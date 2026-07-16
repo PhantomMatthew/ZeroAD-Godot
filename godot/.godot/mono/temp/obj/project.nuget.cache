@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "c/BFJOi2Hdk=",
+  "success": true,
+  "projectFilePath": "/Users/matthew/SourceCode/gitea/0ad-godot/godot/GodotProject.csproj",
+  "expectedPackageFiles": [
+    "/Users/matthew/.nuget/packages/godot.sourcegenerators/4.7.0/godot.sourcegenerators.4.7.0.nupkg.sha512",
+    "/Users/matthew/.nuget/packages/godotsharp/4.7.0/godotsharp.4.7.0.nupkg.sha512",
+    "/Users/matthew/.nuget/packages/godotsharpeditor/4.7.0/godotsharpeditor.4.7.0.nupkg.sha512"
+  ],
+  "logs": []
+}

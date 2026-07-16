@@ -1,0 +1,146 @@
+{
+  "format": 1,
+  "restore": {
+    "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj": {}
+  },
+  "projects": {
+    "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj",
+        "projectName": "ZeroAD.Sim.Tests",
+        "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj",
+        "packagesPath": "/Users/matthew/.nuget/packages/",
+        "outputPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/Users/matthew/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "/usr/local/share/dotnet/library-packs": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {
+              "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
+                "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "allWarningsAsErrors": true,
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "Microsoft.NET.Test.Sdk": {
+              "target": "Package",
+              "version": "[17.11.1, )"
+            },
+            "xunit": {
+              "target": "Package",
+              "version": "[2.9.2, )"
+            },
+            "xunit.runner.visualstudio": {
+              "target": "Package",
+              "version": "[2.8.2, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/8.0.422/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
+        "projectName": "ZeroAD.Sim",
+        "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
+        "packagesPath": "/Users/matthew/.nuget/packages/",
+        "outputPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/Users/matthew/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "/usr/local/share/dotnet/library-packs": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "allWarningsAsErrors": true,
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/8.0.422/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}
