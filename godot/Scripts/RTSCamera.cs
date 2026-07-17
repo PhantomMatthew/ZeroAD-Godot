@@ -9,16 +9,23 @@ public sealed partial class RTSCamera : Camera3D
     private float _distance = 120f;
     private Vector3 _focus = new(274f, 27f, 113f);
 
+    private const float DefaultFov = 45f;
+
     private const float PanSpeed = 120f;
-    private const float ZoomSpeed = 256f;
     private const float RotateSpeed = 2.0f;
     private const float EdgeMargin = 15f;
-    private const float MinDistance = 50f;
+    private const float MinDistance = 5f;
     private const float MaxDistance = 200f;
-    private const float MinPitch = -1.2f;
-    private const float MaxPitch = -0.45f;
+    private const float MinPitch = -1.3f;
+    private const float MaxPitch = -0.15f;
 
-    public override void _Ready() => UpdateTransform();
+    public override void _Ready()
+    {
+        Fov = DefaultFov;
+        Near = 2f;
+        Far = 4096f;
+        UpdateTransform();
+    }
 
     public override void _Process(double delta)
     {
@@ -37,10 +44,10 @@ public sealed partial class RTSCamera : Camera3D
         if (Input.IsActionPressed("cam_rotate_cw"))  { _yaw += RotateSpeed * dt; moved = true; }
         if (Input.IsActionPressed("cam_rotate_ccw")) { _yaw -= RotateSpeed * dt; moved = true; }
 
-        if (Input.IsKeyPressed(Key.Equal) || Input.IsKeyPressed(Key.KpAdd))
-        { _distance = Mathf.Max(MinDistance, _distance - ZoomSpeed * dt); moved = true; }
-        if (Input.IsKeyPressed(Key.Minus) || Input.IsKeyPressed(Key.KpSubtract))
-        { _distance = Mathf.Min(MaxDistance, _distance + ZoomSpeed * dt); moved = true; }
+		if (Input.IsKeyPressed(Key.Equal) || Input.IsKeyPressed(Key.KpAdd))
+		{ _distance = Mathf.Max(MinDistance, _distance * Mathf.Pow(0.5f, dt)); moved = true; }
+		if (Input.IsKeyPressed(Key.Minus) || Input.IsKeyPressed(Key.KpSubtract))
+		{ _distance = Mathf.Min(MaxDistance, _distance * Mathf.Pow(2.0f, dt)); moved = true; }
 
         var vp = GetViewport();
         if (vp != null)
@@ -64,22 +71,22 @@ public sealed partial class RTSCamera : Camera3D
     {
         if (@event is InputEventMouseButton mb && mb.Pressed)
         {
-            if (mb.ButtonIndex == MouseButton.WheelUp)
-            {
-                if (Input.IsKeyPressed(Key.Shift))
-                    _yaw += 0.3f;
-                else
-                    _distance = Mathf.Max(MinDistance, _distance - 32f);
-                UpdateTransform();
-            }
-            else if (mb.ButtonIndex == MouseButton.WheelDown)
-            {
-                if (Input.IsKeyPressed(Key.Shift))
-                    _yaw -= 0.3f;
-                else
-                    _distance = Mathf.Min(MaxDistance, _distance + 32f);
-                UpdateTransform();
-            }
+			if (mb.ButtonIndex == MouseButton.WheelUp)
+			{
+				if (Input.IsKeyPressed(Key.Shift))
+					_yaw += 0.3f;
+				else
+					_distance = Mathf.Max(MinDistance, _distance * 0.85f);
+				UpdateTransform();
+			}
+			else if (mb.ButtonIndex == MouseButton.WheelDown)
+			{
+				if (Input.IsKeyPressed(Key.Shift))
+					_yaw -= 0.3f;
+				else
+					_distance = Mathf.Min(MaxDistance, _distance * 1.15f);
+				UpdateTransform();
+			}
         }
     }
 

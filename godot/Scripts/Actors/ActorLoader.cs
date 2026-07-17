@@ -109,6 +109,17 @@ public sealed class ActorLoader
     /// </summary>
     public static string? ExtractActorFromTemplate(string template)
     {
+        string rel = template.Replace('\\', '/');
+
+        if (rel.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+        {
+            if (rel.StartsWith("actors/", StringComparison.OrdinalIgnoreCase))
+                rel = rel["actors/".Length..];
+            else if (rel.StartsWith("actor/", StringComparison.OrdinalIgnoreCase))
+                rel = rel["actor/".Length..];
+            return rel;
+        }
+
         lock (_templateCacheLock)
         {
             if (_templateActorCache.TryGetValue(template, out var cached))

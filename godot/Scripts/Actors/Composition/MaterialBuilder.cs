@@ -99,6 +99,9 @@ void fragment() {
         {
             mat.AlbedoTexture = baseTex;
             mat.AlbedoColor = Colors.White;
+            mat.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor;
+            mat.AlphaScissorThreshold = 0.5f;
+            mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
         }
         else
         {

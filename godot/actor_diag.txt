@@ -1,108 +1,34 @@
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/paving_tile_aegean_7x7_round.xml	no-mesh-resolved
-BOX	actor/props/flora/bush_medit_underbrush.xml	no-VisualActor
-BOX	actor/props/flora/bush_tempe_sm_lush.xml	no-VisualActor
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/dirt_4x4.xml	no-mesh-resolved
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/flora/decals_flowers_daisies.xml	no-mesh-resolved
-BOX	actor/props/flora/bush_medit_la_dry.xml	no-VisualActor
-BOX	actor/props/flora/bush_medit_sm_dry.xml	no-VisualActor
-BOX	actor/props/flora/bush_medit_me_dry.xml	no-VisualActor
-BOX	actor/props/flora/bush_tempe_la.xml	no-VisualActor
-BOX	actor/props/flora/bush_medit_la_lush.xml	no-VisualActor
-BOX	actor/props/flora/bush_medit_la.xml	no-VisualActor
-BOX	actor/props/flora/bush_tempe_sm.xml	no-VisualActor
-BOX	actor/props/flora/bush_tempe_la_lush.xml	no-VisualActor
-BOX	actor/props/flora/foliagebush.xml	no-VisualActor
-BOX	actor/props/flora/bush_desert_dry_a.xml	no-VisualActor
-BOX	actor/props/flora/bush_tempe_sm_dry.xml	no-VisualActor
-BOX	actor/flora/trees/aleppo_pine.xml	no-VisualActor
-BOX	actor/flora/trees/pine.xml	no-VisualActor
-BOX	actor/props/units/weapons/rock.xml	no-VisualActor
-BOX	actor/geology/stone_medit_med.xml	no-VisualActor
-BOX	actor/geology/stone_granite_greek_med.xml	no-VisualActor
-BOX	actor/geology/stone_granite_greek_large.xml	no-VisualActor
-BOX	actor/geology/stone_granite_greek_small.xml	no-VisualActor
-BOX	actor/props/special/eyecandy/blocks_limestone_pile_b.xml	no-VisualActor
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/berry_mud.xml	no-mesh-resolved
-BOX	actor/props/special/eyecandy/bridge_edge_hele.xml	no-VisualActor
-BOX	actor/flora/trees/oak_old.xml	no-VisualActor
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/dirt_small.xml	no-mesh-resolved
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/dirt_6x6.xml	no-mesh-resolved
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/field_medit_5x5.xml	no-mesh-resolved
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/celt_sb1_mud.xml	no-mesh-resolved
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/flora/olive_decal.xml	no-mesh-resolved
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/ground_tree_decal_01.xml	no-mesh-resolved
-BOX	actor/flora/trees/oak_holly_autumn.xml	no-VisualActor
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/particle/sparkle_metalmine.xml	no-mesh-resolved
-BOX	actor/props/flora/cattails_autumn.xml	no-VisualActor
-BOX	actor/props/flora/bush_temperate_autumn.xml	no-VisualActor
-BOX	actor/props/flora/grass_woody_dry.xml	no-VisualActor
-BOX	actor/props/flora/grass_soft_dry_small_tall.xml	no-VisualActor
-BOX	actor/props/flora/grass_temp_field_brown.xml	no-VisualActor
-BOX	actor/props/flora/grass_temp_field_dry.xml	no-VisualActor
-BOX	actor/props/flora/grass_soft_dry_large_tall.xml	no-VisualActor
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/tree_elm_base.xml	no-mesh-resolved
-BOX	actor/particle/cloud.xml	no-VisualActor
-BOX	actor/flora/trees/elm_dead.xml	no-VisualActor
-BOX	actor/flora/trees/oak_dead.xml	no-VisualActor
-BOX	actor/props/special/eyecandy/statue_aphrodite_small.xml	no-VisualActor
-BOX	actor/props/special/eyecandy/ground_edge_dirt_decal_large.xml	no-VisualActor
-BOX	actor/props/flora/reeds_giant.xml	no-VisualActor
+BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/particle/cloud.xml	no-mesh-resolved
+BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/ground_edge_dirt_decal_large.xml	no-mesh-resolved
 BOX	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/flora/decal_pine.xml	no-mesh-resolved
-BOX	actor/flora/trees/pine_maritime.xml	no-VisualActor
-BOX	actor/flora/trees/temperate_forest_biome_tree_autumn.xml	no-VisualActor
 === ActorDiag summary ===
-resolved-ok templates: 32, box-fallback templates: 52
+resolved-ok templates: 71, box-fallback templates: 15
 --- box fallbacks (template | reason | count) ---
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/paving_tile_aegean_7x7_round.xml|no-mesh-resolved
-x1	actor/props/flora/bush_medit_underbrush.xml|no-VisualActor
-x1	actor/props/flora/bush_tempe_sm_lush.xml|no-VisualActor
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/dirt_4x4.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/flora/decals_flowers_daisies.xml|no-mesh-resolved
-x6	actor/props/flora/bush_medit_la_dry.xml|no-VisualActor
-x19	actor/props/flora/bush_medit_sm_dry.xml|no-VisualActor
-x2	actor/props/flora/bush_medit_me_dry.xml|no-VisualActor
-x6	actor/props/flora/bush_tempe_la.xml|no-VisualActor
-x1	actor/props/flora/bush_medit_la_lush.xml|no-VisualActor
-x3	actor/props/flora/bush_medit_la.xml|no-VisualActor
-x1	actor/props/flora/bush_tempe_sm.xml|no-VisualActor
-x4	actor/props/flora/bush_tempe_la_lush.xml|no-VisualActor
-x3	actor/props/flora/foliagebush.xml|no-VisualActor
-x10	actor/props/flora/bush_desert_dry_a.xml|no-VisualActor
-x1	actor/props/flora/bush_tempe_sm_dry.xml|no-VisualActor
-x1	actor/flora/trees/aleppo_pine.xml|no-VisualActor
-x3	actor/flora/trees/pine.xml|no-VisualActor
-x1	actor/props/units/weapons/rock.xml|no-VisualActor
-x1	actor/geology/stone_medit_med.xml|no-VisualActor
-x1	actor/geology/stone_granite_greek_med.xml|no-VisualActor
-x3	actor/geology/stone_granite_greek_large.xml|no-VisualActor
-x3	actor/geology/stone_granite_greek_small.xml|no-VisualActor
-x3	actor/props/special/eyecandy/blocks_limestone_pile_b.xml|no-VisualActor
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/berry_mud.xml|no-mesh-resolved
-x2	actor/props/special/eyecandy/bridge_edge_hele.xml|no-VisualActor
-x1	actor/flora/trees/oak_old.xml|no-VisualActor
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/dirt_small.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/dirt_6x6.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/field_medit_5x5.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/celt_sb1_mud.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/flora/olive_decal.xml|no-mesh-resolved
-x2	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/ground_tree_decal_01.xml|no-mesh-resolved
-x238	actor/flora/trees/oak_holly_autumn.xml|no-VisualActor
+x10	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/ground_tree_decal_01.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/particle/sparkle_metalmine.xml|no-mesh-resolved
-x617	actor/props/flora/cattails_autumn.xml|no-VisualActor
-x6	actor/props/flora/bush_temperate_autumn.xml|no-VisualActor
-x72	actor/props/flora/grass_woody_dry.xml|no-VisualActor
-x5	actor/props/flora/grass_soft_dry_small_tall.xml|no-VisualActor
-x66	actor/props/flora/grass_temp_field_brown.xml|no-VisualActor
-x71	actor/props/flora/grass_temp_field_dry.xml|no-VisualActor
-x78	actor/props/flora/grass_soft_dry_large_tall.xml|no-VisualActor
-x3	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/tree_elm_base.xml|no-mesh-resolved
-x48	actor/particle/cloud.xml|no-VisualActor
-x18	actor/flora/trees/elm_dead.xml|no-VisualActor
-x4	actor/flora/trees/oak_dead.xml|no-VisualActor
-x2	actor/props/special/eyecandy/statue_aphrodite_small.xml|no-VisualActor
-x3	actor/props/special/eyecandy/ground_edge_dirt_decal_large.xml|no-VisualActor
-x55	actor/props/flora/reeds_giant.xml|no-VisualActor
-x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/flora/decal_pine.xml|no-mesh-resolved
-x30	actor/flora/trees/pine_maritime.xml|no-VisualActor
-x31	actor/flora/trees/temperate_forest_biome_tree_autumn.xml|no-VisualActor
+x6	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/tree_elm_base.xml|no-mesh-resolved
+x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/particle/cloud.xml|no-mesh-resolved
+x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/ground_edge_dirt_decal_large.xml|no-mesh-resolved
+x5	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/flora/decal_pine.xml|no-mesh-resolved
 
