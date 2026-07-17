@@ -21,13 +21,15 @@ public sealed class AssetPathResolver
 
     private readonly HashSet<string> _meshRelPaths;
     private readonly HashSet<string> _texRelPaths;
+    private readonly HashSet<string> _animRelPaths;
     private readonly HashSet<string> _warned = new();
     private readonly object _warnLock = new();
 
-    private AssetPathResolver(HashSet<string> meshRelPaths, HashSet<string> texRelPaths)
+    private AssetPathResolver(HashSet<string> meshRelPaths, HashSet<string> texRelPaths, HashSet<string> animRelPaths)
     {
         _meshRelPaths = meshRelPaths;
         _texRelPaths = texRelPaths;
+        _animRelPaths = animRelPaths;
     }
 
     private static AssetPathResolver CreateInstance()
@@ -52,7 +54,16 @@ public sealed class AssetPathResolver
                     textures.Add(Path.GetRelativePath(texRoot, f).Replace('\\', '/'));
         }
 
-        return new AssetPathResolver(meshes, textures);
+        var animations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string animRoot = Path.Combine(assetsAbs, "animations");
+        if (Directory.Exists(animRoot))
+        {
+            foreach (var f in Directory.GetFiles(animRoot, "*.glb", SearchOption.AllDirectories))
+                if (!f.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+                    animations.Add(Path.GetRelativePath(animRoot, f).Replace('\\', '/'));
+        }
+
+        return new AssetPathResolver(meshes, textures, animations);
     }
 
     public bool Exists(string relPath) =>
@@ -106,6 +117,23 @@ public sealed class AssetPathResolver
 
         WarnOnceMiss($"AssetPathResolver.ResolveTexture miss: '{rawTexPath}' (tried '{withSkins}', '{png}', '{flatSkins}', '{basename}')");
         return Result<string>.Miss(rawTexPath);
+    }
+
+    public Result<string> ResolveAnimation(string rawDaePath)
+    {
+        if (string.IsNullOrEmpty(rawDaePath))
+            return Result<string>.Miss(rawDaePath);
+
+        string glbRel = SwapOrStripExt(rawDaePath, ".glb");
+        if (_animRelPaths.Contains(glbRel))
+            return new Result<string>(glbRel, true, rawDaePath);
+
+        string basename = Path.GetFileName(glbRel);
+        if (_animRelPaths.Contains(basename))
+            return new Result<string>(basename, true, rawDaePath);
+
+        WarnOnceMiss($"AssetPathResolver.ResolveAnimation miss: '{rawDaePath}' (tried '{glbRel}', '{basename}')");
+        return Result<string>.Miss(rawDaePath);
     }
 
     private static string SwapOrStripExt(string path, string newExt)

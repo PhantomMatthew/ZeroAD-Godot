@@ -13,7 +13,7 @@ public sealed partial class MultiplayerController : Node
     private bool _isHost;
 
     public NetTurnManager NetTurn => _netTurn;
-    public bool IsConnected => _peer != null && _peer.GetConnectionStatus() == MultiplayerPeer.ConnectionStatus.Connected;
+    public new bool IsConnected => _peer != null && _peer.GetConnectionStatus() == MultiplayerPeer.ConnectionStatus.Connected;
 
     public event System.Action? OnGameStart;
     public event System.Action<string>? OnOOS;

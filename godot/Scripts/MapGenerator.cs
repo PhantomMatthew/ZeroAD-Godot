@@ -8,7 +8,7 @@ public static class MapGenerator
     public sealed class GeneratedMap
     {
         public int PatchesPerSide;
-        public float[,] Heightmap;
+        public float[,] Heightmap = null!;
         public int VerticesPerSide;
         public float TileSize = 4.0f;
 

@@ -190,13 +190,13 @@ public sealed class ResearchManager
             var researcher = _sim.Sim.QueryInterface<ResearcherComponent>(building);
             if (researcher == null || researcher.IsResearching) continue;
 
-            string tech = PickNextTech(snap, techMgr);
+            string? tech = PickNextTech(snap, techMgr);
             if (tech != null)
                 researcher.StartResearch(tech, techMgr, snap.Player);
         }
     }
 
-    private string PickNextTech(AISnapshot snap, TechnologyManager techMgr)
+    private string? PickNextTech(AISnapshot snap, TechnologyManager techMgr)
     {
         if (!techMgr.IsResearched("phase_town") && snap.Player.Wood >= 100)
             return "phase_town";

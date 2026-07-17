@@ -84,4 +84,15 @@ public static class SpecMerger
             material,
             castShadow);
     }
+
+    public static ResolvedActorSpec? MergeFromActorPath(
+        string absActorPath,
+        int seed,
+        AssetPathResolver paths)
+    {
+        var doc = ActorDocCache.GetOrLoad(absActorPath);
+        if (doc == null) return null;
+        var chosen = VariationResolver.Resolve(doc, seed, VariationResolver.IdleOnly);
+        return Merge(doc, chosen, paths, seed);
+    }
 }

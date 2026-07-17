@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.IO;
 using Godot;
 
 namespace ZeroAD.Godot.Actors.Composition;
@@ -7,11 +6,6 @@ namespace ZeroAD.Godot.Actors.Composition;
 using ZeroAD.Godot.Actors.Variation;
 using ZeroAD.Godot.Actors.Parsing;
 
-/// <summary>
-/// Builds a Godot Node3D tree from a <see cref="ResolvedActorSpec"/>: instantiates the mesh GLB,
-/// applies team-color/base-texture material, recursively attaches props at their attachpoints.
-/// Phase-1: standard material only, no normal/spec maps, idle animation only.
-/// </summary>
 public sealed class ActorComposer
 {
     private const int MaxPropDepth = 5;
@@ -19,29 +13,30 @@ public sealed class ActorComposer
     private readonly HashSet<string> _warnedActors = new();
     private readonly HashSet<string> _warnedAttachpoints = new();
 
-    public Node3D Compose(ResolvedActorSpec spec, Color teamColor, int depth = 0)
+    public Node3D BuildStructural(ResolvedActorSpec spec, int depth = 0)
     {
         var root = new Node3D();
-        root.SetMeta("actorPath", spec.ActorPath);
+        root.SetMeta(LayerMeta.ActorPath, spec.ActorPath);
+        if (!string.IsNullOrEmpty(spec.MeshGlbPath))
+            root.SetMeta(LayerMeta.MeshGlbPath, spec.MeshGlbPath!);
 
-        if (string.IsNullOrEmpty(spec.MeshGlbPath))
-        {
-            root.AddChild(MakeFallbackBox(teamColor));
-            WarnActorOnce(spec.ActorPath, "Compose: no mesh resolved; using fallback box");
-            return root;
-        }
+        Node3D? instance = null;
+        if (!string.IsNullOrEmpty(spec.MeshGlbPath))
+            instance = LoadAndInstantiateGlb(spec.MeshGlbPath!);
 
-        var instance = LoadAndInstantiateGlb(spec.MeshGlbPath!);
         if (instance == null)
         {
-            root.AddChild(MakeFallbackBox(teamColor));
-            WarnActorOnce(spec.ActorPath, $"Compose: GLB load failed for '{spec.MeshGlbPath}'; using fallback box");
+            root.AddChild(MakeFallbackBox(Colors.White));
+            if (string.IsNullOrEmpty(spec.MeshGlbPath))
+                WarnActorOnce(spec.ActorPath, "BuildStructural: no mesh resolved; using fallback box");
+            else
+                WarnActorOnce(spec.ActorPath, $"BuildStructural: GLB load failed for '{spec.MeshGlbPath}'; using fallback box");
             return root;
         }
+
         root.AddChild(instance);
 
-        ApplyMaterial(instance, spec, teamColor);
-        TryPlayIdle(instance);
+        TryLoadExternalAnimations(instance, spec.Animations);
 
         if (depth < MaxPropDepth)
         {
@@ -53,7 +48,7 @@ public sealed class ActorComposer
                 var childSpec = ResolveChildSpec(propSpec);
                 if (childSpec == null) continue;
 
-                var childNode = Compose(childSpec, teamColor, depth + 1);
+                var childNode = BuildStructural(childSpec, depth + 1);
                 var attachNode = AttachpointResolver.FindAttachpoint(instance, attachpoint);
                 if (attachNode != null)
                 {
@@ -70,56 +65,149 @@ public sealed class ActorComposer
         return root;
     }
 
-    private static ResolvedActorSpec? ResolveChildSpec(PropSpec prop)
+    public Node3D Compose(ResolvedActorSpec spec, Color teamColor, int depth = 0)
     {
-        var doc = ActorDocCache.GetOrLoad(ActorLoader.ResolveActorAbsPath(prop.ActorPath));
-        if (doc == null) return null;
-        var chosen = VariationResolver.Resolve(doc, prop.SubSeed, VariationResolver.IdleOnly);
-        return SpecMerger.Merge(doc, chosen, AssetPathResolver.Instance, prop.SubSeed);
+        var root = BuildStructural(spec, depth);
+        InstanceCustomizer.Apply(root, spec, teamColor, entitySeed: 0);
+        TryPlayIdle(root);
+        return root;
     }
+
+    public static void SetAnimationState(Node3D instance, string state)
+    {
+        if (string.IsNullOrEmpty(state)) return;
+        var player = ModelLibrary.FindAnimationPlayer(instance);
+        if (player == null) return;
+        string clip = ModelLibrary.ResolveClip(player, state);
+        if (!string.IsNullOrEmpty(clip))
+            player.Play(clip);
+    }
+
+    private static readonly HashSet<string> _animWarned = new();
+
+    private static void TryLoadExternalAnimations(Node3D baseInstance, IReadOnlyList<AnimRef> animations)
+    {
+        if (animations.Count == 0) return;
+        var target = ModelLibrary.FindAnimationPlayer(baseInstance);
+        if (target == null) return;
+
+        if (!target.HasAnimationLibrary(""))
+            target.AddAnimationLibrary("", new AnimationLibrary());
+        var lib = target.GetAnimationLibrary("");
+
+        var added = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+        foreach (var anim in animations)
+        {
+            string stateName = anim.Name.ToLowerInvariant();
+            if (added.Contains(stateName)) continue;
+
+            var resolved = AssetPathResolver.Instance.ResolveAnimation(anim.File);
+            if (!resolved.Found || resolved.Value == null) continue;
+
+            var scene = ModelLibrary.LoadGlb(resolved.Value);
+            if (scene == null) continue;
+
+            var temp = scene.Instantiate();
+            if (temp == null) continue;
+
+            try
+            {
+                var src = ModelLibrary.FindAnimationPlayer(temp);
+                if (src == null) continue;
+
+                foreach (var libNameVar in src.GetAnimationLibraryList())
+                {
+                    var srcLib = src.GetAnimationLibrary(libNameVar.ToString());
+                    if (srcLib == null) continue;
+                    foreach (var animNameVar in srcLib.GetAnimationList())
+                    {
+                        string an = animNameVar.ToString();
+                        if (!srcLib.HasAnimation(an)) continue;
+                        var clip = srcLib.GetAnimation(an);
+                        if (clip == null) continue;
+
+                        var dup = (Animation)clip.Duplicate();
+                        if (stateName.Contains("idle") || stateName.Contains("walk") || stateName.Contains("trot"))
+                            dup.LoopMode = Animation.LoopModeEnum.Linear;
+
+                        string clipName = stateName;
+                        if (lib.HasAnimation(clipName))
+                            clipName = stateName + "_" + added.Count;
+                        lib.AddAnimation(clipName, dup);
+                        added.Add(stateName);
+                        break;
+                    }
+                    break;
+                }
+            }
+            finally
+            {
+                temp.QueueFree();
+            }
+        }
+    }
+
+    public static void LoadAnimationClips(Node3D baseInstance, IEnumerable<string> animGlbRelPaths)
+    {
+        var target = ModelLibrary.FindAnimationPlayer(baseInstance);
+        if (target == null) return;
+
+        foreach (var relPath in animGlbRelPaths)
+        {
+            if (string.IsNullOrEmpty(relPath)) continue;
+            var scene = ModelLibrary.LoadGlb(relPath);
+            if (scene == null) continue;
+            var temp = scene.Instantiate();
+            if (temp == null) continue;
+
+            try
+            {
+                var src = ModelLibrary.FindAnimationPlayer(temp);
+                if (src == null) continue;
+                foreach (var libNameVar in src.GetAnimationLibraryList())
+                {
+                    string libName = libNameVar.ToString();
+                    var lib = src.GetAnimationLibrary(libName);
+                    if (lib == null) continue;
+
+                    if (target.HasAnimationLibrary(libName))
+                    {
+                        var existing = target.GetAnimationLibrary(libName);
+                        foreach (var animNameVar in lib.GetAnimationList())
+                        {
+                            string animName = animNameVar.ToString();
+                            if (!existing.HasAnimation(animName))
+                                existing.AddAnimation(animName, lib.GetAnimation(animName));
+                        }
+                    }
+                    else
+                    {
+                        target.AddAnimationLibrary(libName, lib);
+                    }
+                }
+            }
+            finally
+            {
+                temp.QueueFree();
+            }
+        }
+    }
+
+    internal static ResolvedActorSpec? ResolveChildSpec(PropSpec prop) =>
+        SpecMerger.MergeFromActorPath(
+            ActorLoader.ResolveActorAbsPath(prop.ActorPath),
+            prop.SubSeed,
+            AssetPathResolver.Instance);
 
     private static Node3D? LoadAndInstantiateGlb(string relGlbPath)
     {
         var scene = ModelLibrary.LoadGlb(relGlbPath);
         if (scene == null) return null;
-        var node = scene.Instantiate<Node3D>();
-        return node;
+        return scene.Instantiate<Node3D>();
     }
 
-    private static void ApplyMaterial(Node3D instance, ResolvedActorSpec spec, Color teamColor)
-    {
-        ImageTexture? baseTex = null;
-        if (spec.Textures.TryGetValue("baseTex", out var texPath))
-            baseTex = LoadTextureByRelPath(texPath);
-
-        var mat = new StandardMaterial3D();
-        if (baseTex != null)
-        {
-            mat.AlbedoTexture = baseTex;
-            mat.AlbedoColor = Colors.White;
-        }
-        else
-        {
-            mat.AlbedoColor = teamColor;
-        }
-
-        foreach (var n in EnumerateDescendants(instance))
-        {
-            if (n is MeshInstance3D mi)
-                mi.MaterialOverride = mat;
-        }
-    }
-
-    private static ImageTexture? LoadTextureByRelPath(string relPath)
-    {
-        string abs = ProjectSettings.GlobalizePath("res://assets/textures/") + relPath;
-        abs = abs.Replace('\\', '/');
-        if (!File.Exists(abs)) return null;
-        var img = Image.LoadFromFile(abs);
-        return img != null ? ImageTexture.CreateFromImage(img) : null;
-    }
-
-    private static void TryPlayIdle(Node3D instance)
+    internal static void TryPlayIdle(Node3D instance)
     {
         var player = ModelLibrary.FindAnimationPlayer(instance);
         if (player == null) return;
@@ -137,16 +225,6 @@ public sealed class ActorComposer
         mi.MaterialOverride = mat;
         mi.Position = new Vector3(0, 1f, 0);
         return mi;
-    }
-
-    private static IEnumerable<Node> EnumerateDescendants(Node root)
-    {
-        foreach (var child in root.GetChildren())
-        {
-            yield return child;
-            foreach (var d in EnumerateDescendants(child))
-                yield return d;
-        }
     }
 
     private void WarnActorOnce(string actor, string message)

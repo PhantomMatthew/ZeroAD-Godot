@@ -38,11 +38,19 @@ public sealed class ActorLoader
     public Node3D? Instantiate(string actorRelPath, int seed, Color teamColor)
     {
         string abs = ResolveActorAbsPath(actorRelPath);
-        var doc = ActorDocCache.GetOrLoad(abs);
-        if (doc == null) return null;
-        var chosen = VariationResolver.Resolve(doc, seed, VariationResolver.IdleOnly);
-        var spec = SpecMerger.Merge(doc, chosen, AssetPathResolver.Instance, seed);
-        return _composer.Compose(spec, teamColor);
+        var spec = SpecMerger.MergeFromActorPath(abs, seed, AssetPathResolver.Instance);
+        if (spec == null) return null;
+
+        string sig = StructuralSignature.Compute(spec);
+        string key = abs + "#" + sig;
+
+        var scene = ComposedSceneCache.Instance.GetOrBuild(
+            key, () => _composer.BuildStructural(spec));
+
+        var instance = scene.Instantiate<Node3D>();
+        InstanceCustomizer.Apply(instance, spec, teamColor, seed);
+        ActorComposer.TryPlayIdle(instance);
+        return instance;
     }
 
     /// <summary>Combines <see cref="ArtRoot"/>/actors/ with the given repo-relative actor path.</summary>

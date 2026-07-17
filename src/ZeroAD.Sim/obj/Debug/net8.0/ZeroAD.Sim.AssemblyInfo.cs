@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ZeroAD.Sim")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+237c7a2f12b30d6d17d918f64e905d583f3c4253")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a6e5e538347726c22ff3096112e684830dae777f")]
 [assembly: System.Reflection.AssemblyProductAttribute("ZeroAD.Sim")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ZeroAD.Sim")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
