@@ -130,36 +130,52 @@ public sealed partial class Main : Node3D
 		_gameStarted = true;
 		_isTutorial = tutorial;
 		_lobby.Hide();
+		GD.Print($"[Tutorial] BeginGameplay start: tutorial={tutorial}");
 
-		string? templatesPath = FindTemplatesPath();
-		_sim.InitWorld(templatesPath);
-
-		_mp.InitTurnManager(_sim.Sim, 2, playerId);
-
-		if (_hud == null)
+		try
 		{
-			_hud = new HUD(_sim, this);
-			AddChild(_hud);
-		}
+			string? templatesPath = FindTemplatesPath();
+			GD.Print($"[Tutorial] templatesPath={templatesPath ?? "null"}");
+			_sim.InitWorld(templatesPath);
+			GD.Print("[Tutorial] InitWorld done");
 
-		if (_isTutorial)
+			_mp.InitTurnManager(_sim.Sim, 2, playerId);
+			GD.Print("[Tutorial] InitTurnManager done");
+
+			if (_hud == null)
+			{
+				_hud = new HUD(_sim, this);
+				AddChild(_hud);
+			}
+
+			if (_isTutorial)
+			{
+				_tutorialPanel = new TutorialPanel();
+				AddChild(_tutorialPanel);
+				_tutorialPanel.OnReadyPressed += () => _sim.Tutorial?.OnReadyPressed();
+				_tutorialPanel.OnQuitPressed += QuitTutorial;
+				_sim.Events.TutorialMessage += OnTutorialMessage;
+			}
+
+			if (_isTutorial)
+			{
+				GD.Print("[Tutorial] calling SetupTutorialWorld...");
+				SetupTutorialWorld();
+				GD.Print("[Tutorial] SetupTutorialWorld done");
+			}
+			else
+				SetupGameWorld(playerId);
+
+			GD.Print(_isTutorial
+				? "[Tutorial] Introductory Tutorial started"
+				: $"[Tutorial] MS6 Game started: player={playerId}, seed={seed}");
+		}
+		catch (System.Exception e)
 		{
-			_tutorialPanel = new TutorialPanel();
-			AddChild(_tutorialPanel);
-			_tutorialPanel.OnReadyPressed += () => _sim.Tutorial?.OnReadyPressed();
-			_tutorialPanel.OnQuitPressed += QuitTutorial;
-			_sim.Events.TutorialMessage += OnTutorialMessage;
+			GD.PrintErr($"[Tutorial] EXCEPTION in BeginGameplay: {e}");
+			GD.PrintErr($"[Tutorial] Stack: {e.StackTrace}");
+			throw;
 		}
-
-		if (_isTutorial)
-			SetupTutorialWorld();
-		else
-			SetupGameWorld(playerId);
-
-		GD.Print(_isTutorial
-			? "Introductory Tutorial started"
-			: $"MS6 Game started: player={playerId}, seed={seed}");
-		GD.Print("Controls: LMB=select  RMB=move/gather/attack  Shift+batch train  H=toggle tutorial");
 	}
 
 	private void OnTutorialMessage(TutorialNotification notification)
@@ -278,21 +294,37 @@ public sealed partial class Main : Node3D
 
 	private void SetupTutorialWorld()
 	{
+		GD.Print("[Tutorial] SetupTutorialWorld: loading terrain...");
 		SetupTerrain("maps/tutorials/introductory_tutorial.pmp");
+		GD.Print("[Tutorial] terrain loaded");
 
 		string? dataRoot = FindDataRoot();
+		GD.Print($"[Tutorial] dataRoot={dataRoot ?? "null"}");
 		if (dataRoot != null)
 		{
+			GD.Print("[Tutorial] loading scenario...");
 			var scenario = _sim.LoadTutorialScenario(dataRoot);
 			if (scenario != null)
 			{
+				GD.Print($"[Tutorial] scenario loaded: {scenario.Entities.Count} entities, camera=({scenario.CameraX},{scenario.CameraZ})");
 				float h = TerrainHeightService.Sample(scenario.CameraX, scenario.CameraZ);
 				_camera.SetFocus(new Vector3(scenario.CameraX, h, scenario.CameraZ));
 			}
+			else
+			{
+				GD.PrintErr("[Tutorial] LoadTutorialScenario returned null!");
+			}
+		}
+		else
+		{
+			GD.PrintErr("[Tutorial] FindDataRoot returned null — scenario cannot load");
 		}
 
+		GD.Print("[Tutorial] StartTutorial...");
 		_sim.StartTutorial();
+		GD.Print("[Tutorial] showing panel...");
 		_tutorialPanel.ShowTutorial();
+		GD.Print("[Tutorial] SetupTutorialWorld complete");
 	}
 
 	private void SetupGameWorld(uint playerId)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Xml.Linq;
 using Godot;
@@ -37,6 +38,7 @@ public sealed class ActorLoader
 
     public Node3D? Instantiate(string actorRelPath, int seed, Color teamColor)
     {
+        actorRelPath = ResolvePlaceholders(actorRelPath, seed);
         string abs = ResolveActorAbsPath(actorRelPath);
         var spec = SpecMerger.MergeFromActorPath(abs, seed, AssetPathResolver.Instance);
         if (spec == null) return null;
@@ -51,6 +53,45 @@ public sealed class ActorLoader
         InstanceCustomizer.Apply(instance, spec, teamColor, seed);
         ActorComposer.TryPlayIdle(instance);
         return instance;
+    }
+
+    private static string ResolvePlaceholders(string actorRelPath, int seed)
+    {
+        if (actorRelPath.Contains("{phenotype}"))
+        {
+            string first = (Math.Abs(seed) % 2 == 0) ? "female" : "male";
+            string second = first == "male" ? "female" : "male";
+            string a = actorRelPath.Replace("{phenotype}", first);
+            if (ActorFileExists(a)) return a;
+            string b = actorRelPath.Replace("{phenotype}", second);
+            if (ActorFileExists(b)) return b;
+            return a;
+        }
+        if (actorRelPath.Contains("{civ}"))
+        {
+            string? resolved = ResolveCivGlob(actorRelPath);
+            if (resolved != null) return resolved;
+        }
+        return actorRelPath;
+    }
+
+    private static bool ActorFileExists(string actorRelPath) =>
+        File.Exists(ResolveActorAbsPath(actorRelPath));
+
+    private static string? ResolveCivGlob(string actorRelPath)
+    {
+        int idx = actorRelPath.IndexOf("{civ}", StringComparison.Ordinal);
+        if (idx < 0) return actorRelPath;
+        string prefix = actorRelPath[..idx];
+        string suffix = actorRelPath[(idx + "{civ}".Length)..];
+        string dir = Path.GetFullPath(Path.Combine(ArtRoot, "actors", prefix));
+        string dirOnly = Path.GetDirectoryName(dir) ?? dir;
+        if (!Directory.Exists(dirOnly)) return null;
+        string pattern = Path.GetFileName(prefix) + "*" + suffix;
+        var match = Directory.GetFiles(dirOnly, pattern).FirstOrDefault();
+        if (match == null) return null;
+        string rel = Path.GetRelativePath(Path.GetFullPath(Path.Combine(ArtRoot, "actors")), match).Replace('\\', '/');
+        return rel;
     }
 
     /// <summary>Combines <see cref="ArtRoot"/>/actors/ with the given repo-relative actor path.</summary>

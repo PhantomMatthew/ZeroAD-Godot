@@ -22,14 +22,26 @@ public sealed class AssetPathResolver
     private readonly HashSet<string> _meshRelPaths;
     private readonly HashSet<string> _texRelPaths;
     private readonly HashSet<string> _animRelPaths;
+    private readonly Dictionary<string, string> _meshByBasename;
+    private readonly Dictionary<string, string> _texByBasename;
+    private readonly Dictionary<string, string> _animByBasename;
     private readonly HashSet<string> _warned = new();
     private readonly object _warnLock = new();
 
-    private AssetPathResolver(HashSet<string> meshRelPaths, HashSet<string> texRelPaths, HashSet<string> animRelPaths)
+    private AssetPathResolver(
+        HashSet<string> meshRelPaths,
+        HashSet<string> texRelPaths,
+        HashSet<string> animRelPaths,
+        Dictionary<string, string> meshByBasename,
+        Dictionary<string, string> texByBasename,
+        Dictionary<string, string> animByBasename)
     {
         _meshRelPaths = meshRelPaths;
         _texRelPaths = texRelPaths;
         _animRelPaths = animRelPaths;
+        _meshByBasename = meshByBasename;
+        _texByBasename = texByBasename;
+        _animByBasename = animByBasename;
     }
 
     private static AssetPathResolver CreateInstance()
@@ -63,7 +75,23 @@ public sealed class AssetPathResolver
                     animations.Add(Path.GetRelativePath(animRoot, f).Replace('\\', '/'));
         }
 
-        return new AssetPathResolver(meshes, textures, animations);
+        return new AssetPathResolver(
+            meshes, textures, animations,
+            BuildBasenameIndex(meshes),
+            BuildBasenameIndex(textures),
+            BuildBasenameIndex(animations));
+    }
+
+    private static Dictionary<string, string> BuildBasenameIndex(HashSet<string> relPaths)
+    {
+        var index = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rel in relPaths)
+        {
+            string base_ = Path.GetFileName(rel);
+            if (!index.ContainsKey(base_))
+                index[base_] = rel;
+        }
+        return index;
     }
 
     public bool Exists(string relPath) =>
@@ -78,12 +106,11 @@ public sealed class AssetPathResolver
         if (_meshRelPaths.Contains(glbRel))
             return new Result<string>(glbRel, true, rawDaePath);
 
-        // Asset pipeline occasionally dropped the leading category dir; try basename fallback.
-        string basenameFallback = Path.GetFileName(glbRel);
-        if (_meshRelPaths.Contains(basenameFallback))
-            return new Result<string>(basenameFallback, true, rawDaePath);
+        string basename = Path.GetFileName(glbRel);
+        if (_meshByBasename.TryGetValue(basename, out var relocated))
+            return new Result<string>(relocated, true, rawDaePath);
 
-        WarnOnceMiss($"AssetPathResolver.ResolveMesh miss: '{rawDaePath}' (tried '{glbRel}', '{basenameFallback}')");
+        WarnOnceMiss($"AssetPathResolver.ResolveMesh miss: '{rawDaePath}' (tried '{glbRel}', basename '{basename}')");
         return Result<string>.Miss(rawDaePath);
     }
 
@@ -107,15 +134,11 @@ public sealed class AssetPathResolver
         if (_texRelPaths.Contains(png))
             return new Result<string>(png, true, rawTexPath);
 
-        // Pipeline flattened skins/ subdir: try skins/<basename> and plain <basename>.
         string basename = Path.GetFileName(png);
-        string flatSkins = "skins/" + basename;
-        if (_texRelPaths.Contains(flatSkins))
-            return new Result<string>(flatSkins, true, rawTexPath);
-        if (_texRelPaths.Contains(basename))
-            return new Result<string>(basename, true, rawTexPath);
+        if (_texByBasename.TryGetValue(basename, out var texRelocated))
+            return new Result<string>(texRelocated, true, rawTexPath);
 
-        WarnOnceMiss($"AssetPathResolver.ResolveTexture miss: '{rawTexPath}' (tried '{withSkins}', '{png}', '{flatSkins}', '{basename}')");
+        WarnOnceMiss($"AssetPathResolver.ResolveTexture miss: '{rawTexPath}' (tried '{withSkins}', '{png}', basename '{basename}')");
         return Result<string>.Miss(rawTexPath);
     }
 
@@ -129,10 +152,10 @@ public sealed class AssetPathResolver
             return new Result<string>(glbRel, true, rawDaePath);
 
         string basename = Path.GetFileName(glbRel);
-        if (_animRelPaths.Contains(basename))
-            return new Result<string>(basename, true, rawDaePath);
+        if (_animByBasename.TryGetValue(basename, out var animRelocated))
+            return new Result<string>(animRelocated, true, rawDaePath);
 
-        WarnOnceMiss($"AssetPathResolver.ResolveAnimation miss: '{rawDaePath}' (tried '{glbRel}', '{basename}')");
+        WarnOnceMiss($"AssetPathResolver.ResolveAnimation miss: '{rawDaePath}' (tried '{glbRel}', basename '{basename}')");
         return Result<string>.Miss(rawDaePath);
     }
 

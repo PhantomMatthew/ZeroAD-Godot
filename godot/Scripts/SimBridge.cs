@@ -136,17 +136,27 @@ public sealed partial class SimBridge : Node
 
         foreach (var def in scenario.Entities)
         {
-            if (def.IsSimulationEntity)
+            try
             {
-                var eid = SpawnScenarioEntity(def);
-                if (def.Uid != 0)
-                    _scenarioUidMap[def.Uid] = eid;
+                if (def.IsSimulationEntity)
+                {
+                    var eid = SpawnScenarioEntity(def);
+                    if (def.Uid != 0)
+                        _scenarioUidMap[def.Uid] = eid;
+                }
+                else if (def.IsActor)
+                {
+                    SpawnDecorativeActor(def);
+                }
             }
-            else if (def.IsActor)
+            catch (System.Exception ex)
             {
-                SpawnDecorativeActor(def);
+                ZeroAD.Godot.Actors.ActorDiagnostics.Fallback(def.Template, $"spawn-exception:{ex.GetType().Name}:{ex.Message}");
+                GD.PushWarning($"SimBridge: spawn failed for '{def.Template}': {ex.Message}");
             }
         }
+
+        ZeroAD.Godot.Actors.ActorDiagnostics.DumpSummary();
     }
 
     private EntityId SpawnScenarioEntity(ScenarioEntityDef def)

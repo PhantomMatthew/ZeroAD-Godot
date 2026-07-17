@@ -27,16 +27,19 @@ public sealed class ActorComposer
         if (instance == null)
         {
             root.AddChild(MakeFallbackBox(Colors.White));
-            if (string.IsNullOrEmpty(spec.MeshGlbPath))
-                WarnActorOnce(spec.ActorPath, "BuildStructural: no mesh resolved; using fallback box");
-            else
-                WarnActorOnce(spec.ActorPath, $"BuildStructural: GLB load failed for '{spec.MeshGlbPath}'; using fallback box");
+            string meshReason = string.IsNullOrEmpty(spec.MeshGlbPath)
+                ? "no-mesh-resolved"
+                : $"glb-load-failed:{spec.MeshGlbPath}";
+            ZeroAD.Godot.Actors.ActorDiagnostics.Fallback(spec.ActorPath, meshReason);
+            WarnActorOnce(spec.ActorPath, $"BuildStructural: {meshReason}; using fallback box");
             return root;
         }
 
         root.AddChild(instance);
 
         TryLoadExternalAnimations(instance, spec.Animations);
+
+        var skeleton = AttachpointResolver.FindSkeleton(instance);
 
         if (depth < MaxPropDepth)
         {
@@ -49,20 +52,38 @@ public sealed class ActorComposer
                 if (childSpec == null) continue;
 
                 var childNode = BuildStructural(childSpec, depth + 1);
-                var attachNode = AttachpointResolver.FindAttachpoint(instance, attachpoint);
-                if (attachNode != null)
-                {
-                    attachNode.AddChild(childNode);
-                }
-                else
-                {
-                    root.AddChild(childNode);
-                    WarnAttachpointOnce(spec.ActorPath, attachpoint);
-                }
+                AttachProp(root, instance, skeleton, attachpoint, childNode, spec.ActorPath);
             }
         }
 
         return root;
+    }
+
+    private void AttachProp(Node3D root, Node3D instance, Skeleton3D? skeleton, string attachpoint, Node3D childNode, string actorPath)
+    {
+        if (skeleton != null)
+        {
+            int boneIdx = AttachpointResolver.FindBoneIndex(skeleton, attachpoint);
+            if (boneIdx != -1)
+            {
+                var ba = new BoneAttachment3D();
+                skeleton.AddChild(ba);
+                ba.BoneIdx = boneIdx;
+                ba.AddChild(childNode);
+                return;
+            }
+        }
+
+        var attachNode = AttachpointResolver.FindNode(instance, attachpoint);
+        if (attachNode != null)
+        {
+            attachNode.AddChild(childNode);
+        }
+        else
+        {
+            root.AddChild(childNode);
+            WarnAttachpointOnce(actorPath, attachpoint);
+        }
     }
 
     public Node3D Compose(ResolvedActorSpec spec, Color teamColor, int depth = 0)
@@ -204,8 +225,23 @@ public sealed class ActorComposer
     {
         var scene = ModelLibrary.LoadGlb(relGlbPath);
         if (scene == null) return null;
-        return scene.Instantiate<Node3D>();
+        var node = scene.Instantiate<Node3D>();
+        NormalizeUnitScale(node);
+        return node;
     }
+
+    private static void NormalizeUnitScale(Node3D instance)
+    {
+        if (IsUnitConversionScale(instance.Scale))
+            instance.Scale = Vector3.One;
+        foreach (var child in instance.GetChildren())
+            if (child is Node3D n3)
+                NormalizeUnitScale(n3);
+    }
+
+    private static bool IsUnitConversionScale(Vector3 s) =>
+        Mathf.Abs(s.X - s.Y) < 0.0001f && Mathf.Abs(s.Y - s.Z) < 0.0001f &&
+        (Mathf.Abs(s.X - 0.0254f) < 0.001f || Mathf.Abs(s.X - 0.01f) < 0.001f);
 
     internal static void TryPlayIdle(Node3D instance)
     {

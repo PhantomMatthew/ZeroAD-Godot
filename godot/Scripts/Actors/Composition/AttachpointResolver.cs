@@ -3,31 +3,41 @@ using Godot;
 
 namespace ZeroAD.Godot.Actors.Composition;
 
-/// <summary>
-/// Resolves an attachpoint name to a Godot node inside an instantiated actor scene.
-/// Matches the 3 conventions found in 0 A.D. GLBs: exact name, "prop-NAME" (biped/infantry),
-/// and "prop_NAME" (horse). "root" maps to the scene root.
-/// </summary>
 public static class AttachpointResolver
 {
     private const string Root = "root";
 
-    public static Node3D? FindAttachpoint(Node root, string attachpoint)
+    public static Skeleton3D? FindSkeleton(Node root)
+    {
+        if (root is Skeleton3D sk) return sk;
+        foreach (var child in root.GetChildren())
+        {
+            var found = FindSkeleton(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    public static int FindBoneIndex(Skeleton3D skeleton, string attachpoint)
+    {
+        if (string.IsNullOrEmpty(attachpoint))
+            return -1;
+        foreach (var name in Candidates(attachpoint))
+        {
+            int idx = skeleton.FindBone(name);
+            if (idx != -1)
+                return idx;
+        }
+        return -1;
+    }
+
+    public static Node3D? FindNode(Node root, string attachpoint)
     {
         if (string.IsNullOrEmpty(attachpoint))
             return null;
-
         if (string.Equals(attachpoint, Root, StringComparison.OrdinalIgnoreCase))
             return root as Node3D;
-
-        string[] candidates =
-        {
-            attachpoint,
-            "prop-" + attachpoint,
-            "prop_" + attachpoint,
-        };
-
-        foreach (var name in candidates)
+        foreach (var name in Candidates(attachpoint))
         {
             var found = root.FindChild(name, recursive: true, owned: false);
             if (found is Node3D n3)
@@ -35,4 +45,11 @@ public static class AttachpointResolver
         }
         return null;
     }
+
+    private static string[] Candidates(string attachpoint) => new[]
+    {
+        attachpoint,
+        "prop-" + attachpoint,
+        "prop_" + attachpoint,
+    };
 }

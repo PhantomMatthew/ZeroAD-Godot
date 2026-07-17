@@ -27,11 +27,21 @@ public static class ModelLibrary
     private static Node3D? TryInstantiateViaActorSystem(string template, float x, float z, Color color)
     {
         var actorPath = ActorLoader.ExtractActorFromTemplate(template);
-        if (string.IsNullOrEmpty(actorPath)) return null;
+        if (string.IsNullOrEmpty(actorPath))
+        {
+            ZeroAD.Godot.Actors.ActorDiagnostics.Fallback(template, "no-VisualActor");
+            return null;
+        }
 
         int seed = (template.GetHashCode(), x.GetHashCode(), z.GetHashCode()).GetHashCode();
         var node = ActorLoader.Instance.Instantiate(actorPath!, seed, color);
-        if (node == null) return null;
+        if (node == null)
+        {
+            ZeroAD.Godot.Actors.ActorDiagnostics.Fallback(template, $"actor-instantiate-failed -> {actorPath}");
+            return null;
+        }
+
+        ZeroAD.Godot.Actors.ActorDiagnostics.Resolved(template, actorPath!);
 
         NormalizeScale(node, template);
         float y = TerrainHeightService.Sample(x, z);

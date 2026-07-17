@@ -48,21 +48,29 @@ public static class ActorParser
             return null;
         }
 
-        bool castShadow = root.Element("castshadow") != null;
-        string? material = root.Element("material")?.Value.Trim();
-        if (string.IsNullOrEmpty(material)) material = null;
-
-        var groups = new List<VariantGroup>();
-        foreach (var g in root.Elements("group"))
+        try
         {
-            var variants = new List<ActorVariant>();
-            foreach (var v in g.Elements("variant"))
-                variants.Add(ParseVariant(v, depth: 0));
-            if (variants.Count > 0)
-                groups.Add(new VariantGroup(variants));
-        }
+            bool castShadow = root.Element("castshadow") != null;
+            string? material = root.Element("material")?.Value.Trim();
+            if (string.IsNullOrEmpty(material)) material = null;
 
-        return new ActorDoc(absActorPath, castShadow, material, groups);
+            var groups = new List<VariantGroup>();
+            foreach (var g in root.Elements("group"))
+            {
+                var variants = new List<ActorVariant>();
+                foreach (var v in g.Elements("variant"))
+                    variants.Add(ParseVariant(v, depth: 0));
+                if (variants.Count > 0)
+                    groups.Add(new VariantGroup(variants));
+            }
+
+            return new ActorDoc(absActorPath, castShadow, material, groups);
+        }
+        catch (Exception ex)
+        {
+            GD.PushWarning($"ActorParser: error building doc for '{absActorPath}': {ex.Message}");
+            return null;
+        }
     }
 
     private static ActorVariant ParseVariant(XElement el, int depth)
