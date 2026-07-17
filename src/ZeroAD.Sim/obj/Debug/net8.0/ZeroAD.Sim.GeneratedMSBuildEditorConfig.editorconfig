@@ -8,6 +8,6 @@ build_property.PlatformNeutralAssembly =
 build_property.EnforceExtendedAnalyzerRules = 
 build_property._SupportedPlatformList = Linux,macOS,Windows
 build_property.RootNamespace = ZeroAD.Sim
-build_property.ProjectDir = /Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/
+build_property.ProjectDir = /Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/
 build_property.EnableComHosting = 
 build_property.EnableGeneratedComInterfaceComImportInterop = 

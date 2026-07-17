@@ -13,11 +13,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
+      "projectUniqueName": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
       "projectName": "ZeroAD.Sim",
-      "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
+      "projectPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
       "packagesPath": "/Users/matthew/.nuget/packages/",
-      "outputPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/obj/",
+      "outputPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "/Users/matthew/.nuget/NuGet/NuGet.Config"

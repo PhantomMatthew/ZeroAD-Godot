@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/Users/matthew/SourceCode/gitea/0ad-godot/godot/GodotProject.csproj": {}
+    "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/godot/GodotProject.csproj": {}
   },
   "projects": {
-    "/Users/matthew/SourceCode/gitea/0ad-godot/godot/GodotProject.csproj": {
+    "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/godot/GodotProject.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/matthew/SourceCode/gitea/0ad-godot/godot/GodotProject.csproj",
+        "projectUniqueName": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/godot/GodotProject.csproj",
         "projectName": "GodotProject",
-        "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/godot/GodotProject.csproj",
+        "projectPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/godot/GodotProject.csproj",
         "packagesPath": "/Users/matthew/.nuget/packages/",
-        "outputPath": "/Users/matthew/SourceCode/gitea/0ad-godot/godot/.godot/mono/temp/obj/",
+        "outputPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/godot/.godot/mono/temp/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/matthew/.nuget/NuGet/NuGet.Config"
@@ -27,8 +27,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
-                "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj"
+              "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
+                "projectPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj"
               }
             }
           }
@@ -85,14 +85,14 @@
         }
       }
     },
-    "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
+    "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
+        "projectUniqueName": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
         "projectName": "ZeroAD.Sim",
-        "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
+        "projectPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
         "packagesPath": "/Users/matthew/.nuget/packages/",
-        "outputPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/obj/",
+        "outputPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/matthew/.nuget/NuGet/NuGet.Config"

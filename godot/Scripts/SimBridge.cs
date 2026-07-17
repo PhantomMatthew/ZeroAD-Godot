@@ -284,18 +284,27 @@ public sealed partial class SimBridge : Node
 
     private void SpawnDecorativeActor(ScenarioEntityDef def)
     {
-        var node = new MeshInstance3D();
-        var mesh = new BoxMesh { Size = new Vector3(1.5f, 2f, 1.5f) };
-        var mat = new StandardMaterial3D();
         bool isTree = def.Template.Contains("tree", StringComparison.OrdinalIgnoreCase);
-        mat.AlbedoColor = isTree ? new Color(0.15f, 0.45f, 0.12f) : new Color(0.35f, 0.55f, 0.2f);
-        mesh.Material = mat;
-        node.Mesh = mesh;
-        float h = TerrainHeightService.Sample(def.X, def.Z);
-        node.Position = new Vector3(def.X, h, def.Z);
-        node.Rotation = new Vector3(0, def.OrientationY, 0);
+        var color = isTree ? new Color(0.15f, 0.45f, 0.12f) : new Color(0.35f, 0.55f, 0.2f);
+
+        Node3D? node = ModelLibrary.InstantiateForTemplate(def.Template, def.X, def.Z, color);
+        if (node != null)
+            node.Rotation = new Vector3(0, def.OrientationY, 0);
+        else
+            node = MakeFallbackBox(def, color);
+
         UnitContainer.AddChild(node);
         _decorativeNodes.Add(node);
+    }
+
+    private static MeshInstance3D MakeFallbackBox(ScenarioEntityDef def, Color color)
+    {
+        var box = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.5f, 2f, 1.5f) } };
+        box.MaterialOverride = new StandardMaterial3D { AlbedoColor = color };
+        float h = TerrainHeightService.Sample(def.X, def.Z);
+        box.Position = new Vector3(def.X, h, def.Z);
+        box.Rotation = new Vector3(0, def.OrientationY, 0);
+        return box;
     }
 
     public override void _Process(double delta)
@@ -930,7 +939,10 @@ public sealed partial class SimBridge : Node
     {
         var identity = _sim.QueryInterface<IdentityComponent>(entity);
         string name = identity?.Name ?? "";
-        string template = templateName ?? _lastSpawnedTemplate ?? name;
+        string template = templateName
+            ?? (!string.IsNullOrEmpty(identity?.TemplateName) ? identity.TemplateName : null)
+            ?? _lastSpawnedTemplate
+            ?? name;
         Node3D? visual = null;
 
         if (!isGhost)

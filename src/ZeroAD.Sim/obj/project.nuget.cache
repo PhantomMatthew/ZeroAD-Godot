@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "tSyIGHuhHKU=",
+  "dgSpecHash": "mn6MgEUt55A=",
   "success": true,
-  "projectFilePath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
+  "projectFilePath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

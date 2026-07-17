@@ -5,6 +5,8 @@ using System.Linq;
 
 namespace ZeroAD.Godot;
 
+using ZeroAD.Godot.Actors;
+
 public static class ModelLibrary
 {
     private static readonly Dictionary<string, PackedScene?> _glbCache = new();
@@ -20,6 +22,11 @@ public static class ModelLibrary
     public static Node3D? InstantiateForTemplate(string template, float x, float z, Color? teamColor)
     {
         var color = teamColor ?? new Color(0.7f, 0.6f, 0.4f);
+
+        var actorNode = TryInstantiateViaActorSystem(template, x, z, color);
+        if (actorNode != null)
+            return actorNode;
+
         var glbPath = ResolveGlbForTemplate(template);
         if (glbPath == null)
         {
@@ -58,6 +65,32 @@ public static class ModelLibrary
             }
         }
 
+        return node;
+    }
+
+    private static Node3D? TryInstantiateViaActorSystem(string template, float x, float z, Color color)
+    {
+        var actorPath = ActorLoader.ExtractActorFromTemplate(template);
+        if (string.IsNullOrEmpty(actorPath)) return null;
+
+        int seed = (template.GetHashCode(), x.GetHashCode(), z.GetHashCode()).GetHashCode();
+        var node = ActorLoader.Instance.Instantiate(actorPath!, seed, color);
+        if (node == null) return null;
+
+        NormalizeScale(node, template);
+        float y = TerrainHeightService.Sample(x, z);
+        node.Position = new Vector3(x, y, z);
+
+        var player = FindAnimationPlayer(node);
+        if (player != null)
+        {
+            string idle = ResolveClip(player, "idle");
+            if (idle != "")
+            {
+                player.Play(idle);
+                player.Advance((double)GD.Randf() * 2.0);
+            }
+        }
         return node;
     }
 
@@ -514,7 +547,7 @@ public static class ModelLibrary
         return img != null ? ImageTexture.CreateFromImage(img) : null;
     }
 
-    private static PackedScene? LoadGlb(string relPath)
+    internal static PackedScene? LoadGlb(string relPath)
     {
         if (_glbCache.TryGetValue(relPath, out var cached))
             return cached;
