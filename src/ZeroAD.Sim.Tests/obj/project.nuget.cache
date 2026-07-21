@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "6CPQ4nrUqeA=",
+  "dgSpecHash": "Q4rnYQ96SjE=",
   "success": true,
-  "projectFilePath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj",
+  "projectFilePath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj",
   "expectedPackageFiles": [
     "/Users/matthew/.nuget/packages/microsoft.codecoverage/17.11.1/microsoft.codecoverage.17.11.1.nupkg.sha512",
     "/Users/matthew/.nuget/packages/microsoft.net.test.sdk/17.11.1/microsoft.net.test.sdk.17.11.1.nupkg.sha512",

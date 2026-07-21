@@ -4,6 +4,9 @@ namespace ZeroAD.Godot;
 
 public sealed partial class RTSCamera : Camera3D
 {
+    public Vector3? Focus => _focus;
+    public float Yaw => _yaw;
+
     private float _yaw = 0f;
     private float _pitch = -0.7f;
     private float _distance = 120f;

@@ -535,6 +535,47 @@ public sealed partial class SimBridge : Node
                 Building = built,
                 TemplateName = template
             });
+
+            if (fullTemplate.Contains("house", StringComparison.OrdinalIgnoreCase))
+            {
+                var houseOwner = GetPlayer();
+                if (houseOwner != null) houseOwner.PopulationLimit += 10;
+            }
+
+            AutoAssignIdleBuilders(x, z);
+        }
+    }
+
+    private void AutoAssignIdleBuilders(float bx, float bz)
+    {
+        EntityId? nearest = null;
+        float nearestDist = 30f * 30f;
+        foreach (var e in GetAllEntitiesSnapshot())
+        {
+            var supply = _sim.QueryInterface<ResourceSupply>(e);
+            if (supply == null || supply.Amount <= 0) continue;
+            var pos = _sim.QueryInterface<PositionComponent>(e);
+            if (pos == null) continue;
+            float dx = pos.Position.X.ToFloat() - bx;
+            float dz = pos.Position.Z.ToFloat() - bz;
+            float d2 = dx * dx + dz * dz;
+            if (d2 < nearestDist)
+            {
+                nearestDist = d2;
+                nearest = e;
+            }
+        }
+        if (nearest == null) return;
+
+        foreach (var e in GetAllEntitiesSnapshot())
+        {
+            var builder = _sim.QueryInterface<BuilderComponent>(e);
+            if (builder == null || builder.Target != null) continue;
+            var gatherer = _sim.QueryInterface<ResourceGatherer>(e);
+            if (gatherer == null) continue;
+            var motion = _sim.QueryInterface<UnitMotion>(e);
+            if (motion == null || motion.HasMoveTarget) continue;
+            GatherResource(e, nearest.Value, motion);
         }
     }
 
@@ -547,7 +588,7 @@ public sealed partial class SimBridge : Node
         "Barracks" => "structures/spart/barracks",
         "Outpost" => "structures/spart/outpost",
         "Tower" => "structures/spart/defense_tower",
-        "Forge" => "structures/spart/blacksmith",
+        "Forge" => "structures/spart/forge",
         "Market" => "structures/spart/market",
         "Temple" => "structures/spart/temple",
         "Arsenal" => "structures/spart/arsenal",
@@ -569,6 +610,12 @@ public sealed partial class SimBridge : Node
             var completed = researcher.Tick(dt, techMgr);
             if (completed != null)
             {
+                var player = GetPlayer();
+                if (player != null && techMgr.Available.TryGetValue(completed, out var tech))
+                {
+                    if (tech.Effects.TryGetValue("pop_limit", out float delta))
+                        player.PopulationLimit += (int)delta;
+                }
                 Events.RaiseResearchFinished(new ResearchFinishedEvent
                 {
                     ResearcherEntity = entity,
@@ -597,6 +644,13 @@ public sealed partial class SimBridge : Node
                     var spawned = SpawnFromTemplate(completed.TemplateName, x, z);
                     if (owner != null)
                         _sim.AddComponent(spawned, new OwnershipComponent { PlayerId = owner.PlayerId });
+
+                    var rally = _sim.QueryInterface<RallyPointComponent>(entity);
+                    if (rally != null && !rally.Position.IsZero)
+                    {
+                        var motion = _sim.QueryInterface<UnitMotion>(spawned);
+                        motion?.MoveToPoint(new FixedVector2D(rally.Position.X, rally.Position.Y));
+                    }
                 }
 
                 var player = GetPlayer();
@@ -1051,8 +1105,29 @@ public sealed partial class SimBridge : Node
     {
         var result = new List<EntityId>();
         foreach (var kvp in _entityNodes)
-            if (kvp.Value.Position.DistanceTo(worldPos) < radius)
+        {
+            var p = kvp.Value.Position;
+            float dx = p.X - worldPos.X;
+            float dz = p.Z - worldPos.Z;
+            float distXZ = Mathf.Sqrt(dx * dx + dz * dz);
+
+            float r = radius;
+            var identity = _sim.QueryInterface<IdentityComponent>(kvp.Key);
+            if (identity != null && identity.IsBuilding)
+                r = 15f;
+
+            if (distXZ < r)
                 result.Add(kvp.Key);
+        }
+
+        result.Sort((a, b) =>
+        {
+            var pa = _entityNodes[a].Position;
+            var pb = _entityNodes[b].Position;
+            float da = (pa.X - worldPos.X) * (pa.X - worldPos.X) + (pa.Z - worldPos.Z) * (pa.Z - worldPos.Z);
+            float db = (pb.X - worldPos.X) * (pb.X - worldPos.X) + (pb.Z - worldPos.Z) * (pb.Z - worldPos.Z);
+            return da.CompareTo(db);
+        });
         return result;
     }
 

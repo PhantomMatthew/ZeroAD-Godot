@@ -4,8 +4,8 @@ namespace ZeroAD.Godot;
 
 public static class SelectionRing
 {
-    private static readonly StandardMaterial3D _ringMatFriendly = CreateRingMat(new Color(0.2f, 1f, 0.2f, 0.7f));
-    private static readonly StandardMaterial3D _ringMatEnemy = CreateRingMat(new Color(1f, 0.2f, 0.2f, 0.7f));
+    private static StandardMaterial3D _ringMat = null!;
+    private static StandardMaterial3D _ringMatEnemy = null!;
 
     private static StandardMaterial3D CreateRingMat(Color color)
     {
@@ -18,24 +18,34 @@ public static class SelectionRing
         return mat;
     }
 
-    public static MeshInstance3D Create(float radius)
+    private static void EnsureMaterials(Color friendlyColor, Color enemyColor)
     {
-        var points = new Vector3[33];
-        for (int i = 0; i <= 32; i++)
+        _ringMat ??= CreateRingMat(friendlyColor);
+        _ringMatEnemy ??= CreateRingMat(enemyColor);
+    }
+
+    public static MeshInstance3D Create(float radius, Color friendlyColor, Color enemyColor)
+    {
+        EnsureMaterials(friendlyColor, enemyColor);
+
+        float half = radius;
+
+        var points = new Vector3[]
         {
-            float angle = i * Mathf.Pi * 2f / 32f;
-            points[i] = new Vector3(Mathf.Cos(angle) * radius, 0.1f, Mathf.Sin(angle) * radius);
-        }
+            new(-half, 0.1f, -half),
+            new(half, 0.1f, -half),
+            new(half, 0.1f, half),
+            new(-half, 0.1f, half),
+            new(-half, 0.1f, -half),
+        };
 
         var st = new SurfaceTool();
         st.Begin(Mesh.PrimitiveType.LineStrip);
         foreach (var p in points)
-        {
             st.AddVertex(p);
-        }
         var mesh = st.Commit();
         var instance = new MeshInstance3D { Mesh = mesh };
-        mesh.SurfaceSetMaterial(0, _ringMatFriendly);
+        mesh.SurfaceSetMaterial(0, _ringMat);
         return instance;
     }
 

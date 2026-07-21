@@ -1,6 +1,5 @@
 using Godot;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace ZeroAD.Godot;
 
@@ -43,7 +42,6 @@ public static class ModelLibrary
 
         ZeroAD.Godot.Actors.ActorDiagnostics.Resolved(template, actorPath!);
 
-        NormalizeScale(node, template);
         float y = TerrainHeightService.Sample(x, z);
         node.Position = new Vector3(x, y, z);
 
@@ -64,117 +62,6 @@ public static class ModelLibrary
         InstantiateForTemplate(kind, 0, 0, teamColor);
 
     public static bool IsAnimated(string kind) => kind.Contains("units/");
-
-    private static readonly Dictionary<string, float> StructureTargetSize = new()
-    {
-        ["civil_centre"] = 24f,
-        ["civic_centre"] = 24f,
-        ["barracks"] = 15f,
-        ["house"] = 7f,
-        ["temple"] = 15f,
-        ["storehouse"] = 9f,
-        ["farmstead"] = 9f,
-        ["gerousia"] = 15f,
-        ["wall"] = 10f,
-        ["tower"] = 8f,
-        ["outpost"] = 8f,
-        ["field"] = 8f,
-    };
-
-    private static readonly Dictionary<string, float> _scaleFactorCache = new();
-
-    private static void NormalizeScale(Node3D node, string template)
-    {
-        if (_scaleFactorCache.TryGetValue(template, out var cachedFactor))
-        {
-            if (cachedFactor != 1f) node.Scale *= cachedFactor;
-            return;
-        }
-
-        var aabb = ComputeLocalAabb(node, Transform3D.Identity);
-        if (aabb == null)
-        {
-            _scaleFactorCache[template] = 1f;
-            return;
-        }
-        var size = aabb.Value.Size;
-
-        float factor = 1f;
-        if (template.StartsWith("units/"))
-        {
-            float height = size.Y;
-            if (height is > 0.001f and (< 0.5f or > 4f))
-                factor = 1.85f / height;
-        }
-        else if (template.StartsWith("structures/"))
-        {
-            float horizontal = Mathf.Max(size.X, size.Z);
-            string building = template.Split('/') is { Length: >= 3 } p ? p[2] : "";
-            float target = 12f;
-            foreach (var kv in StructureTargetSize.OrderByDescending(kv => kv.Key.Length))
-            {
-                if (building.Contains(kv.Key, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    target = kv.Value;
-                    break;
-                }
-            }
-
-            if (horizontal is > 0.001f and (< 2f or > 60f))
-                factor = target / horizontal;
-        }
-        else if (template.StartsWith("gaia/"))
-        {
-            float dim = Mathf.Max(size.X, Mathf.Max(size.Y, size.Z));
-            if (dim is > 0.001f and (< 0.5f or > 20f))
-                factor = 5f / dim;
-        }
-
-        _scaleFactorCache[template] = factor;
-        if (factor != 1f)
-        {
-            node.Scale *= factor;
-            GD.Print($"ModelLibrary: '{template}' had implausible size {size} -> corrected scale x{factor:F3}");
-        }
-    }
-
-    private static Aabb? ComputeLocalAabb(Node3D node, Transform3D accum)
-    {
-        var xform = accum * node.Transform;
-        Aabb? result = null;
-
-        if (node is MeshInstance3D { Mesh: not null } mi)
-            result = TransformAabb(xform, mi.Mesh.GetAabb());
-
-        foreach (var child in node.GetChildren())
-        {
-            if (child is not Node3D n3) continue;
-            var childAabb = ComputeLocalAabb(n3, xform);
-            if (childAabb == null) continue;
-            result = result?.Merge(childAabb.Value) ?? childAabb;
-        }
-
-        return result;
-    }
-
-    private static Aabb TransformAabb(Transform3D xform, Aabb aabb)
-    {
-        Vector3 min = new(float.MaxValue, float.MaxValue, float.MaxValue);
-        Vector3 max = new(float.MinValue, float.MinValue, float.MinValue);
-
-        for (int i = 0; i < 8; i++)
-        {
-            var corner = aabb.Position + new Vector3(
-                (i & 1) != 0 ? aabb.Size.X : 0f,
-                (i & 2) != 0 ? aabb.Size.Y : 0f,
-                (i & 4) != 0 ? aabb.Size.Z : 0f);
-            var t = xform * corner;
-            min = new Vector3(Mathf.Min(min.X, t.X), Mathf.Min(min.Y, t.Y), Mathf.Min(min.Z, t.Z));
-            max = new Vector3(Mathf.Max(max.X, t.X), Mathf.Max(max.Y, t.Y), Mathf.Max(max.Z, t.Z));
-        }
-
-        return new Aabb(min, max - min);
-    }
 
     internal static PackedScene? LoadGlb(string relPath)
     {

@@ -225,23 +225,12 @@ public sealed class ActorComposer
     {
         var scene = ModelLibrary.LoadGlb(relGlbPath);
         if (scene == null) return null;
-        var node = scene.Instantiate<Node3D>();
-        NormalizeUnitScale(node);
-        return node;
+        // Never rescale here: the original engine ignores DAE <unit> metadata and
+        // treats raw coordinates as game meters. GLBs are repaired to match that
+        // convention by godot/tools/fix_glb_unit_scale.py; runtime scale hacks
+        // reintroduce the proportion bugs that script exists to fix.
+        return scene.Instantiate<Node3D>();
     }
-
-    private static void NormalizeUnitScale(Node3D instance)
-    {
-        if (IsUnitConversionScale(instance.Scale))
-            instance.Scale = Vector3.One;
-        foreach (var child in instance.GetChildren())
-            if (child is Node3D n3)
-                NormalizeUnitScale(n3);
-    }
-
-    private static bool IsUnitConversionScale(Vector3 s) =>
-        Mathf.Abs(s.X - s.Y) < 0.0001f && Mathf.Abs(s.Y - s.Z) < 0.0001f &&
-        (Mathf.Abs(s.X - 0.0254f) < 0.001f || Mathf.Abs(s.X - 0.01f) < 0.001f);
 
     internal static void TryPlayIdle(Node3D instance)
     {

@@ -25,7 +25,7 @@ x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mo
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/field_medit_5x5.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/structures/decals/celt_sb1_mud.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/flora/olive_decal.xml|no-mesh-resolved
-x10	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/ground_tree_decal_01.xml|no-mesh-resolved
+x9	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/ground_tree_decal_01.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/particle/sparkle_metalmine.xml|no-mesh-resolved
 x6	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/props/special/eyecandy/tree_elm_base.xml|no-mesh-resolved
 x1	/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/actors/particle/cloud.xml|no-mesh-resolved

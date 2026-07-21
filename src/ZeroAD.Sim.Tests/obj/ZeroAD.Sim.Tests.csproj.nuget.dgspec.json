@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj": {}
+    "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj": {}
   },
   "projects": {
-    "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj": {
+    "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj",
+        "projectUniqueName": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj",
         "projectName": "ZeroAD.Sim.Tests",
-        "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj",
+        "projectPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj",
         "packagesPath": "/Users/matthew/.nuget/packages/",
-        "outputPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim.Tests/obj/",
+        "outputPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim.Tests/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/matthew/.nuget/NuGet/NuGet.Config"
@@ -27,8 +27,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
-                "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj"
+              "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
+                "projectPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj"
               }
             }
           }
@@ -82,14 +82,14 @@
         }
       }
     },
-    "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
+    "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
+        "projectUniqueName": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
         "projectName": "ZeroAD.Sim",
-        "projectPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
+        "projectPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/ZeroAD.Sim.csproj",
         "packagesPath": "/Users/matthew/.nuget/packages/",
-        "outputPath": "/Users/matthew/SourceCode/gitea/0ad-godot/src/ZeroAD.Sim/obj/",
+        "outputPath": "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/src/ZeroAD.Sim/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/matthew/.nuget/NuGet/NuGet.Config"

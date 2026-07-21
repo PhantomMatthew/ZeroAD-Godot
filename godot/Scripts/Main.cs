@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
+using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Events;
 using ZeroAD.Sim.Net;
 
@@ -31,6 +32,9 @@ public sealed partial class Main : Node3D
 	public IReadOnlySet<EntityId> SelectedEntities => _selectedEntities;
 	public bool IsTutorial => _isTutorial;
 	public SimBridge Sim => _sim;
+	public void SetCameraFocus(Vector3 pos) => _camera.SetFocus(pos);
+	public Vector3? GetCameraFocus() => _camera?.Focus;
+	public float GetCameraYaw() => _camera?.Yaw ?? 0f;
 
 	public override void _Ready()
 	{
@@ -200,21 +204,21 @@ public sealed partial class Main : Node3D
 
 	private string? FindTemplatesPath()
 	{
+		string projRoot = ProjectSettings.GlobalizePath("res://");
 		var candidates = new[]
 		{
-			"../../../binaries/data/mods/public/simulation/templates",
-			"../../../../binaries/data/mods/public/simulation/templates",
-			"../../binaries/data/mods/public/simulation/templates",
+			System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "binaries", "data", "mods", "public", "simulation", "templates")),
+			System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "..", "binaries", "data", "mods", "public", "simulation", "templates")),
 		};
 		foreach (string dir in candidates)
 		{
-			var abs = ProjectSettings.GlobalizePath($"res://{dir}");
-			if (System.IO.Directory.Exists(abs))
+			if (System.IO.Directory.Exists(dir))
 			{
-				GD.Print($"Found templates at: {abs}");
-				return abs;
+				GD.Print($"Found templates at: {dir}");
+				return dir;
 			}
 		}
+		GD.PrintErr("FindTemplatesPath: templates dir not found under binaries/data/mods/public/simulation/templates");
 		return null;
 	}
 
@@ -385,12 +389,51 @@ public sealed partial class Main : Node3D
 		_sim.SpawnUnit(85, 85, isSoldier: true);
 	}
 
+	private readonly List<Node3D> _selectionMarkers = new();
+
 	public override void _Process(double delta)
 	{
 		if (!_gameStarted) return;
 
+		UpdateSelectionMarkers();
+
 		if (_mp.NetTurn != null && _mp.IsConnected)
 			_mp.TryAdvanceTurn();
+	}
+
+	private void UpdateSelectionMarkers()
+	{
+		foreach (var m in _selectionMarkers)
+			m.QueueFree();
+		_selectionMarkers.Clear();
+
+		foreach (var eid in _selectedEntities)
+		{
+			var node = _sim.EntityNodes.GetValueOrDefault(eid);
+			if (node == null) continue;
+			var identity = _sim.Sim.QueryInterface<IdentityComponent>(eid);
+			var owner = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
+			float ringRadius = identity != null && identity.IsBuilding ? 10f : 2f;
+
+			Color friendlyColor = owner != null && owner.PlayerId == 1
+				? new Color(0.08f, 0.22f, 0.58f)
+				: new Color(0.72f, 0.06f, 0.06f);
+			Color enemyColor = new Color(0.72f, 0.06f, 0.06f);
+
+			var ring = SelectionRing.Create(ringRadius, friendlyColor, enemyColor);
+			ring.Position = new Vector3(0, 0.1f, 0);
+			node.AddChild(ring);
+			_selectionMarkers.Add(ring);
+
+			var health = _sim.Sim.QueryInterface<HealthComponent>(eid);
+			if (health != null && health.Max > 0)
+			{
+				var bar = SelectionRing.CreateHealthBar(health.HealthFraction);
+				bar.Position = new Vector3(0, identity?.IsBuilding == true ? 6f : 2.5f, 0);
+				node.AddChild(bar);
+				_selectionMarkers.Add(bar);
+			}
+		}
 	}
 
 	public override void _Input(InputEvent @event)
@@ -437,6 +480,19 @@ public sealed partial class Main : Node3D
 		var entities = _sim.GetEntitiesAtPosition(worldPos.Value, 3f);
 		_selectedEntities.Clear();
 		if (entities.Count > 0) _selectedEntities.Add(entities[0]);
+
+		if (_selectedEntities.Count == 0)
+		{
+			var nearby = _sim.GetEntitiesAtPosition(worldPos.Value, 30f);
+			foreach (var eid in nearby)
+			{
+				var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
+				var node = _sim.EntityNodes.GetValueOrDefault(eid);
+				GD.Print($"[Click] miss at {worldPos.Value:F1} | nearby: {id?.Name ?? "?"} at {node?.Position:F1} dist={node?.Position.DistanceTo(worldPos.Value):F1} isBuilding={id?.IsBuilding}");
+			}
+			if (nearby.Count == 0)
+				GD.Print($"[Click] miss at {worldPos.Value:F1} | NO entities within 30f at all");
+		}
 	}
 
 	private void HandleDragSelect(Vector2 start, Vector2 end)
@@ -557,7 +613,15 @@ public sealed partial class Main : Node3D
 			if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) { hasBuilder = true; break; }
 		if (!hasBuilder) return;
 		var player = _sim.GetPlayer();
-		if (player != null && player.Wood >= 50) { _placeBuildingMode = true; _buildTemplate = template; }
+		if (player == null) return;
+		var (wood, stone, metal, food, _) = GetBuildCost(template);
+		if (!CanAfford(player, wood, stone, metal, food))
+		{
+			GD.Print($"Cannot afford {template}: needs {wood}W {stone}S {metal}M {food}F");
+			return;
+		}
+		_placeBuildingMode = true;
+		_buildTemplate = template;
 	}
 
 	public void TrainVillager(bool batch = false)
@@ -617,12 +681,68 @@ public sealed partial class Main : Node3D
 		var worldPos = ScreenToWorld(screenPos);
 		if (worldPos == null) return;
 		var player = _sim.GetPlayer();
-		if (player == null || player.Wood < 50) { _placeBuildingMode = false; return; }
-		player.Wood -= 50;
-		var foundation = _sim.SpawnFoundation(worldPos.Value.X, worldPos.Value.Z, _buildTemplate, 8.0f);
+		if (player == null) { _placeBuildingMode = false; return; }
+		var (wood, stone, metal, food, buildTime) = GetBuildCost(_buildTemplate);
+		if (!CanAfford(player, wood, stone, metal, food))
+		{
+			GD.Print($"Cannot afford {_buildTemplate}: needs {wood}W {stone}S {metal}M {food}F");
+			_placeBuildingMode = false;
+			return;
+		}
+		player.Wood -= wood;
+		player.Stone -= stone;
+		player.Metal -= metal;
+		player.Food -= food;
+		var foundation = _sim.SpawnFoundation(worldPos.Value.X, worldPos.Value.Z, _buildTemplate, buildTime);
 		_placeBuildingMode = false;
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null)
 				_sim.CommandBuild(eid, foundation);
 	}
+
+	private (int wood, int stone, int metal, int food, float buildTime) GetBuildCost(string name)
+	{
+		TemplateStats? stats = null;
+		try { stats = _sim.Templates?.ExtractStats(MapBuildTemplateName(name)); } catch { }
+		if (stats != null && (stats.WoodCost > 0 || stats.StoneCost > 0 || stats.MetalCost > 0 || stats.FoodCost > 0))
+			return (stats.WoodCost, stats.StoneCost, stats.MetalCost, stats.FoodCost,
+				stats.BuildTime > 0f ? stats.BuildTime : 8.0f);
+		var c = FallbackBuildCost(name);
+		return (c.wood, c.stone, c.metal, c.food, 8.0f);
+	}
+
+	private static bool CanAfford(PlayerComponent player, int wood, int stone, int metal, int food) =>
+		player.Wood >= wood && player.Stone >= stone && player.Metal >= metal && player.Food >= food;
+
+	private static string MapBuildTemplateName(string name) => name switch
+	{
+		"House" => "structures/spart/house",
+		"Storehouse" => "structures/spart/storehouse",
+		"Farmstead" => "structures/spart/farmstead",
+		"Field" => "structures/spart/field",
+		"Barracks" => "structures/spart/barracks",
+		"Outpost" => "structures/spart/outpost",
+		"Tower" => "structures/spart/defense_tower",
+		"Forge" => "structures/spart/forge",
+		"Market" => "structures/spart/market",
+		"Temple" => "structures/spart/temple",
+		"Arsenal" => "structures/spart/arsenal",
+		_ => $"structures/spart/{name.ToLowerInvariant()}"
+	};
+
+	private static (int wood, int stone, int metal, int food) FallbackBuildCost(string name) => name switch
+	{
+		"House" => (30, 0, 0, 0),
+		"Storehouse" => (80, 0, 0, 0),
+		"Farmstead" => (80, 0, 0, 0),
+		"Field" => (60, 0, 0, 0),
+		"Barracks" => (100, 0, 0, 0),
+		"Outpost" => (80, 20, 0, 0),
+		"Tower" => (100, 50, 0, 0),
+		"Forge" => (120, 0, 30, 0),
+		"Market" => (100, 0, 0, 0),
+		"Temple" => (150, 50, 0, 0),
+		"Arsenal" => (150, 0, 50, 0),
+		_ => (50, 0, 0, 0)
+	};
 }

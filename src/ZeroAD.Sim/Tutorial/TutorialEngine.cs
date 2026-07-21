@@ -675,10 +675,15 @@ namespace ZeroAD.Sim.Tutorial
                 {
                     foreach (var attacker in ctx.Attackers)
                     {
+                        var atk = ctx.Sim.QueryInterface<AttackComponent>(attacker);
+                        if (atk != null)
+                        {
+                            atk.AttackTarget(target.Value);
+                            continue;
+                        }
+
                         var motion = ctx.Sim.QueryInterface<UnitMotion>(attacker);
                         motion?.MoveToPoint(new Maths.FixedVector2D(pos.Position.X, pos.Position.Z));
-                        var atk = ctx.Sim.QueryInterface<AttackComponent>(attacker);
-                        // Attack-walk toward player structures
                     }
                 }
             }
