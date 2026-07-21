@@ -23,6 +23,10 @@ public sealed partial class SimBridge : Node
     private readonly Dictionary<EntityId, Vector3> _lastPos = new();
     private EntityId? _playerEntity;
     private ObstructionManager _obstructions = null!;
+    private RangeManager _range = null!;
+    private PathfinderComponent _pathfinder = null!;
+    private TerrainComponent _terrain = null!;
+    private EntityId _terrainEntity;
     private readonly Dictionary<uint, EntityId> _scenarioUidMap = new();
     private readonly List<Node3D> _decorativeNodes = new();
 
@@ -45,6 +49,9 @@ public sealed partial class SimBridge : Node
     public ComponentManager Sim => _sim;
     public TurnManager Turns => _turnManager;
     public ObstructionManager Obstructions => _obstructions;
+    public TerrainComponent Terrain => _terrain;
+    public PathfinderComponent Pathfinder => _pathfinder;
+    public RangeManager Range => _range;
 
     public void InitWorld()
     {
@@ -81,7 +88,23 @@ public sealed partial class SimBridge : Node
         int gridSize = 64;
         float cellSize = 4.0f;
         _obstructions = new ObstructionManager(gridSize, cellSize);
-        UnitMotion.SetObstructionManager(_obstructions);
+        SimSystem.SetObstructionManager(_obstructions);
+
+        // System services: RangeManager (spatial queries), Pathfinder (placement checks),
+        // Terrain (passability grid filled from the heightmap by SetupTerrain). All sim-side,
+        // no Godot dependency. The world size matches the obstruction grid for now.
+        float worldSize = gridSize * cellSize;
+        _terrain = new TerrainComponent();
+        _terrain.Configure(gridSize, cellSize);
+        _pathfinder = new PathfinderComponent(_sim);
+        _pathfinder.SetTerrain(_terrain);
+        _range = new RangeManager(_sim, Fixed.FromFloat(worldSize), Fixed.FromFloat(worldSize));
+        SimSystem.SetRangeManager(_range);
+        SimSystem.SetPathfinder(_pathfinder);
+
+        // A system entity to host the TerrainComponent so components can QueryInterface it.
+        _terrainEntity = _sim.CreateEntity();
+        _sim.AddComponent(_terrainEntity, _terrain);
 
         _playerEntity = _sim.CreateEntity();
         _sim.AddComponent(_playerEntity.Value, new PlayerComponent());
@@ -243,8 +266,34 @@ public sealed partial class SimBridge : Node
         if (pos != null)
             pos.Position = new FixedVector3D(Fixed.FromFloat(def.X), Fixed.Zero, Fixed.FromFloat(def.Z));
 
-        _obstructions.BlockCircle(def.X, def.Z, 8f);
-        CreateVisualFor(entity, GetPlayerColor(def.Player), 8f, isBuilding: true);
+        // Building footprint + obstruction + build restrictions, all template-driven. This
+        // replaces the legacy hardcoded BlockCircle(x,z,8f) which gave every building an 8m
+        // radius regardless of actual size and was never cleared on death.
+        float fpSize = stats?.FootprintSize0.ToFloat() is { } fp && fp > 0 ? fp : 12f;
+        float obSize0 = stats?.ObstructionSize0.ToFloat() is { } ob0 && ob0 > 0 ? ob0 : fpSize;
+        float obSize1 = stats?.ObstructionSize1.ToFloat() is { } ob1 && ob1 > 0 ? ob1 : fpSize;
+        _sim.AddComponent(entity, new FootprintComponent
+        {
+            Shape = stats?.FootprintShape == "circle" ? FootprintShape.Circle : FootprintShape.Square,
+            Size0 = Fixed.FromFloat(fpSize),
+            Size1 = Fixed.FromFloat(stats?.FootprintSize1.ToFloat() is { } fp1 && fp1 > 0 ? fp1 : fpSize),
+        });
+        var obstruction = new ObstructionComponent
+        {
+            Type = ObstructionType.Static,
+            Size0 = Fixed.FromFloat(obSize0),
+            Size1 = Fixed.FromFloat(obSize1),
+            Flags = ObstructionFlags.DefaultBlock,
+        };
+        _sim.AddComponent(entity, obstruction);
+        _sim.AddComponent(entity, new BuildRestrictionsComponent
+        {
+            PlacementType = BuildPlacementType.Land,
+            Category = stats?.Category ?? "Building",
+        });
+        obstruction.EnsureRegistered();
+
+        CreateVisualFor(entity, GetPlayerColor(def.Player), Math.Max(fpSize * 0.5f, 4f), isBuilding: true);
         return entity;
     }
 
@@ -1124,10 +1173,19 @@ public sealed partial class SimBridge : Node
             float dz = p.Z - worldPos.Z;
             float distXZ = Mathf.Sqrt(dx * dx + dz * dz);
 
-            float r = radius;
+            // Pick click-radius by entity kind. The node's Position is the foot/origin point,
+            // and gaia (trees, rocks) visually occupy a large footprint above it — so a click on
+            // the canopy lands well away from the trunk and needs a wide tolerance. Units stay
+            // tight so you can click precisely in a crowd. Buildings stay wide.
+            float r = radius; // unit default
             var identity = _sim.QueryInterface<IdentityComponent>(kvp.Key);
-            if (identity != null && identity.IsBuilding)
-                r = 15f;
+            if (identity != null)
+            {
+                if (identity.IsBuilding) r = 15f;
+                else if (!identity.IsUnit) r = 8f; // gaia: trees, rocks, resources
+                else r = 5f; // units: generous click tolerance (node.Position is the foot; clicks
+                             // land on the body/canopy, so a tight 3m radius misses often)
+            }
 
             if (distXZ < r)
                 result.Add(kvp.Key);

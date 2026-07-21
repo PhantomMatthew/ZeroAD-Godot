@@ -81,9 +81,24 @@ namespace ZeroAD.Sim
             if (stats != null && !string.IsNullOrEmpty(stats.TrainingCategory))
                 cm.AddComponent(entity, new TrainingRestrictionsComponent { Category = stats.TrainingCategory });
 
+            // Obstruction: unit circle so other units route around it and it can't be walked through.
+            // Template may override the radius; default to ~1m clearance. Registered with the
+            // ObstructionManager on EnsureRegistered (called by SimBridge after spawn completes).
+            cm.AddComponent(entity, new ObstructionComponent
+            {
+                Type = ObstructionType.Unit,
+                Size0 = (stats != null && stats.ObstructionSize0 > Fixed.Zero)
+                    ? stats.ObstructionSize0
+                    : Fixed.FromFloat(1.0f),
+                Flags = ObstructionFlags.BlockMovement | ObstructionFlags.BlockFoundation
+            });
+
             var pos = cm.QueryInterface<PositionComponent>(entity);
             if (pos != null)
                 pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+
+            // Register the obstruction now that Position is set, so it's tracked from frame 1.
+            cm.QueryInterface<ObstructionComponent>(entity)?.EnsureRegistered();
         }
     }
 }

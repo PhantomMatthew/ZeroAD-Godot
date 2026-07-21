@@ -86,6 +86,9 @@ namespace ZeroAD.Sim
                 TemplateName = templateName,
                 OwnerPlayerId = ownerPlayerId
             });
+            // Notify sim-internal listeners (RangeManager) so they index this entity. Separate from
+            // the SimEventBus raise above which targets the presentation layer.
+            NotifyEntityCreated(entity);
             return entity;
         }
 
@@ -215,10 +218,48 @@ namespace ZeroAD.Sim
                         handler.HandleMessage(message);
         }
 
+        // --- System-level change notifications (strongly typed, for RangeManager / ObstructionManager
+        //     listeners). These mirror the original's SubscribeGloballyToMessageType(MT_PositionChanged)
+        //     etc., but as concrete events so subscribers don't have to switch on TypeId. Code that
+        //     moves an entity calls NotifyPositionChanged; RangeManager/ObstructionComponent react. ---
+
+        /// <summary>Fired after an entity's world position changes. Carries old + new XZ so listeners
+        /// can update spatial indices without re-querying the PositionComponent.</summary>
+        public event Action<EntityId, Maths.FixedVector2D, Maths.FixedVector2D>? PositionChanged;
+
+        /// <summary>Fired after an entity is fully created (components added). RangeManager uses it to
+        /// register the entity in its spatial index.</summary>
+        public event Action<EntityId>? EntityCreated;
+
+        /// <summary>Fired before an entity is destroyed. Listeners clean up their per-entity state.</summary>
+        public event Action<EntityId>? EntityDestroyed;
+
+        /// <summary>Fired after an entity's owner changes. RangeManager/EntityLimits react.</summary>
+        public event Action<EntityId, int, int>? OwnerChanged;
+
+        // Re-exported through SimEventBus too for presentation-layer subscribers; these sim-internal
+        // hooks are the canonical source.
+
+        /// <summary>
+        /// Notify system listeners that <paramref name="entity"/> moved from
+        /// <paramref name="from"/> to <paramref name="to"/> (XZ plane). Call after mutating a
+        /// PositionComponent. Both args are XZ world coordinates.
+        /// </summary>
+        public void NotifyPositionChanged(EntityId entity, Maths.FixedVector2D from, Maths.FixedVector2D to)
+            => PositionChanged?.Invoke(entity, from, to);
+
+        public void NotifyEntityCreated(EntityId entity) => EntityCreated?.Invoke(entity);
+        public void NotifyEntityDestroyed(EntityId entity) => EntityDestroyed?.Invoke(entity);
+        public void NotifyOwnerChanged(EntityId entity, int fromPlayer, int toPlayer)
+            => OwnerChanged?.Invoke(entity, fromPlayer, toPlayer);
+
         public void DestroyEntity(EntityId entity)
         {
             if (!_componentsByEntity.TryGetValue(entity, out var components))
                 return;
+            // Let system listeners (RangeManager, ObstructionManager via ObstructionComponent)
+            // drop this entity from their indices before we tear down the components.
+            NotifyEntityDestroyed(entity);
             foreach (var comp in components.Values)
                 comp.Deinit();
             _componentsByEntity.Remove(entity);

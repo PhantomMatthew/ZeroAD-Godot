@@ -15,9 +15,6 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
 
     private readonly List<(float x, float z)> _waypoints = new();
     private int _currentWaypoint;
-    private static ObstructionManager? _obstructions;
-
-    public static void SetObstructionManager(ObstructionManager mgr) => _obstructions = mgr;
 
     protected override void OnInit()
     {
@@ -35,19 +32,19 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         _waypoints.Clear();
         _currentWaypoint = 0;
 
-        if (_obstructions != null)
+        if (SimSystem.Obstructions is { } obstructions)
         {
             var posComp = SimSystem.GetComponent<PositionComponent>(Entity);
             if (posComp != null)
             {
-                int sx = _obstructions.WorldToGrid(posComp.Position.X.ToFloat());
-                int sz = _obstructions.WorldToGrid(posComp.Position.Z.ToFloat());
-                int ex = _obstructions.WorldToGrid(target.X.ToFloat());
-                int ez = _obstructions.WorldToGrid(target.Y.ToFloat());
+                int sx = obstructions.WorldToGrid(posComp.Position.X.ToFloat());
+                int sz = obstructions.WorldToGrid(posComp.Position.Z.ToFloat());
+                int ex = obstructions.WorldToGrid(target.X.ToFloat());
+                int ez = obstructions.WorldToGrid(target.Y.ToFloat());
 
-                var path = _obstructions.FindPath(sx, sz, ex, ez);
+                var path = obstructions.FindPath(sx, sz, ex, ez);
                 foreach (var (px, pz) in path)
-                    _waypoints.Add((_obstructions.GridToWorld(px), _obstructions.GridToWorld(pz)));
+                    _waypoints.Add((obstructions.GridToWorld(px), obstructions.GridToWorld(pz)));
                 _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
             }
         }
@@ -105,10 +102,15 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         Fixed dx = dir.X.Multiply(stepDist);
         Fixed dz = dir.Y.Multiply(stepDist);
 
+        var oldPos2D = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
         posComp.Position = new FixedVector3D(
             posComp.Position.X + dx,
             posComp.Position.Y,
             posComp.Position.Z + dz);
+        var newPos2D = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
+
+        // Keep spatial indices (RangeManager, dynamic obstruction layer) in sync with the move.
+        SimSystem.NotifyPositionChanged(Entity, oldPos2D, newPos2D);
 
         CurrentSpeed = Speed;
     }
@@ -134,7 +136,22 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
 public static class SimSystem
 {
     private static ComponentManager? _cm;
+    private static ObstructionManager? _obstructions;
+    private static RangeManager? _range;
+    private static PathfinderComponent? _pathfinder;
     public static void Init(ComponentManager cm) => _cm = cm;
+    public static ComponentManager? Sim => _cm;
+    public static ObstructionManager? Obstructions => _obstructions;
+    public static RangeManager? Range => _range;
+    public static PathfinderComponent? Pathfinder => _pathfinder;
+    public static void SetObstructionManager(ObstructionManager mgr) => _obstructions = mgr;
+    public static void SetRangeManager(RangeManager mgr) => _range = mgr;
+    public static void SetPathfinder(PathfinderComponent mgr) => _pathfinder = mgr;
     public static T? GetComponent<T>(EntityId entity) where T : class, IComponent =>
         _cm?.QueryInterface<T>(entity);
+
+    /// <summary>Forward a position change to system listeners (RangeManager, ObstructionComponent).
+    /// Call after mutating a PositionComponent so spatial indices stay in sync.</summary>
+    public static void NotifyPositionChanged(EntityId entity, Maths.FixedVector2D from, Maths.FixedVector2D to)
+        => _cm?.NotifyPositionChanged(entity, from, to);
 }

@@ -210,6 +210,51 @@ namespace ZeroAD.Sim.Content
                     ? garrisonHolder.GetChild("Max").ToInt() : 10;
             }
 
+            // Footprint: physical extent used for spawn-point search (FootprintComponent) and click
+            // hit-testing. Either <Square width depth/> or <Circle radius/>.
+            var footprint = node.GetChild("Footprint");
+            if (footprint.IsOk)
+            {
+                var square = footprint.GetChild("Square");
+                if (square.IsOk)
+                {
+                    stats.FootprintShape = "square";
+                    stats.FootprintSize0 = square.GetChild("width").IsOk ? square.GetChild("width").ToFixed() : stats.FootprintSize0;
+                    stats.FootprintSize1 = square.GetChild("depth").IsOk ? square.GetChild("depth").ToFixed() : stats.FootprintSize1;
+                }
+                var circle = footprint.GetChild("Circle");
+                if (circle.IsOk)
+                {
+                    stats.FootprintShape = "circle";
+                    stats.FootprintSize0 = circle.GetChild("radius").IsOk ? circle.GetChild("radius").ToFixed() : stats.FootprintSize0;
+                    stats.FootprintSize1 = stats.FootprintSize0;
+                }
+                var height = footprint.GetChild("Height");
+                if (height.IsOk) stats.FootprintHeight = height.ToFixed();
+            }
+
+            // Obstruction: what this entity blocks. Either <Static width depth/> (building) or <Unit/> (mobile).
+            // Drives ObstructionComponent shape + flags at spawn time.
+            var obstruction = node.GetChild("Obstruction");
+            if (obstruction.IsOk)
+            {
+                var staticEl = obstruction.GetChild("Static");
+                if (staticEl.IsOk)
+                {
+                    stats.ObstructionShape = "static";
+                    stats.ObstructionSize0 = staticEl.GetChild("width").IsOk ? staticEl.GetChild("width").ToFixed() : stats.ObstructionSize0;
+                    stats.ObstructionSize1 = staticEl.GetChild("depth").IsOk ? staticEl.GetChild("depth").ToFixed() : stats.ObstructionSize1;
+                }
+                else if (obstruction.GetChild("Unit").IsOk)
+                {
+                    stats.ObstructionShape = "unit";
+                }
+                // Flags default to all-block; the XML can override but we keep the common case simple.
+                stats.ObstructionActive = obstruction.GetChild("Active").IsOk
+                    ? obstruction.GetChild("Active").ToBool()
+                    : true;
+            }
+
             return stats;
         }
 
@@ -256,6 +301,20 @@ namespace ZeroAD.Sim.Content
         public int GarrisonCapacity;
         /// <summary>TrainingRestrictions/Category (Civilian/Hero/WarDog/...). Empty if absent.</summary>
         public string TrainingCategory = "";
+
+        // Footprint: physical extent for spawn-point search + click hit-testing.
+        // Shape: "" (none), "square" (Size0=width, Size1=depth), "circle" (Size0=radius).
+        public string FootprintShape = "";
+        public Maths.Fixed FootprintSize0 = Maths.Fixed.Zero;
+        public Maths.Fixed FootprintSize1 = Maths.Fixed.Zero;
+        public Maths.Fixed FootprintHeight = Maths.Fixed.Zero;
+
+        // Obstruction: what this entity blocks.
+        // Shape: "" (default to unit circle), "static" (Size0=width, Size1=depth), "unit" (mobile circle).
+        public string ObstructionShape = "";
+        public Maths.Fixed ObstructionSize0 = Maths.Fixed.Zero;
+        public Maths.Fixed ObstructionSize1 = Maths.Fixed.Zero;
+        public bool ObstructionActive = true;
 
         public List<string> GetClassList() =>
             EntityClassHelper.BuildClassList(Classes, VisibleClasses,

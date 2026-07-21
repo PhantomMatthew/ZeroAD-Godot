@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Sim.Components;
@@ -144,13 +145,30 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
 
         float baseX = trainerPos.Position.X.ToFloat();
         float baseZ = trainerPos.Position.Z.ToFloat();
+        // Footprint-driven spawn: ask the trainer's FootprintComponent for a free slot just outside
+        // its footprint, validated by the Pathfinder so the unit doesn't appear on water / inside
+        // another building. Falls back to a simple ring if no Footprint or no free slot is found.
+        var footprint = cm.QueryInterface<FootprintComponent>(Entity);
+        Fixed spawnedRadius = Fixed.FromFloat(1.0f);
+
         for (int i = 0; i < current.Count; i++)
         {
-            // Simple ring offset around the trainer (Footprint.PickSpawnPoint is not yet ported).
-            float angle = i * 2.4f; // golden-angle-ish spacing
-            float radius = 6f + (i / 6) * 3f;
-            float sx = baseX + MathF.Cos(angle) * radius;
-            float sz = baseZ + MathF.Sin(angle) * radius;
+            float sx, sz;
+            var spawn = footprint?.PickSpawnPoint(spawnedRadius);
+            if (spawn != null && spawn.Value.X.ToFloat() >= 0)
+            {
+                sx = spawn.Value.X.ToFloat();
+                sz = spawn.Value.Z.ToFloat();
+            }
+            else
+            {
+                // Fallback: golden-angle ring around the trainer (keeps training working even when
+                // the area is crowded — units may overlap, but they'll disperse via UnitMotion).
+                float angle = i * 2.4f;
+                float radius = 6f + (i / 6) * 3f;
+                sx = baseX + MathF.Cos(angle) * radius;
+                sz = baseZ + MathF.Sin(angle) * radius;
+            }
             var spawned = cm.SpawnEntity(current.TemplateName, sx, sz, ownerId);
 
             // Rally point: move the fresh unit toward it.

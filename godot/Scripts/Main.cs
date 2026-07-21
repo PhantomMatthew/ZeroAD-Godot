@@ -241,12 +241,18 @@ public sealed partial class Main : Node3D
 
 				string? xmlPath = pmpPath.Replace(".pmp", ".xml");
 				var water = WaterRenderer.LoadWaterFromXml(xmlPath);
+				float waterHeight = water?.height ?? -999f;
 				if (water != null)
 				{
 					var waterMesh = WaterRenderer.CreateWaterPlane(water.Value.height, water.Value.color, pmp.MapSizeMeters);
 					AddChild(waterMesh);
 					GD.Print($"Water: height={water.Value.height:F1}m color={water.Value.color}");
 				}
+
+				// Fill the sim-side passability grid from the heightmap: any tile whose terrain
+				// height is at/below the water level is Water, everything else is Land. This drives
+				// BuildRestrictions (can't build on water) and Footprint spawn placement.
+				FillPassabilityFromPmp(pmp, waterHeight);
 
 				return;
 			}
@@ -265,7 +271,53 @@ public sealed partial class Main : Node3D
 			return map.GetHeight(gx, gz);
 		});
 		_camera.SetFocus(new Vector3(130, 0, 122));
+		// Generated terrain has no water by default; mark everything land so placement still works.
+		FillPassabilityAllLand();
 		GD.Print("Using generated terrain (no PMP found)");
+	}
+
+	/// <summary>Build a [MapSize,MapSize] passability grid from the PMP heightmap + water level and
+	/// hand it to the sim-side TerrainComponent. Tiles at/below water are Water, the rest Land.
+	/// Also reconfigures TerrainComponent + ObstructionManager bounds to the real map size — they
+	/// default to 256m (64 tiles) but real maps are larger (tutorial = 768m), and without this the
+	/// placement checks wrongly flag everything in-bounds as FailOutOfBounds.</summary>
+	private void FillPassabilityFromPmp(PmpMap pmp, float waterHeight)
+	{
+		var terrain = _sim.Terrain;
+		if (terrain == null) return;
+
+		// Reconfigure terrain dimensions to the actual map, then size the grid to match.
+		int tilesPerSide = pmp.TilesPerSide;
+		terrain.Configure(tilesPerSide, PmpMap.TileSize);
+		var grid = new ZeroAD.Sim.Components.TerrainClass[tilesPerSide, tilesPerSide];
+		for (int tz = 0; tz < tilesPerSide; tz++)
+			for (int tx = 0; tx < tilesPerSide; tx++)
+			{
+				float wx = (tx + 0.5f) * terrain.TileSize;
+				float wz = (tz + 0.5f) * terrain.TileSize;
+				float groundH = pmp.GetHeightWorld(wx, wz);
+				grid[tx, tz] = groundH <= waterHeight
+					? ZeroAD.Sim.Components.TerrainClass.Water
+					: ZeroAD.Sim.Components.TerrainClass.Land;
+			}
+		terrain.SetPassabilityGrid(grid);
+
+		// Match the obstruction + range spatial-index world bounds to the real map so queries
+		// don't clamp to the old 256m limit. SetBounds re-indexes existing shapes.
+		float worldM = pmp.MapSizeMeters;
+		var f0 = ZeroAD.Sim.Maths.Fixed.Zero;
+		var f1 = ZeroAD.Sim.Maths.Fixed.FromFloat(worldM);
+		_sim.Obstructions.SetBounds(f0, f0, f1, f1);
+	}
+
+	private void FillPassabilityAllLand()
+	{
+		var terrain = _sim.Terrain;
+		if (terrain == null) return;
+		int n = terrain.MapSize;
+		var grid = new ZeroAD.Sim.Components.TerrainClass[n, n];
+		// Default Land (0) is already the zero value, so no need to fill explicitly.
+		terrain.SetPassabilityGrid(grid);
 	}
 
 	private string? FindDataPath(string relPath)
@@ -740,6 +792,29 @@ public sealed partial class Main : Node3D
 			_placeBuildingMode = false;
 			return;
 		}
+
+		// Placement validation: terrain (land, in bounds) + obstruction (not on another building).
+		// Done before charging resources so a bad click is free. Uses the building's footprint
+		// half-size from the template; falls back to a generic 3m half-size if unknown.
+		float halfSize = 3f;
+		var stats = _sim.Templates?.ExtractStats(_buildTemplate);
+		if (stats != null)
+		{
+			float ob = Mathf.Max(stats.ObstructionSize0.ToFloat(), stats.ObstructionSize1.ToFloat());
+			if (ob > 0) halfSize = ob * 0.5f;
+		}
+		var pr = _sim.Pathfinder.CheckBuildingPlacement(
+			ZeroAD.Sim.Maths.Fixed.FromFloat(worldPos.Value.X),
+			ZeroAD.Sim.Maths.Fixed.FromFloat(worldPos.Value.Z),
+			ZeroAD.Sim.Maths.Fixed.FromFloat(halfSize),
+			ZeroAD.Sim.Maths.Fixed.FromFloat(halfSize));
+		if (pr != ZeroAD.Sim.Components.PlacementResult.Success)
+		{
+			GD.Print($"Cannot place {_buildTemplate} at ({worldPos.Value.X:F1},{worldPos.Value.Z:F1}): {pr}");
+			// Stay in placement mode so the player can try another spot.
+			return;
+		}
+
 		player.Wood -= wood;
 		player.Stone -= stone;
 		player.Metal -= metal;
