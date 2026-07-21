@@ -151,7 +151,7 @@ public sealed partial class AIDirector : Node
     {
         if (player.Wood < 200) return;
 
-        bool needsHouse = player.Population >= player.PopulationLimit - 3;
+        bool needsHouse = player.PopUsed >= player.PopulationLimit - 3;
         bool needsBarracks = !_aiBuildings.Exists(b =>
         {
             var identity = _sim.Sim.QueryInterface<IdentityComponent>(b);

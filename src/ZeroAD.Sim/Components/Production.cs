@@ -19,6 +19,11 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         _progress = 0;
     }
 
+    /// <summary>
+    /// Simple enqueue kept for tests and legacy callers. Production code should prefer
+    /// <see cref="EnqueueTraining"/>, which reads template cost/build-time, validates pop
+    /// and entity limits, and charges the player before queuing.
+    /// </summary>
     public void Enqueue(string templateName, int woodCost, int foodCost, float buildTime, int count = 1)
     {
         _queue.Add(new ProductionItem
@@ -31,28 +36,136 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         });
     }
 
+    /// <summary>
+    /// Deterministic training entry point. Resolves the trainer's owner, reads real template
+    /// cost/build-time/pop-cost/category, validates affordability + entity limits + pop headroom,
+    /// then charges the player and enqueues. Returns false (no side effects) on any validation
+    /// failure. This is the single source of truth shared by SimBridge.CommandTrain and
+    /// NetTurnManager.ExecuteCommand so single-player and lockstep multiplayer agree exactly.
+    /// </summary>
+    public bool EnqueueTraining(string templateName, int count, ComponentManager cm)
+    {
+        if (count <= 0) return false;
+        if (cm.Templates == null) return false;
+
+        var owner = cm.QueryInterface<OwnershipComponent>(Entity);
+        if (owner == null) return false;
+
+        var stats = cm.Templates.ExtractStats(templateName);
+        int totalWood = stats.WoodCost * count;
+        int totalFood = stats.FoodCost * count;
+        int totalStone = stats.StoneCost * count;
+        int totalMetal = stats.MetalCost * count;
+
+        // Find the owner's PlayerComponent. Player entities are registered via ComponentManager's
+        // player map (set up by the presentation layer at world init); resolve through it.
+        var player = cm.GetPlayerEntity(owner.PlayerId);
+        if (player == null) return false;
+
+        if (!player.CanAfford(totalWood, totalFood, totalStone, totalMetal)) return false;
+
+        // Pop headroom check (pop is charged immediately on spawn, but we pre-validate to avoid
+        // charging resources for a unit that can never appear).
+        int popCost = stats.PopulationCost * count;
+        if (popCost > player.PopHeadroom) return false;
+
+        // Entity limits (category caps like "Hero: 1").
+        EntityLimitsComponent? limits = null;
+        if (cm.GetPlayerEntityId(owner.PlayerId) is { } playerEid)
+            limits = cm.QueryInterface<EntityLimitsComponent>(playerEid);
+        if (limits != null && !limits.AllowedToTrain(stats.TrainingCategory, count))
+            return false;
+
+        // All checks passed — commit.
+        player.Spend(totalWood, totalFood, totalStone, totalMetal);
+        _queue.Add(new ProductionItem
+        {
+            TemplateName = templateName,
+            WoodCost = stats.WoodCost,
+            FoodCost = stats.FoodCost,
+            StoneCost = stats.StoneCost,
+            MetalCost = stats.MetalCost,
+            PopulationCost = stats.PopulationCost,
+            BuildTime = stats.BuildTime,
+            Count = count,
+            TrainingCategory = stats.TrainingCategory
+        });
+
+        cm.Events.RaiseTrainingQueued(new Events.TrainingQueuedEvent
+        {
+            TrainerEntity = Entity,
+            UnitTemplate = templateName,
+            Count = count
+        });
+        return true;
+    }
+
     public void ResetQueue()
     {
         _queue.Clear();
         _progress = 0;
     }
 
-    public ProductionItem? Tick(float dt)
+    /// <summary>
+    /// Advance the queue by <paramref name="dt"/> seconds. When the head item completes, spawns
+    /// <see cref="ProductionItem.Count"/> entities via <see cref="ComponentManager.SpawnEntity"/>
+    /// (sim-owned, deterministic), applies the trainer's rally point, and raises
+    /// TrainingFinished. This replaces the legacy SimBridge spawn-after-tick path so the whole
+    /// train→spawn loop is replayable and OOS-safe.
+    /// </summary>
+    public void Tick(float dt, ComponentManager cm)
     {
-        if (_queue.Count == 0)
-            return null;
+        if (_queue.Count == 0) return;
 
         var current = _queue[0];
         _progress += dt;
 
-        if (_progress >= current.BuildTime)
+        if (_progress < current.BuildTime) return;
+
+        // Head item finished: spawn Count units around the trainer, then dequeue.
+        _queue.RemoveAt(0);
+        _progress = 0;
+
+        var trainerPos = cm.QueryInterface<PositionComponent>(Entity);
+        var owner = cm.QueryInterface<OwnershipComponent>(Entity);
+        var rally = cm.QueryInterface<RallyPointComponent>(Entity);
+        int ownerId = owner?.PlayerId ?? -1;
+
+        if (trainerPos == null)
         {
-            _queue.RemoveAt(0);
-            _progress = 0;
-            return current;
+            // No position to spawn at — still notify so GUI can react, but no entities appear.
+            cm.Events.RaiseTrainingFinished(new Events.TrainingFinishedEvent
+            {
+                TrainerEntity = Entity,
+                UnitTemplate = current.TemplateName
+            });
+            return;
         }
 
-        return null;
+        float baseX = trainerPos.Position.X.ToFloat();
+        float baseZ = trainerPos.Position.Z.ToFloat();
+        for (int i = 0; i < current.Count; i++)
+        {
+            // Simple ring offset around the trainer (Footprint.PickSpawnPoint is not yet ported).
+            float angle = i * 2.4f; // golden-angle-ish spacing
+            float radius = 6f + (i / 6) * 3f;
+            float sx = baseX + MathF.Cos(angle) * radius;
+            float sz = baseZ + MathF.Sin(angle) * radius;
+            var spawned = cm.SpawnEntity(current.TemplateName, sx, sz, ownerId);
+
+            // Rally point: move the fresh unit toward it.
+            if (rally != null && !rally.Position.IsZero)
+            {
+                var motion = cm.QueryInterface<UnitMotion>(spawned);
+                motion?.MoveToPoint(new Maths.FixedVector2D(rally.Position.X, rally.Position.Y));
+            }
+        }
+
+        cm.Events.RaiseTrainingFinished(new Events.TrainingFinishedEvent
+        {
+            TrainerEntity = Entity,
+            UnitTemplate = current.TemplateName
+        });
     }
 
     public override void Serialize(ISerializer s)
@@ -64,6 +177,11 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
             s.StringASCII("tmpl", item.TemplateName);
             s.NumberI32("wood", item.WoodCost);
             s.NumberI32("food", item.FoodCost);
+            s.NumberI32("stone", item.StoneCost);
+            s.NumberI32("metal", item.MetalCost);
+            s.NumberI32("pop", item.PopulationCost);
+            s.NumberI32("batch", item.Count);
+            s.StringASCII("cat", item.TrainingCategory);
             s.NumberFixed("time", ZeroAD.Sim.Maths.Fixed.FromFloat(item.BuildTime));
         }
     }
@@ -80,6 +198,11 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
                 TemplateName = d.StringASCII("tmpl"),
                 WoodCost = d.NumberI32("wood"),
                 FoodCost = d.NumberI32("food"),
+                StoneCost = d.NumberI32("stone"),
+                MetalCost = d.NumberI32("metal"),
+                PopulationCost = d.NumberI32("pop"),
+                Count = d.NumberI32("batch"),
+                TrainingCategory = d.StringASCII("cat"),
                 BuildTime = d.NumberFixed("time").ToFloat()
             });
         }
@@ -93,8 +216,12 @@ public sealed class ProductionItem
     public string TemplateName = "";
     public int WoodCost;
     public int FoodCost;
+    public int StoneCost;
+    public int MetalCost;
+    public int PopulationCost;
     public float BuildTime;
     public int Count = 1;
+    public string TrainingCategory = "";
 }
 
 [Component("Player", "Player")]
@@ -104,8 +231,12 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
     public int Food;
     public int Stone;
     public int Metal;
-    public int Population;
-    public int PopulationLimit;
+    /// <summary>Live pop usage (units owned). Maintained by ownership-change handlers.</summary>
+    public int PopUsed;
+    /// <summary>Sum of PopulationComponent.Bonus across the player's buildings.</summary>
+    public int PopBonuses;
+    /// <summary>Hard global cap (0 A.D. default 300).</summary>
+    public int MaxPopCap = 300;
 
     protected override void OnInit()
     {
@@ -113,19 +244,52 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         Food = 300;
         Stone = 200;
         Metal = 100;
-        Population = 0;
-        PopulationLimit = 20;
+        PopUsed = 0;
+        PopBonuses = 20;
+        MaxPopCap = 300;
     }
+
+    /// <summary>
+    /// Effective pop limit = min(global cap, sum of building bonuses). Mirrors
+    /// Player.js GetPopulationLimit. Kept as a computed property so it never drifts from
+    /// PopBonuses/MaxPopCap. Legacy direct writes (SimBridge house +10) are routed through
+    /// <see cref="AddPopulationBonus"/> / <see cref="PopulationLimitSetter"/> during migration.
+    /// </summary>
+    public int PopulationLimit
+    {
+        get => Math.Min(MaxPopCap, PopBonuses);
+        // Setter preserved for SimBridge compatibility; folds into PopBonuses so the
+        // computed getter still wins. Prefer AddPopulationBonus for new code.
+        set => PopBonuses = value;
+    }
+
+    /// <summary>Amount of headroom remaining (never negative).</summary>
+    public int PopHeadroom => Math.Max(0, PopulationLimit - PopUsed);
+
+    public void AddPopulationBonus(int delta) => PopBonuses = Math.Max(0, PopBonuses + delta);
 
     public bool CanAfford(int wood, int food)
     {
         return Wood >= wood && Food >= food;
     }
 
+    public bool CanAfford(int wood, int food, int stone, int metal)
+    {
+        return Wood >= wood && Food >= food && Stone >= stone && Metal >= metal;
+    }
+
     public void Spend(int wood, int food)
     {
         Wood -= wood;
         Food -= food;
+    }
+
+    public void Spend(int wood, int food, int stone, int metal)
+    {
+        Wood -= wood;
+        Food -= food;
+        Stone -= stone;
+        Metal -= metal;
     }
 
     public void AddResource(ResourceType type, int amount)
@@ -145,8 +309,9 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         s.NumberI32("food", Food);
         s.NumberI32("stone", Stone);
         s.NumberI32("metal", Metal);
-        s.NumberI32("pop", Population);
-        s.NumberI32("popLimit", PopulationLimit);
+        s.NumberI32("popUsed", PopUsed);
+        s.NumberI32("popBonus", PopBonuses);
+        s.NumberI32("popCap", MaxPopCap);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -155,8 +320,9 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         Food = d.NumberI32("food");
         Stone = d.NumberI32("stone");
         Metal = d.NumberI32("metal");
-        Population = d.NumberI32("pop");
-        PopulationLimit = d.NumberI32("popLimit");
+        PopUsed = d.NumberI32("popUsed");
+        PopBonuses = d.NumberI32("popBonus");
+        MaxPopCap = d.NumberI32("popCap");
     }
 
     public void HandleMessage(IMessage message) { }

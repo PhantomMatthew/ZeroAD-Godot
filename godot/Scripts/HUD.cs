@@ -397,7 +397,7 @@ public sealed partial class HUD : CanvasLayer
             _resourceCounters[1].Count.Text = player.Wood.ToString();
             _resourceCounters[2].Count.Text = player.Stone.ToString();
             _resourceCounters[3].Count.Text = player.Metal.ToString();
-            _resourceCounters[4].Count.Text = $"{player.Population}/{player.PopulationLimit}";
+            _resourceCounters[4].Count.Text = $"{player.PopUsed}/{player.PopulationLimit}";
 
             int[] gatherers = { 0, 0, 0, 0 };
             foreach (var eid in _sim.EntityNodes.Keys)

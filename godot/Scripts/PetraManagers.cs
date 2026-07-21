@@ -115,7 +115,7 @@ public sealed class BuildManager
 
         if (snap.Player.Wood < 150) return;
 
-        if (snap.Player.Population >= snap.Player.PopulationLimit - 4)
+        if (snap.Player.PopUsed >= snap.Player.PopulationLimit - 4)
             TryBuild("House", snap);
         else if (!HasBuilding("Barracks", snap) && snap.Player.Wood >= 200)
             TryBuild("Barracks", snap);

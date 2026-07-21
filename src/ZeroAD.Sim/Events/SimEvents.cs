@@ -49,6 +49,18 @@ namespace ZeroAD.Sim.Events
         public int To;
     }
 
+    /// <summary>
+    /// Raised by <see cref="ComponentManager.SpawnEntity"/> after a sim entity has been fully
+    /// assembled. The presentation layer subscribes to build Godot visuals. Pure sim state
+    /// (no Godot dependency) — mirrors how TrainingFinished/StructureBuilt already work.
+    /// </summary>
+    public sealed class EntityCreatedEvent
+    {
+        public EntityId Entity;
+        public string TemplateName = "";
+        public int OwnerPlayerId = -1;
+    }
+
     public sealed class TutorialNotification
     {
         public List<string> Instructions = new();
@@ -67,6 +79,7 @@ namespace ZeroAD.Sim.Events
         public event Action<ResearchFinishedEvent>? ResearchFinished;
         public event Action<OwnershipChangedEvent>? OwnershipChanged;
         public event Action<TutorialNotification>? TutorialMessage;
+        public event Action<EntityCreatedEvent>? EntityCreated;
 
         public void RaisePlayerCommand(PlayerCommandEvent e) => PlayerCommand?.Invoke(e);
         public void RaiseTrainingQueued(TrainingQueuedEvent e) => TrainingQueued?.Invoke(e);
@@ -76,5 +89,6 @@ namespace ZeroAD.Sim.Events
         public void RaiseResearchFinished(ResearchFinishedEvent e) => ResearchFinished?.Invoke(e);
         public void RaiseOwnershipChanged(OwnershipChangedEvent e) => OwnershipChanged?.Invoke(e);
         public void RaiseTutorialMessage(TutorialNotification n) => TutorialMessage?.Invoke(n);
+        public void RaiseEntityCreated(EntityCreatedEvent e) => EntityCreated?.Invoke(e);
     }
 }

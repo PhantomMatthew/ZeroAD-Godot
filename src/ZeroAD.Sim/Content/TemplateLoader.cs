@@ -111,8 +111,20 @@ namespace ZeroAD.Sim.Content
                     stats.MetalCost = resources.GetChild("metal").ToInt();
                 }
                 stats.PopulationCost = cost.GetChild("Population").ToInt();
+                // PopulationBonus lives on buildings (e.g. House +10) under <Cost> in 0 A.D. data.
+                var popBonus = cost.GetChild("PopulationBonus");
+                if (popBonus.IsOk)
+                    stats.PopulationBonus = popBonus.ToInt();
                 stats.BuildTime = cost.GetChild("BuildTime").IsOk
                     ? cost.GetChild("BuildTime").ToFixed().ToFloat() : 5.0f;
+            }
+
+            var trainingRestrictions = node.GetChild("TrainingRestrictions");
+            if (trainingRestrictions.IsOk)
+            {
+                var category = trainingRestrictions.GetChild("Category");
+                if (category.IsOk)
+                    stats.TrainingCategory = category.ToString();
             }
 
             var attack = node.GetChild("Attack");
@@ -225,6 +237,8 @@ namespace ZeroAD.Sim.Content
         public int StoneCost;
         public int MetalCost;
         public int PopulationCost;
+        /// <summary>Pop capacity granted by buildings (House +10). Read from &lt;Cost&gt;&lt;PopulationBonus&gt;.</summary>
+        public int PopulationBonus;
         public float BuildTime = 5f;
         public int AttackDamage;
         public float AttackRange = 3f;
@@ -240,6 +254,8 @@ namespace ZeroAD.Sim.Content
         public bool CanGather;
         public bool IsBuilding;
         public int GarrisonCapacity;
+        /// <summary>TrainingRestrictions/Category (Civilian/Hero/WarDog/...). Empty if absent.</summary>
+        public string TrainingCategory = "";
 
         public List<string> GetClassList() =>
             EntityClassHelper.BuildClassList(Classes, VisibleClasses,

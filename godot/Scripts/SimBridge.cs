@@ -26,7 +26,15 @@ public sealed partial class SimBridge : Node
     private readonly Dictionary<uint, EntityId> _scenarioUidMap = new();
     private readonly List<Node3D> _decorativeNodes = new();
 
-    public SimEventBus Events { get; } = new();
+    /// <summary>
+    /// The single shared sim event bus. Delegates to <see cref="ComponentManager.Events"/> so
+    /// sim-side raises (EntityCreated, TrainingFinished, ...) and SimBridge-side raises
+    /// (PlayerCommand, OwnershipChanged on death, ...) hit the same subscribers. TutorialEngine
+    /// and HUD subscribe through this same reference.
+    /// </summary>
+    public SimEventBus Events => _sim?.Events ?? _fallbackEvents;
+    private readonly SimEventBus _fallbackEvents = new();
+
     public TutorialEngine? Tutorial { get; private set; }
     public bool IsTutorialMode { get; private set; }
 
@@ -48,29 +56,39 @@ public sealed partial class SimBridge : Node
         uint seed = 42;
         var registry = new ComponentRegistry();
         registry.AutoRegister(typeof(PositionComponent).Assembly);
-        _sim = new ComponentManager(seed, registry);
+
+        // Wire templates + events into the sim so SpawnEntity / EnqueueTraining can run headless.
+        TemplateLoader? templates = null;
+        if (templatesPath != null && System.IO.Directory.Exists(templatesPath))
+        {
+            templates = new TemplateLoader(templatesPath);
+            GD.Print($"Loaded templates from: {templatesPath}");
+            int count = 0;
+            foreach (var kvp in templates.Cache) count++;
+            if (count == 0) templates.LoadAllTemplates();
+            GD.Print($"Template cache: {templates.Cache.Count} entries");
+        }
+
+        _sim = new ComponentManager(seed, registry, templates);
         _turnManager = new TurnManager(_sim, commandDelay: 0);
         SimSystem.Init(_sim);
+        Templates = templates;
+
+        // Subscribe so the sim can ask us (the presentation layer) to build visuals whenever it
+        // spawns an entity. This is the only Godot→sim coupling direction for spawn.
+        _sim.Events.EntityCreated += OnEntityCreated;
 
         int gridSize = 64;
         float cellSize = 4.0f;
         _obstructions = new ObstructionManager(gridSize, cellSize);
         UnitMotion.SetObstructionManager(_obstructions);
 
-        if (templatesPath != null && System.IO.Directory.Exists(templatesPath))
-        {
-            Templates = new TemplateLoader(templatesPath);
-            GD.Print($"Loaded templates from: {templatesPath}");
-            int count = 0;
-            foreach (var kvp in Templates.Cache) count++;
-            if (count == 0) Templates.LoadAllTemplates();
-            GD.Print($"Template cache: {Templates.Cache.Count} entries");
-        }
-
         _playerEntity = _sim.CreateEntity();
         _sim.AddComponent(_playerEntity.Value, new PlayerComponent());
         _sim.AddComponent(_playerEntity.Value, new TechnologyManager { });
         _sim.AddComponent(_playerEntity.Value, new OwnershipComponent { PlayerId = 1 });
+        _sim.AddComponent(_playerEntity.Value, new EntityLimitsComponent());
+        _sim.RegisterPlayer(1, _playerEntity.Value);
     }
 
     public void StartTutorial()
@@ -212,6 +230,11 @@ public sealed partial class SimBridge : Node
         };
         _sim.AddComponent(entity, identity);
         _sim.AddComponent(entity, new HealthComponent { Current = stats?.MaxHealth ?? 500, Max = stats?.MaxHealth ?? 500 });
+
+        // Population-providing buildings (House etc.) carry their bonus as data so pop-limit
+        // accounting is data-driven via RecomputePlayerPopBonus rather than hardcoded per-template.
+        if (stats != null && stats.PopulationBonus > 0)
+            _sim.AddComponent(entity, new PopulationComponent { Bonus = stats.PopulationBonus });
 
         if (def.Player > 0)
             _sim.AddComponent(entity, new OwnershipComponent { PlayerId = def.Player });
@@ -366,9 +389,12 @@ public sealed partial class SimBridge : Node
                     _animPlayers.Remove(entity);
                     _animState.Remove(entity);
                     _lastPos.Remove(entity);
-                    _entityCacheDirty = true;
                 }
+                // Pop accounting: dying means the entity leaves its owner. Mirrors how Player.js
+                // reacts to MT_OwnershipChanged (To = INVALID_PLAYER).
+                _sim.ApplyOwnershipPopChange(entity, fromPlayer, -1);
                 _sim.DestroyEntity(entity);
+                _entityCacheDirty = true;
             }
         }
     }
@@ -536,11 +562,11 @@ public sealed partial class SimBridge : Node
                 TemplateName = template
             });
 
-            if (fullTemplate.Contains("house", StringComparison.OrdinalIgnoreCase))
-            {
-                var houseOwner = GetPlayer();
-                if (houseOwner != null) houseOwner.PopulationLimit += 10;
-            }
+            // Pop bonus is data-driven now: PopulationComponent on the building (added in
+            // SpawnScenarioBuilding from template stats) feeds PlayerComponent.PopBonuses via
+            // RecomputePlayerPopBonus. This replaces the hardcoded "if house, +10" rule.
+            if (owner != null)
+                _sim.RecomputePlayerPopBonus(owner.PlayerId);
 
             AutoAssignIdleBuilders(x, z);
         }
@@ -627,42 +653,40 @@ public sealed partial class SimBridge : Node
 
     private void TickProductionQueues(float dt)
     {
+        // Training spawn, cost charging, pop/entity-limit accounting, and rally-point assignment
+        // all live in the sim now (ProductionQueue.Tick + EnqueueTraining + ComponentManager).
+        // We just drive the tick; visuals are built when EntityCreated fires from SpawnEntity.
         foreach (var entity in GetAllEntitiesSnapshot())
         {
             var queue = _sim.QueryInterface<ProductionQueue>(entity);
-            if (queue == null) continue;
-
-            var completed = queue.Tick(dt);
-            if (completed != null)
-            {
-                var pos = _sim.QueryInterface<PositionComponent>(entity);
-                if (pos != null)
-                {
-                    float x = pos.Position.X.ToFloat() + 10;
-                    float z = pos.Position.Z.ToFloat() + 10;
-                    var owner = _sim.QueryInterface<OwnershipComponent>(entity);
-                    var spawned = SpawnFromTemplate(completed.TemplateName, x, z);
-                    if (owner != null)
-                        _sim.AddComponent(spawned, new OwnershipComponent { PlayerId = owner.PlayerId });
-
-                    var rally = _sim.QueryInterface<RallyPointComponent>(entity);
-                    if (rally != null && !rally.Position.IsZero)
-                    {
-                        var motion = _sim.QueryInterface<UnitMotion>(spawned);
-                        motion?.MoveToPoint(new FixedVector2D(rally.Position.X, rally.Position.Y));
-                    }
-                }
-
-                var player = GetPlayer();
-                if (player != null) player.Population++;
-
-                Events.RaiseTrainingFinished(new TrainingFinishedEvent
-                {
-                    TrainerEntity = entity,
-                    UnitTemplate = completed.TemplateName
-                });
-            }
+            queue?.Tick(dt, _sim);
         }
+    }
+
+    /// <summary>
+    /// Build a Godot visual for a sim-spawned entity (training output). Driven by the sim's
+    /// EntityCreated event so the train→spawn loop is fully sim-owned and replayable, with the
+    /// presentation layer reacting to events rather than orchestrating spawn. Mirrors how
+    /// CreateVisualFor is called from the legacy SimBridge.Spawn* paths.
+    /// </summary>
+    private void OnEntityCreated(EntityCreatedEvent e)
+    {
+        // If this entity already has a visual (e.g. created via the legacy SimBridge.Spawn* paths
+        // which call CreateVisualFor directly), don't double up. The sim SpawnEntity path is the
+        // only one that goes through this event for freshly-assembled entities.
+        if (_entityNodes.ContainsKey(e.Entity)) return;
+
+        var owner = _sim.QueryInterface<OwnershipComponent>(e.Entity);
+        int playerId = owner?.PlayerId ?? e.OwnerPlayerId;
+        Color color = GetPlayerColor(playerId);
+
+        // Size heuristic matches the legacy unit spawn path (1.5f for units).
+        CreateVisualFor(e.Entity, color, 1.5f, templateName: e.TemplateName);
+
+        // Charge pop on ownership assignment. The sim owns the accounting rule so it stays
+        // deterministic; we call the helper from here because ownership for sim-spawned units is
+        // applied inside ComponentManager.SpawnEntity before this event fires.
+        _sim.ApplyOwnershipPopChange(e.Entity, -1, playerId);
     }
 
     // --- Entity spawning ---
@@ -866,28 +890,12 @@ public sealed partial class SimBridge : Node
     {
         int actualCount = batch ? 5 : count;
         var queue = _sim.QueryInterface<ProductionQueue>(building);
-        var player = GetPlayer();
-        if (queue == null || player == null) return;
+        if (queue == null) return;
 
-        int wood = 50, food = 50, metal = 0;
-        if (template.Contains("spearman")) { food = 80; metal = 20; }
-        if (template.Contains("javelineer")) { food = 70; wood = 30; }
-        if (template.Contains("support_civilian")) { food = 50; wood = 0; }
-        if (template.Contains("siege_ram")) { wood = 200; food = 0; metal = 50; }
-
-        int totalFood = food * actualCount;
-        int totalWood = wood * actualCount;
-        if (!player.CanAfford(totalWood, totalFood) && player.Food < totalFood) return;
-        player.Spend(totalWood, totalFood);
-        player.Metal -= metal * actualCount;
-        queue.Enqueue(template, totalWood, totalFood, 5.0f, actualCount);
-
-        Events.RaiseTrainingQueued(new TrainingQueuedEvent
-        {
-            TrainerEntity = building,
-            UnitTemplate = template,
-            Count = actualCount
-        });
+        // All cost/limit/pop validation and charging happens in the sim now (EnqueueTraining),
+        // shared with NetTurnManager so single-player and lockstep agree exactly. The event is
+        // raised from inside EnqueueTraining on success.
+        queue.EnqueueTraining(template, actualCount, _sim);
     }
 
     public void CommandTrain(EntityId building)
@@ -971,10 +979,15 @@ public sealed partial class SimBridge : Node
 
     private List<EntityId> GetAllEntitiesSnapshot()
     {
+        // Single source of truth: the sim's entity list. Previously this iterated _entityNodes
+        // (the visual map), which meant a sim entity whose visual failed to build became a ghost
+        // — Tick loops never saw it again. Iterating _sim.AllEntities fixes that and keeps the
+        // visual map purely a render concern.
         if (_entityCacheDirty)
         {
             _entityCache.Clear();
-            _entityCache.AddRange(_entityNodes.Keys);
+            if (_sim != null)
+                _entityCache.AddRange(_sim.AllEntities);
             _entityCacheDirty = false;
         }
         return _entityCache;

@@ -43,9 +43,12 @@ public sealed class PositionComponent : ComponentBase, IComponentMessageHandler
 [Component("Ownership", "Ownership")]
 public sealed class OwnershipComponent : ComponentBase, IComponentMessageHandler
 {
-    public int PlayerId;
+    // Default lives on the field initializer (-1 = no owner), not OnInit, so callers using
+    // `new OwnershipComponent { PlayerId = 2 }` keep their value. Previously OnInit reset this
+    // to -1 after the object initializer ran, silently clobbering every caller's owner.
+    public int PlayerId = -1;
 
-    protected override void OnInit() => PlayerId = -1;
+    protected override void OnInit() { }
 
     public override void Serialize(ISerializer serializer) =>
         serializer.NumberI32("player", PlayerId);

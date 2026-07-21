@@ -311,8 +311,24 @@ public sealed partial class Main : Node3D
 			if (scenario != null)
 			{
 				GD.Print($"[Tutorial] scenario loaded: {scenario.Entities.Count} entities, camera=({scenario.CameraX},{scenario.CameraZ})");
-				float h = TerrainHeightService.Sample(scenario.CameraX, scenario.CameraZ);
-				_camera.SetFocus(new Vector3(scenario.CameraX, h, scenario.CameraZ));
+				// The scenario's <Camera> position comes from the original 0 A.D. Atlas editor and
+				// doesn't line up with this rewrite's coordinate space (e.g. tutorial stores
+				// z=-55, off-map). Frame the player's (P1) town centre instead so the player can
+				// actually see and click their base at start. Fall back to the scenario camera
+				// only if no P1 civic centre is found.
+				float camX = scenario.CameraX, camZ = scenario.CameraZ;
+				foreach (var ent in scenario.Entities)
+				{
+					if (ent.Player != 1 || !ent.IsSimulationEntity) continue;
+					if (ent.Template.Contains("civil_centre") || ent.Template.Contains("civic_centre"))
+					{
+						camX = ent.X; camZ = ent.Z;
+						GD.Print($"[Tutorial] framing P1 civic centre at ({camX},{camZ})");
+						break;
+					}
+				}
+				float h = TerrainHeightService.Sample(camX, camZ);
+				_camera.SetFocus(new Vector3(camX, h, camZ));
 			}
 			else
 			{
@@ -387,6 +403,12 @@ public sealed partial class Main : Node3D
 
 		_sim.SpawnUnit(80, 80, isSoldier: true);
 		_sim.SpawnUnit(85, 85, isSoldier: true);
+
+		// Frame the player's starting town centre so the game opens on the player's base, not on
+		// the camera's stale default focus. Matches what SetupTutorialWorld does after scenario
+		// load. Without this, the camera stays wherever _Ready left it and the player can't see
+		// (or click) their own TC without panning first.
+		_camera.SetFocus(new Vector3(120, 0, 120));
 	}
 
 	private readonly List<Node3D> _selectionMarkers = new();
@@ -436,7 +458,10 @@ public sealed partial class Main : Node3D
 		}
 	}
 
-	public override void _Input(InputEvent @event)
+	// _UnhandledInput (not _Input) so that clicks absorbed by the HUD's Control nodes —
+	// e.g. pressing a training button — don't also fall through to HandleLeftClick and wipe
+	// the current selection. GUI-consumed events never reach here; only raw 3D-scene clicks do.
+	public override void _UnhandledInput(InputEvent @event)
 	{
 		if (!_gameStarted) return;
 
@@ -574,6 +599,13 @@ public sealed partial class Main : Node3D
 			_mp.SubmitCommand(cmd);
 	}
 
+	/// <summary>
+	/// True when a multiplayer session is active and connected. Commands that mutate sim state
+	/// (train/build/...) route through the net command queue instead of executing locally so
+	/// both clients apply them at the same turn.
+	/// </summary>
+	private bool IsMultiplayer => _mp.NetTurn != null && _mp.IsConnected;
+
 	private Vector3? ScreenToWorld(Vector2 screenPos)
 	{
 		var from = _camera.ProjectRayOrigin(screenPos);
@@ -629,8 +661,17 @@ public sealed partial class Main : Node3D
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
-				_sim.CommandTrain(eid, "units/spart/support_civilian", batch: batch);
-				SubmitNetCmd(NetCommand.Train(1, eid.Value));
+				const string template = "units/spart/support_civilian";
+				if (IsMultiplayer)
+				{
+					// Lockstep: only enqueue via the net command so both clients run the exact
+					// same EnqueueTraining at the same turn. Local prediction would double-charge.
+					SubmitNetCmd(NetCommand.Train(1, eid.Value, template));
+				}
+				else
+				{
+					_sim.CommandTrain(eid, template, batch: batch);
+				}
 				break;
 			}
 	}
@@ -640,8 +681,11 @@ public sealed partial class Main : Node3D
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
-				_sim.CommandTrain(eid, "units/spart/infantry_spearman_b", batch: batch);
-				SubmitNetCmd(NetCommand.TrainSoldier(1, eid.Value));
+				const string template = "units/spart/infantry_spearman_b";
+				if (IsMultiplayer)
+					SubmitNetCmd(NetCommand.Train(1, eid.Value, template));
+				else
+					_sim.CommandTrain(eid, template, batch: batch);
 				break;
 			}
 	}
@@ -651,7 +695,11 @@ public sealed partial class Main : Node3D
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
-				_sim.CommandTrain(eid, "units/spart/infantry_javelineer_b", batch: batch);
+				const string template = "units/spart/infantry_javelineer_b";
+				if (IsMultiplayer)
+					SubmitNetCmd(NetCommand.Train(1, eid.Value, template));
+				else
+					_sim.CommandTrain(eid, template, batch: batch);
 				break;
 			}
 	}
@@ -661,7 +709,10 @@ public sealed partial class Main : Node3D
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
-				_sim.CommandTrain(eid, template, batch: batch);
+				if (IsMultiplayer)
+					SubmitNetCmd(NetCommand.Train(1, eid.Value, template));
+				else
+					_sim.CommandTrain(eid, template, batch: batch);
 				break;
 			}
 	}
