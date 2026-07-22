@@ -1,6 +1,11 @@
 using Xunit;
 using ZeroAD.Sim.Maths;
 
+// This file exercises the legacy ObstructionManager A* grid (FindPath/BlockCircle/IsBlocked),
+// which is [Obsolete] now that PathfinderComponent is the pathfinding source. The legacy path
+// is deliberately retained as a fallback, so these tests guard it; suppress the obsolete warning.
+#pragma warning disable CS0618
+
 namespace ZeroAD.Sim.Tests;
 
 /// <summary>

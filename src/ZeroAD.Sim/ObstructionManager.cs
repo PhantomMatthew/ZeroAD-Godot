@@ -299,6 +299,16 @@ namespace ZeroAD.Sim
             return null;
         }
 
+        /// <summary>Snapshot of every static obstruction square (buildings etc.). Used by the
+        /// passability-grid builder to stamp obstacles onto the navcell grid.</summary>
+        public System.Collections.Generic.List<ObstructionSquare> GetAllStaticObstructions()
+        {
+            var list = new System.Collections.Generic.List<ObstructionSquare>(_staticShapes.Count);
+            foreach (var ss in _staticShapes.Values)
+                list.Add(new ObstructionSquare(ss.X, ss.Z, ss.U, ss.V, ss.Hw, ss.Hh));
+            return list;
+        }
+
         // --- Subdivision bookkeeping helpers ---
 
         private void AddUnitToSubdivision(uint raw, UnitShape s)
@@ -468,6 +478,8 @@ namespace ZeroAD.Sim
         public int WorldToGrid(float world) => (int)(world / CellSize);
         public float GridToWorld(int grid) => grid * CellSize + CellSize * 0.5f;
 
+        [Obsolete("Use PathfinderComponent.ComputePath (the M3 hierarchical+A*+vertex pipeline). "
+            + "Retained as a fallback for code paths where the new pathfinder isn't initialized.")]
         public List<(int x, int z)> FindPath(int sx, int sz, int ex, int ez)
         {
             if (IsBlocked(ex, ez)) return new List<(int, int)>();

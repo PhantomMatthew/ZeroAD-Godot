@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using ZeroAD.Sim.Maths;
+using ZeroAD.Sim.Pathfinding;
 
 namespace ZeroAD.Sim.Components
 {
@@ -13,19 +15,24 @@ namespace ZeroAD.Sim.Components
     }
 
     /// <summary>
-    /// Minimal pathfinder/placement service. The full hierarchical + vertex pathfinder (M3) isn't
-    /// ported yet; this component only provides placement checks that <see cref="BuildRestrictionsComponent"/>
-    /// and <see cref="FootprintComponent"/> need to validate where units/buildings can go:
-    ///   1. Is the footprint inside the map bounds?
-    ///   2. Is the terrain under it passable (land, not water/cliff)?
-    ///   3. Does it overlap any foundation-blocking obstruction?
-    ///
-    /// Pathfinding for unit movement still uses <see cref="ObstructionManager"/>'s legacy A* grid
-    /// until the proper pathfinder lands; this class does NOT replace that.
+    /// The pathfinder service: placement checks (existing) + the M3 three-engine pathfinding
+    /// pipeline (new). Owns the passability grid, hierarchical connectivity, long-range (A*) and
+    /// short-range (vertex) pathfinders. Registered as <see cref="SimSystem.Pathfinder"/> and
+    /// globally reachable. Placement methods (<see cref="CheckUnitPlacement"/>/
+    /// <see cref="CheckBuildingPlacement"/>) are unchanged.
     /// </summary>
     public sealed class PathfinderComponent
     {
         private readonly ComponentManager _cm;
+
+        // --- M3 pathfinding pipeline ---
+        private readonly PassabilityGridBuilder _gridBuilder = new();
+        private readonly HierarchicalPathfinder _hier = new();
+        private readonly LongPathfinder _long = new();
+        private readonly VertexPathfinder _vertex = new();
+
+        public PassabilityClassDef DefaultClass => _gridBuilder.Default;
+        public PassabilityClassDef ShipClass => _gridBuilder.Ship;
 
         public PathfinderComponent(ComponentManager cm) => _cm = cm;
 
@@ -86,6 +93,84 @@ namespace ZeroAD.Sim.Components
                 if (hits.Count > 0) return PlacementResult.FailObstructsFoundation;
             }
             return PlacementResult.Success;
+        }
+
+        // --- M3 pathfinding ---
+
+        /// <summary>Rebuild the passability grid + hierarchical connectivity + long pathfinder
+        /// from the current terrain and obstructions. Call after map load and whenever
+        /// obstructions change (P0: full rebuild each time; incremental is P1).</summary>
+        public void RebuildGrid()
+        {
+            if (Terrain == null || Obstructions == null) return;
+
+            int tiles = Terrain.MapSize;
+            float ts = Terrain.TileSize;
+            // Derive per-tile terrain info from TerrainComponent's land/water grid. Slope/depth
+            // detail isn't available yet (the PMP passability is baked into TerrainClass), so we
+            // map class → approximate depth: land=0, water=deep, impassable=cliff.
+            var terrain = new TerrainTileInfo[tiles, tiles];
+            for (int j = 0; j < tiles; j++)
+                for (int i = 0; i < tiles; i++)
+                {
+                    // Sample the terrain class at the tile's centre (world coords).
+                    var cls = Terrain.GetClass(
+                        Fixed.FromFloat(i * ts + ts * 0.5f),
+                        Fixed.FromFloat(j * ts + ts * 0.5f));
+                    terrain[i, j] = cls switch
+                    {
+                        TerrainClass.Land => new TerrainTileInfo(Fixed.Zero, Fixed.Zero, Fixed.Zero),
+                        TerrainClass.Water => new TerrainTileInfo(Fixed.FromInt(5), Fixed.Zero, Fixed.Zero),
+                        _ => new TerrainTileInfo(Fixed.Zero, Fixed.FromInt(2), Fixed.Zero), // Impassable = steep cliff
+                    };
+                }
+
+            _gridBuilder.Build(terrain, tiles, Obstructions.GetAllStaticObstructions());
+            if (_gridBuilder.Grid != null)
+            {
+                _hier.Recompute(_gridBuilder.Grid, _gridBuilder.AllClasses);
+                _long.Reload(_gridBuilder.Grid);
+            }
+        }
+
+        /// <summary>Compute a long-range path from a world position to a goal. Returns waypoints
+        /// (world-space) or an empty path if no route exists. Uses the default (land) class.</summary>
+        public WaypointPath ComputePath(FixedVector2D start, in PathGoal goal)
+            => ComputePath(start, goal, _gridBuilder.Default.Mask);
+
+        /// <summary>Compute a long-range path for a specific passability class.</summary>
+        public WaypointPath ComputePath(FixedVector2D start, in PathGoal goal, PassClass passClass)
+        {
+            var empty = new WaypointPath();
+            if (_gridBuilder.Grid == null) return empty;
+            int si = PathfindingCore.WorldToNavcell(start.X);
+            int sj = PathfindingCore.WorldToNavcell(start.Y);
+            return _long.ComputePath(_hier, si, sj, goal, passClass);
+        }
+
+        /// <summary>Compute a short-range path that routes precisely around nearby obstructions.
+        /// Used for local detours / unit avoidance.</summary>
+        public WaypointPath ComputeShortPath(FixedVector2D start, in PathGoal goal,
+            Fixed clearance, Fixed range, PassClass passClass, bool avoidMovingUnits = false)
+        {
+            // P0: gather all static obstructions (range-filtering is a refinement; at P0 map
+            // sizes the vertex graph stays small). Moving-unit avoidance is a P1 add.
+            System.Collections.Generic.List<ObstructionSquare> obstructions =
+                Obstructions?.GetAllStaticObstructions()
+                ?? new System.Collections.Generic.List<ObstructionSquare>();
+            return _vertex.ComputeShortPath(start, goal, clearance, range, obstructions);
+        }
+
+        /// <summary>True if a straight line between two world points is unobstructed (no impassable
+        /// navcell crossed). Mirrors CCmpPathfinder::CheckMovement.</summary>
+        public bool CheckMovement(FixedVector2D from, FixedVector2D to, PassClass passClass)
+        {
+            if (_gridBuilder.Grid == null) return true;
+            int i0 = PathfindingCore.WorldToNavcell(from.X);
+            int j0 = PathfindingCore.WorldToNavcell(from.Y);
+            int i1 = PathfindingCore.WorldToNavcell(to.X);
+            int j1 = PathfindingCore.WorldToNavcell(to.Y);
+            return _long.CheckLineMovement(i0, j0, i1, j1, passClass);
         }
     }
 }

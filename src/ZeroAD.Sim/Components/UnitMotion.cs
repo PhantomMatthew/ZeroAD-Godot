@@ -32,23 +32,47 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         _waypoints.Clear();
         _currentWaypoint = 0;
 
+        var posComp = SimSystem.GetComponent<PositionComponent>(Entity);
+        if (posComp == null)
+        {
+            _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+            return;
+        }
+
+        // Prefer the M3 pathfinder (PathfinderComponent) when it's wired and has a grid. This is
+        // the deterministic, hierarchical + A* + vertex pipeline. Falls back to the legacy
+        // ObstructionManager A* grid when the new pathfinder isn't initialized (pure determinism
+        // tests that don't load a map), and finally to a straight beeline.
+        var pathfinder = SimSystem.Pathfinder;
+        if (pathfinder != null)
+        {
+            var start = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
+            var goal = Pathfinding.PathGoal.Point(target.X, target.Y);
+            var path = pathfinder.ComputePath(start, goal);
+            // WaypointPath.Waypoints is stored start→goal; consume front-to-back (matching the
+            // existing _waypoints contract). Each waypoint is world-space Fixed → float.
+            foreach (var wp in path.Waypoints)
+                _waypoints.Add((wp.X.ToFloat(), wp.Z.ToFloat()));
+            if (_waypoints.Count == 0)
+                _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+            return;
+        }
+
+#pragma warning disable CS0618 // FindPath is [Obsolete]; retained as the pre-pathfinder fallback.
         if (SimSystem.Obstructions is { } obstructions)
         {
-            var posComp = SimSystem.GetComponent<PositionComponent>(Entity);
-            if (posComp != null)
-            {
-                int sx = obstructions.WorldToGrid(posComp.Position.X.ToFloat());
-                int sz = obstructions.WorldToGrid(posComp.Position.Z.ToFloat());
-                int ex = obstructions.WorldToGrid(target.X.ToFloat());
-                int ez = obstructions.WorldToGrid(target.Y.ToFloat());
+            int sx = obstructions.WorldToGrid(posComp.Position.X.ToFloat());
+            int sz = obstructions.WorldToGrid(posComp.Position.Z.ToFloat());
+            int ex = obstructions.WorldToGrid(target.X.ToFloat());
+            int ez = obstructions.WorldToGrid(target.Y.ToFloat());
 
-                var path = obstructions.FindPath(sx, sz, ex, ez);
-                foreach (var (px, pz) in path)
-                    _waypoints.Add((obstructions.GridToWorld(px), obstructions.GridToWorld(pz)));
-                _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
-            }
+            var path = obstructions.FindPath(sx, sz, ex, ez);
+            foreach (var (px, pz) in path)
+                _waypoints.Add((obstructions.GridToWorld(px), obstructions.GridToWorld(pz)));
+            _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
         }
         else
+#pragma warning restore CS0618
         {
             _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
         }

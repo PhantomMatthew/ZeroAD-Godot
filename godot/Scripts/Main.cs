@@ -310,11 +310,15 @@ public sealed partial class Main : Node3D
 
 		// Match the obstruction + range spatial-index world bounds to the real map so queries
 		// don't clamp to the old 256m limit. SetBounds re-indexes existing shapes.
-		float worldM = pmp.MapSizeMeters;
-		var f0 = ZeroAD.Sim.Maths.Fixed.Zero;
-		var f1 = ZeroAD.Sim.Maths.Fixed.FromFloat(worldM);
-		_sim.Obstructions.SetBounds(f0, f0, f1, f1);
-	}
+			float worldM = pmp.MapSizeMeters;
+			var f0 = ZeroAD.Sim.Maths.Fixed.Zero;
+			var f1 = ZeroAD.Sim.Maths.Fixed.FromFloat(worldM);
+			_sim.Obstructions.SetBounds(f0, f0, f1, f1);
+
+			// Build the M3 pathfinding pipeline (passability grid → hierarchical connectivity →
+			// A*) now that terrain + obstructions reflect the real map.
+			_sim.Pathfinder.RebuildGrid();
+		}
 
 	private void FillPassabilityAllLand()
 	{
