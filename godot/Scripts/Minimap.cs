@@ -36,7 +36,7 @@ public sealed partial class Minimap : Control
         if (@event is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Left)
         {
             Vector2 local = mb.Position;
-            float worldSize = _sim.Obstructions.GridSize * _sim.Obstructions.CellSize;
+            float worldSize = _sim.Terrain.MapSize * _sim.Terrain.TileSize;
             float wx = local.X / MapSize * worldSize;
             float wz = local.Y / MapSize * worldSize;
             float h = TerrainHeightService.Sample(wx, wz);
@@ -48,7 +48,7 @@ public sealed partial class Minimap : Control
     {
         _image.Fill(new Color(0.12f, 0.15f, 0.08f));
 
-        float worldSize = _sim.Obstructions.GridSize * _sim.Obstructions.CellSize;
+        float worldSize = _sim.Terrain.MapSize * _sim.Terrain.TileSize;
         if (worldSize <= 0) { _texture.Update(_image); QueueRedraw(); return; }
 
         foreach (var kvp in GetAllEntityNodes())
@@ -97,7 +97,7 @@ public sealed partial class Minimap : Control
 
         DrawTextureRect(_texture, new Rect2(Vector2.Zero, MapSize, MapSize), false);
 
-        float worldSize = _sim.Obstructions.GridSize * _sim.Obstructions.CellSize;
+        float worldSize = _sim.Terrain.MapSize * _sim.Terrain.TileSize;
         if (worldSize <= 0) return;
 
         DrawViewCone(worldSize);

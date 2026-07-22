@@ -161,6 +161,13 @@ namespace ZeroAD.Sim
             // Without a RangeManager (pure determinism tests), victory detection can't run — skip.
             if (range == null) return;
 
+            // Conquest requires at least 2 non-gaia players. With only one (tutorial mode, or a
+            // test), "last one standing" is meaningless and the zero-entity check would spuriously
+            // defeat the sole player if their entities aren't indexed yet.
+            int nonGaia = 0;
+            foreach (var _ in Players.GetNonGaiaPlayerIds()) nonGaia++;
+            if (nonGaia < 2) return;
+
             // 1. Mark any active player with zero units/buildings as defeated.
             foreach (int pid in Players.GetNonGaiaPlayerIds())
             {
