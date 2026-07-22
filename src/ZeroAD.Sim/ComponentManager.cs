@@ -23,20 +23,31 @@ namespace ZeroAD.Sim
         private readonly ComponentRegistry _registry;
         private readonly Dictionary<EntityId, Dictionary<InterfaceId, IComponent>> _componentsByEntity = new();
         private readonly List<EntityId> _allEntities = new();
-        // player ID → player entity. Populated by RegisterPlayer. Used by EnqueueTraining and
-        // pop/entity-limit accounting to find the owner's PlayerComponent without scanning.
-        private readonly Dictionary<int, EntityId> _playerEntities = new();
 
         public EntityManager Entities => _entityManager;
         public Rand48 RNG => _rng;
         public ComponentRegistry Registry => _registry;
         public IReadOnlyList<EntityId> AllEntities => _allEntities;
 
+        // Formalized managers. PlayerManager owns the player registry + pop accounting rules
+        // (ported from PlayerManager.js). TemplateManager wraps the TemplateLoader (ported from
+        // CCmpTemplateManager). WaterManager holds the sim-side water height (CCmpWaterManager).
+        // Lazy-created so pure determinism tests that never touch them pay no cost.
+        public PlayerManager Players { get; }
+        public TemplateManager? TemplateManager { get; private set; }
+        public WaterManager Water { get; } = new();
+        public DelayedDamage DelayedDamage { get; } = new();
+
         /// <summary>
         /// Template loader used by <see cref="SpawnEntity"/> and training/spawn paths.
-        /// Null in pure determinism tests that don't load XML.
+        /// Null in pure determinism tests that don't load XML. Setting this also (re)creates
+        /// the <see cref="TemplateManager"/> wrapper.
         /// </summary>
-        public TemplateLoader? Templates { get; set; }
+        public TemplateLoader? Templates
+        {
+            get => TemplateManager?.Loader;
+            set => TemplateManager = value != null ? new TemplateManager(value) : null;
+        }
 
         /// <summary>
         /// Event bus owned by the sim. Spawn/death/ownership paths raise events here so the
@@ -49,8 +60,9 @@ namespace ZeroAD.Sim
         {
             _rng = new Rand48(rngSeed);
             _registry = registry ?? new ComponentRegistry();
-            Templates = templates;
+            Players = new PlayerManager(this);
             Events = events ?? new SimEventBus();
+            if (templates != null) TemplateManager = new TemplateManager(templates);
         }
 
         public EntityId CreateEntity()
@@ -95,63 +107,28 @@ namespace ZeroAD.Sim
         /// <summary>
         /// Register a player entity under its player ID so <see cref="GetPlayerEntity"/> and
         /// pop/entity-limit accounting can resolve owners in O(1). Call once per player at
-        /// world setup (the presentation layer already creates these entities today).
+        /// world setup. Forwards to <see cref="Players"/>.
         /// </summary>
-        public void RegisterPlayer(int playerId, EntityId entity) => _playerEntities[playerId] = entity;
+        public void RegisterPlayer(int playerId, EntityId entity) => Players.AddPlayer(playerId, entity);
 
-        public EntityId? GetPlayerEntityId(int playerId) =>
-            _playerEntities.TryGetValue(playerId, out var eid) ? eid : null;
+        public EntityId? GetPlayerEntityId(int playerId) => Players.GetPlayerEntityId(playerId);
 
-        /// <summary>Resolve a player's PlayerComponent by player ID, or null if unregistered.</summary>
-        public PlayerComponent? GetPlayerEntity(int playerId)
-        {
-            if (!_playerEntities.TryGetValue(playerId, out var eid)) return null;
-            return QueryInterface<PlayerComponent>(eid);
-        }
+        /// <summary>Resolve a player's PlayerComponent by player ID, or null if unregistered.
+        /// Forwards to <see cref="Players"/>.</summary>
+        public PlayerComponent? GetPlayerEntity(int playerId) => Players.GetPlayerEntity(playerId);
 
         /// <summary>
-        /// Adjust pop usage for a player when an entity's ownership changes. Called by the
-        /// presentation layer's ownership-change handler (mirrors how Player.js reacts to
-        /// MT_OwnershipChanged). Kept on ComponentManager so the rule is owned by the sim
-        /// and stays deterministic across single/multiplayer. Pop is charged by CostComponent.
+        /// Adjust pop usage for a player when an entity's ownership changes. Mirrors how
+        /// Player.js reacts to MT_OwnershipChanged. Forwards to <see cref="Players"/>.
         /// </summary>
         public void ApplyOwnershipPopChange(EntityId entity, int oldOwner, int newOwner)
-        {
-            var cost = QueryInterface<CostComponent>(entity);
-            if (cost == null || cost.PopulationCost == 0) return;
-
-            if (oldOwner > 0)
-            {
-                var p = GetPlayerEntity(oldOwner);
-                if (p != null) p.PopUsed = Math.Max(0, p.PopUsed - cost.PopulationCost);
-            }
-            if (newOwner > 0)
-            {
-                var p = GetPlayerEntity(newOwner);
-                if (p != null) p.PopUsed += cost.PopulationCost;
-            }
-        }
+            => Players.ApplyOwnershipPopChange(entity, oldOwner, newOwner);
 
         /// <summary>
         /// Aggregate a player's PopulationComponent bonuses (House +10, etc.) into
-        /// PlayerComponent.PopBonuses. Called after buildings spawn/change ownership.
-        /// Scans the player's owned entities — cheap enough for the handful of buildings
-        /// a player has; mirrors how Player.js re-derives popBonuses on MT_ValueModification.
+        /// PlayerComponent.PopBonuses. Forwards to <see cref="Players"/>.
         /// </summary>
-        public void RecomputePlayerPopBonus(int playerId)
-        {
-            var player = GetPlayerEntity(playerId);
-            if (player == null) return;
-            int total = 0;
-            foreach (var entity in _allEntities)
-            {
-                var own = QueryInterface<OwnershipComponent>(entity);
-                if (own == null || own.PlayerId != playerId) continue;
-                var pop = QueryInterface<PopulationComponent>(entity);
-                if (pop != null) total += pop.Bonus;
-            }
-            player.PopBonuses = total;
-        }
+        public void RecomputePlayerPopBonus(int playerId) => Players.RecomputePlayerPopBonus(playerId);
 
         public void AddComponent(EntityId entity, ComponentTypeId cid)
         {

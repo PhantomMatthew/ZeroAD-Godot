@@ -29,6 +29,9 @@ namespace ZeroAD.Sim
 
             cm.AddComponent(entity, new PositionComponent());
             cm.AddComponent(entity, new UnitMotion());
+            // UnitAI owns the order queue + state machine for mobile units. Added to all units
+            // so SimBridge.Command* and lockstep commands route through the FSM.
+            cm.AddComponent(entity, new UnitAIComponent());
 
             string name = stats?.Name ?? (isSoldier ? "Soldier" : isVillager ? "Villager" : "Unit");
             int maxHp = stats?.MaxHealth ?? (isSoldier ? 80 : 50);
@@ -57,12 +60,39 @@ namespace ZeroAD.Sim
 
             if (isSoldier || (stats != null && stats.AttackDamage > 0))
             {
+                // Build the multi-type damage block from template stats.
+                var dmg = new Components.DamageBlock();
+                if (stats != null)
+                {
+                    if (stats.AttackHack > 0) dmg.Amounts[Components.DamageType.Hack] = stats.AttackHack;
+                    if (stats.AttackPierce > 0) dmg.Amounts[Components.DamageType.Pierce] = stats.AttackPierce;
+                    if (stats.AttackCrush > 0) dmg.Amounts[Components.DamageType.Crush] = stats.AttackCrush;
+                    dmg.Capture = stats.AttackCapture;
+                }
+                else
+                {
+                    dmg.Amounts[Components.DamageType.Hack] = 20; // default melee damage
+                }
                 cm.AddComponent(entity, new AttackComponent
                 {
-                    Damage = stats?.AttackDamage ?? 20,
+                    Damage = dmg,
                     Range = stats?.AttackRange ?? 3.0f,
                     Rate = stats?.AttackRate ?? 1.0f
                 });
+            }
+
+            // Resistance: anything with Health can resist damage. Attached unconditionally for
+            // units so the DamageBlock→Resistance→Health pipeline has a component to consult.
+            if (stats != null &&
+                (stats.ResistanceHack != 0 || stats.ResistancePierce != 0 ||
+                 stats.ResistanceCrush != 0 || stats.ResistanceCapture != 0))
+            {
+                var res = new ResistanceComponent();
+                if (stats.ResistanceHack != 0) res.Resistances[Components.DamageType.Hack] = stats.ResistanceHack;
+                if (stats.ResistancePierce != 0) res.Resistances[Components.DamageType.Pierce] = stats.ResistancePierce;
+                if (stats.ResistanceCrush != 0) res.Resistances[Components.DamageType.Crush] = stats.ResistanceCrush;
+                res.CaptureResistance = stats.ResistanceCapture;
+                cm.AddComponent(entity, res);
             }
 
             // Cost: real template cost (consumed by training refund / entity-limits accounting).

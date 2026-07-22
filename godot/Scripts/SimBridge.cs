@@ -47,6 +47,10 @@ public sealed partial class SimBridge : Node
     public TemplateLoader? Templates { get; private set; }
 
     public ComponentManager Sim => _sim;
+
+    /// <summary>Read-only query facade for HUD/Minimap/AI. Consolidates the scattered
+    /// QueryInterface + entity-list iteration that previously lived inline in the GUI.</summary>
+    public GuiInterface Gui { get; private set; } = null!;
     public TurnManager Turns => _turnManager;
     public ObstructionManager Obstructions => _obstructions;
     public TerrainComponent Terrain => _terrain;
@@ -101,6 +105,8 @@ public sealed partial class SimBridge : Node
         _range = new RangeManager(_sim, Fixed.FromFloat(worldSize), Fixed.FromFloat(worldSize));
         SimSystem.SetRangeManager(_range);
         SimSystem.SetPathfinder(_pathfinder);
+        SimSystem.SetWaterManager(_sim.Water);
+        Gui = new GuiInterface(_sim);
 
         // A system entity to host the TerrainComponent so components can QueryInterface it.
         _terrainEntity = _sim.CreateEntity();
@@ -407,12 +413,16 @@ public sealed partial class SimBridge : Node
     {
         RemoveDeadEntities();
         TickUnitMotions(dt);
+        TickUnitAI(dt);
         TickGatherers(dt);
         TickAttackers(dt);
         TickBuilders(dt);
         TickProductionQueues(dt);
         TickFoundations(dt);
         TickResearch(dt);
+        // Settle any damage whose delay elapsed this turn, then advance the delay clock.
+        _sim.DelayedDamage.TickPending(_sim);
+        _sim.DelayedDamage.AdvanceTurn();
     }
 
     private void RemoveDeadEntities()
@@ -454,6 +464,15 @@ public sealed partial class SimBridge : Node
         {
             var motion = _sim.QueryInterface<UnitMotion>(entity);
             motion?.Tick(dt);
+        }
+    }
+
+    private void TickUnitAI(float dt)
+    {
+        foreach (var entity in GetAllEntitiesSnapshot())
+        {
+            var ai = _sim.QueryInterface<UnitAIComponent>(entity);
+            ai?.Tick(dt, _sim);
         }
     }
 
@@ -759,6 +778,7 @@ public sealed partial class SimBridge : Node
         var entity = _sim.CreateEntity();
         _sim.AddComponent(entity, new PositionComponent());
         _sim.AddComponent(entity, new UnitMotion());
+        _sim.AddComponent(entity, new UnitAIComponent());
 
         string name = stats?.Name ?? (isSoldier ? "Soldier" : isVillager ? "Villager" : "Unit");
         int maxHp = stats?.MaxHealth ?? (isSoldier ? 80 : 50);
@@ -786,13 +806,38 @@ public sealed partial class SimBridge : Node
 
         if (isSoldier || (stats != null && stats.AttackDamage > 0))
         {
+            var dmg = new DamageBlock();
+            if (stats != null)
+            {
+                if (stats.AttackHack > 0) dmg.Amounts[DamageType.Hack] = stats.AttackHack;
+                if (stats.AttackPierce > 0) dmg.Amounts[DamageType.Pierce] = stats.AttackPierce;
+                if (stats.AttackCrush > 0) dmg.Amounts[DamageType.Crush] = stats.AttackCrush;
+                dmg.Capture = stats.AttackCapture;
+            }
+            else
+            {
+                dmg.Amounts[DamageType.Hack] = 20;
+            }
             var atk = new AttackComponent
             {
-                Damage = stats?.AttackDamage ?? 20,
+                Damage = dmg,
                 Range = stats?.AttackRange ?? 3.0f,
                 Rate = stats?.AttackRate ?? 1.0f
             };
             _sim.AddComponent(entity, atk);
+
+            // Resistance (mirror EntityAssembler so sim-trained units also resist damage).
+            if (stats != null &&
+                (stats.ResistanceHack != 0 || stats.ResistancePierce != 0 ||
+                 stats.ResistanceCrush != 0 || stats.ResistanceCapture != 0))
+            {
+                var res = new ResistanceComponent();
+                if (stats.ResistanceHack != 0) res.Resistances[DamageType.Hack] = stats.ResistanceHack;
+                if (stats.ResistancePierce != 0) res.Resistances[DamageType.Pierce] = stats.ResistancePierce;
+                if (stats.ResistanceCrush != 0) res.Resistances[DamageType.Crush] = stats.ResistanceCrush;
+                res.CaptureResistance = stats.ResistanceCapture;
+                _sim.AddComponent(entity, res);
+            }
         }
 
         var pos = _sim.QueryInterface<PositionComponent>(entity);
@@ -875,28 +920,45 @@ public sealed partial class SimBridge : Node
 
     public void MoveEntity(EntityId entity, float x, float z)
     {
-        var motion = _sim.QueryInterface<UnitMotion>(entity);
-        motion?.MoveToPoint(new FixedVector2D(Fixed.FromFloat(x), Fixed.FromFloat(z)));
+        // Route through UnitAI when present (the canonical command sink); otherwise fall back
+        // to driving UnitMotion directly for legacy entities without a UnitAI component.
+        var ai = _sim.QueryInterface<UnitAIComponent>(entity);
+        if (ai != null)
+            ai.Walk(new FixedVector2D(Fixed.FromFloat(x), Fixed.FromFloat(z)));
+        else
+            _sim.QueryInterface<UnitMotion>(entity)?.MoveToPoint(new FixedVector2D(Fixed.FromFloat(x), Fixed.FromFloat(z)));
     }
 
     public void CommandGather(EntityId unit, EntityId target)
     {
-        var motion = _sim.QueryInterface<UnitMotion>(unit);
-        if (motion != null) GatherResource(unit, target, motion);
+        var ai = _sim.QueryInterface<UnitAIComponent>(unit);
+        if (ai != null)
+            ai.Gather(target);
+        else
+        {
+            var motion = _sim.QueryInterface<UnitMotion>(unit);
+            if (motion != null) GatherResource(unit, target, motion);
+        }
         Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "gather", Target = target });
     }
 
     public void CommandAttack(EntityId attacker, EntityId target)
     {
-        var attack = _sim.QueryInterface<AttackComponent>(attacker);
-        attack?.AttackTarget(target);
+        var ai = _sim.QueryInterface<UnitAIComponent>(attacker);
+        if (ai != null)
+            ai.Attack(target);
+        else
+            _sim.QueryInterface<AttackComponent>(attacker)?.AttackTarget(target);
         Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "attack", Target = target });
     }
 
     public void CommandBuild(EntityId builder, EntityId foundation)
     {
-        var b = _sim.QueryInterface<BuilderComponent>(builder);
-        b?.Build(foundation);
+        var ai = _sim.QueryInterface<UnitAIComponent>(builder);
+        if (ai != null)
+            ai.Repair(foundation);
+        else
+            _sim.QueryInterface<BuilderComponent>(builder)?.Build(foundation);
         Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "repair", Target = foundation });
     }
 

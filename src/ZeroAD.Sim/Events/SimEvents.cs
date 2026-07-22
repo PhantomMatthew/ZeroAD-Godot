@@ -69,6 +69,15 @@ namespace ZeroAD.Sim.Events
         public bool Leave;
     }
 
+    /// <summary>Raised by DelayedDamage when a hit settles on a target. Lets the presentation
+    /// layer play impact feedback (blood puffs, screen shake, hit sound).</summary>
+    public sealed class AttackLandedEvent
+    {
+        public EntityId Target;
+        public EntityId Attacker;
+        public int DamageDealt;
+    }
+
     public sealed class SimEventBus
     {
         public event Action<PlayerCommandEvent>? PlayerCommand;
@@ -80,6 +89,7 @@ namespace ZeroAD.Sim.Events
         public event Action<OwnershipChangedEvent>? OwnershipChanged;
         public event Action<TutorialNotification>? TutorialMessage;
         public event Action<EntityCreatedEvent>? EntityCreated;
+        public event Action<AttackLandedEvent>? AttackLanded;
 
         public void RaisePlayerCommand(PlayerCommandEvent e) => PlayerCommand?.Invoke(e);
         public void RaiseTrainingQueued(TrainingQueuedEvent e) => TrainingQueued?.Invoke(e);
@@ -90,5 +100,6 @@ namespace ZeroAD.Sim.Events
         public void RaiseOwnershipChanged(OwnershipChangedEvent e) => OwnershipChanged?.Invoke(e);
         public void RaiseTutorialMessage(TutorialNotification n) => TutorialMessage?.Invoke(n);
         public void RaiseEntityCreated(EntityCreatedEvent e) => EntityCreated?.Invoke(e);
+        public void RaiseAttackLanded(AttackLandedEvent e) => AttackLanded?.Invoke(e);
     }
 }

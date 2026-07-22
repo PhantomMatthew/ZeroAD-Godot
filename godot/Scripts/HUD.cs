@@ -400,16 +400,11 @@ public sealed partial class HUD : CanvasLayer
             _resourceCounters[4].Count.Text = $"{player.PopUsed}/{player.PopulationLimit}";
 
             int[] gatherers = { 0, 0, 0, 0 };
-            foreach (var eid in _sim.EntityNodes.Keys)
-            {
-                var gatherer = _sim.Sim.QueryInterface<ResourceGatherer>(eid);
-                var owner = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
-                if (gatherer == null || owner == null || owner.PlayerId != 1) continue;
-                if (gatherer.State == ResourceGatherer.GatherState.Gathering ||
-                    gatherer.State == ResourceGatherer.GatherState.MovingToResource ||
-                    gatherer.State == ResourceGatherer.GatherState.MovingToDropsite)
-                    gatherers[(int)gatherer.CarryType]++;
-            }
+            var counts = _sim.Gui.GetGathererCounts(playerId: 1);
+            gatherers[(int)ResourceType.Wood] = counts[ResourceType.Wood];
+            gatherers[(int)ResourceType.Food] = counts[ResourceType.Food];
+            gatherers[(int)ResourceType.Stone] = counts[ResourceType.Stone];
+            gatherers[(int)ResourceType.Metal] = counts[ResourceType.Metal];
             for (int i = 0; i < 4; i++)
             {
                 int g = gatherers[i];

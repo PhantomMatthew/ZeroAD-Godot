@@ -136,15 +136,38 @@ namespace ZeroAD.Sim.Content
                     var dmg = melee.GetChild("Damage");
                     if (dmg.IsOk)
                     {
-                        stats.AttackDamage = dmg.GetChild("Hack").IsOk
-                            ? dmg.GetChild("Hack").ToInt()
-                            : dmg.GetChild("Pierce").IsOk
-                                ? dmg.GetChild("Pierce").ToInt()
-                                : dmg.GetChild("Crush").ToInt();
+                        // Read all three physical damage types (any subset may be present).
+                        stats.AttackHack = dmg.GetChild("Hack").IsOk ? dmg.GetChild("Hack").ToInt() : 0;
+                        stats.AttackPierce = dmg.GetChild("Pierce").IsOk ? dmg.GetChild("Pierce").ToInt() : 0;
+                        stats.AttackCrush = dmg.GetChild("Crush").IsOk ? dmg.GetChild("Crush").ToInt() : 0;
                     }
+                    var capture = melee.GetChild("Capture");
+                    if (capture.IsOk)
+                        stats.AttackCapture = capture.GetChild("Value").IsOk ? capture.GetChild("Value").ToInt() : 0;
                     stats.AttackRange = 3.0f;
                     stats.AttackRate = melee.GetChild("RepeatTime").IsOk
                         ? 1000f / melee.GetChild("RepeatTime").ToInt() : 1.0f;
+                }
+            }
+
+            // Resistance: per-type damage reduction. Read from Resistance/Entity/Damage/{type}
+            // (the Foundation form is ignored in P0 — we collapse to the Entity form).
+            var resistance = node.GetChild("Resistance");
+            if (resistance.IsOk)
+            {
+                var entityForm = resistance.GetChild("Entity");
+                if (entityForm.IsOk)
+                {
+                    var rDmg = entityForm.GetChild("Damage");
+                    if (rDmg.IsOk)
+                    {
+                        stats.ResistanceHack = rDmg.GetChild("Hack").IsOk ? rDmg.GetChild("Hack").ToInt() : 0;
+                        stats.ResistancePierce = rDmg.GetChild("Pierce").IsOk ? rDmg.GetChild("Pierce").ToInt() : 0;
+                        stats.ResistanceCrush = rDmg.GetChild("Crush").IsOk ? rDmg.GetChild("Crush").ToInt() : 0;
+                    }
+                    var rCap = entityForm.GetChild("Capture");
+                    if (rCap.IsOk)
+                        stats.ResistanceCapture = rCap.ToInt();
                 }
             }
 
@@ -285,7 +308,19 @@ namespace ZeroAD.Sim.Content
         /// <summary>Pop capacity granted by buildings (House +10). Read from &lt;Cost&gt;&lt;PopulationBonus&gt;.</summary>
         public int PopulationBonus;
         public float BuildTime = 5f;
-        public int AttackDamage;
+
+        // Multi-type attack damage (Hack/Pierce/Crush). Read from Attack/Melee/Damage/{type}.
+        // AttackDamage (below) is derived as the total for back-compat with callers that just
+        // check "does this unit deal damage" (AttackDamage > 0).
+        public int AttackHack;
+        public int AttackPierce;
+        public int AttackCrush;
+        public int AttackCapture;
+
+        /// <summary>Total physical attack damage (Hack+Pierce+Crush). Derived; 0 means civilian.
+        /// Kept as a field so existing `stats.AttackDamage > 0` checks keep working.</summary>
+        public int AttackDamage => AttackHack + AttackPierce + AttackCrush;
+
         public float AttackRange = 3f;
         public float AttackRate = 1f;
         public int ResourceAmount;
@@ -315,6 +350,13 @@ namespace ZeroAD.Sim.Content
         public Maths.Fixed ObstructionSize0 = Maths.Fixed.Zero;
         public Maths.Fixed ObstructionSize1 = Maths.Fixed.Zero;
         public bool ObstructionActive = true;
+
+        // Resistance: per-type damage reduction (read from Resistance/Entity/Damage/{type}).
+        // The damage formula (0.9^resistance) lives in DamageBlock.WithResistanceApplied.
+        public int ResistanceHack;
+        public int ResistancePierce;
+        public int ResistanceCrush;
+        public int ResistanceCapture;
 
         public List<string> GetClassList() =>
             EntityClassHelper.BuildClassList(Classes, VisibleClasses,

@@ -139,14 +139,17 @@ public static class SimSystem
     private static ObstructionManager? _obstructions;
     private static RangeManager? _range;
     private static PathfinderComponent? _pathfinder;
+    private static WaterManager? _water;
     public static void Init(ComponentManager cm) => _cm = cm;
     public static ComponentManager? Sim => _cm;
     public static ObstructionManager? Obstructions => _obstructions;
     public static RangeManager? Range => _range;
     public static PathfinderComponent? Pathfinder => _pathfinder;
+    public static WaterManager? Water => _water;
     public static void SetObstructionManager(ObstructionManager mgr) => _obstructions = mgr;
     public static void SetRangeManager(RangeManager mgr) => _range = mgr;
     public static void SetPathfinder(PathfinderComponent mgr) => _pathfinder = mgr;
+    public static void SetWaterManager(WaterManager mgr) => _water = mgr;
     public static T? GetComponent<T>(EntityId entity) where T : class, IComponent =>
         _cm?.QueryInterface<T>(entity);
 

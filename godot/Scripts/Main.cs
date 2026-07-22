@@ -249,6 +249,12 @@ public sealed partial class Main : Node3D
 					GD.Print($"Water: height={water.Value.height:F1}m color={water.Value.color}");
 				}
 
+				// Record the authoritative sim-side water height (matches CCmpWaterManager).
+				// The passability grid below is still baked from it for now; a future pass will
+				// derive tiles dynamically from (terrainHeight, waterHeight).
+				if (water != null)
+					_sim.Sim.Water.SetWaterLevel(ZeroAD.Sim.Maths.Fixed.FromFloat(waterHeight));
+
 				// Fill the sim-side passability grid from the heightmap: any tile whose terrain
 				// height is at/below the water level is Water, everything else is Land. This drives
 				// BuildRestrictions (can't build on water) and Footprint spawn placement.

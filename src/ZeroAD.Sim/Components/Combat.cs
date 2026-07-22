@@ -17,6 +17,16 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
 
     public float HealthFraction => Max > 0 ? (float)Current / Max : 0f;
 
+    /// <summary>Apply a post-resistance damage block directly to health. This is the sink at the
+    /// end of the Attack → DelayedDamage → Resistance → Health pipeline. Capture is handled
+    /// separately (Capturable component) and ignored here.</summary>
+    public void TakeDamage(DamageBlock damage)
+    {
+        Current = Math.Max(0, Current - damage.TotalPhysical);
+    }
+
+    /// <summary>Apply a flat amount of physical damage (post-resistance). Kept for back-compat
+    /// with code paths that already computed the reduced value (e.g. tutorial scripting).</summary>
     public void TakeDamage(int amount)
     {
         Current = Math.Max(0, Current - amount);
@@ -47,7 +57,8 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
 [Component("Attack", "Attack")]
 public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
 {
-    public int Damage;
+    // Per-type raw damage (pre-resistance). Populated from the template's Attack/Melee/Damage node.
+    public DamageBlock Damage = new();
     public float Range;
     public float Rate;
     public float Cooldown;
@@ -58,7 +69,8 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
 
     protected override void OnInit()
     {
-        Damage = 20;
+        // Defaults live on the field initializer so callers using
+        // `new AttackComponent { Damage = ..., Range = ... }` keep their values.
         Range = 3.0f;
         Rate = 1.0f;
         Cooldown = 0;
@@ -71,6 +83,25 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         State = AttackState.Approaching;
     }
 
+    /// <summary>Stop attacking and clear the current target. Called by UnitAI when an order
+    /// finishes or the target is lost.</summary>
+    public void StopAttacking()
+    {
+        Target = null;
+        State = AttackState.Idle;
+        Cooldown = 0;
+    }
+
+    /// <summary>Perform one attack hit against the current target. Routes through DelayedDamage
+    /// so resistance is applied and (for ranged) travel latency is honoured. Called by UnitAI's
+    /// COMBAT.ATTACKING state on each attack cycle.</summary>
+    public void PerformAttack(ComponentManager cm)
+    {
+        if (Target == null) return;
+        DelayedDamage.ScheduleHit(cm, Entity, Target.Value, Damage, delayTurns: 0);
+        Cooldown = 1.0f / Rate;
+    }
+
     public void Tick(float dt, ComponentManager cm)
     {
         if (Target == null) return;
@@ -79,8 +110,7 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         var targetHealth = cm.QueryInterface<HealthComponent>(Target.Value);
         if (targetHealth == null || targetHealth.IsDead)
         {
-            Target = null;
-            State = AttackState.Idle;
+            StopAttacking();
             return;
         }
 
@@ -109,16 +139,13 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
             if (motion != null) motion.Stop();
 
             if (Cooldown <= 0)
-            {
-                targetHealth.TakeDamage(Damage);
-                Cooldown = 1.0f / Rate;
-            }
+                PerformAttack(cm);
         }
     }
 
     public override void Serialize(ISerializer s)
     {
-        s.NumberI32("dmg", Damage);
+        Damage.Serialize(s, "dmg");
         s.NumberFixed("range", Maths.Fixed.FromFloat(Range));
         s.NumberFixed("rate", Maths.Fixed.FromFloat(Rate));
         s.NumberI32("state", (int)State);
@@ -127,7 +154,7 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
 
     public override void Deserialize(IDeserializer d)
     {
-        Damage = d.NumberI32("dmg");
+        Damage = DamageBlock.Deserialize(d, "dmg");
         Range = d.NumberFixed("range").ToFloat();
         Rate = d.NumberFixed("rate").ToFloat();
         State = (AttackState)d.NumberI32("state");
