@@ -332,6 +332,16 @@ public sealed partial class Main : Node3D
 		var grid = new ZeroAD.Sim.Components.TerrainClass[n, n];
 		// Default Land (0) is already the zero value, so no need to fill explicitly.
 		terrain.SetPassabilityGrid(grid);
+
+		// Match the obstruction bounds to the generated map, then build the pathfinding grid
+		// (the PMP path does the same in FillPassabilityFromPmp). Without this, the pathfinder's
+		// grid stays null and ComputePath returns empty paths — units would only ever move in
+		// straight lines, ignoring terrain and obstructions.
+		float worldM = n * terrain.TileSize;
+		var f0 = ZeroAD.Sim.Maths.Fixed.Zero;
+		var f1 = ZeroAD.Sim.Maths.Fixed.FromFloat(worldM);
+		_sim.Obstructions.SetBounds(f0, f0, f1, f1);
+		_sim.Pathfinder.RebuildGrid();
 	}
 
 	private string? FindDataPath(string relPath)
@@ -469,6 +479,11 @@ public sealed partial class Main : Node3D
 
 		_sim.SpawnUnit(80, 80, isSoldier: true);
 		_sim.SpawnUnit(85, 85, isSoldier: true);
+
+		// Initial buildings/units were spawned AFTER the map-load RebuildGrid, so their static
+		// obstructions aren't in the navcell grid yet. Rebuild once more so pathing accounts for
+		// the town centres and any scenario buildings.
+		_sim.Pathfinder.RebuildGrid();
 
 		// Frame the player's starting town centre so the game opens on the player's base, not on
 		// the camera's stale default focus. Matches what SetupTutorialWorld does after scenario
