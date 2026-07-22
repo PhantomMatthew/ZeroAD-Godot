@@ -139,8 +139,17 @@ namespace ZeroAD.Sim.Components
             _gridBuilder.Build(terrain, tiles, Obstructions.GetAllStaticObstructions());
             if (_gridBuilder.Grid != null)
             {
-                _hier.Recompute(_gridBuilder.Grid, _gridBuilder.AllClasses);
-                _long.Reload(_gridBuilder.Grid);
+                try
+                {
+                    _hier.Recompute(_gridBuilder.Grid, _gridBuilder.AllClasses);
+                    _long.Reload(_gridBuilder.Grid);
+                }
+                catch (System.Exception ex)
+                {
+                    System.Console.WriteLine($"[Pathfinder] hierarchical/long rebuild failed: {ex.Message}");
+                    // Grid is still usable for direct A* even without hierarchical connectivity;
+                    // leave Grid set so ComputePath can at least attempt a search.
+                }
             }
         }
 
