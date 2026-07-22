@@ -25,3 +25,6 @@ source/
 *.suo
 .vs/
 .idea/
+
+# Local diagnostic output (asset-parsing reports, regenerated on demand).
+godot/actor_diag.txt
