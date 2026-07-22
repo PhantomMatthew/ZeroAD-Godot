@@ -6,6 +6,16 @@
 # Godot C# (.NET) build output — the equivalent of bin/obj for the Godot project.
 godot/.godot/mono/
 
+# Godot editor/import/shader caches — regenerated when the project is opened.
+# ~22000 tracked files before this; they bloat the repo and differ per machine.
+# .gdignore is kept (it's the intentional project marker, not a cache).
+godot/.godot/editor/
+godot/.godot/imported/
+godot/.godot/shader_cache/
+godot/.godot/global_script_class_cache.cfg
+godot/.godot/scene_groups_cache.cfg
+godot/.godot/uid_cache.bin
+
 # IDE / editor-local state.
 *.user
 *.suo
