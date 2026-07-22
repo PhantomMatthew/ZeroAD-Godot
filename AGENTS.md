@@ -9,9 +9,12 @@ A **Godot 4.7 (.NET) + C# rewrite of 0 A.D.** (the open-source RTS). It is a hyb
 | Tree | Status | Purpose |
 |---|---|---|
 | `src/ZeroAD.Sim/` + `godot/` | **Active rewrite (C#)** | The new Godot game. Edit here. |
-| `source/`, `binaries/`, `build/`, `libraries/` | **Original 0 A.D. (C++20/JS), read-only reference** | Source of truth for behavior, data, and assets. Do NOT modify unless working on the original engine itself. |
+| `binaries/` | **Original 0 A.D. data assets, tracked** | Entity templates XML, art assets, maps, audio — read verbatim by the rewrite. Do NOT modify. |
+| `/Users/matthew/SourceCode/gitea/0ad` | **Original 0 A.D. full source (C++20/JS), external reference** | The complete original engine source tree (`source/`, `binaries/`, `build/`, `libraries/`, etc.). This is the **authoritative reference** for porting behavior. The `source/` directory is **no longer tracked in this repo** (moved to .gitignore to reduce repo size); always look up C++/JS reference code at the external path instead. |
 
 The rewrite reads the original's data verbatim (entity templates XML, art assets) and ports its behavior to C#. Treat the original tree as a reference corpus, not a build target — unless explicitly asked to work on the C++ engine.
+
+> **Where to find the original C++/JS source**: `/Users/matthew/SourceCode/gitea/0ad/`. This path holds the complete 0 A.D. codebase. When porting a subsystem, read the reference implementation there (e.g. `/Users/matthew/SourceCode/gitea/0ad/source/simulation2/...`). The `source/` directory previously in this repo has been gitignored and may not exist on disk — use the external path.
 
 **Master plan**: `godot-rewrite-plan.md` (modules M0–M10, milestones MS1–MS7, risk matrix). Read it before any non-trivial rewrite work.
 **System deep-dive notes**: `claude-analyze/*.md` (15 docs analyzing the original engine: ECS, network lockstep, pathfinding, rendering, audio, UnitAI, etc.). The fastest way to understand a subsystem you're porting.
@@ -77,7 +80,7 @@ Requires **Blender 4.2 LTS** at `/Applications/Blender 4.2 LTS.app` (hardcoded p
 
 ## Where to find reference implementations
 
-When porting a subsystem, start from the original code:
+When porting a subsystem, start from the original code. **The original C++/JS source lives at `/Users/matthew/SourceCode/gitea/0ad/`** (external to this repo; `source/` in-repo is gitignored). Paths below are relative to that root:
 
 | You're working on | Look at |
 |---|---|
@@ -88,9 +91,12 @@ When porting a subsystem, start from the original code:
 | Entity template loading (XML inheritance/merge) | `source/simulation2/system/ParamNode` |
 | Serialization + state hashing (OOS detection) | `source/simulation2/serialization/` |
 | Rendering / map loading / actors | `source/renderer/`, `source/graphics/` |
+| PMP map file format | `source/graphics/MapIO.h` (`FILE_VERSION`), `source/graphics/MapWriter.cpp` (header layout), `source/graphics/MapReader.cpp` |
 | Reference integrity checker | `source/tools/entity/checkrefs.py` |
 
-Entity templates (data, consumed as-is by the rewrite): `binaries/data/mods/public/simulation/templates/*.xml`.
+**Example**: to look up the PMP header format, read `/Users/matthew/SourceCode/gitea/0ad/source/graphics/MapIO.h` and `MapWriter.cpp`.
+
+Entity templates (data, consumed as-is by the rewrite): `binaries/data/mods/public/simulation/templates/*.xml` (this path is tracked in-repo).
 
 ## Conventions that differ from defaults
 
