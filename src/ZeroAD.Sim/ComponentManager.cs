@@ -139,6 +139,84 @@ namespace ZeroAD.Sim
             ((IComponent)component).Init();
         }
 
+        /// <summary>True once any player has won (the match is over). TickVictory short-circuits
+        /// on this so it doesn't re-fire GameEnded every turn.</summary>
+        public bool IsGameOver { get; private set; }
+
+        /// <summary>
+        /// Per-turn conquest victory check. Called by the presentation layer once per sim tick
+        /// (after RemoveDeadEntities, so the dead are gone from the RangeManager index). A player
+        /// is defeated when they own zero units or buildings (resources/animals don't count);
+        /// when only one active player remains, that player wins and the match ends.
+        ///
+        /// Deterministic: uses the RangeManager's sorted entity index (no RNG, no float). Idempotent
+        /// via PlayerComponent's Active-only transition guard. Ported from ConquestCommon.js +
+        /// EndGameManager.AlliedVictoryCheck.
+        /// </summary>
+        public void TickVictory()
+        {
+            if (IsGameOver) return;
+
+            var range = Components.SimSystem.Range;
+            // Without a RangeManager (pure determinism tests), victory detection can't run — skip.
+            if (range == null) return;
+
+            // 1. Mark any active player with zero units/buildings as defeated.
+            foreach (int pid in Players.GetNonGaiaPlayerIds())
+            {
+                var player = Players.GetPlayerEntity(pid);
+                if (player == null || !player.IsActive()) continue;
+
+                if (CountConquestEntities(pid, range) == 0)
+                {
+                    if (player.SetDefeated())
+                        Events.RaisePlayerDefeated(new PlayerDefeatedEvent
+                        {
+                            PlayerId = pid,
+                            Reason = "Lost all units and structures."
+                        });
+                }
+            }
+
+            // 2. If only one active player remains, they win and the match ends.
+            int winnerId = -1;
+            int activeCount = 0;
+            foreach (int pid in Players.GetNonGaiaPlayerIds())
+            {
+                var player = Players.GetPlayerEntity(pid);
+                if (player != null && player.IsActive())
+                {
+                    activeCount++;
+                    if (activeCount == 1) winnerId = pid;
+                    else { winnerId = -1; break; }  // more than one active → no winner yet
+                }
+            }
+
+            if (activeCount <= 1 && winnerId > 0)
+            {
+                var winner = Players.GetPlayerEntity(winnerId);
+                if (winner != null && winner.SetWon())
+                {
+                    IsGameOver = true;
+                    Events.RaisePlayerWon(new PlayerWonEvent { PlayerId = winnerId });
+                    Events.RaiseGameEnded(new GameEndedEvent { WinnerPlayerId = winnerId });
+                }
+            }
+        }
+
+        /// <summary>Count a player's entities that count for survival: units + buildings only
+        /// (not resources/animals/decals). Mirrors the conquest "ConquestCritical" filter.</summary>
+        private int CountConquestEntities(int playerId, Components.RangeManager range)
+        {
+            int count = 0;
+            foreach (var entity in range.GetEntitiesByPlayer(playerId))
+            {
+                var id = QueryInterface<IdentityComponent>(entity);
+                if (id != null && (id.IsUnit || id.IsBuilding)) count++;
+            }
+            return count;
+        }
+
         public void AddComponent<T>(EntityId entity, T component) where T : ComponentBase
         {
             component.SetEntity(entity);

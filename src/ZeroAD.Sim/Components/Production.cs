@@ -62,6 +62,8 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         // player map (set up by the presentation layer at world init); resolve through it.
         var player = cm.GetPlayerEntity(owner.PlayerId);
         if (player == null) return false;
+        // A defeated player can't train units.
+        if (player.IsDefeated()) return false;
 
         if (!player.CanAfford(totalWood, totalFood, totalStone, totalMetal)) return false;
 
@@ -256,6 +258,32 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
     /// <summary>Hard global cap (0 A.D. default 300).</summary>
     public int MaxPopCap = 300;
 
+    /// <summary>Win/loss state. Mono-directional from Active (only Active can transition).
+    /// Ported from Player.js STATE_ACTIVE/DEFEATED/WON. Defaults live on the field initializer
+    /// (not OnInit) so callers using `new PlayerComponent { ... }` keep their values.</summary>
+    public PlayerState State = PlayerState.Active;
+
+    public bool IsActive() => State == PlayerState.Active;
+    public bool IsDefeated() => State == PlayerState.Defeated;
+    public bool HasWon() => State == PlayerState.Won;
+
+    /// <summary>Mark this player defeated. Idempotent: only transitions from Active (mirrors
+    /// Player.js SetState's `!IsActive() return` guard). Returns true if the state changed.</summary>
+    public bool SetDefeated()
+    {
+        if (!IsActive()) return false;
+        State = PlayerState.Defeated;
+        return true;
+    }
+
+    /// <summary>Mark this player victorious. Idempotent: only transitions from Active.</summary>
+    public bool SetWon()
+    {
+        if (!IsActive()) return false;
+        State = PlayerState.Won;
+        return true;
+    }
+
     protected override void OnInit()
     {
         Wood = 300;
@@ -330,6 +358,7 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         s.NumberI32("popUsed", PopUsed);
         s.NumberI32("popBonus", PopBonuses);
         s.NumberI32("popCap", MaxPopCap);
+        s.NumberI32("state", (int)State);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -341,9 +370,19 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         PopUsed = d.NumberI32("popUsed");
         PopBonuses = d.NumberI32("popBonus");
         MaxPopCap = d.NumberI32("popCap");
+        State = (PlayerState)d.NumberI32("state");
     }
 
     public void HandleMessage(IMessage message) { }
+}
+
+/// <summary>Player win/loss state. Ported from Player.js STATE_* constants.
+/// Mono-directional: only Active can transition to Defeated or Won.</summary>
+public enum PlayerState
+{
+    Active = 0,
+    Defeated = 1,
+    Won = 2,
 }
 
 [Component("Identity", "Identity")]

@@ -423,6 +423,9 @@ public sealed partial class SimBridge : Node
         // Settle any damage whose delay elapsed this turn, then advance the delay clock.
         _sim.DelayedDamage.TickPending(_sim);
         _sim.DelayedDamage.AdvanceTurn();
+        // Conquest victory check — runs after dead entities are removed so the RangeManager
+        // index reflects the current survivors.
+        _sim.TickVictory();
     }
 
     private void RemoveDeadEntities()

@@ -150,6 +150,10 @@ public sealed partial class Main : Node3D
 			{
 				_hud = new HUD(_sim, this);
 				AddChild(_hud);
+				// Game-over overlay: subscribes to the sim's win/loss events and shows the
+				// Victory/Defeat panel when the match ends.
+				var gameOver = new GameOverOverlay(_sim, localPlayerId: 1);
+				AddChild(gameOver);
 			}
 
 			if (_isTutorial)

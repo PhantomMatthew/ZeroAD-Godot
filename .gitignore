@@ -24,7 +24,9 @@ source/
 *.user
 *.suo
 .vs/
+.vscode/
 .idea/
+.zcode/
 
 # Local diagnostic output (asset-parsing reports, regenerated on demand).
 godot/actor_diag.txt

@@ -76,6 +76,14 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
     {
         if (Target == null) return;
 
+        // A defeated player's builders stop working.
+        var owner = cm.QueryInterface<OwnershipComponent>(Entity);
+        if (owner != null)
+        {
+            var player = cm.GetPlayerEntity(owner.PlayerId);
+            if (player != null && player.IsDefeated()) { Target = null; return; }
+        }
+
         var foundation = cm.QueryInterface<FoundationComponent>(Target.Value);
         if (foundation == null || foundation.IsBuilt)
         {

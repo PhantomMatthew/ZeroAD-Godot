@@ -78,6 +78,27 @@ namespace ZeroAD.Sim.Events
         public int DamageDealt;
     }
 
+    /// <summary>Raised when a player is eliminated (lost all units + buildings in conquest).
+    /// Ported from the MT_PlayerDefeated message. Drives the game-over UI.</summary>
+    public sealed class PlayerDefeatedEvent
+    {
+        public int PlayerId;
+        public string Reason = "";
+    }
+
+    /// <summary>Raised when a player wins (last one standing). Ported from MT_PlayerWon.</summary>
+    public sealed class PlayerWonEvent
+    {
+        public int PlayerId;
+    }
+
+    /// <summary>Raised once when the match ends — the sole surviving player has won.
+    /// The presentation layer shows the victory/defeat overlay on this.</summary>
+    public sealed class GameEndedEvent
+    {
+        public int WinnerPlayerId;
+    }
+
     public sealed class SimEventBus
     {
         public event Action<PlayerCommandEvent>? PlayerCommand;
@@ -90,6 +111,9 @@ namespace ZeroAD.Sim.Events
         public event Action<TutorialNotification>? TutorialMessage;
         public event Action<EntityCreatedEvent>? EntityCreated;
         public event Action<AttackLandedEvent>? AttackLanded;
+        public event Action<PlayerDefeatedEvent>? PlayerDefeated;
+        public event Action<PlayerWonEvent>? PlayerWon;
+        public event Action<GameEndedEvent>? GameEnded;
 
         public void RaisePlayerCommand(PlayerCommandEvent e) => PlayerCommand?.Invoke(e);
         public void RaiseTrainingQueued(TrainingQueuedEvent e) => TrainingQueued?.Invoke(e);
@@ -101,5 +125,8 @@ namespace ZeroAD.Sim.Events
         public void RaiseTutorialMessage(TutorialNotification n) => TutorialMessage?.Invoke(n);
         public void RaiseEntityCreated(EntityCreatedEvent e) => EntityCreated?.Invoke(e);
         public void RaiseAttackLanded(AttackLandedEvent e) => AttackLanded?.Invoke(e);
+        public void RaisePlayerDefeated(PlayerDefeatedEvent e) => PlayerDefeated?.Invoke(e);
+        public void RaisePlayerWon(PlayerWonEvent e) => PlayerWon?.Invoke(e);
+        public void RaiseGameEnded(GameEndedEvent e) => GameEnded?.Invoke(e);
     }
 }
