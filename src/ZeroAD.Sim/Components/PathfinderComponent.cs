@@ -105,6 +105,17 @@ namespace ZeroAD.Sim.Components
             if (Terrain == null || Obstructions == null) return;
 
             int tiles = Terrain.MapSize;
+            // Guard against pathological map sizes that would explode the navcell grid. The
+            // original caps at 256 tiles/side; if MapSize is unreasonable (e.g. terrain wasn't
+            // Configure'd before RebuildGrid, or a PMP parse returned garbage), skip the build
+            // rather than allocate gigabytes.
+            int navcellsPerSide = tiles * PathfindingCore.NavcellsPerTerrainTile;
+            if (tiles <= 0 || tiles > 512 || navcellsPerSide > 2048)
+            {
+                System.Console.WriteLine($"[Pathfinder] RebuildGrid skipped: tiles={tiles} (navcells/side={navcellsPerSide}, limit 2048)");
+                return;
+            }
+
             float ts = Terrain.TileSize;
             // Derive per-tile terrain info from TerrainComponent's land/water grid. Slope/depth
             // detail isn't available yet (the PMP passability is baked into TerrainClass), so we

@@ -168,7 +168,17 @@ public sealed partial class Main : Node3D
 			if (_isTutorial)
 			{
 				GD.Print("[Tutorial] calling SetupTutorialWorld...");
-				SetupTutorialWorld();
+				try
+				{
+					SetupTutorialWorld();
+				}
+				catch (System.Exception ex)
+				{
+					GD.PrintErr($"[Tutorial] SetupTutorialWorld FAILED: {ex}");
+					GD.PrintErr($"[Tutorial] Stack: {ex.StackTrace}");
+					// Don't rethrow — let the game continue without the tutorial scenario rather
+					// than crash. The player can still see terrain and the panel.
+				}
 				GD.Print("[Tutorial] SetupTutorialWorld done");
 			}
 			else
