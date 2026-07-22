@@ -77,6 +77,15 @@ public sealed class ActorComposer
         var attachNode = AttachpointResolver.FindNode(instance, attachpoint);
         if (attachNode != null)
         {
+            // Match the C++ engine: PMDConvert::AddStaticPropPoints decomposes each
+            // prop-point's world transform into translation + rotation and DISCARDS the
+            // scale (PropPoint stores only t and q, never scale). So a prop_* node that
+            // carries a non-unity scale (e.g. sparta_civic_center's prop_bush at 2.41x)
+            // must NOT pass that scale on to the attached prop, or trees/shields/flags get
+            // inflated. Force the attachpoint's own scale to 1 (keeps position+rotation)
+            // via the Scale property so it applies regardless of how the transform was
+            // authored, then attach the child at 1:1.
+            attachNode.Scale = Vector3.One;
             attachNode.AddChild(childNode);
         }
         else
