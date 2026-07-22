@@ -491,11 +491,15 @@ public sealed partial class Main : Node3D
 		{
 			var node = _sim.EntityNodes.GetValueOrDefault(eid);
 			if (node == null) continue;
-			var identity = _sim.Sim.QueryInterface<IdentityComponent>(eid);
-			var owner = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
-			float ringRadius = identity != null && identity.IsBuilding ? 10f : 2f;
+			// Read identity/owner/health through the GuiInterface facade.
+			var st = _sim.Gui.GetEntityState(eid);
+			bool isBuilding = st?.IsBuilding ?? false;
+			int ownerPlayerId = st?.OwnerPlayerId ?? -1;
+			int healthMax = st?.HealthMax ?? 0;
+			float healthFraction = st?.HealthFraction ?? 0f;
+			float ringRadius = isBuilding ? 10f : 2f;
 
-			Color friendlyColor = owner != null && owner.PlayerId == 1
+			Color friendlyColor = ownerPlayerId == 1
 				? new Color(0.08f, 0.22f, 0.58f)
 				: new Color(0.72f, 0.06f, 0.06f);
 			Color enemyColor = new Color(0.72f, 0.06f, 0.06f);
@@ -505,11 +509,10 @@ public sealed partial class Main : Node3D
 			node.AddChild(ring);
 			_selectionMarkers.Add(ring);
 
-			var health = _sim.Sim.QueryInterface<HealthComponent>(eid);
-			if (health != null && health.Max > 0)
+			if (healthMax > 0)
 			{
-				var bar = SelectionRing.CreateHealthBar(health.HealthFraction);
-				bar.Position = new Vector3(0, identity?.IsBuilding == true ? 6f : 2.5f, 0);
+				var bar = SelectionRing.CreateHealthBar(healthFraction);
+				bar.Position = new Vector3(0, isBuilding ? 6f : 2.5f, 0);
 				node.AddChild(bar);
 				_selectionMarkers.Add(bar);
 			}

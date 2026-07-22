@@ -59,32 +59,31 @@ public sealed partial class Minimap : Control
 
             if (px < 0 || px >= MapSize || pz < 0 || pz >= MapSize) continue;
 
-            var identity = _sim.Sim.QueryInterface<IdentityComponent>(kvp.Key);
-            var health = _sim.Sim.QueryInterface<HealthComponent>(kvp.Key);
-            var owner = _sim.Sim.QueryInterface<OwnershipComponent>(kvp.Key);
+            // Read identity/health/owner via the GuiInterface facade instead of inline
+            // QueryInterface calls, so the query surface stays consolidated.
+            var st = _sim.Gui.GetEntityState(kvp.Key);
+            bool isBuilding = st?.IsBuilding ?? false;
+            bool isUnit = st?.IsUnit ?? false;
+            int ownerPlayerId = st?.OwnerPlayerId ?? -1;
+            float healthFraction = st?.HealthFraction ?? 1f;
+            string name = st?.Name ?? "";
 
             Color color;
-            if (identity != null && identity.IsBuilding)
+            if (isBuilding || isUnit)
             {
-                color = owner != null && owner.PlayerId == 1
+                color = ownerPlayerId == 1
                     ? new Color(0.08f, 0.22f, 0.58f)
                     : new Color(0.72f, 0.06f, 0.06f);
             }
-            else if (identity != null && identity.IsUnit)
-            {
-                color = owner != null && owner.PlayerId == 1
-                    ? new Color(0.08f, 0.22f, 0.58f)
-                    : new Color(0.72f, 0.06f, 0.06f);
-            }
-            else if (identity != null && identity.Name.Contains("Tree"))
+            else if (name.Contains("Tree"))
                 color = new Color(0.1f, 0.45f, 0.1f);
             else
                 color = new Color(0.6f, 0.6f, 0.4f);
 
-            if (health != null && health.HealthFraction < 0.5f)
+            if (healthFraction < 0.5f)
                 color = new Color(0.9f, 0.3f, 0.1f);
 
-            DrawDot(px, pz, color, identity?.IsBuilding == true ? 3 : 2);
+            DrawDot(px, pz, color, isBuilding ? 3 : 2);
         }
 
         _texture.Update(_image);

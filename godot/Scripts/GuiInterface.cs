@@ -31,8 +31,11 @@ public sealed class GuiInterface
         int OwnerPlayerId,
         int HealthCurrent,
         int HealthMax,
+        float HealthFraction,
         float PosX,
         float PosZ,
+        bool IsUnit,
+        bool IsBuilding,
         bool CanGather,
         bool CanAttack,
         bool IsDropsite,
@@ -55,14 +58,18 @@ public sealed class GuiInterface
         // An entity with no identity/position is not a meaningful selectable — skip.
         if (id == null && pos == null) return null;
 
+        int hpMax = hp?.Max ?? 0;
         return new EntityState(
             Id: entity.Value,
             Name: id?.Name ?? "Entity",
             OwnerPlayerId: own?.PlayerId ?? -1,
             HealthCurrent: hp?.Current ?? 0,
-            HealthMax: hp?.Max ?? 0,
+            HealthMax: hpMax,
+            HealthFraction: hpMax > 0 ? (float)(hp?.Current ?? 0) / hpMax : 0f,
             PosX: pos?.Position.X.ToFloat() ?? 0f,
             PosZ: pos?.Position.Z.ToFloat() ?? 0f,
+            IsUnit: id?.IsUnit ?? false,
+            IsBuilding: id?.IsBuilding ?? false,
             CanGather: gatherer != null,
             CanAttack: attack != null,
             IsDropsite: dropsite != null,
