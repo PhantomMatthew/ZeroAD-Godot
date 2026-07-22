@@ -1,0 +1,11 @@
+res://Scripts/AIController.cs
+res://Scripts/Main.cs
+res://Scripts/AIDirector.cs
+res://Scripts/MultiplayerController.cs
+res://Scripts/RTSCamera.cs
+res://Scripts/HUD.cs
+res://Scripts/TutorialPanel.cs
+res://Scripts/LobbyUI.cs
+res://Scripts/PetraAI.cs
+res://Scripts/SimBridge.cs
+res://Scripts/Minimap.cs
