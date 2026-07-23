@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
-using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.Net
 {
     public sealed class NetTurnManager
     {
         private readonly ComponentManager _cm;
+        private readonly SimCommandExecutor _executor;
         private readonly int _commandDelay;
 
         private readonly List<Dictionary<uint, List<NetCommand>>> _turnSlots = new();
@@ -30,6 +30,7 @@ namespace ZeroAD.Sim.Net
         public NetTurnManager(ComponentManager cm, int commandDelay, uint localPlayerId)
         {
             _cm = cm;
+            _executor = new SimCommandExecutor(cm);
             _commandDelay = Math.Max(1, commandDelay);
             _localPlayerId = localPlayerId;
             for (int i = 0; i <= _commandDelay; i++)
@@ -97,70 +98,9 @@ namespace ZeroAD.Sim.Net
 
         private void ExecuteCommand(NetCommand cmd)
         {
-            var entity = new EntityId(cmd.EntityId);
-            switch (cmd.Type)
-            {
-                case NetCommandType.Move:
-                    {
-                        var x = Fixed.Zero.WithInternalValue(cmd.FixedParam1);
-                        var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
-                        // Route through UnitAI when present so lockstep agrees with single-player;
-                        // fall back to direct UnitMotion for legacy entities.
-                        var ai = _cm.QueryInterface<Components.UnitAIComponent>(entity);
-                        if (ai != null)
-                            ai.Walk(new FixedVector2D(x, z));
-                        else
-                            _cm.QueryInterface<Components.UnitMotion>(entity)?.MoveToPoint(new FixedVector2D(x, z));
-                        break;
-                    }
-                case NetCommandType.Gather:
-                    {
-                        var target = new EntityId((uint)cmd.IntParam1);
-                        var ai = _cm.QueryInterface<Components.UnitAIComponent>(entity);
-                        if (ai != null)
-                        {
-                            ai.Gather(target);
-                        }
-                        else
-                        {
-                            var motion = _cm.QueryInterface<Components.UnitMotion>(entity);
-                            var gatherer = _cm.QueryInterface<Components.ResourceGatherer>(entity);
-                            var supply = _cm.QueryInterface<Components.ResourceSupply>(target);
-                            var supplyPos = _cm.QueryInterface<Components.PositionComponent>(target);
-                            if (gatherer != null && supply != null && supplyPos != null && motion != null)
-                            {
-                                gatherer.TargetSupply = target;
-                                gatherer.CarryType = supply.Type;
-                                gatherer.State = Components.ResourceGatherer.GatherState.MovingToResource;
-                                motion.MoveToPoint(new FixedVector2D(supplyPos.Position.X, supplyPos.Position.Z));
-                            }
-                        }
-                        break;
-                    }
-                case NetCommandType.Attack:
-                    {
-                        var target = new EntityId((uint)cmd.IntParam1);
-                        var ai = _cm.QueryInterface<Components.UnitAIComponent>(entity);
-                        if (ai != null)
-                            ai.Attack(target);
-                        else
-                            _cm.QueryInterface<Components.AttackComponent>(entity)?.AttackTarget(target);
-                        break;
-                    }
-                case NetCommandType.Train:
-                    {
-                        // Route through the same sim entry point as SimBridge.CommandTrain so
-                        // single-player and lockstep agree exactly on cost/limits/spawn. The
-                        // template name travels with the command; if it's empty (older peer),
-                        // fall back to a sane default.
-                        var queue = _cm.QueryInterface<Components.ProductionQueue>(entity);
-                        string template = string.IsNullOrEmpty(cmd.TemplateName)
-                            ? "units/spart/support_civilian"
-                            : cmd.TemplateName;
-                        queue?.EnqueueTraining(template, count: 1, _cm);
-                        break;
-                    }
-            }
+            // Command execution lives in SimCommandExecutor — the single shared entry point
+            // so single-player (SimBridge.CommandX) and lockstep (this path) can never diverge.
+            _executor.Apply(cmd);
         }
 
         private void CheckOOS()
