@@ -85,8 +85,8 @@ public sealed partial class AIController : Node
 		float bx = bpos.Position.X.ToFloat() + 40 + GD.Randf() * 20;
 		float bz = bpos.Position.Z.ToFloat() + GD.Randf() * 20;
 
-		var foundation = _sim.SpawnFoundation(bx, bz, "House", 8.0f);
-		_sim.CommandBuild(builder, foundation);
+		var foundation = _sim.SpawnFoundationDirect(bx, bz, "House", 8.0f);
+		_sim.OrderRepairDirect(builder, foundation);
 		_aiBuildings.Add(foundation);
 	}
 

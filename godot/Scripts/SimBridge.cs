@@ -1,11 +1,13 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Events;
 using ZeroAD.Sim.Maths;
+using ZeroAD.Sim.Net;
 using ZeroAD.Sim.Tutorial;
 
 namespace ZeroAD.Godot;
@@ -13,7 +15,7 @@ namespace ZeroAD.Godot;
 public sealed partial class SimBridge : Node
 {
     private ComponentManager _sim = null!;
-    private TurnManager _turnManager = null!;
+    private NetTurnManager _netTurn = null!;
     private double _simAccumulator;
     private const double SimTickRate = 0.1;
 
@@ -48,10 +50,15 @@ public sealed partial class SimBridge : Node
 
     public ComponentManager Sim => _sim;
 
+    /// <summary>The lockstep turn manager. In single-player it is Standalone (local
+    /// batches aggregate synchronously, so the barrier never blocks); in multiplayer
+    /// the MultiplayerController feeds it batches/bundles via the transport.</summary>
+    public NetTurnManager NetTurn => _netTurn;
+    public uint LocalPlayerId { get; private set; } = 1;
+
     /// <summary>Read-only query facade for HUD/Minimap/AI. Consolidates the scattered
     /// QueryInterface + entity-list iteration that previously lived inline in the GUI.</summary>
     public GuiInterface Gui { get; private set; } = null!;
-    public TurnManager Turns => _turnManager;
     public ObstructionManager Obstructions => _obstructions;
     public TerrainComponent Terrain => _terrain;
     public PathfinderComponent Pathfinder => _pathfinder;
@@ -62,9 +69,13 @@ public sealed partial class SimBridge : Node
         InitWorld(null);
     }
 
-    public void InitWorld(string? templatesPath)
+    /// <param name="seed">RNG seed — must match across peers (host assigns it in MP).</param>
+    /// <param name="localPlayerId">This peer's game player id (host=1, clients assigned by host).</param>
+    /// <param name="role">Standalone for SP; Host/Client for MP. Governs turn-barrier behaviour.</param>
+    /// <param name="playerCount">Number of player slots to create. Host + each client own one.</param>
+    public void InitWorld(string? templatesPath, uint seed = 42, uint localPlayerId = 1,
+        NetRole role = NetRole.Standalone, int playerCount = 1)
     {
-        uint seed = 42;
         var registry = new ComponentRegistry();
         registry.AutoRegister(typeof(PositionComponent).Assembly);
 
@@ -81,9 +92,9 @@ public sealed partial class SimBridge : Node
         }
 
         _sim = new ComponentManager(seed, registry, templates);
-        _turnManager = new TurnManager(_sim, commandDelay: 0);
         SimSystem.Init(_sim);
         Templates = templates;
+        LocalPlayerId = localPlayerId;
 
         // Subscribe so the sim can ask us (the presentation layer) to build visuals whenever it
         // spawns an entity. This is the only Godot→sim coupling direction for spawn.
@@ -112,12 +123,20 @@ public sealed partial class SimBridge : Node
         _terrainEntity = _sim.CreateEntity();
         _sim.AddComponent(_terrainEntity, _terrain);
 
-        _playerEntity = _sim.CreateEntity();
-        _sim.AddComponent(_playerEntity.Value, new PlayerComponent());
-        _sim.AddComponent(_playerEntity.Value, new TechnologyManager { });
-        _sim.AddComponent(_playerEntity.Value, new OwnershipComponent { PlayerId = 1 });
-        _sim.AddComponent(_playerEntity.Value, new EntityLimitsComponent());
-        _sim.RegisterPlayer(1, _playerEntity.Value);
+        for (int pid = 1; pid <= playerCount; pid++)
+        {
+            var playerEntity = _sim.CreateEntity();
+            _sim.AddComponent(playerEntity, new PlayerComponent());
+            _sim.AddComponent(playerEntity, new TechnologyManager { });
+            _sim.AddComponent(playerEntity, new OwnershipComponent { PlayerId = pid });
+            _sim.AddComponent(playerEntity, new EntityLimitsComponent());
+            _sim.RegisterPlayer(pid, playerEntity);
+            if (pid == (int)localPlayerId)
+                _playerEntity = playerEntity;
+        }
+
+        var expectedPlayers = Enumerable.Range(1, playerCount).Select(i => (uint)i).ToHashSet();
+        _netTurn = new NetTurnManager(_sim, commandDelay: 2, localPlayerId, role, expectedPlayers);
     }
 
     public void StartTutorial()
@@ -395,6 +414,8 @@ public sealed partial class SimBridge : Node
         return box;
     }
 
+    private bool _stallLogged;
+
     public override void _Process(double delta)
     {
         if (_sim == null) return;
@@ -402,9 +423,23 @@ public sealed partial class SimBridge : Node
         _simAccumulator += delta;
         while (_simAccumulator >= SimTickRate)
         {
+            // Turn barrier: in lockstep the sim advances only when the bundle for the
+            // upcoming turn has arrived (always true in standalone — local bundles are
+            // produced synchronously). While stalled, rendering continues; only the
+            // sim pauses.
+            if (!_netTurn.CanAdvanceTurn())
+            {
+                if (!_stallLogged)
+                {
+                    GD.Print($"[Lockstep] waiting for turn {_netTurn.CurrentTurn} bundle");
+                    _stallLogged = true;
+                }
+                break;
+            }
+            _stallLogged = false;
             _simAccumulator -= SimTickRate;
             TickSimulation((float)SimTickRate);
-            _turnManager.AdvanceTurn();
+            _netTurn.AdvanceTurn();
         }
         SyncVisuals();
     }
@@ -604,7 +639,13 @@ public sealed partial class SimBridge : Node
             var foundation = _sim.QueryInterface<FoundationComponent>(entity)!;
             var pos = _sim.QueryInterface<PositionComponent>(entity);
             var identity = _sim.QueryInterface<IdentityComponent>(entity);
-            string template = foundation.ResultTemplate;
+            // Prefer the full template name carried by IdentityComponent (the kernel
+            // SimCommandExecutor stores it there for player-placed foundations). Fall back to
+            // ResultTemplate mapped through the UI-name table for legacy/scenario foundations
+            // that still store a short display name.
+            string fullTemplate = !string.IsNullOrEmpty(identity?.TemplateName)
+                ? identity!.TemplateName
+                : MapBuildNameToTemplate(foundation.ResultTemplate);
             float x = pos?.Position.X.ToFloat() ?? 0;
             float z = pos?.Position.Z.ToFloat() ?? 0;
             var owner = _sim.QueryInterface<OwnershipComponent>(entity);
@@ -616,7 +657,6 @@ public sealed partial class SimBridge : Node
             }
             _sim.DestroyEntity(entity);
 
-            string fullTemplate = MapBuildNameToTemplate(template);
             TemplateStats? stats = null;
             try { stats = Templates?.ExtractStats(fullTemplate); } catch { }
             var built = SpawnScenarioBuilding(new ScenarioEntityDef
@@ -630,7 +670,7 @@ public sealed partial class SimBridge : Node
             Events.RaiseStructureBuilt(new StructureBuiltEvent
             {
                 Building = built,
-                TemplateName = template
+                TemplateName = fullTemplate
             });
 
             // Pop bonus is data-driven now: PopulationComponent on the building (added in
@@ -756,8 +796,18 @@ public sealed partial class SimBridge : Node
         int playerId = owner?.PlayerId ?? e.OwnerPlayerId;
         Color color = GetPlayerColor(playerId);
 
-        // Size heuristic matches the legacy unit spawn path (1.5f for units).
-        CreateVisualFor(e.Entity, color, 1.5f, templateName: e.TemplateName);
+        // Foundations (placed via SimCommandExecutor.ApplyBuild in the kernel) get a ghost
+        // preview; everything else uses the unit-size heuristic.
+        bool isFoundation = _sim.QueryInterface<FoundationComponent>(e.Entity) != null;
+        if (isFoundation)
+        {
+            CreateVisualFor(e.Entity, new Color(0.6f, 0.5f, 0.4f, 0.3f), 6f,
+                isBuilding: true, isGhost: true, templateName: e.TemplateName);
+        }
+        else
+        {
+            CreateVisualFor(e.Entity, color, 1.5f, templateName: e.TemplateName);
+        }
 
         // Charge pop on ownership assignment. The sim owns the accounting rule so it stays
         // deterministic; we call the helper from here because ownership for sim-spawned units is
@@ -893,74 +943,51 @@ public sealed partial class SimBridge : Node
         return entity;
     }
 
-    public EntityId SpawnFoundation(float x, float z, string name, float buildTime)
+    // --- Commands (ALL player commands funnel into the lockstep queue; in standalone
+    // they execute COMMAND_DELAY turns later, exactly as in multiplayer — one code path,
+    // no SP/MP divergence. Presentation-only validation stays in Main.) ---
+
+    public void SubmitCommand(NetCommand cmd) => _netTurn.SubmitLocalCommand(cmd);
+
+    /// <summary>
+    /// Synchronous foundation spawn + build order for the single-player AI scripts ONLY.
+    /// The AI is non-deterministic and disabled in multiplayer (design doc §9), so it does
+    /// not participate in lockstep and may touch the sim directly. Returns the foundation
+    /// entity so the AI can track it for "don't build a second barracks" checks. Player
+    /// commands must NEVER use this — they go through <see cref="CommandBuild"/>.
+    /// </summary>
+    public EntityId SpawnFoundationDirect(float x, float z, string name, float buildTime)
     {
+        string fullTemplate = MapBuildNameToTemplate(name);
         var entity = _sim.CreateEntity();
         _sim.AddComponent(entity, new PositionComponent());
         _sim.AddComponent(entity, new FoundationComponent());
-        string fullTemplate = MapBuildNameToTemplate(name);
         TemplateStats? stats = null;
         try { stats = Templates?.ExtractStats(fullTemplate); } catch { }
-        var identity = new IdentityComponent
+        _sim.AddComponent(entity, new IdentityComponent
         {
             Name = name + " (building)",
             TemplateName = fullTemplate,
             IsBuilding = true,
             IsUnit = false,
             Classes = stats?.GetClassList() ?? new List<string> { name }
-        };
-        _sim.AddComponent(entity, identity);
+        });
         _sim.AddComponent(entity, new HealthComponent { Current = 200, Max = 200 });
         _sim.AddComponent(entity, new OwnershipComponent { PlayerId = 1 });
-
-        var foundation = _sim.QueryInterface<FoundationComponent>(entity);
-        foundation?.Configure(name, buildTime);
-
+        _sim.QueryInterface<FoundationComponent>(entity)?.Configure(fullTemplate, buildTime);
         var pos = _sim.QueryInterface<PositionComponent>(entity);
         if (pos != null)
             pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
-
         CreateVisualFor(entity, new Color(0.6f, 0.5f, 0.4f, 0.3f), 6f, isBuilding: true, isGhost: true);
         return entity;
     }
 
-    // --- Commands ---
-
-    public void MoveEntity(EntityId entity, float x, float z)
-    {
-        // Route through UnitAI when present (the canonical command sink); otherwise fall back
-        // to driving UnitMotion directly for legacy entities without a UnitAI component.
-        var ai = _sim.QueryInterface<UnitAIComponent>(entity);
-        if (ai != null)
-            ai.Walk(new FixedVector2D(Fixed.FromFloat(x), Fixed.FromFloat(z)));
-        else
-            _sim.QueryInterface<UnitMotion>(entity)?.MoveToPoint(new FixedVector2D(Fixed.FromFloat(x), Fixed.FromFloat(z)));
-    }
-
-    public void CommandGather(EntityId unit, EntityId target)
-    {
-        var ai = _sim.QueryInterface<UnitAIComponent>(unit);
-        if (ai != null)
-            ai.Gather(target);
-        else
-        {
-            var motion = _sim.QueryInterface<UnitMotion>(unit);
-            if (motion != null) GatherResource(unit, target, motion);
-        }
-        Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "gather", Target = target });
-    }
-
-    public void CommandAttack(EntityId attacker, EntityId target)
-    {
-        var ai = _sim.QueryInterface<UnitAIComponent>(attacker);
-        if (ai != null)
-            ai.Attack(target);
-        else
-            _sim.QueryInterface<AttackComponent>(attacker)?.AttackTarget(target);
-        Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "attack", Target = target });
-    }
-
-    public void CommandBuild(EntityId builder, EntityId foundation)
+    /// <summary>
+    /// Order a builder to repair a specific foundation, synchronously. AI-only counterpart
+    /// to <see cref="SpawnFoundationDirect"/>: the AI drives the sim directly outside lockstep.
+    /// Player builds must use <see cref="CommandBuild"/> so they route through the turn queue.
+    /// </summary>
+    public void OrderRepairDirect(EntityId builder, EntityId foundation)
     {
         var ai = _sim.QueryInterface<UnitAIComponent>(builder);
         if (ai != null)
@@ -970,57 +997,33 @@ public sealed partial class SimBridge : Node
         Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "repair", Target = foundation });
     }
 
-    public void CommandSetRallyPoint(EntityId building, EntityId? target, string command, string specific)
-    {
-        var rally = _sim.QueryInterface<RallyPointComponent>(building);
-        if (target.HasValue)
-        {
-            var pos = _sim.QueryInterface<PositionComponent>(target.Value);
-            if (pos != null && rally != null)
-                rally.Set(new FixedVector2D(pos.Position.X, pos.Position.Z));
-        }
-        Events.RaisePlayerCommand(new PlayerCommandEvent
-        {
-            Type = "set-rallypoint",
-            Target = target,
-            Data = new Dictionary<string, object>
-            {
-                ["command"] = command,
-                ["specific"] = specific
-            }
-        });
-    }
+    public void MoveEntity(EntityId entity, float x, float z) =>
+        SubmitCommand(NetCommand.Move(LocalPlayerId, entity.Value,
+            Fixed.FromFloat(x), Fixed.FromFloat(z)));
 
-    public void CommandResearch(EntityId building, string techName)
-    {
-        var researcher = _sim.QueryInterface<ResearcherComponent>(building);
-        var techMgr = _playerEntity.HasValue ? _sim.QueryInterface<TechnologyManager>(_playerEntity.Value) : null;
-        var player = GetPlayer();
-        if (researcher == null || techMgr == null || player == null) return;
-        if (!researcher.StartResearch(techName, techMgr, player)) return;
-        Events.RaiseResearchQueued(new ResearchQueuedEvent
-        {
-            ResearcherEntity = building,
-            TechnologyTemplate = techName
-        });
-    }
+    public void CommandGather(EntityId unit, EntityId target) =>
+        SubmitCommand(NetCommand.Gather(LocalPlayerId, unit.Value, target.Value));
 
-    public void CommandTrain(EntityId building, string template, int count = 1, bool batch = false)
-    {
-        int actualCount = batch ? 5 : count;
-        var queue = _sim.QueryInterface<ProductionQueue>(building);
-        if (queue == null) return;
+    public void CommandAttack(EntityId attacker, EntityId target) =>
+        SubmitCommand(NetCommand.Attack(LocalPlayerId, attacker.Value, target.Value));
 
-        // All cost/limit/pop validation and charging happens in the sim now (EnqueueTraining),
-        // shared with NetTurnManager so single-player and lockstep agree exactly. The event is
-        // raised from inside EnqueueTraining on success.
-        queue.EnqueueTraining(template, actualCount, _sim);
-    }
+    /// <summary>Issue a build order: cost charge + foundation spawn happen in the sim
+    /// at the execution turn (SimCommandExecutor). `template` is the FULL template name.</summary>
+    public void CommandBuild(EntityId builder, string template, float x, float z) =>
+        SubmitCommand(NetCommand.Build(LocalPlayerId, builder.Value, template,
+            Fixed.FromFloat(x), Fixed.FromFloat(z)));
 
-    public void CommandTrain(EntityId building)
-    {
+    public void CommandSetRallyPoint(EntityId building, EntityId? target) =>
+        SubmitCommand(NetCommand.SetRallyPoint(LocalPlayerId, building.Value, target?.Value ?? 0));
+
+    public void CommandResearch(EntityId building, string techName) =>
+        SubmitCommand(NetCommand.Research(LocalPlayerId, building.Value, techName));
+
+    public void CommandTrain(EntityId building, string template, int count = 1, bool batch = false) =>
+        SubmitCommand(NetCommand.Train(LocalPlayerId, building.Value, template, batch ? 5 : count));
+
+    public void CommandTrain(EntityId building) =>
         CommandTrain(building, "units/spart/support_civilian");
-    }
 
     public void CommandTrainSoldier(EntityId building)
     {

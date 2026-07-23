@@ -175,8 +175,8 @@ public sealed partial class AIDirector : Node
         float bz = bpos.Position.Z.ToFloat() + GD.Randf() * 20;
 
         string name = needsBarracks ? "Barracks" : "House";
-        var foundation = _sim.SpawnFoundation(bx, bz, name, 8.0f);
-        _sim.CommandBuild(builder, foundation);
+        var foundation = _sim.SpawnFoundationDirect(bx, bz, name, 8.0f);
+        _sim.OrderRepairDirect(builder, foundation);
         _aiBuildings.Add(foundation);
     }
 

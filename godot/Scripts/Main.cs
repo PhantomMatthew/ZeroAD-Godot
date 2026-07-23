@@ -98,37 +98,32 @@ public sealed partial class Main : Node3D
 
 	private void StartGame(bool isHost, int param1, uint seed)
 	{
-		_sim.InitWorld();
-		uint actualSeed = isHost ? seed : 42;
-
+		// Host selects the seed; the client learns it from the host's GameStart message.
+		// Both peers defer world creation until GameStart fires so they share one seed.
 		if (isHost)
 		{
-			_mp.StartHost(param1, actualSeed);
-			_mp.OnGameStart += () => BeginGameplay(actualSeed, 1);
+			_mp.StartHost(param1, seed);
+			_mp.OnGameStart += (s, pid) => BeginGameplay(s, pid, isMultiplayer: true, isHost: true);
 		}
 		else
 		{
 			_mp.StartClient("127.0.0.1", param1);
-			_mp.OnGameStart += () => BeginGameplay(actualSeed, 2);
+			_mp.OnGameStart += (s, pid) => BeginGameplay(s, pid, isMultiplayer: true, isHost: false);
 		}
 
 		_lobby.SetStatus("Waiting for players...");
-
-		if (isHost)
-		{
-			BeginGameplay(actualSeed, 1);
-		}
 	}
 
 	private void StartGame(bool isHost, string addr, int port)
 	{
-		_sim.InitWorld();
+		_ = isHost;
 		_mp.StartClient(addr, port);
-		_mp.OnGameStart += () => BeginGameplay(42, 2);
+		_mp.OnGameStart += (s, pid) => BeginGameplay(s, pid, isMultiplayer: true, isHost: false);
 		_lobby.SetStatus("Connecting...");
 	}
 
-	private void BeginGameplay(uint seed, uint playerId, bool tutorial = false)
+	private void BeginGameplay(uint seed, uint playerId, bool tutorial = false,
+		bool isMultiplayer = false, bool isHost = false)
 	{
 		if (_gameStarted) return;
 		_gameStarted = true;
@@ -140,11 +135,25 @@ public sealed partial class Main : Node3D
 		{
 			string? templatesPath = FindTemplatesPath();
 			GD.Print($"[Tutorial] templatesPath={templatesPath ?? "null"}");
-			_sim.InitWorld(templatesPath);
+
+			// One InitWorld path for SP/MP/tutorial: seed + player slots + role all flow in
+			// here. In MP the host assigned the seed and player ids over GameStart, so every
+			// peer constructs the same world and the same NetTurnManager.
+			var role = isMultiplayer
+				? (isHost ? ZeroAD.Sim.Net.NetRole.Host : ZeroAD.Sim.Net.NetRole.Client)
+				: ZeroAD.Sim.Net.NetRole.Standalone;
+			int playerCount = isMultiplayer ? 2 : 1;
+			_sim.InitWorld(templatesPath, seed, playerId, role, playerCount);
 			GD.Print("[Tutorial] InitWorld done");
 
-			_mp.InitTurnManager(_sim.Sim, 2, playerId);
-			GD.Print("[Tutorial] InitTurnManager done");
+			if (isMultiplayer)
+			{
+				// Wire the transport to the freshly built NetTurnManager. The host bootstraps
+				// its empty leading turns so play can start immediately.
+				_mp.AttachTurnManager(_sim.NetTurn);
+				_mp.OnOOS += OnOOSDetected;
+				GD.Print("[MP] AttachTurnManager done");
+			}
 
 			if (_hud == null)
 			{
@@ -152,7 +161,7 @@ public sealed partial class Main : Node3D
 				AddChild(_hud);
 				// Game-over overlay: subscribes to the sim's win/loss events and shows the
 				// Victory/Defeat panel when the match ends.
-				var gameOver = new GameOverOverlay(_sim, localPlayerId: 1);
+				var gameOver = new GameOverOverlay(_sim, localPlayerId: (int)playerId);
 				AddChild(gameOver);
 			}
 
@@ -510,8 +519,22 @@ public sealed partial class Main : Node3D
 
 		UpdateSelectionMarkers();
 
-		if (_mp.NetTurn != null && _mp.IsConnected)
-			_mp.TryAdvanceTurn();
+		// Turn advancement is driven by SimBridge._Process, which honours the lockstep
+		// barrier (it only advances when the next turn's bundle has arrived). Nothing to
+		// force here.
+	}
+
+	/// <summary>
+	/// OOS handler: write a binary + text state dump so the two peers' dumps can be
+	/// diffed to locate the divergence. Triggered via the host's broadcast once it
+	/// detects a state-hash mismatch.
+	/// </summary>
+	private void OnOOSDetected(string msg)
+	{
+		string dir = ProjectSettings.GlobalizePath("user://oos");
+		var (bin, txt) = ZeroAD.Sim.Serialization.StateDump.WriteAll(
+			_sim.Sim, dir, _sim.NetTurn.CurrentTurn, _sim.LocalPlayerId);
+		GD.PrintErr($"OOS: {msg}\nState dumped:\n  {txt}\n  {bin}");
 	}
 
 	private void UpdateSelectionMarkers()
@@ -646,7 +669,7 @@ public sealed partial class Main : Node3D
 				var supply = _sim.Sim.QueryInterface<ResourceSupply>(targetEntity.Value);
 				if (supply != null)
 				{
-					_sim.CommandSetRallyPoint(only, targetEntity, "gather", supply.SpecificType);
+					_sim.CommandSetRallyPoint(only, targetEntity);
 					return;
 				}
 			}
@@ -670,35 +693,17 @@ public sealed partial class Main : Node3D
 			if (isEnemy && targetEntity.HasValue && _sim.Sim.QueryInterface<AttackComponent>(unit) != null)
 			{
 				_sim.CommandAttack(unit, targetEntity.Value);
-				SubmitNetCmd(NetCommand.Attack(1, unit.Value, targetEntity.Value.Value));
 			}
 			else if (isResource && targetEntity.HasValue)
 			{
 				_sim.CommandGather(unit, targetEntity.Value);
-				SubmitNetCmd(NetCommand.Gather(1, unit.Value, targetEntity.Value.Value));
 			}
 			else
 			{
 				_sim.MoveEntity(unit, worldPos.Value.X, worldPos.Value.Z);
-				var fx = ZeroAD.Sim.Maths.Fixed.FromFloat(worldPos.Value.X);
-				var fz = ZeroAD.Sim.Maths.Fixed.FromFloat(worldPos.Value.Z);
-				SubmitNetCmd(NetCommand.Move(1, unit.Value, fx, fz));
 			}
 		}
 	}
-
-	private void SubmitNetCmd(NetCommand cmd)
-	{
-		if (_mp.NetTurn != null)
-			_mp.SubmitCommand(cmd);
-	}
-
-	/// <summary>
-	/// True when a multiplayer session is active and connected. Commands that mutate sim state
-	/// (train/build/...) route through the net command queue instead of executing locally so
-	/// both clients apply them at the same turn.
-	/// </summary>
-	private bool IsMultiplayer => _mp.NetTurn != null && _mp.IsConnected;
 
 	private Vector3? ScreenToWorld(Vector2 screenPos)
 	{
@@ -755,17 +760,7 @@ public sealed partial class Main : Node3D
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
-				const string template = "units/spart/support_civilian";
-				if (IsMultiplayer)
-				{
-					// Lockstep: only enqueue via the net command so both clients run the exact
-					// same EnqueueTraining at the same turn. Local prediction would double-charge.
-					SubmitNetCmd(NetCommand.Train(1, eid.Value, template));
-				}
-				else
-				{
-					_sim.CommandTrain(eid, template, batch: batch);
-				}
+				_sim.CommandTrain(eid, "units/spart/support_civilian", batch: batch);
 				break;
 			}
 	}
@@ -775,11 +770,7 @@ public sealed partial class Main : Node3D
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
-				const string template = "units/spart/infantry_spearman_b";
-				if (IsMultiplayer)
-					SubmitNetCmd(NetCommand.Train(1, eid.Value, template));
-				else
-					_sim.CommandTrain(eid, template, batch: batch);
+				_sim.CommandTrain(eid, "units/spart/infantry_spearman_b", batch: batch);
 				break;
 			}
 	}
@@ -789,11 +780,7 @@ public sealed partial class Main : Node3D
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
-				const string template = "units/spart/infantry_javelineer_b";
-				if (IsMultiplayer)
-					SubmitNetCmd(NetCommand.Train(1, eid.Value, template));
-				else
-					_sim.CommandTrain(eid, template, batch: batch);
+				_sim.CommandTrain(eid, "units/spart/infantry_javelineer_b", batch: batch);
 				break;
 			}
 	}
@@ -803,10 +790,7 @@ public sealed partial class Main : Node3D
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
-				if (IsMultiplayer)
-					SubmitNetCmd(NetCommand.Train(1, eid.Value, template));
-				else
-					_sim.CommandTrain(eid, template, batch: batch);
+				_sim.CommandTrain(eid, template, batch: batch);
 				break;
 			}
 	}
@@ -835,11 +819,12 @@ public sealed partial class Main : Node3D
 			return;
 		}
 
-		// Placement validation: terrain (land, in bounds) + obstruction (not on another building).
-		// Done before charging resources so a bad click is free. Uses the building's footprint
-		// half-size from the template; falls back to a generic 3m half-size if unknown.
+		// Placement validation is a presentation-only courtesy pre-filter (reject obviously
+		// bad clicks without charging). The authoritative check — and resource charging and
+		// foundation spawn — happens in the sim at the execution turn via SimCommandExecutor,
+		// identically on every peer, so MP never desyncs on build.
 		float halfSize = 3f;
-		var stats = _sim.Templates?.ExtractStats(_buildTemplate);
+		var stats = _sim.Templates?.ExtractStats(MapBuildTemplateName(_buildTemplate));
 		if (stats != null)
 		{
 			float ob = Mathf.Max(stats.ObstructionSize0.ToFloat(), stats.ObstructionSize1.ToFloat());
@@ -857,15 +842,15 @@ public sealed partial class Main : Node3D
 			return;
 		}
 
-		player.Wood -= wood;
-		player.Stone -= stone;
-		player.Metal -= metal;
-		player.Food -= food;
-		var foundation = _sim.SpawnFoundation(worldPos.Value.X, worldPos.Value.Z, _buildTemplate, buildTime);
+		_ = buildTime; // build time comes from template data at execution; not needed here.
+		string fullTemplate = MapBuildTemplateName(_buildTemplate);
 		_placeBuildingMode = false;
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null)
-				_sim.CommandBuild(eid, foundation);
+			{
+				_sim.CommandBuild(eid, fullTemplate, worldPos.Value.X, worldPos.Value.Z);
+				break;
+			}
 	}
 
 	private (int wood, int stone, int metal, int food, float buildTime) GetBuildCost(string name)

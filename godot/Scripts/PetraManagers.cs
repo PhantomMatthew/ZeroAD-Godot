@@ -160,8 +160,8 @@ public sealed class BuildManager
         if (player.Wood < 100) return;
         player.Wood -= 100;
 
-        var foundation = _sim.SpawnFoundation(bx, bz, name, 8.0f);
-        _sim.CommandBuild(builder, foundation);
+        var foundation = _sim.SpawnFoundationDirect(bx, bz, name, 8.0f);
+        _sim.OrderRepairDirect(builder, foundation);
         _buildings.Add(foundation);
     }
 }
