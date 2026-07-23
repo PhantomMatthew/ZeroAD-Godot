@@ -43,18 +43,20 @@ public sealed class NetCommandRoutingTests
     private static void RunOneTurn(NetTurnManager tm)
     {
         var players = new HashSet<uint> { 1 };
-        // commandDelay=1 means a submitted command sits in slot 1; it only executes once it
-        // rotates down to slot 0. Each AdvanceTurn shifts slots, so two advances flush the
-        // command through. (IsTurnReady is irrelevant here — we force-advance for the test.)
-        tm.AdvanceTurn(players);
-        tm.AdvanceTurn(players);
+        // commandDelay=1 means a submitted command is batched for currentTurn+1; it only
+        // executes once that turn arrives. Each AdvanceTurn drains the outbox into a batch
+        // and executes the bundle scheduled for the current turn, so two advances flush the
+        // command through. (CanAdvanceTurn is always true for Standalone.)
+        _ = players;
+        tm.AdvanceTurn();
+        tm.AdvanceTurn();
     }
 
     [Fact]
     public void Move_RoutesThroughUnitAI_WhenPresent()
     {
         var cm = new ComponentManager(rngSeed: 1);
-        var tm = new NetTurnManager(cm, commandDelay: 1, localPlayerId: 1);
+        var tm = new NetTurnManager(cm, commandDelay: 1, localPlayerId: 1, NetRole.Standalone, new HashSet<uint> { 1 });
         var unit = MakeUnitWithAI(cm);
         var ai = cm.QueryInterface<UnitAIComponent>(unit)!;
 
@@ -75,7 +77,7 @@ public sealed class NetCommandRoutingTests
     public void Move_FallsBackToDirectUnitMotion_ForLegacyEntity()
     {
         var cm = new ComponentManager(rngSeed: 1);
-        var tm = new NetTurnManager(cm, commandDelay: 1, localPlayerId: 1);
+        var tm = new NetTurnManager(cm, commandDelay: 1, localPlayerId: 1, NetRole.Standalone, new HashSet<uint> { 1 });
         var unit = MakeLegacyUnit(cm);
         var motion = cm.QueryInterface<UnitMotion>(unit)!;
 
@@ -93,7 +95,7 @@ public sealed class NetCommandRoutingTests
     public void Attack_RoutesThroughUnitAI_WhenPresent()
     {
         var cm = new ComponentManager(rngSeed: 1);
-        var tm = new NetTurnManager(cm, commandDelay: 1, localPlayerId: 1);
+        var tm = new NetTurnManager(cm, commandDelay: 1, localPlayerId: 1, NetRole.Standalone, new HashSet<uint> { 1 });
 
         var attacker = MakeUnitWithAI(cm);
         cm.AddComponent(attacker, new AttackComponent { Damage = new DamageBlock(DamageType.Hack, 10) });
@@ -112,7 +114,7 @@ public sealed class NetCommandRoutingTests
     public void Attack_FallsBackToDirectAttackComponent_ForLegacyEntity()
     {
         var cm = new ComponentManager(rngSeed: 1);
-        var tm = new NetTurnManager(cm, commandDelay: 1, localPlayerId: 1);
+        var tm = new NetTurnManager(cm, commandDelay: 1, localPlayerId: 1, NetRole.Standalone, new HashSet<uint> { 1 });
 
         var attacker = MakeLegacyUnit(cm);
         cm.AddComponent(attacker, new AttackComponent { Damage = new DamageBlock(DamageType.Hack, 10) });
