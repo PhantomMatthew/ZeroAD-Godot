@@ -1,105 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.Net
 {
-    public enum NetCommandType : byte
-    {
-        Invalid = 0,
-        Move = 1,
-        Gather = 2,
-        Attack = 3,
-        Build = 4,
-        Train = 5,
-        TrainSoldier = 6,
-    }
-
-    public readonly struct NetCommand
-    {
-        public readonly uint Player;
-        public readonly NetCommandType Type;
-        public readonly uint EntityId;
-        public readonly int IntParam1;
-        public readonly int IntParam2;
-        public readonly int FixedParam1;
-        public readonly int FixedParam2;
-        /// <summary>
-        /// Template name for Train (e.g. "units/spart/infantry_spearman_b"). Carried alongside
-        /// the command so both clients enqueue the exact same template — previously this was
-        /// hardcoded to "villager"/"soldier" in ExecuteCommand, which diverged from the local
-        /// SimBridge path and caused OOS on training.
-        /// </summary>
-        public readonly string TemplateName;
-
-        public NetCommand(uint player, NetCommandType type, uint entityId = 0,
-            int p1 = 0, int p2 = 0, int fp1 = 0, int fp2 = 0, string? templateName = null)
-        {
-            Player = player; Type = type; EntityId = entityId;
-            IntParam1 = p1; IntParam2 = p2; FixedParam1 = fp1; FixedParam2 = fp2;
-            TemplateName = templateName ?? "";
-        }
-
-        public byte[] Serialize()
-        {
-            using var ms = new MemoryStream(48);
-            using var bw = new BinaryWriter(ms);
-            bw.Write(Player);
-            bw.Write((byte)Type);
-            bw.Write(EntityId);
-            bw.Write(IntParam1);
-            bw.Write(IntParam2);
-            bw.Write(FixedParam1);
-            bw.Write(FixedParam2);
-            // Length-prefixed UTF8 (0 if no template). Keeps the wire format self-describing
-            // without growing every command by a fixed buffer.
-            byte[] tmplBytes = System.Text.Encoding.UTF8.GetBytes(TemplateName);
-            bw.Write(tmplBytes.Length);
-            bw.Write(tmplBytes);
-            return ms.ToArray();
-        }
-
-        public static NetCommand Deserialize(byte[] data)
-        {
-            using var ms = new MemoryStream(data);
-            using var br = new BinaryReader(ms);
-            return new NetCommand(
-                br.ReadUInt32(),
-                (NetCommandType)br.ReadByte(),
-                br.ReadUInt32(),
-                br.ReadInt32(),
-                br.ReadInt32(),
-                br.ReadInt32(),
-                br.ReadInt32(),
-                br.ReadString());
-        }
-
-        public static NetCommand Move(uint player, uint entityId, Fixed x, Fixed z) =>
-            new(player, NetCommandType.Move, entityId, 0, 0, x.InternalValue, z.InternalValue);
-
-        public static NetCommand Gather(uint player, uint unitId, uint targetId) =>
-            new(player, NetCommandType.Gather, unitId, (int)targetId);
-
-        public static NetCommand Attack(uint player, uint attackerId, uint targetId) =>
-            new(player, NetCommandType.Attack, attackerId, (int)targetId);
-
-        public static NetCommand Build(uint player, uint builderId, int gx, int gz) =>
-            new(player, NetCommandType.Build, builderId, gx, gz);
-
-        /// <summary>
-        /// Train command carrying the full template name. Use this for all training (villagers,
-        /// soldiers, siege, ...). The legacy <see cref="TrainSoldier"/> factory is kept only for
-        /// backward compatibility with older peers and routes through the same ExecuteCommand
-        /// path keyed on template name.
-        /// </summary>
-        public static NetCommand Train(uint player, uint buildingId, string templateName) =>
-            new(player, NetCommandType.Train, buildingId, templateName: templateName);
-
-        public static NetCommand TrainSoldier(uint player, uint buildingId) =>
-            new(player, NetCommandType.TrainSoldier, buildingId);
-    }
-
     public sealed class NetTurnManager
     {
         private readonly ComponentManager _cm;
@@ -247,21 +151,13 @@ namespace ZeroAD.Sim.Net
                     {
                         // Route through the same sim entry point as SimBridge.CommandTrain so
                         // single-player and lockstep agree exactly on cost/limits/spawn. The
-                        // template name travels with the command; if it's empty (older peer or
-                        // TrainSoldier legacy), fall back to a sane default.
+                        // template name travels with the command; if it's empty (older peer),
+                        // fall back to a sane default.
                         var queue = _cm.QueryInterface<Components.ProductionQueue>(entity);
                         string template = string.IsNullOrEmpty(cmd.TemplateName)
                             ? "units/spart/support_civilian"
                             : cmd.TemplateName;
                         queue?.EnqueueTraining(template, count: 1, _cm);
-                        break;
-                    }
-                case NetCommandType.TrainSoldier:
-                    {
-                        // Legacy soldier command from older peers. Maps to the spearman template
-                        // and otherwise takes the unified training path.
-                        var queue = _cm.QueryInterface<Components.ProductionQueue>(entity);
-                        queue?.EnqueueTraining("units/spart/infantry_spearman_b", count: 1, _cm);
                         break;
                     }
             }
