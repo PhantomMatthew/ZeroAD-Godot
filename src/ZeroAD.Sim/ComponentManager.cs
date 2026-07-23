@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Events;
@@ -338,21 +339,36 @@ namespace ZeroAD.Sim
             _entityManager.Reset();
         }
 
-        public byte[] ComputeStateHash()
+        /// <summary>
+        /// Serialize the entire deterministic state (RNG, entity ids, every non-local
+        /// entity's components). Traversal order is fully sorted so two peers produce
+        /// byte-identical streams regardless of insertion order; used by both the state
+        /// hash (OOS detection) and StateDump (OOS forensics).
+        /// </summary>
+        public void SerializeFullState(ISerializer serializer)
         {
-            var serializer = new Serialization.HashSerializer();
             serializer.StringASCII("rng", _rng.Serialize());
             serializer.NumberU32("next entity id", _entityManager.NextEntityId);
 
-            foreach (var kvp in _componentsByEntity)
+            var entitySection = serializer as ISectionSerializer;
+            foreach (var kvp in _componentsByEntity.OrderBy(k => k.Key.Value))
             {
                 if (kvp.Key.IsLocal)
                     continue;
+                entitySection?.BeginSection($"entity {kvp.Key.Value}");
                 serializer.NumberU32("entity", kvp.Key.Value);
-                foreach (var comp in kvp.Value.Values)
+                foreach (var comp in kvp.Value.Values.OrderBy(c => c.GetType().Name))
+                {
+                    entitySection?.BeginSection($"component {comp.GetType().Name}");
                     comp.Serialize(serializer);
+                }
             }
+        }
 
+        public byte[] ComputeStateHash()
+        {
+            var serializer = new Serialization.HashSerializer();
+            SerializeFullState(serializer);
             return serializer.ComputeHash();
         }
     }

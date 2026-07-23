@@ -24,6 +24,13 @@ public interface ISerializer
     void RawBytes(string name, ReadOnlySpan<byte> data);
 }
 
+/// <summary>Optional serializer extension: state traversal announces entity/component
+/// boundaries so text dumps can emit section headers. Hash/binary serializers ignore it.</summary>
+public interface ISectionSerializer
+{
+    void BeginSection(string name);
+}
+
 public interface IDeserializer
 {
     byte NumberU8(string name);
