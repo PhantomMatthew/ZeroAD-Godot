@@ -152,9 +152,10 @@ namespace ZeroAD.Sim.Net
         /// <summary>
         /// Kernel-side foundation spawn (moved out of SimBridge so the lockstep path can
         /// run it headless). Visuals are built by the presentation layer via the
-        /// EntityCreated event raised here. The first Configure argument is the result
-        /// template the foundation completes into — Task 3 verifies this matches the
-        /// completion path; for now it mirrors the old SimBridge behaviour.
+        /// EntityCreated event raised here. The foundation's ResultTemplate is the FULL
+        /// template name; the completion path (SimBridge.TickFoundations, migrated in
+        /// Task 7) reads IdentityComponent.TemplateName directly instead of re-mapping a
+        /// display name — so the full template must travel here, not a UI short name.
         /// </summary>
         private EntityId SpawnFoundation(string template, Fixed x, Fixed z, float buildTime, int ownerPlayerId)
         {
@@ -174,7 +175,7 @@ namespace ZeroAD.Sim.Net
             });
             _cm.AddComponent(entity, new HealthComponent { Current = 200, Max = 200 });
             _cm.AddComponent(entity, new OwnershipComponent { PlayerId = ownerPlayerId });
-            _cm.QueryInterface<FoundationComponent>(entity)?.Configure(displayName, buildTime);
+            _cm.QueryInterface<FoundationComponent>(entity)?.Configure(template, buildTime);
             var pos = _cm.QueryInterface<PositionComponent>(entity);
             if (pos != null)
                 pos.Position = new FixedVector3D(x, Fixed.Zero, z);

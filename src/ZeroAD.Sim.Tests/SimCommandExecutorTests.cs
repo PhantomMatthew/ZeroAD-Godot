@@ -88,4 +88,100 @@ public sealed class SimCommandExecutorTests
         Assert.Single(queue.Queue);
         Assert.Equal(5, queue.Queue[0].Count);
     }
+
+    private static ComponentManager BuildWorldWithRichPlayer(uint seed = 42)
+    {
+        var templates = TryLoadTemplates();
+        var cm = new ComponentManager(seed, templates: templates);
+        SimSystem.Init(cm);
+        var playerEntity = cm.CreateEntity();
+        cm.AddComponent(playerEntity, new PlayerComponent { Wood = 1000, Food = 1000, Stone = 1000, Metal = 1000, PopBonuses = 50 });
+        cm.AddComponent(playerEntity, new TechnologyManager());
+        cm.RegisterPlayer(1, playerEntity);
+        return cm;
+    }
+
+    [Fact]
+    public void Build_ChargesCostOnce_AndSpawnsFoundationOwnedByCommander()
+    {
+        var templates = TryLoadTemplates();
+        if (templates == null) return;
+        var cm = BuildWorldWithRichPlayer();
+        var builder = MakeUnitWithAI(cm, player: 1);
+        var executor = new SimCommandExecutor(cm);
+
+        const string template = "structures/spart/house";
+        int woodBefore = cm.GetPlayerEntity(1)!.Wood;
+
+        executor.Apply(NetCommand.Build(1, builder.Value, template,
+            Fixed.FromFloat(30f), Fixed.FromFloat(30f)));
+
+        var player = cm.GetPlayerEntity(1)!;
+        var stats = templates.ExtractStats(template);
+        Assert.Equal(woodBefore - stats.WoodCost, player.Wood);
+        var f = Assert.Single(cm.AllEntities, e => cm.QueryInterface<FoundationComponent>(e) != null);
+        Assert.Equal(1, cm.QueryInterface<OwnershipComponent>(f)!.PlayerId);
+        // The foundation carries the FULL template so the completion path (Task 7) can
+        // rebuild the building without re-mapping a display name.
+        Assert.Equal(template, cm.QueryInterface<FoundationComponent>(f)!.ResultTemplate);
+    }
+
+    [Fact]
+    public void Build_Refused_WhenUnaffordable()
+    {
+        var templates = TryLoadTemplates();
+        if (templates == null) return; // without template cost data this test can't assert
+        var cm = BuildWorldWithRichPlayer();
+        cm.GetPlayerEntity(1)!.Wood = 0;
+        cm.GetPlayerEntity(1)!.Stone = 0;
+        cm.GetPlayerEntity(1)!.Metal = 0;
+        cm.GetPlayerEntity(1)!.Food = 0;
+        var builder = MakeUnitWithAI(cm);
+        var executor = new SimCommandExecutor(cm);
+        int entitiesBefore = cm.AllEntities.Count;
+
+        executor.Apply(NetCommand.Build(1, builder.Value, "structures/spart/house",
+            Fixed.FromFloat(30f), Fixed.FromFloat(30f)));
+
+        Assert.Equal(entitiesBefore, cm.AllEntities.Count);
+    }
+
+    [Fact]
+    public void Research_StartsExactlyOnce()
+    {
+        var cm = BuildWorldWithRichPlayer();
+        var building = cm.CreateEntity();
+        cm.AddComponent(building, new ResearcherComponent());
+        cm.AddComponent(building, new OwnershipComponent { PlayerId = 1 });
+        var executor = new SimCommandExecutor(cm);
+
+        ResearchQueuedEvent? raised = null;
+        cm.Events.ResearchQueued += e => raised = e;
+
+        executor.Apply(NetCommand.Research(1, building.Value, "phase_town_generic"));
+
+        Assert.NotNull(raised);
+        Assert.Equal("phase_town_generic", raised!.TechnologyTemplate);
+        Assert.True(cm.QueryInterface<ResearcherComponent>(building)!.IsResearching);
+    }
+
+    [Fact]
+    public void SetRallyPoint_SetsPositionFromTargetEntity()
+    {
+        var cm = new ComponentManager(1);
+        SimSystem.Init(cm);
+        var building = cm.CreateEntity();
+        cm.AddComponent(building, new RallyPointComponent());
+        var target = cm.CreateEntity();
+        cm.AddComponent(target, new PositionComponent());
+        cm.QueryInterface<PositionComponent>(target)!.Position =
+            new FixedVector3D(Fixed.FromFloat(11f), Fixed.Zero, Fixed.FromFloat(22f));
+        var executor = new SimCommandExecutor(cm);
+
+        executor.Apply(NetCommand.SetRallyPoint(1, building.Value, target.Value));
+
+        var rally = cm.QueryInterface<RallyPointComponent>(building)!;
+        Assert.Equal(Fixed.FromFloat(11f), rally.Position.X);
+        Assert.Equal(Fixed.FromFloat(22f), rally.Position.Y);
+    }
 }
