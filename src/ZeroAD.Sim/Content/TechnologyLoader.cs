@@ -1,0 +1,177 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using ZeroAD.Sim.Components;
+
+namespace ZeroAD.Sim.Content;
+
+/// <summary>科技前置条件。entity 形态({class,number})不建模——解析时视为满足
+/// (否则阶段科技永远无法研究;设计文档 §5 记录的取舍)。</summary>
+public sealed record TechRequirement(string? Tech, string? Civ,
+    IReadOnlyList<TechRequirement>? Any, IReadOnlyList<TechRequirement>? All);
+
+public sealed record TechnologyDefinition(
+    string Name, string GenericName,
+    int Wood, int Food, int Stone, int Metal, float ResearchTime,
+    IReadOnlyList<TechRequirement> Requirements,
+    IReadOnlyList<Modification> Modifications,
+    bool AutoResearch,
+    string? Supersedes,
+    IReadOnlyList<string> Replaces);
+
+public sealed record TechCatalog(
+    IReadOnlyDictionary<string, TechnologyDefinition> Technologies,
+    IReadOnlyDictionary<string, IReadOnlyList<string>> Pairs);
+
+/// <summary>
+/// 加载 simulation/data/technologies/*.json(对齐原版数据格式)。
+/// pair 文件({ "pair": [a, b] })单独收进 Pairs,不进 Technologies。
+/// 单个坏文件不阻塞整体(与模板加载同款容错)。
+/// </summary>
+public static class TechnologyLoader
+{
+    public static TechCatalog LoadAll(string technologiesDir)
+    {
+        var techs = new Dictionary<string, TechnologyDefinition>();
+        var pairs = new Dictionary<string, IReadOnlyList<string>>();
+        if (!Directory.Exists(technologiesDir)) return new TechCatalog(techs, pairs);
+
+        foreach (var file in Directory.GetFiles(technologiesDir, "*.json", SearchOption.AllDirectories)
+                     .OrderBy(f => f, StringComparer.Ordinal))
+        {
+            string name = Path.GetFileNameWithoutExtension(file);
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                var root = doc.RootElement;
+                if (root.TryGetProperty("pair", out var pairEl) && pairEl.ValueKind == JsonValueKind.Array)
+                {
+                    pairs[name] = pairEl.EnumerateArray().Select(e => e.GetString()!).ToList();
+                    continue;
+                }
+                techs[name] = ParseTech(name, root);
+            }
+            catch { /* 容错:跳过坏文件 */ }
+        }
+        return new TechCatalog(techs, pairs);
+    }
+
+    private static TechnologyDefinition ParseTech(string name, JsonElement root)
+    {
+        var cost = root.TryGetProperty("cost", out var c) ? c : default;
+        bool hasCost = root.TryGetProperty("cost", out _);
+
+        var techAffects = TryGetAffects(root, out var ta) ? ta : (IReadOnlyList<string>)Array.Empty<string>();
+
+        var mods = new List<Modification>();
+        if (root.TryGetProperty("modifications", out var modsEl) && modsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var m in modsEl.EnumerateArray())
+            {
+                if (!m.TryGetProperty("value", out var v) || v.ValueKind != JsonValueKind.String) continue;
+                var affects = TryGetAffects(m, out var ma) ? ma : techAffects;
+                mods.Add(new Modification(
+                    v.GetString()!,
+                    TryGetNumber(m, "add", out var a) ? a : null,
+                    TryGetNumber(m, "multiply", out var mu) ? mu : null,
+                    m.TryGetProperty("replace", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null,
+                    affects));
+            }
+        }
+
+        return new TechnologyDefinition(
+            name,
+            root.TryGetProperty("genericName", out var g) && g.ValueKind == JsonValueKind.String ? g.GetString()! : name,
+            hasCost ? GetInt(cost, "wood") : 0,
+            hasCost ? GetInt(cost, "food") : 0,
+            hasCost ? GetInt(cost, "stone") : 0,
+            hasCost ? GetInt(cost, "metal") : 0,
+            TryGetNumber(root, "researchTime", out var t) ? t : 0f,
+            ParseRequirements(root),
+            mods,
+            root.TryGetProperty("autoResearch", out var ar) && ar.ValueKind == JsonValueKind.True,
+            root.TryGetProperty("supersedes", out var su) && su.ValueKind == JsonValueKind.String ? su.GetString() : null,
+            root.TryGetProperty("replaces", out var re) && re.ValueKind == JsonValueKind.Array
+                ? re.EnumerateArray().Select(e => e.GetString()!).ToList()
+                : (IReadOnlyList<string>)Array.Empty<string>());
+    }
+
+    /// <summary>requirements 对象的每个键 = 一个条件;多键 AND。</summary>
+    private static IReadOnlyList<TechRequirement> ParseRequirements(JsonElement root)
+    {
+        var result = new List<TechRequirement>();
+        if (!root.TryGetProperty("requirements", out var req) || req.ValueKind != JsonValueKind.Object)
+            return result;
+        foreach (var prop in req.EnumerateObject())
+        {
+            switch (prop.Name)
+            {
+                case "tech":
+                    if (prop.Value.ValueKind == JsonValueKind.String)
+                        result.Add(new TechRequirement(prop.Value.GetString(), null, null, null));
+                    break;
+                case "civ":
+                    if (prop.Value.ValueKind == JsonValueKind.String)
+                        result.Add(new TechRequirement(null, prop.Value.GetString(), null, null));
+                    break;
+                case "any":
+                    if (prop.Value.ValueKind == JsonValueKind.Array)
+                        result.Add(new TechRequirement(null, null, ParseReqList(prop.Value), null));
+                    break;
+                case "all":
+                    if (prop.Value.ValueKind == JsonValueKind.Array)
+                        result.Add(new TechRequirement(null, null, null, ParseReqList(prop.Value)));
+                    break;
+                // "entity" 等其他形态:跳过(视为满足)
+            }
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<TechRequirement> ParseReqList(JsonElement arr)
+    {
+        var result = new List<TechRequirement>();
+        foreach (var item in arr.EnumerateArray())
+        {
+            var reqs = ParseRequirements(item);
+            if (reqs.Count == 0)
+                // 项内只有 entity 等被跳过的形态 → 恒真占位(entity 视为满足,设计文档 §5)
+                result.Add(new TechRequirement(null, null, null, null));
+            else
+                result.AddRange(reqs);
+        }
+        return result;
+    }
+
+    /// <summary>affects 形态:string(可空格分词)或 string[]。统一成列表。</summary>
+    private static bool TryGetAffects(JsonElement el, out IReadOnlyList<string> affects)
+    {
+        affects = Array.Empty<string>();
+        if (!el.TryGetProperty("affects", out var a)) return false;
+        if (a.ValueKind == JsonValueKind.String)
+        {
+            affects = new List<string> { a.GetString()! };
+            return true;
+        }
+        if (a.ValueKind == JsonValueKind.Array)
+        {
+            affects = a.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String)
+                .Select(e => e.GetString()!).ToList();
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryGetNumber(JsonElement el, string key, out float value)
+    {
+        value = 0f;
+        if (!el.TryGetProperty(key, out var n) || n.ValueKind != JsonValueKind.Number) return false;
+        value = n.GetSingle();
+        return true;
+    }
+
+    private static int GetInt(JsonElement cost, string key) =>
+        cost.TryGetProperty(key, out var n) && n.ValueKind == JsonValueKind.Number ? n.GetInt32() : 0;
+}
