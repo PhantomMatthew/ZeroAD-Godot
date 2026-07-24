@@ -130,6 +130,8 @@ namespace ZeroAD.Sim.Content
             var attack = node.GetChild("Attack");
             if (attack.IsOk)
             {
+                // 远程节点存在性决定修正值路径前缀(Attack/Ranged vs Attack/Melee)
+                stats.AttackIsRanged = attack.GetChild("Ranged").IsOk;
                 var melee = attack.GetChild("Melee");
                 if (melee.IsOk)
                 {
@@ -316,6 +318,8 @@ namespace ZeroAD.Sim.Content
         public int AttackPierce;
         public int AttackCrush;
         public int AttackCapture;
+        /// <summary>模板含 Attack/Ranged 节点 = 远程单位(修正值路径前缀用)。</summary>
+        public bool AttackIsRanged;
 
         /// <summary>Total physical attack damage (Hack+Pierce+Crush). Derived; 0 means civilian.
         /// Kept as a field so existing `stats.AttackDamage > 0` checks keep working.</summary>

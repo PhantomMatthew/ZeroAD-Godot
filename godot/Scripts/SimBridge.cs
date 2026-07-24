@@ -768,7 +768,9 @@ public sealed partial class SimBridge : Node
             {
                 // 修改值已在 ApplyResearch 内落地;手动研究可能解锁新的 autoResearch 科技
                 techMgr.UpdateAutoResearch(_sim);
-                // TODO(Task 4): ValueModificationApplier.RescaleHealth(_sim, _playerEntity.Value)
+                // 血量类科技改变 Health/Max → 该玩家全部实体按比例缩放(原版 Health.js 同款)
+                if (_playerEntity.HasValue)
+                    ValueModificationApplier.RescaleHealth(_sim, _playerEntity.Value);
                 Events.RaiseResearchFinished(new ResearchFinishedEvent
                 {
                     ResearcherEntity = entity,

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Sim.Components;
@@ -8,6 +9,13 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
 {
     public int Current;
     public int Max;
+    /// <summary>模板基值(修正值管线的输入)。0 = 未显式设置,回退用 Max
+    /// (既有创建点只管 Max,语义等价)。科技改变 Max 时由
+    /// <see cref="ValueModificationApplier.RescaleHealth"/> 按比例缩放 Current。</summary>
+    public int BaseMax;
+
+    /// <summary>修正值查询用的基值:BaseMax > 0 优先,否则 Max。</summary>
+    public int BaseMaxOrMax => BaseMax > 0 ? BaseMax : Max;
 
     protected override void OnInit()
     {
@@ -43,12 +51,14 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
     {
         s.NumberI32("cur", Current);
         s.NumberI32("max", Max);
+        s.NumberI32("bmax", BaseMax);
     }
 
     public override void Deserialize(IDeserializer d)
     {
         Current = d.NumberI32("cur");
         Max = d.NumberI32("max");
+        BaseMax = d.NumberI32("bmax");
     }
 
     public void HandleMessage(IMessage message) { }
@@ -64,6 +74,9 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
     public float Cooldown;
     public EntityId? Target;
     public AttackState State;
+    /// <summary>远程单位 = true,决定修正值路径前缀(Attack/Ranged vs Attack/Melee)。
+    /// 装配时由模板 Attack/Ranged 节点存在性推导(TemplateStats.AttackIsRanged)。</summary>
+    public bool IsRanged;
 
     public enum AttackState { Idle, Approaching, Attacking }
 
@@ -94,11 +107,17 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
 
     /// <summary>Perform one attack hit against the current target. Routes through DelayedDamage
     /// so resistance is applied and (for ranged) travel latency is honoured. Called by UnitAI's
-    /// COMBAT.ATTACKING state on each attack cycle.</summary>
+    /// COMBAT.ATTACKING state on each attack cycle. Damage passes the modifier pipeline here
+    /// (tech effects on Attack/{Melee|Ranged}/Damage/{type}), so research applies at hit time.</summary>
     public void PerformAttack(ComponentManager cm)
     {
         if (Target == null) return;
-        DelayedDamage.ScheduleHit(cm, Entity, Target.Value, Damage, delayTurns: 0);
+        string prefix = IsRanged ? "Attack/Ranged/Damage/" : "Attack/Melee/Damage/";
+        var mod = new DamageBlock { Capture = Damage.Capture };
+        foreach (var kv in Damage.Amounts.OrderBy(k => (int)k.Key)) // 排序保确定
+            mod.Amounts[kv.Key] = (int)MathF.Round(
+                cm.Modifiers.Apply(prefix + kv.Key, kv.Value, Entity), MidpointRounding.AwayFromZero);
+        DelayedDamage.ScheduleHit(cm, Entity, Target.Value, mod, delayTurns: 0);
         Cooldown = 1.0f / Rate;
     }
 
@@ -150,6 +169,7 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         s.NumberFixed("rate", Maths.Fixed.FromFloat(Rate));
         s.NumberI32("state", (int)State);
         s.NumberU32("target", Target?.Value ?? 0);
+        s.Bool("ranged", IsRanged);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -160,6 +180,7 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         State = (AttackState)d.NumberI32("state");
         uint tid = d.NumberU32("target");
         Target = tid != 0 ? new EntityId(tid) : null;
+        IsRanged = d.Bool("ranged");
     }
 
     public void HandleMessage(IMessage message) { }
