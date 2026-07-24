@@ -11,6 +11,16 @@ namespace ZeroAD.Sim.Tests;
 public sealed class SimCommandExecutorTests
 {
     private const string TemplatesRoot = "../../../binaries/data/mods/public/simulation/templates";
+    private const string TechDir = "../../../binaries/data/mods/public/simulation/data/technologies";
+
+    /// <summary>从测试程序集位置向上找仓库标记目录(相对 ../../../ 依赖 CWD,会静默解析失败)。</summary>
+    private static string? FindRepoPath(string relative)
+    {
+        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
+        while (dir != null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, relative)))
+            dir = dir.Parent;
+        return dir == null ? null : System.IO.Path.Combine(dir.FullName, relative);
+    }
 
     private static Content.TemplateLoader? TryLoadTemplates() =>
         System.IO.Directory.Exists(TemplatesRoot) ? new Content.TemplateLoader(TemplatesRoot) : null;
@@ -95,8 +105,16 @@ public sealed class SimCommandExecutorTests
         var cm = new ComponentManager(seed, templates: templates);
         SimSystem.Init(cm);
         var playerEntity = cm.CreateEntity();
-        cm.AddComponent(playerEntity, new PlayerComponent { Wood = 1000, Food = 1000, Stone = 1000, Metal = 1000, PopBonuses = 50 });
-        cm.AddComponent(playerEntity, new TechnologyManager());
+        var player = new PlayerComponent();
+        cm.AddComponent(playerEntity, player);
+        // AddComponent 触发 OnInit 重置默认值 → 资源在挂载后设置
+        player.Wood = 1000; player.Food = 1000; player.Stone = 1000; player.Metal = 1000; player.PopBonuses = 50;
+        var techMgr = new TechnologyManager();
+        cm.AddComponent(playerEntity, techMgr);
+        // 数据驱动科技:配置真实 JSON 目录(LFS 缺失时 catalog 为空,研究类测试自然跳过)
+        var techDir = FindRepoPath("binaries/data/mods/public/simulation/data/technologies");
+        if (techDir != null)
+            techMgr.Configure(Content.TechnologyLoader.LoadAll(techDir), "athen");
         cm.RegisterPlayer(1, playerEntity);
         return cm;
     }

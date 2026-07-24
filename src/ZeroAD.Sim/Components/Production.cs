@@ -258,6 +258,10 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
     /// <summary>Hard global cap (0 A.D. default 300).</summary>
     public int MaxPopCap = 300;
 
+    /// <summary>文明代码(athen/spart/...),驱动科技 requirements {civ} 判定与 civ 加成。
+    /// 默认 athen(与 SimBridge 当前硬编码一致);gamesetup GUI 落地后由开局参数注入。</summary>
+    public string Civ = "athen";
+
     /// <summary>Win/loss state. Mono-directional from Active (only Active can transition).
     /// Ported from Player.js STATE_ACTIVE/DEFEATED/WON. Defaults live on the field initializer
     /// (not OnInit) so callers using `new PlayerComponent { ... }` keep their values.</summary>
@@ -359,6 +363,7 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         s.NumberI32("popBonus", PopBonuses);
         s.NumberI32("popCap", MaxPopCap);
         s.NumberI32("state", (int)State);
+        s.StringASCII("civ", Civ);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -371,6 +376,7 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         PopBonuses = d.NumberI32("popBonus");
         MaxPopCap = d.NumberI32("popCap");
         State = (PlayerState)d.NumberI32("state");
+        Civ = d.StringASCII("civ");
     }
 
     public void HandleMessage(IMessage message) { }

@@ -74,13 +74,14 @@ public sealed partial class SimBridge : Node
     /// <param name="role">Standalone for SP; Host/Client for MP. Governs turn-barrier behaviour.</param>
     /// <param name="playerCount">Number of player slots to create. Host + each client own one.</param>
     public void InitWorld(string? templatesPath, uint seed = 42, uint localPlayerId = 1,
-        NetRole role = NetRole.Standalone, int playerCount = 1)
+        NetRole role = NetRole.Standalone, int playerCount = 1, string civ = "athen")
     {
         var registry = new ComponentRegistry();
         registry.AutoRegister(typeof(PositionComponent).Assembly);
 
         // Wire templates + events into the sim so SpawnEntity / EnqueueTraining can run headless.
         TemplateLoader? templates = null;
+        TechCatalog? techCatalog = null;
         if (templatesPath != null && System.IO.Directory.Exists(templatesPath))
         {
             templates = new TemplateLoader(templatesPath);
@@ -89,6 +90,12 @@ public sealed partial class SimBridge : Node
             foreach (var kvp in templates.Cache) count++;
             if (count == 0) templates.LoadAllTemplates();
             GD.Print($"Template cache: {templates.Cache.Count} entries");
+
+            // 科技 JSON 与模板同根(simulation/templates → simulation/data/technologies)
+            var techDir = System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(templatesPath, "..", "data", "technologies"));
+            techCatalog = TechnologyLoader.LoadAll(techDir);
+            GD.Print($"Technologies: {techCatalog.Technologies.Count} (+{techCatalog.Pairs.Count} pairs)");
         }
 
         _sim = new ComponentManager(seed, registry, templates);
@@ -126,11 +133,18 @@ public sealed partial class SimBridge : Node
         for (int pid = 1; pid <= playerCount; pid++)
         {
             var playerEntity = _sim.CreateEntity();
-            _sim.AddComponent(playerEntity, new PlayerComponent());
-            _sim.AddComponent(playerEntity, new TechnologyManager { });
+            _sim.AddComponent(playerEntity, new PlayerComponent { Civ = civ });
+            var techMgr = new TechnologyManager();
+            _sim.AddComponent(playerEntity, techMgr);
             _sim.AddComponent(playerEntity, new OwnershipComponent { PlayerId = pid });
             _sim.AddComponent(playerEntity, new EntityLimitsComponent());
             _sim.RegisterPlayer(pid, playerEntity);
+            if (techCatalog != null)
+            {
+                techMgr.Configure(techCatalog, civ);
+                // 开局即满足的 autoResearch 科技(phase_village、civ 加成)免费落地
+                techMgr.UpdateAutoResearch(_sim);
+            }
             if (pid == (int)localPlayerId)
                 _playerEntity = playerEntity;
         }
@@ -749,15 +763,12 @@ public sealed partial class SimBridge : Node
             var researcher = _sim.QueryInterface<ResearcherComponent>(entity);
             if (researcher == null) continue;
             string? prev = researcher.CurrentTech;
-            var completed = researcher.Tick(dt, techMgr);
+            var completed = researcher.Tick(dt, techMgr, _sim);
             if (completed != null)
             {
-                var player = GetPlayer();
-                if (player != null && techMgr.Available.TryGetValue(completed, out var tech))
-                {
-                    if (tech.Effects.TryGetValue("pop_limit", out float delta))
-                        player.PopulationLimit += (int)delta;
-                }
+                // 修改值已在 ApplyResearch 内落地;手动研究可能解锁新的 autoResearch 科技
+                techMgr.UpdateAutoResearch(_sim);
+                // TODO(Task 4): ValueModificationApplier.RescaleHealth(_sim, _playerEntity.Value)
                 Events.RaiseResearchFinished(new ResearchFinishedEvent
                 {
                     ResearcherEntity = entity,
