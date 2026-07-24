@@ -181,6 +181,189 @@ public sealed class UseSiteModifierTests
         Assert.Equal(400, restored.Max);
     }
 
+    // ---------- Task 5: 采集/移速/建造/训练/人口 ----------
+
+    [Fact]
+    public void GatherRate_WoodTech_AppliesPrefixMatch()
+    {
+        var (cm, _, tm) = World();
+        var catalog = new TechCatalog(new Dictionary<string, TechnologyDefinition>
+        {
+            ["gather_wood"] = Def("gather_wood", mods: new List<Modification>
+            {
+                new("ResourceGatherer/Rates/wood.tree", null, 1.15f, null, new List<string>())
+            })
+        }, new Dictionary<string, IReadOnlyList<string>>());
+        tm.Configure(catalog, "athen");
+
+        var worker = MakeEntity(cm, 1, "Unit", "Support");
+        var g = new ResourceGatherer();
+        cm.AddComponent(worker, g);
+        g.GatherRate = 10;
+
+        Assert.Equal(10, g.EffectiveRate(cm, ResourceType.Wood)); // 研究前
+        tm.ApplyResearch("gather_wood", cm);
+        Assert.Equal(12, g.EffectiveRate(cm, ResourceType.Wood)); // round(10 × 1.15)
+        Assert.Equal(10, g.EffectiveRate(cm, ResourceType.Food)); // 其他资源不受影响
+    }
+
+    [Fact]
+    public void WalkSpeed_Tech_AppliesAtMoveAdvance()
+    {
+        var (cm, _, tm) = World();
+        var catalog = new TechCatalog(new Dictionary<string, TechnologyDefinition>
+        {
+            ["speed_up"] = Def("speed_up", mods: new List<Modification>
+            {
+                new("UnitMotion/WalkSpeed", null, 1.5f, null, new List<string>())
+            })
+        }, new Dictionary<string, IReadOnlyList<string>>());
+        tm.Configure(catalog, "athen");
+
+        SimSystem.Init(cm);
+        var unit = MakeEntity(cm, 1, "Unit");
+        cm.AddComponent(unit, new PositionComponent());
+        var motion = new UnitMotion();
+        cm.AddComponent(unit, motion);
+        motion.Speed = Fixed.FromFloat(8f);
+
+        motion.MoveToPoint(new FixedVector2D(Fixed.FromFloat(10f), Fixed.Zero));
+        motion.Tick(0.1f);
+        float before = cm.QueryInterface<PositionComponent>(unit)!.Position.X.ToFloat();
+        Assert.Equal(0.8f, before, 2); // 8 × 0.1
+
+        tm.ApplyResearch("speed_up", cm);
+        motion.Tick(0.1f);
+        float after = cm.QueryInterface<PositionComponent>(unit)!.Position.X.ToFloat();
+        Assert.Equal(0.8f + 1.2f, after, 2); // 再走一步:12 × 0.1
+    }
+
+    [Fact]
+    public void BuilderRate_Tech_SpeedsUpFoundation()
+    {
+        var (cm, _, tm) = World();
+        var catalog = new TechCatalog(new Dictionary<string, TechnologyDefinition>
+        {
+            ["eng"] = Def("eng", mods: new List<Modification>
+            {
+                new("Builder/Rate", null, 2f, null, new List<string>())
+            })
+        }, new Dictionary<string, IReadOnlyList<string>>());
+        tm.Configure(catalog, "athen");
+
+        var builderEnt = MakeEntity(cm, 1, "Unit");
+        cm.AddComponent(builderEnt, new PositionComponent());
+        var builder = new BuilderComponent();
+        cm.AddComponent(builderEnt, builder);
+        builder.BuildSpeed = 1f;
+
+        var foundation = cm.CreateEntity();
+        cm.AddComponent(foundation, new PositionComponent());
+        var f = new FoundationComponent();
+        cm.AddComponent(foundation, f);
+        f.Configure("structures/x", buildTime: 10f);
+
+        builder.Build(foundation);
+        builder.Tick(cm);
+        Assert.Equal(0.1f, f.Progress, 3); // 研究前:1 × 0.1
+
+        tm.ApplyResearch("eng", cm);
+        builder.Build(foundation);
+        builder.Tick(cm);
+        Assert.Equal(0.1f + 0.2f, f.Progress, 3); // 研究后:2 × 0.1
+    }
+
+    [Fact]
+    public void TrainTime_CostTech_Reduced()
+    {
+        var (cm, _, tm) = World();
+        var templatesPath = FindRepoPath("binaries/data/mods/public/simulation/templates");
+        if (templatesPath == null) return; // LFS 数据缺失则跳过
+        cm.Templates = new TemplateLoader(templatesPath);
+        var catalog = new TechCatalog(new Dictionary<string, TechnologyDefinition>
+        {
+            ["cheap"] = Def("cheap", mods: new List<Modification>
+            {
+                new("Cost/BuildTime", null, 0.9f, null, new List<string>())
+            })
+        }, new Dictionary<string, IReadOnlyList<string>>());
+        tm.Configure(catalog, "athen");
+
+        const string template = "units/spart/support_civilian";
+        var stats = cm.Templates.ExtractStats(template);
+        var building = MakeEntity(cm, 1, "Structure");
+        var queue = new ProductionQueue();
+        cm.AddComponent(building, queue);
+
+        Assert.True(queue.EnqueueTraining(template, 1, cm));
+        Assert.Equal(stats.BuildTime, queue.Queue[0].BuildTime, 3); // 研究前
+
+        tm.ApplyResearch("cheap", cm);
+        Assert.True(queue.EnqueueTraining(template, 1, cm));
+        Assert.Equal(stats.BuildTime * 0.9f, queue.Queue[1].BuildTime, 3); // 研究后
+    }
+
+    [Fact]
+    public void PopulationBonus_Tech_IncreasesLimit()
+    {
+        var (cm, _, tm) = World();
+        var catalog = new TechCatalog(new Dictionary<string, TechnologyDefinition>
+        {
+            ["housing"] = Def("housing", mods: new List<Modification>
+            {
+                new("Population/Bonus", 5f, null, null, new List<string> { "House" })
+            })
+        }, new Dictionary<string, IReadOnlyList<string>>());
+        tm.Configure(catalog, "athen");
+
+        var house = MakeEntity(cm, 1, "Structure", "House");
+        var pop = new PopulationComponent();
+        cm.AddComponent(house, pop);
+        pop.Bonus = 10;
+
+        cm.Players.RecomputePlayerPopBonus(1);
+        Assert.Equal(10, cm.GetPlayerEntity(1)!.PopBonuses); // 研究前
+
+        tm.ApplyResearch("housing", cm);
+        cm.Players.RecomputePlayerPopBonus(1);
+        Assert.Equal(15, cm.GetPlayerEntity(1)!.PopBonuses); // 研究后:10 + 5
+    }
+
+    [Fact]
+    public void Determinism_SameResearchOrder_SameStateHash()
+    {
+        var (cm1, _, tm1) = World();
+        var (cm2, _, tm2) = World();
+        MakeEntity(cm1, 1, "Unit", "Soldier");
+        MakeEntity(cm2, 1, "Unit", "Soldier");
+
+        // 同序研究
+        tm1.ApplyResearch("attack_ranged_01", cm1);
+        tm1.ApplyResearch("health_tower", cm1);
+        tm2.ApplyResearch("attack_ranged_01", cm2);
+        tm2.ApplyResearch("health_tower", cm2);
+        Assert.Equal(cm1.ComputeStateHash(), cm2.ComputeStateHash());
+
+        // 反序也一致(序列化排序 + 合成排序固定)
+        var (cm3, _, tm3) = World();
+        var (cm4, _, tm4) = World();
+        MakeEntity(cm3, 1, "Unit", "Soldier");
+        MakeEntity(cm4, 1, "Unit", "Soldier");
+        tm3.ApplyResearch("health_tower", cm3);
+        tm3.ApplyResearch("attack_ranged_01", cm3);
+        tm4.ApplyResearch("attack_ranged_01", cm4);
+        tm4.ApplyResearch("health_tower", cm4);
+        Assert.Equal(cm3.ComputeStateHash(), cm4.ComputeStateHash());
+    }
+
+    private static string? FindRepoPath(string relative)
+    {
+        var dir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, relative)))
+            dir = dir.Parent;
+        return dir == null ? null : System.IO.Path.Combine(dir.FullName, relative);
+    }
+
     // ---------- 支持字符串的捕获/重放序列化桩(与 TechnologyManagerTests 同款) ----------
 
     private sealed class StringCapturingSerializer : ISerializer

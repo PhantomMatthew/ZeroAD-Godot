@@ -347,7 +347,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 var supply = m.Cm!.QueryInterface<ResourceSupply>(gatherer.TargetSupply.Value);
                 if (supply == null || supply.IsEmpty) { u.FinishOrder(); return; }
 
-                int gathered = supply.Take((int)(gatherer.GatherRate * m.Dt));
+                int gathered = supply.Take((int)(gatherer.EffectiveRate(m.Cm!, supply.Type) * m.Dt));
                 gatherer.CarryAmount += gathered;
                 gatherer.CarryType = supply.Type;
 

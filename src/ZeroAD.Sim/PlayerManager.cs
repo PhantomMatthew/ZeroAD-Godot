@@ -90,7 +90,11 @@ public sealed class PlayerManager
             var own = _cm.QueryInterface<OwnershipComponent>(entity);
             if (own == null || own.PlayerId != playerId) continue;
             var pop = _cm.QueryInterface<PopulationComponent>(entity);
-            if (pop != null) total += pop.Bonus;
+            // 每栋建筑的加成过修正值管线(科技如 "Population/Bonus" add/multiply)
+            if (pop != null)
+                total += (int)System.MathF.Round(
+                    _cm.Modifiers.Apply("Population/Bonus", pop.Bonus, entity),
+                    System.MidpointRounding.AwayFromZero);
         }
         player.PopBonuses = total;
     }

@@ -77,6 +77,15 @@ public sealed class ResourceGatherer : ComponentBase, IComponentMessageHandler
 
     public enum GatherState { Idle, MovingToResource, Gathering, MovingToDropsite, Dropping }
 
+    /// <summary>经修正值管线的采集速率(科技如 "ResourceGatherer/Rates/wood.tree" ×1.15)。
+    /// 前缀匹配:按资源类型(wood/food/stone/metal)命中其全部子类型路径。</summary>
+    public int EffectiveRate(ComponentManager cm, ResourceType type)
+    {
+        float modified = cm.Modifiers.ApplyPrefix(
+            "ResourceGatherer/Rates/" + type.ToString().ToLowerInvariant(), GatherRate, Entity);
+        return (int)System.MathF.Round(modified, System.MidpointRounding.AwayFromZero);
+    }
+
     protected override void OnInit()
     {
         GatherRate = 10;

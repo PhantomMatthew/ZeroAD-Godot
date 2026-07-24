@@ -74,10 +74,17 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
 
         // Entity limits (category caps like "Hero: 1").
         EntityLimitsComponent? limits = null;
-        if (cm.GetPlayerEntityId(owner.PlayerId) is { } playerEid)
-            limits = cm.QueryInterface<EntityLimitsComponent>(playerEid);
+        EntityId? playerEid = cm.GetPlayerEntityId(owner.PlayerId);
+        if (playerEid is { } pe)
+            limits = cm.QueryInterface<EntityLimitsComponent>(pe);
         if (limits != null && !limits.AllowedToTrain(stats.TrainingCategory, count))
             return false;
+
+        // 训练时间过修正值管线(科技如 "Cost/BuildTime" ×0.9;单位未出生,走模板查询)
+        float buildTime = stats.BuildTime;
+        if (playerEid.HasValue)
+            buildTime = cm.Modifiers.ApplyTemplate(
+                "Cost/BuildTime", stats.BuildTime, stats.GetClassList(), playerEid.Value);
 
         // All checks passed — commit.
         player.Spend(totalWood, totalFood, totalStone, totalMetal);
@@ -89,7 +96,7 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
             StoneCost = stats.StoneCost,
             MetalCost = stats.MetalCost,
             PopulationCost = stats.PopulationCost,
-            BuildTime = stats.BuildTime,
+            BuildTime = buildTime,
             Count = count,
             TrainingCategory = stats.TrainingCategory
         });

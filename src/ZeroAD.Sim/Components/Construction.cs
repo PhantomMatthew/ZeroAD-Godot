@@ -109,7 +109,8 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         else
         {
             if (motion != null) motion.Stop();
-            foundation.AddProgress(BuildSpeed * 0.1f);
+            // 建造速度过修正值管线(科技如 "Builder/Rate" ×1.15)
+            foundation.AddProgress(cm.Modifiers.Apply("Builder/Rate", BuildSpeed, Entity) * 0.1f);
         }
     }
 

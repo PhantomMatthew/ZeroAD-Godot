@@ -107,7 +107,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         uint isqrt = MathInt.Sqrt64(dx2 + dy2);
         Fixed dist = Fixed.Zero.WithInternalValue((int)isqrt);
 
-        Fixed stepDist = Speed.Multiply(Fixed.FromFloat(dt));
+        Fixed stepDist = EffectiveSpeed().Multiply(Fixed.FromFloat(dt));
 
         if (dist < stepDist || dist < Fixed.FromFloat(1.0f))
         {
@@ -137,6 +137,15 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         SimSystem.NotifyPositionChanged(Entity, oldPos2D, newPos2D);
 
         CurrentSpeed = Speed;
+    }
+
+    /// <summary>经修正值管线的移动速度(科技如 "UnitMotion/WalkSpeed" ×1.15)。
+    /// 无 sim 上下文(纯测试)时回退基值。Speed 字段保持基值不动。</summary>
+    private Fixed EffectiveSpeed()
+    {
+        var cm = SimSystem.Sim;
+        if (cm == null) return Speed;
+        return Fixed.FromFloat(cm.Modifiers.Apply("UnitMotion/WalkSpeed", Speed.ToFloat(), Entity));
     }
 
     public override void Serialize(ISerializer s)

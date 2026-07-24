@@ -550,7 +550,7 @@ public sealed partial class SimBridge : Node
                         var supply = _sim.QueryInterface<ResourceSupply>(supplyId);
                         if (supply != null && !supply.IsEmpty)
                         {
-                            int gathered = supply.Take((int)(gatherer.GatherRate * dt));
+                            int gathered = supply.Take((int)(gatherer.EffectiveRate(_sim, supply.Type) * dt));
                             gatherer.CarryAmount += gathered;
                             gatherer.CarryType = supply.Type;
 
