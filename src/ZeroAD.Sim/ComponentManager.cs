@@ -56,6 +56,12 @@ namespace ZeroAD.Sim
         /// </summary>
         public SimEventBus Events { get; }
 
+        /// <summary>
+        /// 修正值管线(对齐原版 ModifiersManager.js)。派生态:不随状态序列化,
+        /// 由 TechnologyManager 在研究/重放时写入。
+        /// </summary>
+        public Components.ModifiersManager Modifiers { get; }
+
         public ComponentManager(uint rngSeed, ComponentRegistry? registry = null,
             TemplateLoader? templates = null, SimEventBus? events = null)
         {
@@ -63,6 +69,7 @@ namespace ZeroAD.Sim
             _registry = registry ?? new ComponentRegistry();
             Players = new PlayerManager(this);
             Events = events ?? new SimEventBus();
+            Modifiers = new Components.ModifiersManager(this);
             if (templates != null) TemplateManager = new TemplateManager(templates);
         }
 
