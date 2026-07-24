@@ -198,16 +198,13 @@ public sealed class ResearchManager
 
     private string? PickNextTech(AISnapshot snap, TechnologyManager techMgr)
     {
-        if (!techMgr.IsResearched("phase_town") && snap.Player.Wood >= 100)
-            return "phase_town";
-        if (!techMgr.IsResearched("gather_capacity") && snap.Player.Wood >= 50 && snap.Player.Food >= 50)
-            return "gather_capacity";
-        if (!techMgr.IsResearched("infantry_attack") && snap.Player.Metal >= 50)
-            return "infantry_attack";
-        if (!techMgr.IsResearched("gather_wood") && snap.Player.Wood >= 40 && snap.Player.Stone >= 40)
-            return "gather_wood";
-        if (!techMgr.IsResearched("infantry_armor") && snap.Player.Stone >= 50)
-            return "infantry_armor";
+        // 真实 JSON 科技名(数据驱动重写后)。CanResearch 已含前置/pair/重复判定;
+        // 资源是否够由 StartResearch 的 CanAfford 把关(不够则本次放弃,15s 后重试)。
+        if (techMgr.CanResearch("phase_town_generic")) return "phase_town_generic";
+        if (techMgr.CanResearch("gather_capacity_wheelbarrow")) return "gather_capacity_wheelbarrow";
+        if (techMgr.CanResearch("gather_lumbering_sharpaxes")) return "gather_lumbering_sharpaxes";
+        if (techMgr.CanResearch("soldier_attack_ranged_01")) return "soldier_attack_ranged_01";
+        if (techMgr.CanResearch("soldier_resistance_pierce_01")) return "soldier_resistance_pierce_01";
         return null;
     }
 }
