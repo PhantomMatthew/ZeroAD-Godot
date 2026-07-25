@@ -88,15 +88,19 @@ public static class SpecMerger
                         anims.Add(a);
 
         // State-named variants also carry prop deltas: adds (axe while chopping)
-        // and clears (hide weapon/shield). The original re-runs variation per
-        // animation state, so these must be reachable per state name. Keyed by
-        // variant name AND by each animation name inside the variant (they match
-        // in practice, but the alias costs nothing and covers mismatches).
-        // CHOSEN variants are skipped — their props are already attached as base
-        // props; re-registering them as state adds would spawn duplicates (e.g.
-        // the head prop on every idle/walk entry).
-        var deltaAcc = new Dictionary<string, (Dictionary<string, PropSpec> Adds, HashSet<string> Clears)>(
-            StringComparer.OrdinalIgnoreCase);
+        // and clears (hide weapon/shield). Keyed by VARIANT NAME ONLY, one
+        // variant per key, first in actor order wins — never merged across
+        // files and never aliased by animation name. The locomotion clips
+        // inside approach_*/carry_* variants are named "Idle"/"Walk"/"Run",
+        // so animation-name aliasing merged their weapon/shield/helmet clears
+        // into the plain idle/walk states (soldiers idled bare-headed and
+        // unarmed). Variant names ARE the state names across the board
+        // (female_gather_tree.xml declares name="gather_tree"), and each
+        // actor references its own file set, so per-actor resolution stays
+        // exact. CHOSEN variants are skipped — their props are already
+        // attached as base props; re-registering them as state adds would
+        // spawn duplicates (e.g. the head prop on every idle/walk entry).
+        var stateProps = new Dictionary<string, StatePropDelta>(StringComparer.OrdinalIgnoreCase);
         for (int gi = 0; gi < doc.Groups.Count; gi++)
         {
             var variants = doc.Groups[gi].Variants;
@@ -106,41 +110,21 @@ public static class SpecMerger
                 if (vi == chosenIdx) continue;
                 var v = variants[vi];
                 if (v.Props.Count == 0) continue;
-                if (string.IsNullOrEmpty(v.Name) && v.Animations.Count == 0) continue;
+                if (string.IsNullOrEmpty(v.Name)) continue;
+                if (stateProps.ContainsKey(v.Name)) continue;
 
-                var keys = new List<string>();
-                if (!string.IsNullOrEmpty(v.Name)) keys.Add(v.Name);
-                foreach (var a in v.Animations)
-                    if (!keys.Contains(a.Name, StringComparer.OrdinalIgnoreCase))
-                        keys.Add(a.Name);
-
-                foreach (var key in keys)
+                var adds = new Dictionary<string, PropSpec>();
+                var clears = new HashSet<string>();
+                foreach (var kv in v.Props)
                 {
-                    if (!deltaAcc.TryGetValue(key, out var acc))
-                    {
-                        acc = (new Dictionary<string, PropSpec>(), new HashSet<string>());
-                        deltaAcc[key] = acc;
-                    }
-                    foreach (var kv in v.Props)
-                    {
-                        if (kv.Value.ActorPath == null)
-                        {
-                            acc.Clears.Add(kv.Key);
-                            acc.Adds.Remove(kv.Key);
-                        }
-                        else
-                        {
-                            acc.Adds[kv.Key] = new PropSpec(kv.Value.ActorPath!, HashCode.Combine(seed, kv.Key));
-                            acc.Clears.Remove(kv.Key);
-                        }
-                    }
+                    if (kv.Value.ActorPath == null)
+                        clears.Add(kv.Key);
+                    else
+                        adds[kv.Key] = new PropSpec(kv.Value.ActorPath!, HashCode.Combine(seed, kv.Key));
                 }
+                stateProps[v.Name] = new StatePropDelta(adds, clears);
             }
         }
-
-        var stateProps = new Dictionary<string, StatePropDelta>(StringComparer.OrdinalIgnoreCase);
-        foreach (var kv in deltaAcc)
-            stateProps[kv.Key] = new StatePropDelta(kv.Value.Adds, kv.Value.Clears);
 
         string? meshGlb = null;
         if (!string.IsNullOrEmpty(mesh))
