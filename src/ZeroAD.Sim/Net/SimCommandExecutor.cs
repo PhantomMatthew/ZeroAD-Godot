@@ -185,6 +185,9 @@ namespace ZeroAD.Sim.Net
                 TemplateName = template,
                 OwnerPlayerId = ownerPlayerId
             });
+            // Fog-of-war registration (Fogging/RetainInFog from the structure template —
+            // foundations stand in explored fog and mirage like completed buildings).
+            EntityAssembler.RegisterForLos(_cm, entity, template, stats);
             return entity;
         }
 

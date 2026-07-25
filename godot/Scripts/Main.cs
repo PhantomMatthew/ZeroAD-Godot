@@ -174,6 +174,14 @@ public sealed partial class Main : Node3D
 				_sim.Events.TutorialMessage += OnTutorialMessage;
 			}
 
+			// Fog-of-war: a selected mirage swaps back to the real entity when it returns
+			// to sight (MT_EntityRenamed semantics), so orders/GUI keep targeting the real one.
+			_sim.Events.MirageSwapBack += e =>
+			{
+				if (e.Player == (int)_sim.LocalPlayerId && _selectedEntities.Remove(e.Mirage))
+					_selectedEntities.Add(e.Parent);
+			};
+
 			if (_isTutorial)
 			{
 				GD.Print("[Tutorial] calling SetupTutorialWorld...");
@@ -294,9 +302,9 @@ public sealed partial class Main : Node3D
 		}
 
 		var map = MapGenerator.GenerateContinents(8, 42);
-		var genTerrain = MapGenerator.CreateMeshFromGenerated(map);
-		AddChild(genTerrain);
-		_sim.FogWorld.Attach(genTerrain, map.TileSize * map.PatchesPerSide * 16);
+		// No fog attach here: the generated mesh emits no UVs and uses vertex-color albedo,
+		// which the fog shader can't sample — fog stays a PMP-terrain feature for now.
+		AddChild(MapGenerator.CreateMeshFromGenerated(map));
 		TerrainHeightService.Set((x, z) =>
 		{
 			int gx = (int)(x / map.TileSize);
@@ -511,6 +519,10 @@ public sealed partial class Main : Node3D
 		// obstructions aren't in the navcell grid yet. Rebuild once more so pathing accounts for
 		// the town centres and any scenario buildings.
 		_sim.Pathfinder.RebuildGrid();
+
+		// The sandbox world spawns owner-less entities (no seers) — reveal the map so the
+		// dev world isn't shrouded. Scenario/tutorial paths keep real fog.
+		_sim.Range.SetLosRevealAll(1, true);
 
 		// Frame the player's starting town centre so the game opens on the player's base, not on
 		// the camera's stale default focus. Matches what SetupTutorialWorld does after scenario

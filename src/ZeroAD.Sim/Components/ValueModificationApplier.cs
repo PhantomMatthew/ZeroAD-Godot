@@ -46,14 +46,13 @@ public static class ValueModificationApplier
         Fixed.FromFloat(cm.Modifiers.Apply("Vision/Range", vis.Range.ToFloat(), ent));
 
     /// <summary>重算某玩家全部 seer 的有效视野;变化经 OnVisionRangeChanged 重铺 LOS 圆。
-    /// 无变化时逐实体 no-op,不产生任何网格抖动。</summary>
-    public static void ReapplyVisionRange(ComponentManager cm, EntityId playerEntity)
+    /// 无变化时逐实体 no-op,不产生任何网格抖动。RangeManager 显式传入(不走 SimSystem
+    /// 静态——多世界测试进程里静态只指向最后初始化的世界)。</summary>
+    public static void ReapplyVisionRange(ComponentManager cm, EntityId playerEntity, RangeManager rm)
     {
         var ownership = cm.QueryInterface<OwnershipComponent>(playerEntity);
         if (ownership == null) return;
         int playerId = ownership.PlayerId;
-        var rm = SimSystem.Range;
-        if (rm == null) return;
 
         foreach (var ent in cm.AllEntities) // List: 插入序,跨端确定
         {
@@ -66,7 +65,7 @@ public static class ValueModificationApplier
     }
 
     /// <summary>全部非 gaia 玩家的视野重算(每回合兜底驱动;玩家 id 排序保证确定)。</summary>
-    public static void ReapplyVisionRangeAll(ComponentManager cm)
+    public static void ReapplyVisionRangeAll(ComponentManager cm, RangeManager rm)
     {
         var players = new List<int>(cm.Players.GetNonGaiaPlayerIds());
         players.Sort();
@@ -74,7 +73,7 @@ public static class ValueModificationApplier
         {
             var pe = cm.GetPlayerEntityId(pid);
             if (pe.HasValue)
-                ReapplyVisionRange(cm, pe.Value);
+                ReapplyVisionRange(cm, pe.Value, rm);
         }
     }
 }

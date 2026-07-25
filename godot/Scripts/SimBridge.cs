@@ -108,6 +108,9 @@ public sealed partial class SimBridge : Node
         // Subscribe so the sim can ask us (the presentation layer) to build visuals whenever it
         // spawns an entity. This is the only Godot→sim coupling direction for spawn.
         _sim.Events.EntityCreated += OnEntityCreated;
+        // Kernel-side destruction (mirage self-destruct/cleanup, RemoveDeadEntities) → drop the
+        // Godot node + cached state. Without this, kernel-destroyed entities leak nodes.
+        _sim.EntityDestroyed += OnSimEntityDestroyed;
 
         int gridSize = 64;
         float cellSize = 4.0f;
@@ -339,6 +342,10 @@ public sealed partial class SimBridge : Node
         });
         obstruction.EnsureRegistered();
 
+        // Fog-of-war registration: Vision/Fogging/Visibility from the template + entry
+        // into the RangeManager index (without this the entity is permanently HIDDEN).
+        EntityAssembler.RegisterForLos(_sim, entity, def.Template, stats);
+
         CreateVisualFor(entity, GetPlayerColor(def.Player), Math.Max(fpSize * 0.5f, 4f), isBuilding: true);
         return entity;
     }
@@ -358,6 +365,10 @@ public sealed partial class SimBridge : Node
 
         if (def.Player > 0)
             _sim.AddComponent(entity, new OwnershipComponent { PlayerId = def.Player });
+
+        // Re-register now that ownership is set: activates fogging and indexes the entity
+        // under its owner (the in-SpawnUnit call ran ownerless). Idempotent.
+        EntityAssembler.RegisterForLos(_sim, entity, def.Template, stats);
 
         return entity;
     }
@@ -407,6 +418,7 @@ public sealed partial class SimBridge : Node
         CreateVisualFor(entity,
             isTree ? new Color(0.1f, 0.5f, 0.1f) : new Color(0.5f, 0.5f, 0.3f),
             isTree ? 2.5f : 1.5f);
+        EntityAssembler.RegisterForLos(_sim, entity, def.Template, stats);
         return entity;
     }
 
@@ -479,7 +491,7 @@ public sealed partial class SimBridge : Node
         // Vision range through the modifiers pipeline: tech/aura changes re-cover seer
         // circles in the LOS grid. Runs every turn (after research completes) so all
         // players' ranges stay fresh without a research-completion hook per player.
-        ValueModificationApplier.ReapplyVisionRangeAll(_sim);
+        ValueModificationApplier.ReapplyVisionRangeAll(_sim, _range);
         // Settle any damage whose delay elapsed this turn, then advance the delay clock.
         _sim.DelayedDamage.TickPending(_sim);
         _sim.DelayedDamage.AdvanceTurn();
@@ -491,6 +503,19 @@ public sealed partial class SimBridge : Node
         // drives Fogging/Mirage bookkeeping and presentation-layer show/hide. Cheap no-op
         // when nothing moved.
         _range.UpdateVisibilityData();
+    }
+
+    private void OnSimEntityDestroyed(EntityId entity)
+    {
+        if (_entityNodes.TryGetValue(entity, out var node))
+        {
+            node.QueueFree();
+            _entityNodes.Remove(entity);
+        }
+        _animPlayers.Remove(entity);
+        _animState.Remove(entity);
+        _lastPos.Remove(entity);
+        _lastVis.Remove(entity);
     }
 
     private void RemoveDeadEntities()
@@ -509,15 +534,7 @@ public sealed partial class SimBridge : Node
                     To = -1
                 });
 
-                if (_entityNodes.TryGetValue(entity, out var node))
-                {
-                    node.QueueFree();
-                    _entityNodes.Remove(entity);
-                    _animPlayers.Remove(entity);
-                    _animState.Remove(entity);
-                    _lastPos.Remove(entity);
-                    _lastVis.Remove(entity);
-                }
+                // Node cleanup happens in OnSimEntityDestroyed (fired by DestroyEntity below).
                 // Pop accounting: dying means the entity leaves its owner. Mirrors how Player.js
                 // reacts to MT_OwnershipChanged (To = INVALID_PLAYER).
                 _sim.ApplyOwnershipPopChange(entity, fromPlayer, -1);
@@ -934,6 +951,9 @@ public sealed partial class SimBridge : Node
 
         Color color = _lastPlayerColor;
         CreateVisualFor(entity, color, 1.5f);
+        // Ownerless at this point (scenario callers re-register after assigning an owner);
+        // still indexes the entity so fog visibility applies to it.
+        EntityAssembler.RegisterForLos(_sim, entity, stats?.TemplateName ?? "", stats);
         return entity;
     }
 
@@ -951,6 +971,8 @@ public sealed partial class SimBridge : Node
             pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
 
         CreateVisualFor(entity, new Color(0.1f, 0.5f, 0.1f), 2.5f);
+        // No template stats on this fallback path: indexing only, no fog components.
+        EntityAssembler.RegisterForLos(_sim, entity, _lastSpawnedTemplate, stats: null);
         return entity;
     }
 
@@ -970,6 +992,7 @@ public sealed partial class SimBridge : Node
 
         _obstructions.BlockCircle(x, z, 8f);
         CreateVisualFor(entity, new Color(0.6f, 0.5f, 0.4f), 8f, isBuilding: true);
+        EntityAssembler.RegisterForLos(_sim, entity, _lastSpawnedTemplate, stats: null);
         return entity;
     }
 

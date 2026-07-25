@@ -104,24 +104,29 @@ public sealed partial class Minimap : Control
     private readonly FogTextureBuilder _fogBuilder = new();
 
     /// <summary>Darken the whole map by the blurred fog texture: unexplored → black,
-    /// explored → half bright, visible → full. Soft edges from the 7-tap binomial.</summary>
+    /// explored → half bright, visible → full. Soft edges from the 7-tap binomial.
+    /// Operates on the raw RGBA buffer — two marshalled copies per frame instead of
+    /// 80k per-pixel interop calls.</summary>
     private void BlendFog(int player)
     {
         byte[] fog = _fogBuilder.BuildBlurred(_sim.Range.Los, player);
         int fn = _sim.Range.Los.VerticesPerSide;
         if (fn <= 1) return;
+        byte[] rgba = _image.GetData();
         for (int pz = 0; pz < MapSize; pz++)
         {
             int fj = Mathf.Min(pz * fn / MapSize, fn - 1);
             for (int px = 0; px < MapSize; px++)
             {
-                float bright = fog[fj * fn + Mathf.Min(px * fn / MapSize, fn - 1)] / 255f;
-                if (bright >= 0.99f) continue;
-                var c = _image.GetPixel(px, pz) * bright;
-                c.A = 1f;
-                _image.SetPixel(px, pz, c);
+                int bright = fog[fj * fn + Mathf.Min(px * fn / MapSize, fn - 1)];
+                if (bright >= 252) continue;
+                int o = (pz * MapSize + px) * 4;
+                rgba[o] = (byte)(rgba[o] * bright / 255);
+                rgba[o + 1] = (byte)(rgba[o + 1] * bright / 255);
+                rgba[o + 2] = (byte)(rgba[o + 2] * bright / 255);
             }
         }
+        _image.SetData(MapSize, MapSize, false, Image.Format.Rgba8, rgba);
     }
 
     public override void _Draw()

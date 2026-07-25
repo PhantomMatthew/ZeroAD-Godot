@@ -155,6 +155,43 @@ namespace ZeroAD.Sim
         }
 
         /// <summary>
+        /// LOS registration for entities assembled outside <see cref="AssembleUnit"/> — the
+        /// legacy SimBridge scenario/sandbox spawns and kernel foundations create entities
+        /// directly and would otherwise never enter the RangeManager index (rendering them
+        /// permanently HIDDEN) nor carry Vision/Fogging/Visibility. Attaches the fog-of-war
+        /// components from template stats (idempotent), notifies the RangeManager, then fires
+        /// the ownership message that activates fogging when an owner is present.
+        /// Call AFTER ownership (if any) is assigned.
+        /// </summary>
+        public static void RegisterForLos(ComponentManager cm, EntityId entity,
+            string templateName, TemplateStats? stats)
+        {
+            if (stats != null && stats.VisionRange > 0
+                && cm.QueryInterface<VisionComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new VisionComponent());
+                cm.QueryInterface<VisionComponent>(entity)!.Range = Fixed.FromInt(stats.VisionRange);
+            }
+            if (stats != null && stats.HasFogging
+                && cm.QueryInterface<FoggingComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new FoggingComponent());
+                cm.QueryInterface<FoggingComponent>(entity)!.TemplateName = templateName;
+            }
+            if (stats != null && stats.RetainInFog
+                && cm.QueryInterface<VisibilityComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new VisibilityComponent());
+                cm.QueryInterface<VisibilityComponent>(entity)!.RetainInFog = true;
+            }
+
+            cm.NotifyEntityCreated(entity); // RangeManager subscribes → indexes + Refresh
+            int owner = cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId ?? -1;
+            if (owner > 0)
+                cm.NotifyOwnerChanged(entity, -1, owner); // activates fogging (MT_OwnershipChanged)
+        }
+
+        /// <summary>
         /// Spawn a mirage: the lean frozen stand-in for <paramref name="parent"/> in one
         /// player's fog (Fogging.js LoadMirage + the special/filter/mirage.xml derivation).
         /// Carries only Mirage + Position + Ownership (+ Visibility when the parent retains
