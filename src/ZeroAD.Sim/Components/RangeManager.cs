@@ -334,6 +334,10 @@ namespace ZeroAD.Sim.Components
             {
                 d.X = pos.Position.X; d.Z = pos.Position.Z; d.InWorld = true;
                 _subdivision.Add(entity, d.X, d.Z, Fixed.Zero.WithInternalValue(d.Size));
+                // First placement without a position message (the SpawnEntity path notifies
+                // only NotifyEntityCreated): still re-evaluate for every player next turn,
+                // or enemies wouldn't see a freshly spawned unit until it first moves.
+                _movedOrPlacedEntities.Add(entity);
             }
             _data[entity] = d;
             SyncLos(entity, d);

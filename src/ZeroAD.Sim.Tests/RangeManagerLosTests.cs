@@ -140,6 +140,28 @@ public class RangeManagerLosTests
     }
 
     [Fact]
+    public void Spawn_WithoutPositionNotify_StillEvaluatedForAllPlayers()
+    {
+        var (cm, rm) = NewWorld();
+        var p2 = cm.CreateEntity();
+        cm.AddComponent(p2, new PlayerComponent());
+        cm.Players.AddPlayer(2, p2);
+        SpawnSeer(cm, rm, 100, 100, owner: 2, range: 20);
+        rm.UpdateVisibilityData(); // settle: dirty bits cleared
+
+        // Production spawn path: components + NotifyEntityCreated only, no position message.
+        var u = cm.CreateEntity();
+        cm.AddComponent(u, new PositionComponent());
+        cm.QueryInterface<PositionComponent>(u)!.Position =
+            new FixedVector3D(Fixed.FromInt(100), Fixed.Zero, Fixed.FromInt(100));
+        cm.AddComponent(u, new OwnershipComponent { PlayerId = 1 });
+        cm.NotifyEntityCreated(u);
+        rm.UpdateVisibilityData();
+
+        Assert.Equal(LosVisibility.Visible, rm.GetLosVisibility(u, 2));
+    }
+
+    [Fact]
     public void AssembleUnit_AttachesVisionFromTemplate()
     {
         // Template stats with a vision range must produce a Fixed-range VisionComponent.

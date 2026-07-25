@@ -513,6 +513,7 @@ public sealed partial class SimBridge : Node
                     _animPlayers.Remove(entity);
                     _animState.Remove(entity);
                     _lastPos.Remove(entity);
+                    _lastVis.Remove(entity);
                 }
                 // Pop accounting: dying means the entity leaves its owner. Mirrors how Player.js
                 // reacts to MT_OwnershipChanged (To = INVALID_PLAYER).
@@ -1217,6 +1218,7 @@ public sealed partial class SimBridge : Node
 
     private void SyncVisuals()
     {
+        SyncVisibility();
         foreach (var kvp in _entityNodes)
         {
             var pos = _sim.QueryInterface<PositionComponent>(kvp.Key);
@@ -1233,6 +1235,40 @@ public sealed partial class SimBridge : Node
             if (_animPlayers.TryGetValue(kvp.Key, out var player))
                 UpdateUnitAnimation(kvp.Key, node, player, newPos);
         }
+    }
+
+    // Last applied per-player visibility per entity — visuals update only on transitions.
+    private readonly Dictionary<EntityId, LosVisibility> _lastVis = new();
+
+    /// <summary>Fog-of-war on the presentation layer: HIDDEN entities lose their node,
+    /// FOGGED ones (structures/mirages standing in explored fog) stay but ghosted.
+    /// Applied only on transitions (per-player visibility changes are rare per frame).</summary>
+    private void SyncVisibility()
+    {
+        int lp = (int)LocalPlayerId;
+        foreach (var kvp in _entityNodes)
+        {
+            var vis = _range.GetLosVisibility(kvp.Key, lp);
+            if (_lastVis.TryGetValue(kvp.Key, out var old) && old == vis) continue;
+            _lastVis[kvp.Key] = vis;
+            ApplyVisibility(kvp.Value, vis);
+        }
+    }
+
+    private static void ApplyVisibility(Node3D node, LosVisibility vis)
+    {
+        node.Visible = vis != LosVisibility.Hidden;
+        // FOGGED = frozen last-seen state: ghost it. MVP uses GeometryInstance3D.Transparency
+        // (single cheap property); Task 8 replaces this with proper mirage materials.
+        SetTransparencyRecursive(node, vis == LosVisibility.Fogged ? 0.45f : 0f);
+    }
+
+    private static void SetTransparencyRecursive(Node node, float transparency)
+    {
+        if (node is GeometryInstance3D geo)
+            geo.Transparency = transparency;
+        foreach (var child in node.GetChildren())
+            SetTransparencyRecursive(child, transparency);
     }
 
     private void UpdateUnitAnimation(EntityId entity, Node3D node, AnimationPlayer player, Vector3 newPos)
@@ -1265,8 +1301,12 @@ public sealed partial class SimBridge : Node
     public List<EntityId> GetEntitiesAtPosition(Vector3 worldPos, float radius = 3f)
     {
         var result = new List<EntityId>();
+        int lp = (int)LocalPlayerId;
         foreach (var kvp in _entityNodes)
         {
+            // Fog-of-war: hidden entities can't be clicked (fogged stand-ins stay
+            // selectable, matching the original's mirage selection).
+            if (_range.GetLosVisibility(kvp.Key, lp) == LosVisibility.Hidden) continue;
             var p = kvp.Value.Position;
             float dx = p.X - worldPos.X;
             float dz = p.Z - worldPos.Z;

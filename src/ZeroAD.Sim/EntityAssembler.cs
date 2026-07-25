@@ -185,6 +185,14 @@ namespace ZeroAD.Sim
             RefreshMirageData(cm, parent, mirage);
             cm.NotifyEntityCreated(mirage);
             rm.RefreshFromComponents(mirage); // flags IsMirage/RetainInFog, indexes position
+            // Presentation builds the mirage's visual from the parent's template (the fog
+            // shader/dimming distinguishes it); same spawn-event pattern as SpawnEntity.
+            cm.Events.RaiseEntityCreated(new Events.EntityCreatedEvent
+            {
+                Entity = mirage,
+                TemplateName = templateName,
+                OwnerPlayerId = parentOwner?.PlayerId ?? -1
+            });
             return mirage;
         }
 

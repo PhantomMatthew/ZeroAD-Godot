@@ -51,8 +51,14 @@ public sealed partial class Minimap : Control
         float worldSize = _sim.Terrain.MapSize * _sim.Terrain.TileSize;
         if (worldSize <= 0) { _texture.Update(_image); QueueRedraw(); return; }
 
+        int lp = (int)_sim.LocalPlayerId;
         foreach (var kvp in GetAllEntityNodes())
         {
+            // Fog-of-war: entities hidden from the local player don't appear at all;
+            // fogged stand-ins (mirages/structures) draw dimmed.
+            var vis = _sim.Range.GetLosVisibility(kvp.Key, lp);
+            if (vis == LosVisibility.Hidden) continue;
+
             var node = kvp.Value;
             int px = (int)(node.Position.X / worldSize * MapSize);
             int pz = (int)(node.Position.Z / worldSize * MapSize);
@@ -71,7 +77,7 @@ public sealed partial class Minimap : Control
             Color color;
             if (isBuilding || isUnit)
             {
-                color = ownerPlayerId == 1
+                color = ownerPlayerId == lp
                     ? new Color(0.08f, 0.22f, 0.58f)
                     : new Color(0.72f, 0.06f, 0.06f);
             }
@@ -83,11 +89,39 @@ public sealed partial class Minimap : Control
             if (healthFraction < 0.5f)
                 color = new Color(0.9f, 0.3f, 0.1f);
 
+            if (vis == LosVisibility.Fogged)
+                color = color.Darkened(0.5f);
+
             DrawDot(px, pz, color, isBuilding ? 3 : 2);
         }
 
+        BlendFog(lp);
+
         _texture.Update(_image);
         QueueRedraw();
+    }
+
+    private readonly FogTextureBuilder _fogBuilder = new();
+
+    /// <summary>Darken the whole map by the blurred fog texture: unexplored → black,
+    /// explored → half bright, visible → full. Soft edges from the 7-tap binomial.</summary>
+    private void BlendFog(int player)
+    {
+        byte[] fog = _fogBuilder.BuildBlurred(_sim.Range.Los, player);
+        int fn = _sim.Range.Los.VerticesPerSide;
+        if (fn <= 1) return;
+        for (int pz = 0; pz < MapSize; pz++)
+        {
+            int fj = Mathf.Min(pz * fn / MapSize, fn - 1);
+            for (int px = 0; px < MapSize; px++)
+            {
+                float bright = fog[fj * fn + Mathf.Min(px * fn / MapSize, fn - 1)] / 255f;
+                if (bright >= 0.99f) continue;
+                var c = _image.GetPixel(px, pz) * bright;
+                c.A = 1f;
+                _image.SetPixel(px, pz, c);
+            }
+        }
     }
 
     public override void _Draw()
