@@ -4,6 +4,10 @@ using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.Components
 {
+    /// <summary>Per-entity visibility for one player. Values mirror the original's
+    /// LosVisibility enum (HIDDEN/FOGGED/VISIBLE) and fit the 2-bit per-player cache.</summary>
+    public enum LosVisibility : byte { Hidden = 0, Fogged = 1, Visible = 2 }
+
     /// <summary>
     /// Compact per-entity record kept by <see cref="RangeManager"/>. Mirrors
     /// <c>EntityData</c> from <c>CCmpRangeManager.cpp</c> (24 bytes there): XZ position, owner,
@@ -122,6 +126,15 @@ namespace ZeroAD.Sim.Components
         /// <summary>Per-player LOS grids. Rebuilt by <see cref="SetBounds"/> on map load.</summary>
         public LosGrid Los { get; private set; }
 
+        // --- Visibility (fog-of-war) state ---
+        // Players whose LOS grid changed this turn (bit p-1 set): all entities re-evaluated.
+        private uint _playerLosDirtyMask;
+        // Entities that moved or were placed this turn: re-evaluated for every player.
+        private readonly HashSet<EntityId> _movedOrPlacedEntities = new();
+        // Explicit re-evaluation requests (e.g. freshly spawned mirages).
+        private readonly HashSet<EntityId> _requestedVisibilityUpdates = new();
+        private readonly bool[] _revealAll = new bool[LosGrid.MaxPlayers + 1];
+
         public RangeManager(ComponentManager cm, Fixed maxX, Fixed maxZ)
         {
             _cm = cm;
@@ -140,6 +153,7 @@ namespace ZeroAD.Sim.Components
         {
             _subdivision = new FastSpatialSubdivision(worldMeters, worldMeters);
             Los = new LosGrid(worldMeters.ToIntRoundToNearest());
+            _playerLosDirtyMask = 0xFFFF; // everything re-evaluated against the fresh grid
             var keys = new List<EntityId>(_data.Keys);
             keys.Sort((a, b) => a.Value.CompareTo(b.Value));
             foreach (var eid in keys)
@@ -155,6 +169,8 @@ namespace ZeroAD.Sim.Components
 
         // --- LOS bookkeeping ---
 
+        private static uint DirtyBit(int player) => 1u << (player - 1);
+
         /// <summary>Bring the LOS grid in line with the entity's desired seer state:
         /// counted iff in-world, owned by a real player, and has a vision range.</summary>
         private void SyncLos(EntityId entity, RangeEntityData d)
@@ -164,11 +180,13 @@ namespace ZeroAD.Sim.Components
             {
                 Los.AddLos(d.Owner, d.X, d.Z, d.VisionRange);
                 d.LosAdded = true;
+                _playerLosDirtyMask |= DirtyBit(d.Owner);
             }
             else if (!want && d.LosAdded)
             {
                 Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
                 d.LosAdded = false;
+                _playerLosDirtyMask |= DirtyBit(d.Owner);
             }
             _data[entity] = d;
         }
@@ -179,7 +197,10 @@ namespace ZeroAD.Sim.Components
         {
             if (!_data.TryGetValue(entity, out var d)) return;
             if (d.LosAdded && oldRange > Fixed.Zero)
+            {
                 Los.RemoveLos(d.Owner, d.X, d.Z, oldRange);
+                _playerLosDirtyMask |= DirtyBit(d.Owner);
+            }
             d.LosAdded = false;
             d.VisionRange = newRange;
             _data[entity] = d;
@@ -198,7 +219,10 @@ namespace ZeroAD.Sim.Components
         {
             if (!_data.TryGetValue(entity, out var d)) return;
             if (d.LosAdded)
+            {
                 Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
+                _playerLosDirtyMask |= DirtyBit(d.Owner);
+            }
             if (d.InWorld)
             {
                 var size = Fixed.FromInt(0).WithInternalValue(d.Size);
@@ -215,14 +239,19 @@ namespace ZeroAD.Sim.Components
             {
                 d.X = to.X; d.Z = to.Y; d.InWorld = true;
                 _subdivision.Add(entity, d.X, d.Z, size);
+                _movedOrPlacedEntities.Add(entity);
                 SyncLos(entity, d);
                 return;
             }
             _subdivision.Move(entity, d.X, d.Z, to.X, to.Y, size);
             if (d.LosAdded)
+            {
                 Los.MoveLos(d.Owner, d.X, d.Z, to.X, to.Y, d.VisionRange);
+                _playerLosDirtyMask |= DirtyBit(d.Owner);
+            }
             d.X = to.X; d.Z = to.Y;
             _data[entity] = d;
+            _movedOrPlacedEntities.Add(entity);
         }
 
         private void OnOwnerChanged(EntityId entity, int from, int to)
@@ -231,10 +260,14 @@ namespace ZeroAD.Sim.Components
             // OwnerChanged while counted: drop the old owner's circle first (the new
             // owner's circle is added by SyncLos below if still a valid seer).
             if (d.LosAdded && from > 0)
+            {
                 Los.RemoveLos(from, d.X, d.Z, d.VisionRange);
+                _playerLosDirtyMask |= DirtyBit(from);
+            }
             d.LosAdded = false;
             d.Owner = to;
             _data[entity] = d;
+            _movedOrPlacedEntities.Add(entity); // ownership affects every player's chain
             SyncLos(entity, d);
         }
 
@@ -311,6 +344,158 @@ namespace ZeroAD.Sim.Components
                     result.Add(kvp.Key);
             result.Sort((a, b) => a.Value.CompareTo(b.Value));
             return result;
+        }
+
+        // --- Per-turn visibility (ported from CCmpRangeManager's UpdateVisibilityData) ---
+
+        /// <summary>Set RetainInFog / IsMirage flags on a tracked entity (assembly-time).</summary>
+        public void SetEntityFlags(EntityId entity, byte flags)
+        {
+            if (!_data.TryGetValue(entity, out var d)) return;
+            d.Flags = flags;
+            _data[entity] = d;
+        }
+
+        /// <summary>Cached per-player visibility of an entity (HIDDEN when untracked).</summary>
+        public LosVisibility GetLosVisibility(EntityId ent, int player) =>
+            _data.TryGetValue(ent, out var d) ? GetCachedVis(d.Visibilities, player) : LosVisibility.Hidden;
+
+        /// <summary>Visibility of an arbitrary world position (grid lookup only, no entity logic).
+        /// Mirrors ICmpRangeManager::GetLosVisibilityPosition.</summary>
+        public LosVisibility GetLosVisibilityPosition(Fixed x, Fixed z, int player)
+        {
+            var (i, j) = Los.WorldToVertex(x, z);
+            if (_revealAll[player] || Los.IsVisible(player, i, j)) return LosVisibility.Visible;
+            return Los.IsExplored(player, i, j) ? LosVisibility.Fogged : LosVisibility.Hidden;
+        }
+
+        /// <summary>Reveal the whole map for a player (debug/spectator). Mirrors SetLosRevealAll.</summary>
+        public void SetLosRevealAll(int player, bool enabled)
+        {
+            if (player < 1 || player > LosGrid.MaxPlayers || _revealAll[player] == enabled) return;
+            _revealAll[player] = enabled;
+            _playerLosDirtyMask |= DirtyBit(player);
+        }
+
+        public bool GetLosRevealAll(int player) => _revealAll[player];
+
+        public int GetPercentMapExplored(int player) => Los.GetPercentExplored(player);
+
+        /// <summary>Force re-evaluation of an entity next turn (mirage spawns use this).</summary>
+        public void RequestVisibilityUpdate(EntityId ent) => _requestedVisibilityUpdates.Add(ent);
+
+        /// <summary>Per-turn visibility pass. Re-evaluates entities whose inputs changed
+        /// (players with LOS grid changes → all entities; moved/placed/requested entities →
+        /// all players), fires VisibilityChangedEvent on transitions, and notifies Fogging.
+        /// Standing game with no movement costs nothing. Called once per sim turn by SimBridge.</summary>
+        public void UpdateVisibilityData()
+        {
+            if (_playerLosDirtyMask == 0 && _movedOrPlacedEntities.Count == 0
+                && _requestedVisibilityUpdates.Count == 0)
+                return;
+
+            uint dirtyMask = _playerLosDirtyMask;
+            _playerLosDirtyMask = 0;
+
+            if (dirtyMask != 0)
+            {
+                var ents = new List<EntityId>(_data.Keys);
+                ents.Sort((a, b) => a.Value.CompareTo(b.Value));
+                for (int p = 1; p <= LosGrid.MaxPlayers; p++)
+                {
+                    if ((dirtyMask & DirtyBit(p)) == 0) continue;
+                    foreach (var e in ents)
+                        EvaluateVisibility(e, p);
+                }
+            }
+
+            if (_movedOrPlacedEntities.Count > 0 || _requestedVisibilityUpdates.Count > 0)
+            {
+                var set = new HashSet<EntityId>(_movedOrPlacedEntities);
+                set.UnionWith(_requestedVisibilityUpdates);
+                _movedOrPlacedEntities.Clear();
+                _requestedVisibilityUpdates.Clear();
+                var ents = new List<EntityId>(set);
+                ents.Sort((a, b) => a.Value.CompareTo(b.Value));
+
+                var players = new List<int>(_cm.Players.GetNonGaiaPlayerIds());
+                players.Sort();
+                foreach (var e in ents)
+                    foreach (var p in players)
+                        EvaluateVisibility(e, p);
+            }
+        }
+
+        private void EvaluateVisibility(EntityId e, int player)
+        {
+            if (!_data.TryGetValue(e, out var d)) return;
+            var newVis = ComputeLosVisibility(e, d, player);
+            var oldVis = GetCachedVis(d.Visibilities, player);
+            if (newVis == oldVis) return;
+            d.Visibilities = SetCachedVis(d.Visibilities, player, newVis);
+            _data[e] = d;
+            _cm.Events.RaiseVisibilityChanged(new Events.VisibilityChangedEvent
+            {
+                Player = player,
+                Entity = e,
+                Old = oldVis,
+                New = newVis
+            });
+            // Fogging/Mirage lifecycle hook (Task 5 fills the behavior).
+            _cm.QueryInterface<FoggingComponent>(e)?.OnVisibilityChanged(player, newVis, _cm);
+        }
+
+        /// <summary>The visibility decision chain, faithfully ported from
+        /// CCmpRangeManager::ComputeLosVisibility (lines 1653-1748).</summary>
+        private LosVisibility ComputeLosVisibility(EntityId ent, RangeEntityData d, int player)
+        {
+            // Not placed in the world: never visible.
+            if (!d.InWorld) return LosVisibility.Hidden;
+
+            bool isMirage = (d.Flags & RangeEntityData.FlagIsMirage) != 0;
+            var mirage = isMirage ? _cm.QueryInterface<MirageComponent>(ent) : null;
+            // Mirage entities, whatever the situation, are visible for one specific player.
+            if (isMirage && mirage != null && mirage.Player != player)
+                return LosVisibility.Hidden;
+
+            var (i, j) = Los.WorldToVertex(d.X, d.Z);
+
+            // Reveal-all: everything real visible, all mirages useless.
+            if (_revealAll[player])
+                return isMirage ? LosVisibility.Hidden : LosVisibility.Visible;
+
+            if (Los.IsVisible(player, i, j))
+                return isMirage ? LosVisibility.Hidden : LosVisibility.Visible;
+
+            if (!Los.IsExplored(player, i, j)) return LosVisibility.Hidden;
+
+            // Explored-but-fogged: only retain-in-fog entities linger.
+            if ((d.Flags & RangeEntityData.FlagRetainInFog) == 0) return LosVisibility.Hidden;
+
+            if (isMirage) return LosVisibility.Fogged;
+
+            if (d.Owner < 0) return LosVisibility.Fogged;
+
+            var fogging = _cm.QueryInterface<FoggingComponent>(ent);
+            if (d.Owner == player)
+                return fogging == null || !fogging.IsMiraged(player)
+                    ? LosVisibility.Fogged
+                    : LosVisibility.Hidden;
+
+            // Enemy entity in fog: hidden when never scouted or currently mirage-replaced.
+            if (fogging != null && fogging.Activated && (!fogging.WasSeen(player) || fogging.IsMiraged(player)))
+                return LosVisibility.Hidden;
+
+            return LosVisibility.Fogged;
+        }
+
+        private static LosVisibility GetCachedVis(uint vis, int player) =>
+            (LosVisibility)(vis >> 2 * (player - 1) & 3);
+
+        private static uint SetCachedVis(uint vis, int player, LosVisibility v)
+        {
+            int s = 2 * (player - 1);
+            return vis & ~(3u << s) | ((uint)v << s);
         }
     }
 }

@@ -99,6 +99,17 @@ namespace ZeroAD.Sim.Events
         public int WinnerPlayerId;
     }
 
+    /// <summary>Raised by RangeManager.UpdateVisibilityData when an entity's per-player
+    /// visibility changes (HIDDEN/FOGGED/VISIBLE). Drives Fogging/Mirage bookkeeping in the
+    /// kernel and entity show/hide on the presentation layer. Mirrors CMessageVisibilityChanged.</summary>
+    public sealed class VisibilityChangedEvent
+    {
+        public int Player;
+        public EntityId Entity;
+        public Components.LosVisibility Old;
+        public Components.LosVisibility New;
+    }
+
     public sealed class SimEventBus
     {
         public event Action<PlayerCommandEvent>? PlayerCommand;
@@ -114,6 +125,7 @@ namespace ZeroAD.Sim.Events
         public event Action<PlayerDefeatedEvent>? PlayerDefeated;
         public event Action<PlayerWonEvent>? PlayerWon;
         public event Action<GameEndedEvent>? GameEnded;
+        public event Action<VisibilityChangedEvent>? VisibilityChanged;
 
         public void RaisePlayerCommand(PlayerCommandEvent e) => PlayerCommand?.Invoke(e);
         public void RaiseTrainingQueued(TrainingQueuedEvent e) => TrainingQueued?.Invoke(e);
@@ -128,5 +140,6 @@ namespace ZeroAD.Sim.Events
         public void RaisePlayerDefeated(PlayerDefeatedEvent e) => PlayerDefeated?.Invoke(e);
         public void RaisePlayerWon(PlayerWonEvent e) => PlayerWon?.Invoke(e);
         public void RaiseGameEnded(GameEndedEvent e) => GameEnded?.Invoke(e);
+        public void RaiseVisibilityChanged(VisibilityChangedEvent e) => VisibilityChanged?.Invoke(e);
     }
 }
