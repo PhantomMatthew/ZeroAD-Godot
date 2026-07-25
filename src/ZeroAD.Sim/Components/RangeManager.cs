@@ -171,6 +171,29 @@ namespace ZeroAD.Sim.Components
 
         private static uint DirtyBit(int player) => 1u << (player - 1);
 
+        /// <summary>After a full-state load (LosGrid.Deserialize restored the state words
+        /// and zeroed the counts): re-apply the reveal-all mask, re-add every live seer's
+        /// circle in sorted order (deterministic count rebuild), and mark all players dirty
+        /// so the next UpdateVisibilityData recomputes every cached visibility.</summary>
+        public void RebuildLosAfterLoad(uint revealAllMask)
+        {
+            for (int p = 1; p <= LosGrid.MaxPlayers; p++)
+                _revealAll[p] = (revealAllMask & DirtyBit(p)) != 0;
+            Los.RebuildCountsClear();
+            _playerLosDirtyMask = 0xFFFF;
+            _movedOrPlacedEntities.Clear();
+            _requestedVisibilityUpdates.Clear();
+            var keys = new List<EntityId>(_data.Keys);
+            keys.Sort((a, b) => a.Value.CompareTo(b.Value));
+            foreach (var eid in keys)
+            {
+                var d = _data[eid];
+                d.LosAdded = false;
+                _data[eid] = d;
+                SyncLos(eid, d);
+            }
+        }
+
         /// <summary>Bring the LOS grid in line with the entity's desired seer state:
         /// counted iff in-world, owned by a real player, and has a vision range.</summary>
         private void SyncLos(EntityId entity, RangeEntityData d)

@@ -337,6 +337,9 @@ public sealed partial class Main : Node3D
 			var f0 = ZeroAD.Sim.Maths.Fixed.Zero;
 			var f1 = ZeroAD.Sim.Maths.Fixed.FromFloat(worldM);
 			_sim.Obstructions.SetBounds(f0, f0, f1, f1);
+			// The fog-of-war vertex grid must cover the real map too (same bounds as the
+			// spatial index — one LosGrid vertex per 4m).
+			_sim.Range.SetBounds(f1);
 
 			// Build the M3 pathfinding pipeline (passability grid → hierarchical connectivity →
 			// A*) now that terrain + obstructions reflect the real map.
@@ -360,6 +363,7 @@ public sealed partial class Main : Node3D
 		var f0 = ZeroAD.Sim.Maths.Fixed.Zero;
 		var f1 = ZeroAD.Sim.Maths.Fixed.FromFloat(worldM);
 		_sim.Obstructions.SetBounds(f0, f0, f1, f1);
+		_sim.Range.SetBounds(f1);
 		_sim.Pathfinder.RebuildGrid();
 	}
 

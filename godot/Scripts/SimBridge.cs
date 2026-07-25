@@ -129,6 +129,10 @@ public sealed partial class SimBridge : Node
         // A system entity to host the TerrainComponent so components can QueryInterface it.
         _terrainEntity = _sim.CreateEntity();
         _sim.AddComponent(_terrainEntity, _terrain);
+        // LOS state rides full-state serialization + the lockstep hash via this component.
+        var losComp = new LosManagerComponent();
+        losComp.Attach(_range);
+        _sim.AddComponent(_terrainEntity, losComp);
 
         for (int pid = 1; pid <= playerCount; pid++)
         {
@@ -475,6 +479,11 @@ public sealed partial class SimBridge : Node
         // Conquest victory check — runs after dead entities are removed so the RangeManager
         // index reflects the current survivors.
         _sim.TickVictory();
+        // Fog-of-war: recompute per-player visibility for whatever changed this turn
+        // (moved/placed/destroyed seers, ownership flips). Fires VisibilityChanged, which
+        // drives Fogging/Mirage bookkeeping and presentation-layer show/hide. Cheap no-op
+        // when nothing moved.
+        _range.UpdateVisibilityData();
     }
 
     private void RemoveDeadEntities()
