@@ -324,19 +324,27 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
     private static void BuildGatherSubtree(FsmSpec<UnitAIComponent, FsmMessage> spec)
     {
-        // GATHER.APPROACHING — moving to resource; hand off to gatherer once arrived.
+        // GATHER.APPROACHING — moving to resource; hand off to gatherer once in range.
+        // The move target is the supply's exact centre, which is unreachable (trees/
+        // rocks have obstructions), so we also transition on a proximity check instead
+        // of waiting for HasMoveTarget to clear (it never does for obstructed targets).
         spec.State("INDIVIDUAL").State("GATHER").State("APPROACHING")
             .On("Timer", (u, m) =>
             {
                 var gatherer = m.Cm!.QueryInterface<ResourceGatherer>(u.Entity);
+                if (gatherer == null || gatherer.TargetSupply == null) { u.FinishOrder(); return; }
                 var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
-                if (gatherer == null) { u.FinishOrder(); return; }
-                if (motion != null && !motion.HasMoveTarget)
+                bool arrived = motion != null && !motion.HasMoveTarget;
+                if (!arrived)
+                    arrived = WithinRange(u.Entity, gatherer.TargetSupply.Value, m.Cm!, GatherRange);
+                if (arrived)
                 {
+                    StopMoving(u);
                     gatherer.State = ResourceGatherer.GatherState.Gathering;
                     u.FsmNextState = "GATHER.GATHERING";
                 }
             });
+
 
         // GATHER.GATHERING — collect until full, then return to dropsite.
         spec.State("INDIVIDUAL").State("GATHER").State("GATHERING")
@@ -449,6 +457,26 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         cm.QueryInterface<UnitMotion>(u.Entity)?.MoveToPoint(
             new FixedVector2D(pos.Position.X, pos.Position.Z));
         return true;
+    }
+
+    /// <summary>Max distance (game metres) at which a gatherer can start collecting.
+    /// Resources have obstructions so the unit can't reach their exact centre; this
+    /// lets GATHER.APPROACHING hand off to GATHERING once the gatherer is adjacent.</summary>
+    private const int GatherRange = 3;
+
+    /// <summary>True when <paramref name="entity"/> is within <paramref name="range"/> metres
+    /// of <paramref name="target"/> (2D, ignoring height).</summary>
+    private static bool WithinRange(EntityId entity, EntityId target, ComponentManager cm, int range)
+    {
+        var a = cm.QueryInterface<PositionComponent>(entity);
+        var b = cm.QueryInterface<PositionComponent>(target);
+        if (a == null || b == null) return false;
+        var dx = a.Position.X - b.Position.X;
+        var dz = a.Position.Z - b.Position.Z;
+        long d2 = (long)dx.InternalValue * (long)dx.InternalValue
+                + (long)dz.InternalValue * (long)dz.InternalValue;
+        long r2 = (long)Fixed.FromInt(range).InternalValue * Fixed.FromInt(range).InternalValue;
+        return d2 <= r2;
     }
 
     private static void StopMoving(UnitAIComponent u) =>

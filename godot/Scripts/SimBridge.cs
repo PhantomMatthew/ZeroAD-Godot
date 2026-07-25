@@ -386,6 +386,9 @@ public sealed partial class SimBridge : Node
                 MaxAmount = stats.ResourceAmount,
                 Type = stats.ResourceType
             };
+            _sim.AddComponent(entity, supply);
+            // SetTypeString AFTER AddComponent — OnInit resets SpecificType/GenericType
+            // to defaults ("tree"/"wood"), so configuring before attach is overwritten.
             if (!string.IsNullOrEmpty(stats.ResourceTypeString))
                 supply.SetTypeString(stats.ResourceTypeString);
             else if (def.Template.Contains("fruit", StringComparison.OrdinalIgnoreCase) ||
@@ -393,7 +396,6 @@ public sealed partial class SimBridge : Node
                 supply.SetTypeString("food.fruit");
             else if (def.Template.Contains("tree", StringComparison.OrdinalIgnoreCase))
                 supply.SetTypeString("wood.tree");
-            _sim.AddComponent(entity, supply);
         }
 
         var identity = new IdentityComponent

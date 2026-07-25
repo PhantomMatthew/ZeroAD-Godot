@@ -555,9 +555,9 @@ public sealed partial class Main : Node3D
 		if (System.Environment.GetEnvironmentVariable("ZEROAD_CAPTURE") != "1" || _captureDone) return;
 		_captureFrames++;
 
-		// At frame 175, spawn a dedicated debug Camera3D on the first visible civilian
-		// unit. RTSCamera._Process fights manual position sets, so we add a separate
-		// current camera we fully control and capture at 180.
+		// Frame 175: spawn a dedicated debug Camera3D on the first visible civilian.
+		// RTSCamera._Process fights manual position sets, so we add a separate current
+		// camera we fully control and capture at 180.
 		if (_captureFrames == 175 && _debugCam == null)
 		{
 			foreach (var kvp in _sim.EntityNodes)
@@ -591,15 +591,17 @@ public sealed partial class Main : Node3D
 			var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
 			string tmpl = ident?.TemplateName ?? ident?.Name ?? "?";
 			var fsm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.UnitAIComponent>(kvp.Key)?.FsmStateName ?? "";
+			var gatherer = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.ResourceGatherer>(kvp.Key);
+			var pos = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.PositionComponent>(kvp.Key);
+			string gtarget = gatherer?.TargetSupply is EntityId gs ? $" gtarget={gs.Value}" : "";
 			var node = kvp.Value;
 			var anim = ModelLibrary.FindManualAnimator(node);
 			var mesh = _findFirstMesh(node);
 			int lp = (int)_sim.LocalPlayerId;
 			var vis = _sim.Range.GetLosVisibility(kvp.Key, lp);
 			var aabb = mesh?.GetAabb() ?? new Aabb();
-			sb.AppendLine($"eid={kvp.Key.Value} tmpl={tmpl} fsm={fsm} " +
-				$"vis={vis} visible={node.Visible} " +
-				$"mesh={(mesh != null ? mesh.Name : "none")} aabb={aabb.Size:F2} " +
+			sb.AppendLine($"eid={kvp.Key.Value} tmpl={tmpl} fsm={fsm} pos={node.GlobalPosition:F1}{gtarget} " +
+				$"vis={vis} mesh={(mesh != null ? mesh.Name : "none")} " +
 				$"anim={(anim != null ? anim.Summary : "none")}");
 		}
 		System.IO.File.WriteAllText($"{dir}/entities.txt", sb.ToString());
