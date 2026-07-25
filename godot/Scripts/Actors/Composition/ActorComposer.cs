@@ -63,6 +63,19 @@ public sealed class ActorComposer
 
     private void AttachProp(Node3D root, Node3D instance, Skeleton3D? skeleton, string attachpoint, Node3D childNode, string actorPath)
     {
+        if (!AttachPropAt(root, skeleton, attachpoint, childNode))
+            WarnAttachpointOnce(actorPath, attachpoint);
+    }
+
+    /// <summary>Attaches a prop at the given attachpoint: bone attachment when the
+    /// skeleton has a matching bone, prop-point node otherwise, unit root as last
+    /// resort. Tags the child with <see cref="LayerMeta.PropAttachpoint"/> so
+    /// StatePropSwitcher can find base props later. Returns false when no real
+    /// attachpoint matched (child attached to root).</summary>
+    public static bool AttachPropAt(Node3D root, Skeleton3D? skeleton, string attachpoint, Node3D childNode)
+    {
+        childNode.SetMeta(LayerMeta.PropAttachpoint, attachpoint);
+
         if (skeleton != null)
         {
             int boneIdx = AttachpointResolver.FindBoneIndex(skeleton, attachpoint);
@@ -72,11 +85,11 @@ public sealed class ActorComposer
                 skeleton.AddChild(ba);
                 ba.BoneIdx = boneIdx;
                 ba.AddChild(childNode);
-                return;
+                return true;
             }
         }
 
-        var attachNode = AttachpointResolver.FindNode(instance, attachpoint);
+        var attachNode = AttachpointResolver.FindNode(root, attachpoint);
         if (attachNode != null)
         {
             // Match the C++ engine: PMDConvert::AddStaticPropPoints decomposes each
@@ -89,12 +102,11 @@ public sealed class ActorComposer
             // authored, then attach the child at 1:1.
             attachNode.Scale = Vector3.One;
             attachNode.AddChild(childNode);
+            return true;
         }
-        else
-        {
-            root.AddChild(childNode);
-            WarnAttachpointOnce(actorPath, attachpoint);
-        }
+
+        root.AddChild(childNode);
+        return false;
     }
 
     public Node3D Compose(ResolvedActorSpec spec, Color teamColor, int depth = 0)
@@ -110,6 +122,8 @@ public sealed class ActorComposer
         if (string.IsNullOrEmpty(state)) return;
         var animator = ModelLibrary.FindManualAnimator(instance);
         animator?.Play(state);
+        var switcher = StatePropSwitcher.Find(instance);
+        switcher?.Apply(state);
     }
 
     private static readonly HashSet<string> _animWarned = new();
@@ -234,7 +248,7 @@ public sealed class ActorComposer
     {
         var animator = ModelLibrary.FindManualAnimator(instance);
         if (animator == null) return;
-        if (animator.HasState("idle")) animator.Play("idle");
+        if (animator.HasState("idle")) SetAnimationState(instance, "idle");
     }
 
     public static MeshInstance3D MakeFallbackBox(Color color)

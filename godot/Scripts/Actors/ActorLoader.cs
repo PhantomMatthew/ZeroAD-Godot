@@ -54,6 +54,8 @@ public sealed class ActorLoader
         // Attach animations to the final instance (not during BuildStructural, whose
         // result is packed into a PackedScene by the cache and would lose C# clip state).
         ActorComposer.TryLoadExternalAnimations(instance, spec.Animations);
+        // Same reasoning for the per-state prop switcher (axe while chopping etc.).
+        StatePropSwitcher.Attach(instance, spec, teamColor, seed);
         ActorComposer.TryPlayIdle(instance);
         return instance;
     }

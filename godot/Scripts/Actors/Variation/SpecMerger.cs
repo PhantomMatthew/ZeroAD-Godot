@@ -13,9 +13,17 @@ public sealed record ResolvedActorSpec(
     IReadOnlyDictionary<string, PropSpec> Props,    // attachpoint -> prop (later groups win)
     IReadOnlyList<AnimRef> Animations,
     string? Material,
-    bool CastShadow);
+    bool CastShadow,
+    IReadOnlyDictionary<string, StatePropDelta> StateProps); // animation-state name -> prop delta
 
 public sealed record PropSpec(string ActorPath, int SubSeed);
+
+/// <summary>Per-animation-state prop changes from state-named variants (e.g. gather_tree.xml):
+/// <see cref="Adds"/> attach a prop actor for the duration of the state (axe while chopping),
+/// <see cref="Clears"/> hide base props at those attachpoints (weapons/shield).</summary>
+public sealed record StatePropDelta(
+    IReadOnlyDictionary<string, PropSpec> Adds,
+    IReadOnlySet<string> Clears);
 
 /// <summary>
 /// Walks an <see cref="ActorDoc"/> in group order with chosen variant indices, accumulating
@@ -52,9 +60,15 @@ public static class SpecMerger
             foreach (var kv in v.Textures)
                 textures[kv.Key] = kv.Value;
 
-            // C++ erase+insert: later group fully replaces attachpoint entry.
+            // C++ erase+insert: later group fully replaces the attachpoint entry;
+            // a clear entry (null ActorPath) erases it outright.
             foreach (var kv in v.Props)
-                props[kv.Key] = new PropSpec(kv.Value.ActorPath, HashCode.Combine(seed, kv.Key));
+            {
+                if (kv.Value.ActorPath == null)
+                    props.Remove(kv.Key);
+                else
+                    props[kv.Key] = new PropSpec(kv.Value.ActorPath!, HashCode.Combine(seed, kv.Key));
+            }
         }
 
         // Animations are merged across ALL variants of ALL groups, not just the
@@ -72,6 +86,61 @@ public static class SpecMerger
                 foreach (var a in v.Animations)
                     if (animSeen.Add(a.Name + "|" + a.File))
                         anims.Add(a);
+
+        // State-named variants also carry prop deltas: adds (axe while chopping)
+        // and clears (hide weapon/shield). The original re-runs variation per
+        // animation state, so these must be reachable per state name. Keyed by
+        // variant name AND by each animation name inside the variant (they match
+        // in practice, but the alias costs nothing and covers mismatches).
+        // CHOSEN variants are skipped — their props are already attached as base
+        // props; re-registering them as state adds would spawn duplicates (e.g.
+        // the head prop on every idle/walk entry).
+        var deltaAcc = new Dictionary<string, (Dictionary<string, PropSpec> Adds, HashSet<string> Clears)>(
+            StringComparer.OrdinalIgnoreCase);
+        for (int gi = 0; gi < doc.Groups.Count; gi++)
+        {
+            var variants = doc.Groups[gi].Variants;
+            int chosenIdx = gi < chosen.Count ? chosen[gi] : -1;
+            for (int vi = 0; vi < variants.Count; vi++)
+            {
+                if (vi == chosenIdx) continue;
+                var v = variants[vi];
+                if (v.Props.Count == 0) continue;
+                if (string.IsNullOrEmpty(v.Name) && v.Animations.Count == 0) continue;
+
+                var keys = new List<string>();
+                if (!string.IsNullOrEmpty(v.Name)) keys.Add(v.Name);
+                foreach (var a in v.Animations)
+                    if (!keys.Contains(a.Name, StringComparer.OrdinalIgnoreCase))
+                        keys.Add(a.Name);
+
+                foreach (var key in keys)
+                {
+                    if (!deltaAcc.TryGetValue(key, out var acc))
+                    {
+                        acc = (new Dictionary<string, PropSpec>(), new HashSet<string>());
+                        deltaAcc[key] = acc;
+                    }
+                    foreach (var kv in v.Props)
+                    {
+                        if (kv.Value.ActorPath == null)
+                        {
+                            acc.Clears.Add(kv.Key);
+                            acc.Adds.Remove(kv.Key);
+                        }
+                        else
+                        {
+                            acc.Adds[kv.Key] = new PropSpec(kv.Value.ActorPath!, HashCode.Combine(seed, kv.Key));
+                            acc.Clears.Remove(kv.Key);
+                        }
+                    }
+                }
+            }
+        }
+
+        var stateProps = new Dictionary<string, StatePropDelta>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in deltaAcc)
+            stateProps[kv.Key] = new StatePropDelta(kv.Value.Adds, kv.Value.Clears);
 
         string? meshGlb = null;
         if (!string.IsNullOrEmpty(mesh))
@@ -95,7 +164,8 @@ public static class SpecMerger
             props,
             anims,
             material,
-            castShadow);
+            castShadow,
+            stateProps);
     }
 
     public static ResolvedActorSpec? MergeFromActorPath(

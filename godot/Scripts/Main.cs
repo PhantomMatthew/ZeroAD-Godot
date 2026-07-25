@@ -546,26 +546,64 @@ public sealed partial class Main : Node3D
 		TryDebugCapture();
 	}
 
-	// --- Debug capture (ZEROAD_CAPTURE=1): screenshot + per-entity diagnostics ---
+	// --- Debug capture (ZEROAD_CAPTURE=1|gather): screenshot + per-entity diagnostics ---
 	private int _captureFrames;
 	private bool _captureDone;
 	private Camera3D? _debugCam;
 	private void TryDebugCapture()
 	{
-		if (System.Environment.GetEnvironmentVariable("ZEROAD_CAPTURE") != "1" || _captureDone) return;
+		string mode = System.Environment.GetEnvironmentVariable("ZEROAD_CAPTURE") ?? "";
+		if (string.IsNullOrEmpty(mode) || _captureDone) return;
+		bool gather = mode == "gather";
 		_captureFrames++;
 
-		// Frame 175: spawn a dedicated debug Camera3D on the first visible civilian.
-		// RTSCamera._Process fights manual position sets, so we add a separate current
-		// camera we fully control and capture at 180.
-		if (_captureFrames == 175 && _debugCam == null)
+		// gather mode: frame 60 orders the first civilian to chop the nearest tree,
+		// so the capture lands inside GATHERING (axe prop + chop animation visible).
+		if (gather && _captureFrames == 60)
+			_sim.DebugOrderFirstCivilianGatherNearest();
+
+		// Mode "1": fixed frames (camera at 175, capture at 180). Mode "gather":
+		// wait until any civilian actually reaches GATHERING (walk time varies with
+		// tree distance), spawn the camera that frame, capture the next; hard cap
+		// at frame 3000 so the run can't hang forever.
+		bool spawnCam;
+		bool captureNow;
+		if (!gather)
 		{
+			spawnCam = _captureFrames == 175 && _debugCam == null;
+			captureNow = _captureFrames == 180;
+		}
+		else
+		{
+			spawnCam = false;
+			if (_debugCam == null && _captureFrames >= 900)
+			{
+				bool gathering = false;
+				foreach (var kvp in _sim.EntityNodes)
+				{
+					var g = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.UnitAIComponent>(kvp.Key)?.FsmStateName ?? "";
+					if (g.Contains("GATHER.GATHERING")) { gathering = true; break; }
+				}
+				spawnCam = gathering || _captureFrames >= 3000;
+			}
+			captureNow = _debugCam != null; // the frame after the camera spawned
+		}
+
+		// Camera spawn: dedicated debug Camera3D on a visible civilian (RTSCamera._Process
+		// fights manual position sets, so we add a separate current camera we control).
+		if (spawnCam && _debugCam == null)
+		{
+			Node3D? firstCiv = null;
 			foreach (var kvp in _sim.EntityNodes)
 			{
 				var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
 				if (ident?.TemplateName?.Contains("support_civilian") != true) continue;
 				int lp = (int)_sim.LocalPlayerId;
 				if (_sim.Range.GetLosVisibility(kvp.Key, lp) == ZeroAD.Sim.Components.LosVisibility.Hidden) continue;
+				firstCiv ??= kvp.Value;
+				// In gather mode prefer the civilian that is actually gathering.
+				var fsm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.UnitAIComponent>(kvp.Key)?.FsmStateName ?? "";
+				if (gather && !fsm.Contains("GATHER")) continue;
 				var p = kvp.Value.GlobalPosition;
 				_debugCam = new Camera3D();
 				AddChild(_debugCam);
@@ -576,12 +614,14 @@ public sealed partial class Main : Node3D
 			}
 		}
 
-		if (_captureFrames != 180) return;
+		if (!captureNow) return;
 		_captureDone = true;
 
 		string dir = "/tmp/zeroad_debug";
 		System.IO.Directory.CreateDirectory(dir);
-		GetViewport().GetTexture().GetImage().SavePng($"{dir}/frame.png");
+		// Headless (RasterizerSceneDummy) has no real viewport texture — skip the PNG.
+		if (DisplayServer.GetName() != "headless")
+			GetViewport().GetTexture().GetImage().SavePng($"{dir}/frame.png");
 
 		var sb = new System.Text.StringBuilder();
 		sb.AppendLine($"frame={_captureFrames} entities={_sim.EntityNodes.Count}");
@@ -595,12 +635,14 @@ public sealed partial class Main : Node3D
 			string gtarget = gatherer?.TargetSupply is EntityId gs ? $" gtarget={gs.Value}" : "";
 			var node = kvp.Value;
 			var anim = ModelLibrary.FindManualAnimator(node);
+			var props = ZeroAD.Godot.Actors.Composition.StatePropSwitcher.Find(node);
 			var mesh = _findFirstMesh(node);
 			int lp = (int)_sim.LocalPlayerId;
 			var vis = _sim.Range.GetLosVisibility(kvp.Key, lp);
 			sb.AppendLine($"eid={kvp.Key.Value} tmpl={tmpl} fsm={fsm} pos={node.GlobalPosition:F1}{gtarget} " +
 				$"vis={vis} mesh={(mesh != null ? mesh.Name : "none")} " +
-				$"anim={(anim != null ? anim.Summary : "none")}");
+				$"anim={(anim != null ? anim.Summary : "none")} " +
+				$"props={(props != null ? props.Summary : "-")}");
 		}
 		System.IO.File.WriteAllText($"{dir}/entities.txt", sb.ToString());
 		GD.Print($"DEBUG_CAPTURE wrote {dir}/frame.png + entities.txt");

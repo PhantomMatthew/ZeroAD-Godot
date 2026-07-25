@@ -771,6 +771,46 @@ public sealed partial class SimBridge : Node
         }
     }
 
+    /// <summary>Debug helper for ZEROAD_CAPTURE=gather: order the first civilian to
+    /// gather the nearest tree, so captures land inside the GATHERING state
+    /// (verifies chop animation + axe prop switching).</summary>
+    public void DebugOrderFirstCivilianGatherNearest()
+    {
+        EntityId? civ = null;
+        PositionComponent? civPos = null;
+        foreach (var e in GetAllEntitiesSnapshot())
+        {
+            var ident = _sim.QueryInterface<IdentityComponent>(e);
+            if (ident?.TemplateName?.Contains("support_civilian") != true) continue;
+            if (_sim.QueryInterface<ResourceGatherer>(e) == null) continue;
+            var p = _sim.QueryInterface<PositionComponent>(e);
+            if (p == null) continue;
+            civ = e; civPos = p;
+            break;
+        }
+        if (civ == null || civPos == null) return;
+
+        EntityId? tree = null;
+        float best = float.MaxValue;
+        foreach (var e in GetAllEntitiesSnapshot())
+        {
+            var supply = _sim.QueryInterface<ResourceSupply>(e);
+            if (supply == null || supply.Amount <= 0 || supply.SpecificType != "tree") continue;
+            var pos = _sim.QueryInterface<PositionComponent>(e);
+            if (pos == null) continue;
+            float dx = pos.Position.X.ToFloat() - civPos.Position.X.ToFloat();
+            float dz = pos.Position.Z.ToFloat() - civPos.Position.Z.ToFloat();
+            float d2 = dx * dx + dz * dz;
+            if (d2 < best) { best = d2; tree = e; }
+        }
+        if (tree == null) return;
+
+        // Go through the real command path (lockstep queue → SimCommandExecutor →
+        // UnitAI FSM order) — calling GatherResource directly sets the target but
+        // leaves the FSM in IDLE, so the gather states/animations never trigger.
+        CommandGather(civ.Value, tree.Value);
+    }
+
     private static string MapBuildNameToTemplate(string name) => name switch
     {
         "House" => "structures/spart/house",
@@ -1347,7 +1387,9 @@ public sealed partial class SimBridge : Node
                 want = ResolveAnimationState(entity).Contains("walk") ? "walk" : "idle";
             if (animator.HasState(want))
             {
-                animator.Play(want);
+                // SetAnimationState (not animator.Play) so per-state props switch too
+                // (axe appears while chopping, shield hidden, restored on walk/idle).
+                Actors.Composition.ActorComposer.SetAnimationState(node, want);
                 _animState[entity] = want;
             }
         }

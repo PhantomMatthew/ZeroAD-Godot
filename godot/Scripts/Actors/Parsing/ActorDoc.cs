@@ -32,7 +32,10 @@ public sealed record ActorVariant(
             Material: null);
 }
 
-public sealed record PropRef(string ActorPath, string Attachpoint);
+/// <summary>Attachpoint prop entry. A null <paramref name="ActorPath"/> is a CLEAR
+/// (&lt;prop attachpoint="x"/&gt; with no actor): the original erases whatever prop the
+/// base variation had at that attachpoint (e.g. gather_tree hides weapon_R/shield).</summary>
+public sealed record PropRef(string? ActorPath, string Attachpoint);
 public sealed record AnimRef(string Name, string File, int Speed);
 
 internal static class EmptyDict<TKey, TValue> where TKey : notnull

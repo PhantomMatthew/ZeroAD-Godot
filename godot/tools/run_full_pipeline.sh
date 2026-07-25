@@ -69,23 +69,14 @@ find "$SRC/textures/terrain/types" -name "*.png" \
     -exec cp {} "$TEX_DST/terrain/" \; 2>/dev/null
 echo "  terrain: $(ls "$TEX_DST/terrain/"*.png 2>/dev/null | wc -l | tr -d ' ') files"
 
-# DDS → PNG conversion (for key textures that are DDS-only)
+# DDS → PNG conversion (textures that are DDS-only). sips cannot read these DDS
+# (DXT-compressed) — silently produced nothing. Blender 4.2 batch-imports them
+# instead; convert_dds_textures.py mirrors this script's flat layout and skips
+# basenames that already exist as PNG.
 echo ""
-echo ">>> Converting DDS textures to PNG..."
-dds_count=0
-for dds_dir in "$SRC/textures/skins/skeletal/athen" "$SRC/textures/skins/props/head" "$SRC/textures/terrain/types"; do
-    if [ -d "$dds_dir" ]; then
-        for dds in "$dds_dir"/*.dds; do
-            [ -f "$dds" ] || continue
-            name=$(basename "$dds" .dds)
-            out="$TEX_DST/${name}.png"
-            if [ ! -f "$out" ]; then
-                sips -s format png "$dds" --out "$out" >/dev/null 2>&1 && dds_count=$((dds_count+1))
-            fi
-        done
-    fi
-done
-echo "  converted $dds_count DDS files to PNG"
+echo ">>> Converting DDS textures to PNG (Blender)..."
+"$BL" --background --python "$(dirname "$0")/convert_dds_textures.py" 2>&1 \
+    | grep -E "CONVERTED|FAILED" || true
 
 # ---- 3. UI textures ----
 echo ""

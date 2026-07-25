@@ -248,8 +248,11 @@ public static class ActorParser
         {
             string? actor = (string?)p.Attribute("actor");
             string? attachpoint = (string?)p.Attribute("attachpoint");
-            if (!string.IsNullOrEmpty(actor) && !string.IsNullOrEmpty(attachpoint))
-                dict[attachpoint!] = new PropRef(actor!, attachpoint!);
+            if (string.IsNullOrEmpty(attachpoint)) continue;
+            // Empty <prop attachpoint="x"/> (no actor) is a CLEAR entry, not noise —
+            // animation variants use it to hide weapons/shields while gathering etc.
+            if (string.IsNullOrEmpty(actor)) actor = null;
+            dict[attachpoint!] = new PropRef(actor, attachpoint!);
         }
         return dict;
     }
