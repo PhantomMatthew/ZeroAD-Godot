@@ -52,6 +52,14 @@ namespace ZeroAD.Sim
             if (motion != null && stats != null)
                 motion.Speed = Fixed.FromFloat(stats.WalkSpeed);
 
+            // Vision: seers get a Fixed-range VisionComponent (RangeManager counts their
+            // circles in the LOS grid). Set AFTER AddComponent — OnInit resets the default.
+            if (stats != null && stats.VisionRange > 0)
+            {
+                cm.AddComponent(entity, new VisionComponent());
+                cm.QueryInterface<VisionComponent>(entity)!.Range = Fixed.FromInt(stats.VisionRange);
+            }
+
             if (isVillager || stats?.CanGather == true)
             {
                 cm.AddComponent(entity, new ResourceGatherer());

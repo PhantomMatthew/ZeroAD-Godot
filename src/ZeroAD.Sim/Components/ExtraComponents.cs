@@ -148,15 +148,18 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
 [Component("Vision", "Vision")]
 public sealed class VisionComponent : ComponentBase, IComponentMessageHandler
 {
-    public float Range;
+    /// <summary>Base vision range in meters (fixed-point — this feeds LOS tick math).
+    /// Template value comes from &lt;Vision&gt;&lt;Range&gt;; techs adjust the effective
+    /// range through the modifiers pipeline ("Vision/Range").</summary>
+    public Maths.Fixed Range;
 
-    protected override void OnInit() => Range = 20.0f;
+    protected override void OnInit() => Range = Maths.Fixed.FromInt(20);
 
     public override void Serialize(ISerializer s) =>
-        s.NumberFixed("range", Maths.Fixed.FromFloat(Range));
+        s.NumberFixed("range", Range);
 
     public override void Deserialize(IDeserializer d) =>
-        Range = d.NumberFixed("range").ToFloat();
+        Range = d.NumberFixed("range");
 
     public void HandleMessage(IMessage message) { }
 }

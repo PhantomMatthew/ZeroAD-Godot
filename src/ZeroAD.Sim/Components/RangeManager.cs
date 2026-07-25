@@ -5,9 +5,9 @@ using ZeroAD.Sim.Maths;
 namespace ZeroAD.Sim.Components
 {
     /// <summary>
-    /// Compact per-entity record kept by <see cref="RangeManager"/> for range queries. Mirrors
-    /// <c>EntityData</c> from <c>CCmpRangeManager.cpp</c> — only the fields needed when LOS is off
-    /// (everything visible): XZ position, owner, obstruction size (so queries can account for it).
+    /// Compact per-entity record kept by <see cref="RangeManager"/>. Mirrors
+    /// <c>EntityData</c> from <c>CCmpRangeManager.cpp</c> (24 bytes there): XZ position, owner,
+    /// obstruction size, vision range, per-player 2-bit visibility cache, and flags.
     /// </summary>
     public struct RangeEntityData
     {
@@ -15,6 +15,13 @@ namespace ZeroAD.Sim.Components
         public int Owner;       // -1 = no owner, 0 = gaia, 1+ = players
         public int Size;        // obstruction radius as int (internal Fixed units), for accountForSize
         public bool InWorld;    // has a PositionComponent and is placed
+        public Fixed VisionRange;   // 0 = not a seer
+        public uint Visibilities;   // per-player 2-bit LosVisibility cache (Task 3)
+        public byte Flags;          // bit0 RetainInFog, bit1 IsMirage (Task 5)
+        public bool LosAdded;       // vision circle currently counted in the LOS grid
+
+        public const byte FlagRetainInFog = 1;
+        public const byte FlagIsMirage = 2;
     }
 
     /// <summary>
@@ -108,18 +115,75 @@ namespace ZeroAD.Sim.Components
     {
         private readonly ComponentManager _cm;
         private readonly Dictionary<EntityId, RangeEntityData> _data = new();
-        private readonly FastSpatialSubdivision _subdivision;
+        private FastSpatialSubdivision _subdivision;
         // Reused scratch buffer — never exposed across calls.
         private readonly List<EntityId> _scratch = new();
+
+        /// <summary>Per-player LOS grids. Rebuilt by <see cref="SetBounds"/> on map load.</summary>
+        public LosGrid Los { get; private set; }
 
         public RangeManager(ComponentManager cm, Fixed maxX, Fixed maxZ)
         {
             _cm = cm;
             _subdivision = new FastSpatialSubdivision(maxX, maxZ);
+            Los = new LosGrid(maxX.ToIntRoundToNearest());
             cm.EntityCreated += OnEntityCreated;
             cm.EntityDestroyed += OnEntityDestroyed;
             cm.PositionChanged += OnPositionChanged;
             cm.OwnerChanged += OnOwnerChanged;
+        }
+
+        /// <summary>Resize the world after loading a real map (the constructor default is 256m,
+        /// but e.g. the tutorial map is 768m). Rebuilds the spatial index and LOS grid from the
+        /// current entity data, in sorted entity order for determinism.</summary>
+        public void SetBounds(Fixed worldMeters)
+        {
+            _subdivision = new FastSpatialSubdivision(worldMeters, worldMeters);
+            Los = new LosGrid(worldMeters.ToIntRoundToNearest());
+            var keys = new List<EntityId>(_data.Keys);
+            keys.Sort((a, b) => a.Value.CompareTo(b.Value));
+            foreach (var eid in keys)
+            {
+                var d = _data[eid];
+                d.LosAdded = false;
+                _data[eid] = d;
+                if (!d.InWorld) continue;
+                _subdivision.Add(eid, d.X, d.Z, Fixed.Zero.WithInternalValue(d.Size));
+                SyncLos(eid, d);
+            }
+        }
+
+        // --- LOS bookkeeping ---
+
+        /// <summary>Bring the LOS grid in line with the entity's desired seer state:
+        /// counted iff in-world, owned by a real player, and has a vision range.</summary>
+        private void SyncLos(EntityId entity, RangeEntityData d)
+        {
+            bool want = d.InWorld && d.Owner > 0 && d.VisionRange > Fixed.Zero;
+            if (want && !d.LosAdded)
+            {
+                Los.AddLos(d.Owner, d.X, d.Z, d.VisionRange);
+                d.LosAdded = true;
+            }
+            else if (!want && d.LosAdded)
+            {
+                Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
+                d.LosAdded = false;
+            }
+            _data[entity] = d;
+        }
+
+        /// <summary>Vision range changed (tech/aura): re-cover with the new range.
+        /// Mirrors MT_VisionRangeChanged → LosRemove(old)+LosAdd(new) in the original.</summary>
+        public void OnVisionRangeChanged(EntityId entity, Fixed oldRange, Fixed newRange)
+        {
+            if (!_data.TryGetValue(entity, out var d)) return;
+            if (d.LosAdded && oldRange > Fixed.Zero)
+                Los.RemoveLos(d.Owner, d.X, d.Z, oldRange);
+            d.LosAdded = false;
+            d.VisionRange = newRange;
+            _data[entity] = d;
+            SyncLos(entity, d);
         }
 
         private void OnEntityCreated(EntityId entity)
@@ -133,6 +197,8 @@ namespace ZeroAD.Sim.Components
         private void OnEntityDestroyed(EntityId entity)
         {
             if (!_data.TryGetValue(entity, out var d)) return;
+            if (d.LosAdded)
+                Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
             if (d.InWorld)
             {
                 var size = Fixed.FromInt(0).WithInternalValue(d.Size);
@@ -149,26 +215,32 @@ namespace ZeroAD.Sim.Components
             {
                 d.X = to.X; d.Z = to.Y; d.InWorld = true;
                 _subdivision.Add(entity, d.X, d.Z, size);
+                SyncLos(entity, d);
+                return;
             }
-            else
-            {
-                _subdivision.Move(entity, d.X, d.Z, to.X, to.Y, size);
-                d.X = to.X; d.Z = to.Y;
-            }
+            _subdivision.Move(entity, d.X, d.Z, to.X, to.Y, size);
+            if (d.LosAdded)
+                Los.MoveLos(d.Owner, d.X, d.Z, to.X, to.Y, d.VisionRange);
+            d.X = to.X; d.Z = to.Y;
             _data[entity] = d;
         }
 
         private void OnOwnerChanged(EntityId entity, int from, int to)
         {
-            if (_data.TryGetValue(entity, out var d))
-            {
-                d.Owner = to;
-                _data[entity] = d;
-            }
+            if (!_data.TryGetValue(entity, out var d)) return;
+            // OwnerChanged while counted: drop the old owner's circle first (the new
+            // owner's circle is added by SyncLos below if still a valid seer).
+            if (d.LosAdded && from > 0)
+                Los.RemoveLos(from, d.X, d.Z, d.VisionRange);
+            d.LosAdded = false;
+            d.Owner = to;
+            _data[entity] = d;
+            SyncLos(entity, d);
         }
 
-        /// <summary>Re-read owner + obstruction size from the live components. Call after assembling
-        /// an entity (e.g. when OwnershipComponent/ObstructionComponent are added post-creation).</summary>
+        /// <summary>Re-read owner + obstruction size + vision range from the live components.
+        /// Call after assembling an entity (e.g. when OwnershipComponent/ObstructionComponent
+        /// are added post-creation).</summary>
         public void RefreshFromComponents(EntityId entity)
         {
             if (!_data.TryGetValue(entity, out var d)) return;
@@ -176,6 +248,8 @@ namespace ZeroAD.Sim.Components
             d.Owner = own?.PlayerId ?? -1;
             var obs = _cm.QueryInterface<ObstructionComponent>(entity);
             d.Size = obs?.GetSize().InternalValue ?? 0;
+            var vis = _cm.QueryInterface<VisionComponent>(entity);
+            d.VisionRange = vis?.Range ?? Fixed.Zero;
             var pos = _cm.QueryInterface<PositionComponent>(entity);
             if (pos != null && !d.InWorld)
             {
@@ -183,6 +257,7 @@ namespace ZeroAD.Sim.Components
                 _subdivision.Add(entity, d.X, d.Z, Fixed.Zero.WithInternalValue(d.Size));
             }
             _data[entity] = d;
+            SyncLos(entity, d);
         }
 
         /// <summary>
