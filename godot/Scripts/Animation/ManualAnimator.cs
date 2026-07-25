@@ -81,14 +81,10 @@ public sealed partial class ManualAnimator : Node
     {
         if (_skeleton == null || !_clips.TryGetValue(_current, out var clip)) return;
 
-        // Bone driving is DISABLED by default: the mesh GLBs are Blender-converted
-        // while the DAE animations are Godot-imported, and the two skeleton frames
-        // disagree (especially lower-body bone rolls), so naive per-bone correction
-        // distorts the character. Set ZEROAD_ANIM_DRIVE=1 to re-enable for testing
-        // the retargeting work in progress. The rest pose (set by Play→ResetToRest)
-        // is correct, so units still render properly standing.
-        if (System.Environment.GetEnvironmentVariable("ZEROAD_ANIM_DRIVE") != "1") return;
-
+        // Animations are Blender-converted GLBs (same pipeline as the mesh GLBs),
+        // so their bone frame matches the mesh skeleton exactly — no runtime
+        // correction needed. The _corrections map is identity when source and mesh
+        // share rest poses (verified per-bone at load).
         _elapsed = clip.Length > 0f
             ? (_elapsed + (float)delta) % clip.Length
             : 0f;
@@ -99,10 +95,10 @@ public sealed partial class ManualAnimator : Node
             if (idx >= 0)
             {
                 var q = InterpRot(kv.Value, _elapsed);
-                // Re-express the DAE rotation in the mesh bone's frame.
-                // ZEROAD_NOCORRECT=1: skip correction (raw DAE quaternions) for A/B testing.
-                if (System.Environment.GetEnvironmentVariable("ZEROAD_NOCORRECT") != "1"
-                    && _corrections.TryGetValue(kv.Key, out var c))
+                // Per-bone frame correction (identity when source + mesh share rest poses,
+                // which holds now that animations are Blender-converted GLBs matching the
+                // mesh GLBs). Kept as a safety net for any future mixed-source assets.
+                if (_corrections.TryGetValue(kv.Key, out var c))
                     q = c * q;
                 _skeleton.SetBonePoseRotation(idx, q);
             }

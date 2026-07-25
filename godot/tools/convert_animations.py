@@ -13,7 +13,13 @@ from pathlib import Path
 ANIM_SRC = Path("../binaries/data/mods/public/art/animation")
 OUT = Path("assets/animations")
 
-MANIFEST = [
+# Manifest file: one DAE path (relative to art/animation/) per line.
+# Default covers every animation referenced by the Athenian citizen (both
+# phenotypes) and infantry spearman actors — the units our sim actually spawns.
+# Regenerate with the variant-chain walker when adding new unit actors.
+MANIFEST_FILE = Path(os.environ.get("ANIM_MANIFEST", "/tmp/anim_manifest.txt"))
+
+FALLBACK_MANIFEST = [
     "biped/infantry/hoplite/idle_relax_01.dae",
     "biped/infantry/hoplite/idle_relax_02.dae",
     "biped/infantry/hoplite/walk_relax.dae",
@@ -30,6 +36,12 @@ MANIFEST = [
     "quadraped/horse_death_01.dae",
     "quadraped/horse_death_02.dae",
 ]
+
+MANIFEST = (
+    [line.strip() for line in MANIFEST_FILE.read_text().splitlines() if line.strip()]
+    if MANIFEST_FILE.exists()
+    else FALLBACK_MANIFEST
+)
 
 
 def convert(rel: str) -> bool:
