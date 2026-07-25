@@ -24,20 +24,18 @@ public static class SelectionRing
         _ringMatEnemy ??= CreateRingMat(enemyColor);
     }
 
-    public static MeshInstance3D Create(float radius, Color friendlyColor, Color enemyColor)
+    public enum Shape { Circle, Square }
+
+    /// <summary>
+    /// Selection marker matching the original: units get a circular ring,
+    /// buildings get a square outline around their footprint.
+    /// </summary>
+    public static MeshInstance3D Create(float radius, Color friendlyColor, Color enemyColor,
+        Shape shape = Shape.Circle)
     {
         EnsureMaterials(friendlyColor, enemyColor);
 
-        float half = radius;
-
-        var points = new Vector3[]
-        {
-            new(-half, 0.1f, -half),
-            new(half, 0.1f, -half),
-            new(half, 0.1f, half),
-            new(-half, 0.1f, half),
-            new(-half, 0.1f, -half),
-        };
+        var points = shape == Shape.Square ? SquarePoints(radius) : CirclePoints(radius);
 
         var st = new SurfaceTool();
         st.Begin(Mesh.PrimitiveType.LineStrip);
@@ -47,6 +45,27 @@ public static class SelectionRing
         var instance = new MeshInstance3D { Mesh = mesh };
         mesh.SurfaceSetMaterial(0, _ringMat);
         return instance;
+    }
+
+    private static Vector3[] SquarePoints(float half) => new Vector3[]
+    {
+        new(-half, 0.1f, -half),
+        new(half, 0.1f, -half),
+        new(half, 0.1f, half),
+        new(-half, 0.1f, half),
+        new(-half, 0.1f, -half),
+    };
+
+    private static Vector3[] CirclePoints(float radius)
+    {
+        const int segments = 32;
+        var pts = new Vector3[segments + 1];
+        for (int i = 0; i <= segments; i++)
+        {
+            float a = i * Mathf.Tau / segments;
+            pts[i] = new Vector3(Mathf.Cos(a) * radius, 0.1f, Mathf.Sin(a) * radius);
+        }
+        return pts;
     }
 
     public static MeshInstance3D CreateHealthBar(float healthFraction)

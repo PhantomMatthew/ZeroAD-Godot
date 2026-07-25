@@ -35,7 +35,7 @@ public static class SpecMerger
         bool castShadow = doc.CastShadow;
         var textures = new Dictionary<string, string>();
         var props = new Dictionary<string, PropSpec>();
-        var anims = new Dictionary<string, AnimRef>();
+        var anims = new List<AnimRef>();
 
         for (int gi = 0; gi < doc.Groups.Count; gi++)
         {
@@ -55,10 +55,23 @@ public static class SpecMerger
             // C++ erase+insert: later group fully replaces attachpoint entry.
             foreach (var kv in v.Props)
                 props[kv.Key] = new PropSpec(kv.Value.ActorPath, HashCode.Combine(seed, kv.Key));
-
-            foreach (var a in v.Animations)
-                anims[a.Name] = a;
         }
+
+        // Animations are merged across ALL variants of ALL groups, not just the
+        // chosen visual variant. The original re-runs variant selection per
+        // animation state (ObjectBase::CalculateVariation matches variants by
+        // state name — "gather_tree", "Build", ...), so every state-named
+        // variant's clips must be reachable from one spec. Mesh/props/textures
+        // still come from the chosen variant only. Name clashes (idle/walk/run
+        // exist in base, carry-* and combat-stance variants alike) keep ALL
+        // candidates in actor order — the composer picks the first whose source
+        // file resolves, so a missing conversion never costs a whole state.
+        var animSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in doc.Groups)
+            foreach (var v in group.Variants)
+                foreach (var a in v.Animations)
+                    if (animSeen.Add(a.Name + "|" + a.File))
+                        anims.Add(a);
 
         string? meshGlb = null;
         if (!string.IsNullOrEmpty(mesh))
@@ -80,7 +93,7 @@ public static class SpecMerger
             meshGlb,
             remappedTex,
             props,
-            anims.Values.ToList(),
+            anims,
             material,
             castShadow);
     }

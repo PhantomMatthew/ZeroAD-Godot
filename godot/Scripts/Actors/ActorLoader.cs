@@ -51,6 +51,9 @@ public sealed class ActorLoader
 
         var instance = scene.Instantiate<Node3D>();
         InstanceCustomizer.Apply(instance, spec, teamColor, seed);
+        // Attach animations to the final instance (not during BuildStructural, whose
+        // result is packed into a PackedScene by the cache and would lose C# clip state).
+        ActorComposer.TryLoadExternalAnimations(instance, spec.Animations);
         ActorComposer.TryPlayIdle(instance);
         return instance;
     }

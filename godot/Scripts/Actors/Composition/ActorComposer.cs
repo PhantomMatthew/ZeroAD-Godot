@@ -37,8 +37,10 @@ public sealed class ActorComposer
 
         root.AddChild(instance);
 
-        TryLoadExternalAnimations(instance, spec.Animations);
-
+        // NOTE: animations are NOT loaded here. BuildStructural's result is packed into a
+        // PackedScene by ComposedSceneCache and re-instantiated per spawn; PackedScene only
+        // serializes Godot-native properties, so ManualAnimator's C# clip state would be
+        // lost. Clips are attached to the final instance in ActorLoader.Instantiate instead.
         var skeleton = AttachpointResolver.FindSkeleton(instance);
 
         if (depth < MaxPropDepth)
@@ -116,7 +118,7 @@ public sealed class ActorComposer
     // (same DAE → same keyframes). Avoids re-parsing 200+ tracks per spawn.
     private static readonly Dictionary<string, ZeroAD.Godot.SkeletalAnim.AnimClip> _clipCache = new();
 
-    private static void TryLoadExternalAnimations(Node3D baseInstance, IReadOnlyList<AnimRef> animations)
+    public static void TryLoadExternalAnimations(Node3D baseInstance, IReadOnlyList<AnimRef> animations)
     {
         if (animations.Count == 0) return;
 

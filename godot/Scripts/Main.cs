@@ -580,7 +580,8 @@ public sealed partial class Main : Node3D
 				: new Color(0.72f, 0.06f, 0.06f);
 			Color enemyColor = new Color(0.72f, 0.06f, 0.06f);
 
-			var ring = SelectionRing.Create(ringRadius, friendlyColor, enemyColor);
+			var ring = SelectionRing.Create(ringRadius, friendlyColor, enemyColor,
+				isBuilding ? SelectionRing.Shape.Square : SelectionRing.Shape.Circle);
 			ring.Position = new Vector3(0, 0.1f, 0);
 			node.AddChild(ring);
 			_selectionMarkers.Add(ring);

@@ -70,9 +70,13 @@ public sealed class AssetPathResolver
 		string animRoot = Path.Combine(assetsAbs, "animations");
 		if (Directory.Exists(animRoot))
 		{
-			foreach (var f in Directory.GetFiles(animRoot, "*.glb", SearchOption.AllDirectories))
-				if (!f.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
-					animations.Add(Path.GetRelativePath(animRoot, f).Replace('\\', '/'));
+			// .glb (legacy Blender conversions) and .dae (Godot-native import —
+			// Blender 5 dropped Collada, so new clips ship as raw DAE and load
+			// through ResourceLoader instead of GltfDocument).
+			foreach (var pattern in new[] { "*.glb", "*.dae" })
+				foreach (var f in Directory.GetFiles(animRoot, pattern, SearchOption.AllDirectories))
+					if (!f.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+						animations.Add(Path.GetRelativePath(animRoot, f).Replace('\\', '/'));
 		}
 
 		return new AssetPathResolver(
@@ -147,15 +151,25 @@ public sealed class AssetPathResolver
 		if (string.IsNullOrEmpty(rawDaePath))
 			return Result<string>.Miss(rawDaePath);
 
+		// Prefer a converted .glb when one exists (matches the mesh GLB import path
+		// exactly), else fall back to the raw .dae (Godot-native import).
 		string glbRel = SwapOrStripExt(rawDaePath, ".glb");
 		if (_animRelPaths.Contains(glbRel))
 			return new Result<string>(glbRel, true, rawDaePath);
 
-		string basename = Path.GetFileName(glbRel);
-		if (_animByBasename.TryGetValue(basename, out var animRelocated))
+		string glbBasename = Path.GetFileName(glbRel);
+		if (_animByBasename.TryGetValue(glbBasename, out var animRelocated))
 			return new Result<string>(animRelocated, true, rawDaePath);
 
-		WarnOnceMiss($"AssetPathResolver.ResolveAnimation miss: '{rawDaePath}' (tried '{glbRel}', basename '{basename}')");
+		string daeRel = SwapOrStripExt(rawDaePath, ".dae");
+		if (_animRelPaths.Contains(daeRel))
+			return new Result<string>(daeRel, true, rawDaePath);
+
+		string daeBasename = Path.GetFileName(daeRel);
+		if (_animByBasename.TryGetValue(daeBasename, out var daeRelocated))
+			return new Result<string>(daeRelocated, true, rawDaePath);
+
+		WarnOnceMiss($"AssetPathResolver.ResolveAnimation miss: '{rawDaePath}' (tried '{glbRel}', '{daeRel}')");
 		return Result<string>.Miss(rawDaePath);
 	}
 
