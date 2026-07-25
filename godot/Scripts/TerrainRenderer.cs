@@ -43,21 +43,28 @@ public static class TerrainRenderer
         st.GenerateNormals();
         var mesh = st.Commit();
 
-        var mat = new StandardMaterial3D();
-
-        var tex = LoadTexture("terrain_grass.png");
-        if (tex != null)
+        // Splat material from the PMP's per-tile texture pairs (matches the original's
+        // per-tile terrain texturing); single grass texture only as fallback.
+        var splatMat = TerrainSplatBuilder.BuildMaterial(map);
+        if (splatMat != null)
         {
-            mat.AlbedoTexture = tex;
+            mesh.SurfaceSetMaterial(0, splatMat);
         }
         else
         {
-            mat.AlbedoColor = new Color(0.35f, 0.50f, 0.20f);
+            var mat = new StandardMaterial3D();
+            var tex = LoadTexture("terrain_grass.png");
+            if (tex != null)
+            {
+                mat.AlbedoTexture = tex;
+            }
+            else
+            {
+                mat.AlbedoColor = new Color(0.35f, 0.50f, 0.20f);
+            }
+            mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+            mesh.SurfaceSetMaterial(0, mat);
         }
-
-        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-
-        mesh.SurfaceSetMaterial(0, mat);
 
         var instance = new MeshInstance3D { Mesh = mesh };
         instance.CreateTrimeshCollision();

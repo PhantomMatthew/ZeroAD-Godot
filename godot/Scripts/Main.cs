@@ -555,6 +555,7 @@ public sealed partial class Main : Node3D
 		string mode = System.Environment.GetEnvironmentVariable("ZEROAD_CAPTURE") ?? "";
 		if (string.IsNullOrEmpty(mode) || _captureDone) return;
 		bool gather = mode == "gather";
+		bool wide = mode == "wide"; // RTS default camera view — for terrain comparisons
 		_captureFrames++;
 
 		// gather mode: frame 60 orders the first civilian to chop the nearest tree,
@@ -562,16 +563,16 @@ public sealed partial class Main : Node3D
 		if (gather && _captureFrames == 60)
 			_sim.DebugOrderFirstCivilianGatherNearest();
 
-		// Mode "1": fixed frames (camera at 175, capture at 180). Mode "gather":
-		// wait until any civilian actually reaches GATHERING (walk time varies with
-		// tree distance), spawn the camera that frame, capture the next; hard cap
-		// at frame 3000 so the run can't hang forever.
+		// Mode "1": fixed frames (camera at 175, capture at 180). Mode "wide": RTS
+		// camera as-is, capture at 185. Mode "gather": wait until any civilian
+		// actually reaches GATHERING (walk time varies with tree distance), spawn
+		// the camera that frame, capture the next; hard cap at frame 3000.
 		bool spawnCam;
 		bool captureNow;
 		if (!gather)
 		{
-			spawnCam = _captureFrames == 175 && _debugCam == null;
-			captureNow = _captureFrames == 180;
+			spawnCam = !wide && _captureFrames == 175 && _debugCam == null;
+			captureNow = _captureFrames == (wide ? 600 : 180);
 		}
 		else
 		{
@@ -591,6 +592,25 @@ public sealed partial class Main : Node3D
 
 		// Camera spawn: dedicated debug Camera3D on a visible civilian (RTSCamera._Process
 		// fights manual position sets, so we add a separate current camera we control).
+		// "wide" instead mounts a high overview above the player's civil centre
+		// (RTS camera focus is unreliable in captures) for terrain comparisons.
+		if (wide && _debugCam == null && _captureFrames == 175)
+		{
+			foreach (var kvp in _sim.EntityNodes)
+			{
+				var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
+				if (ident?.TemplateName?.Contains("civil_centre") != true) continue;
+				int lp = (int)_sim.LocalPlayerId;
+				if (_sim.Range.GetLosVisibility(kvp.Key, lp) == ZeroAD.Sim.Components.LosVisibility.Hidden) continue;
+				var p = kvp.Value.GlobalPosition;
+				_debugCam = new Camera3D();
+				AddChild(_debugCam);
+				_debugCam.GlobalPosition = p + new Vector3(80f, 160f, 140f);
+				_debugCam.LookAt(p, Vector3.Up);
+				_debugCam.Current = true;
+				break;
+			}
+		}
 		if (spawnCam && _debugCam == null)
 		{
 			Node3D? firstCiv = null;

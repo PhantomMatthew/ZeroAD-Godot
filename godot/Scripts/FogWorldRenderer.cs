@@ -22,9 +22,19 @@ public sealed class FogWorldRenderer
 
     /// <summary>Swap the terrain's material for the fog shader, copying its albedo
     /// setup. worldSize must match the sim-side RangeManager bounds (one fog texel
-    /// per 4m LOS vertex).</summary>
+    /// per 4m LOS vertex). When the terrain already uses a fog-aware ShaderMaterial
+    /// (terrain_splat.gdshader), keeps it and just refreshes the fog params.</summary>
     public void Attach(MeshInstance3D terrain, float worldSize)
     {
+        if (terrain.GetActiveMaterial(0) is ShaderMaterial splat)
+        {
+            _mat = splat;
+            _mat.SetShaderParameter("world_size", worldSize);
+            EnsureTexture(_sim.Range.Los.VerticesPerSide);
+            terrain.MaterialOverride = _mat;
+            return;
+        }
+
         var src = terrain.GetActiveMaterial(0) as StandardMaterial3D;
         _mat = new ShaderMaterial
         {

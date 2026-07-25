@@ -25,6 +25,14 @@ public sealed class PmpMap
     public ushort[] Heightmap { get; init; } = Array.Empty<ushort>();
     public List<string> TextureNames { get; init; } = new();
 
+    /// <summary>Per-tile texture blend descriptors (STileDesc): base texture index,
+    /// blend texture index (0xFFFF = none), and author priority (higher splats later).
+    /// Index = z * TilesPerSide + x.</summary>
+    public ushort[] TileTex1 { get; init; } = Array.Empty<ushort>();
+    public ushort[] TileTex2 { get; init; } = Array.Empty<ushort>();
+    public uint[] TilePriority { get; init; } = Array.Empty<uint>();
+    public const ushort NoTexture = 0xFFFF;
+
     public int TilesPerSide => PatchesPerSide * PatchSize;
     public float MapSizeMeters => (VerticesPerSide - 1) * TileSize;
 
@@ -83,7 +91,19 @@ public sealed class PmpMap
 
         int tilesPerSide = patchesPerSide * PatchSize;
         int tileCount = tilesPerSide * tilesPerSide;
-        reader.ReadBytes(tileCount * 8);
+        // STileDesc: u16 tex1 + u16 tex2 + u32 priority, little-endian, per tile.
+        byte[] tileRaw = reader.ReadBytes(tileCount * 8);
+        var tileTex1 = new ushort[tileCount];
+        var tileTex2 = new ushort[tileCount];
+        var tilePriority = new uint[tileCount];
+        for (int i = 0; i < tileCount; i++)
+        {
+            int o = i * 8;
+            tileTex1[i] = (ushort)(tileRaw[o] | (tileRaw[o + 1] << 8));
+            tileTex2[i] = (ushort)(tileRaw[o + 2] | (tileRaw[o + 3] << 8));
+            tilePriority[i] = (uint)(tileRaw[o + 4] | (tileRaw[o + 5] << 8)
+                | (tileRaw[o + 6] << 16) | (tileRaw[o + 7] << 24));
+        }
 
         return new PmpMap
         {
@@ -92,6 +112,9 @@ public sealed class PmpMap
             VerticesPerSide = verticesPerSide,
             Heightmap = heightmap,
             TextureNames = textureNames,
+            TileTex1 = tileTex1,
+            TileTex2 = tileTex2,
+            TilePriority = tilePriority,
         };
     }
 
