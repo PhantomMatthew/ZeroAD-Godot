@@ -203,7 +203,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             if (m.Order!.Target is { } target)
             {
                 gatherer.TargetSupply = target;
-                MoveToTarget(u, target, m.Cm!);
+                MoveToTargetEdge(u, target, m.Cm!, Fixed.FromInt(1));
             }
             u.FsmNextState = "GATHER.APPROACHING";
         });
@@ -366,7 +366,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                     if (dropsite.HasValue)
                     {
                         gatherer.TargetDropsite = dropsite;
-                        MoveToTarget(u, dropsite.Value, m.Cm!);
+                        MoveToTargetEdge(u, dropsite.Value, m.Cm!, Fixed.FromInt(1));
                         gatherer.State = ResourceGatherer.GatherState.MovingToDropsite;
                         u.FsmNextState = "GATHER.RETURNINGRESOURCE";
                     }
@@ -385,7 +385,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                     // Deposit carried resources at the dropsite.
                     DepositResources(u.Entity, gatherer, m.Cm!);
                     // Return to the original supply (if still valid) for another load.
-                    if (gatherer.TargetSupply is { } supply && MoveToTarget(u, supply, m.Cm!))
+                    if (gatherer.TargetSupply is { } supply && MoveToTargetEdge(u, supply, m.Cm!, Fixed.FromInt(1)))
                     {
                         gatherer.State = ResourceGatherer.GatherState.MovingToResource;
                         u.FsmNextState = "GATHER.APPROACHING";
@@ -459,13 +459,54 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         return true;
     }
 
+    /// <summary>Like <see cref="MoveToTarget"/>, but aims at a point just outside the
+    /// target's obstruction edge, pulled toward the unit's current position (mirrors
+    /// the original's MoveToTargetRange). The exact centre sits inside the target's
+    /// own obstruction; pathing to it can strand the unit cells away with the move
+    /// target never clearing (observed: gatherer frozen 10 m from a poplar).
+    /// Falls back to the centre when the target has no obstruction or the unit is
+    /// already inside the offset.</summary>
+    private static bool MoveToTargetEdge(UnitAIComponent u, EntityId target, ComponentManager cm, Fixed margin)
+    {
+        var pos = cm.QueryInterface<PositionComponent>(target);
+        if (pos == null) return false;
+        var goal = new FixedVector2D(pos.Position.X, pos.Position.Z);
+
+        var self = cm.QueryInterface<PositionComponent>(u.Entity);
+        var obs = cm.QueryInterface<ObstructionComponent>(target);
+        if (self != null && obs != null)
+        {
+            long dx = self.Position.X.InternalValue - pos.Position.X.InternalValue;
+            long dz = self.Position.Z.InternalValue - pos.Position.Z.InternalValue;
+            long offset = (obs.GetSize() + margin).InternalValue;
+            long d2 = dx * dx + dz * dz;
+            if (d2 > offset * offset && d2 > 0)
+            {
+                // goal = centre + (self − centre) × (offset / dist), all in fixed-point
+                // internal units ((a·b)/c preserves the 16.16 scale).
+                long dist = (long)MathInt.Sqrt64((ulong)d2);
+                long gx = pos.Position.X.InternalValue + dx * offset / dist;
+                long gz = pos.Position.Z.InternalValue + dz * offset / dist;
+                goal = new FixedVector2D(
+                    Fixed.Zero.WithInternalValue((int)gx),
+                    Fixed.Zero.WithInternalValue((int)gz));
+            }
+        }
+
+        cm.QueryInterface<UnitMotion>(u.Entity)?.MoveToPoint(goal);
+        return true;
+    }
+
     /// <summary>Max distance (game metres) at which a gatherer can start collecting.
     /// Resources have obstructions so the unit can't reach their exact centre; this
     /// lets GATHER.APPROACHING hand off to GATHERING once the gatherer is adjacent.</summary>
     private const int GatherRange = 3;
 
     /// <summary>True when <paramref name="entity"/> is within <paramref name="range"/> metres
-    /// of <paramref name="target"/> (2D, ignoring height).</summary>
+    /// of <paramref name="target"/>'s obstruction EDGE (2D, ignoring height). The original
+    /// measures gather range from the target's obstruction shape, not its centre — a big
+    /// tree's centre sits inside its own obstruction and can never be reached, so a
+    /// centre-distance check strands the gatherer in APPROACHING forever.</summary>
     private static bool WithinRange(EntityId entity, EntityId target, ComponentManager cm, int range)
     {
         var a = cm.QueryInterface<PositionComponent>(entity);
@@ -475,7 +516,11 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         var dz = a.Position.Z - b.Position.Z;
         long d2 = (long)dx.InternalValue * (long)dx.InternalValue
                 + (long)dz.InternalValue * (long)dz.InternalValue;
-        long r2 = (long)Fixed.FromInt(range).InternalValue * Fixed.FromInt(range).InternalValue;
+        // effective range = range + target obstruction radius → distance-to-edge semantics.
+        var eff = Fixed.FromInt(range);
+        var obs = cm.QueryInterface<ObstructionComponent>(target);
+        if (obs != null) eff += obs.GetSize();
+        long r2 = (long)eff.InternalValue * (long)eff.InternalValue;
         return d2 <= r2;
     }
 
