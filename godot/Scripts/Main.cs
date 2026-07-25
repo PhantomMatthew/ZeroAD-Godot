@@ -542,6 +542,80 @@ public sealed partial class Main : Node3D
 		// Turn advancement is driven by SimBridge._Process, which honours the lockstep
 		// barrier (it only advances when the next turn's bundle has arrived). Nothing to
 		// force here.
+
+		TryDebugCapture();
+	}
+
+	// --- Debug capture (ZEROAD_CAPTURE=1): screenshot + per-entity diagnostics ---
+	private int _captureFrames;
+	private bool _captureDone;
+	private Camera3D? _debugCam;
+	private EntityId _debugCamTarget;
+	private void TryDebugCapture()
+	{
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_CAPTURE") != "1" || _captureDone) return;
+		_captureFrames++;
+
+		// At frame 175, spawn a dedicated debug Camera3D at the first visible civilian
+		// unit. RTSCamera._Process fights manual position sets, so we add a separate
+		// current camera we fully control, capture at 180, then drop it.
+		if (_captureFrames == 175 && _debugCam == null)
+		{
+			foreach (var kvp in _sim.EntityNodes)
+			{
+				var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
+				if (ident?.TemplateName?.Contains("support_civilian") != true) continue;
+				int lp = (int)_sim.LocalPlayerId;
+				if (_sim.Range.GetLosVisibility(kvp.Key, lp) == ZeroAD.Sim.Components.LosVisibility.Hidden) continue;
+				var p = kvp.Value.GlobalPosition;
+				_debugCam = new Camera3D();
+				AddChild(_debugCam);
+				_debugCam.GlobalPosition = new Vector3(p.X + 4f, p.Y + 3.5f, p.Z + 4f);
+				_debugCam.LookAt(p + new Vector3(0, 1f, 0), Vector3.Up);
+				_debugCam.Current = true;
+				_debugCamTarget = kvp.Key;
+				break;
+			}
+		}
+
+		if (_captureFrames != 180) return;
+		_captureDone = true;
+
+		string dir = "/tmp/zeroad_debug";
+		System.IO.Directory.CreateDirectory(dir);
+		GetViewport().GetTexture().GetImage().SavePng($"{dir}/frame.png");
+
+		var sb = new System.Text.StringBuilder();
+		sb.AppendLine($"frame={_captureFrames} entities={_sim.EntityNodes.Count}");
+		sb.AppendLine($"camera_pos={_camera.GlobalPosition:F1} camera_focus={_camera.Focus:F1}");
+		foreach (var kvp in _sim.EntityNodes)
+		{
+			var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
+			string tmpl = ident?.TemplateName ?? ident?.Name ?? "?";
+			var node = kvp.Value;
+			var anim = ModelLibrary.FindManualAnimator(node);
+			var mesh = _findFirstMesh(node);
+			int lp = (int)_sim.LocalPlayerId;
+			var vis = _sim.Range.GetLosVisibility(kvp.Key, lp);
+			var aabb = mesh?.GetAabb() ?? new Aabb();
+			sb.AppendLine($"eid={kvp.Key.Value} tmpl={tmpl} pos={node.Position:F1} " +
+				$"vis={vis} visible={node.Visible} " +
+				$"mesh={(mesh != null ? mesh.Name : "none")} aabb={aabb.Size:F2} globalPos={node.GlobalPosition:F1} " +
+				$"anim={(anim != null ? anim.Summary : "none")}");
+		}
+		System.IO.File.WriteAllText($"{dir}/entities.txt", sb.ToString());
+		GD.Print($"DEBUG_CAPTURE wrote {dir}/frame.png + entities.txt");
+	}
+
+	private static MeshInstance3D? _findFirstMesh(Node n)
+	{
+		if (n is MeshInstance3D m) return m;
+		foreach (var c in n.GetChildren())
+		{
+			var r = _findFirstMesh(c);
+			if (r != null) return r;
+		}
+		return null;
 	}
 
 	/// <summary>

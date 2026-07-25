@@ -16,6 +16,12 @@ public sealed class AnimClip
     public readonly Dictionary<string, List<RotKey>> Rotations = new();
     public readonly Dictionary<string, List<VecKey>> Positions = new();
     public readonly Dictionary<string, List<VecKey>> Scales = new();
+
+    /// <summary>Per-bone REST rotations from the DAE's own skeleton. The mesh GLBs
+    /// are Blender-converted (bone axes differ from the raw Collada the animations
+    /// come from), so ManualAnimator computes a per-bone correction
+    /// <c>mesh_rest * dae_rest⁻¹</c> from these to align the two frames.</summary>
+    public readonly Dictionary<string, Quaternion> RestRotations = new();
 }
 
 public readonly record struct RotKey(float Time, Quaternion Value);

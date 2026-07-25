@@ -12,10 +12,20 @@ namespace ZeroAD.Godot.SkeletalAnim;
 /// </summary>
 public static class AnimClipParser
 {
-    /// <summary>Parses the first (only) animation of the source player into a clip.</summary>
-    public static AnimClip Parse(global::Godot.Animation src)
+    /// <summary>Parses the first (only) animation of the source player into a clip.
+    /// If <paramref name="daeSkeleton"/> is provided, also records per-bone rest
+    /// rotations so ManualAnimator can correct the Blender-vs-Collada frame
+    /// mismatch on the mesh GLB skeleton.</summary>
+    public static AnimClip Parse(global::Godot.Animation src, Skeleton3D? daeSkeleton = null)
     {
         var clip = new AnimClip { Length = (float)src.Length };
+
+        if (daeSkeleton != null)
+        {
+            for (int i = 0; i < daeSkeleton.GetBoneCount(); i++)
+                clip.RestRotations[daeSkeleton.GetBoneName(i)] =
+                    daeSkeleton.GetBoneRest(i).Basis.GetRotationQuaternion();
+        }
 
         for (int i = 0; i < src.GetTrackCount(); i++)
         {

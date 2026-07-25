@@ -19,17 +19,45 @@ public sealed partial class ManualAnimator : Node
     private Skeleton3D? _skeleton;
     private readonly Dictionary<string, AnimClip> _clips = new();
     private readonly Dictionary<string, int> _boneIdx = new();
+    // Per-bone frame correction: mesh_rest * dae_rest⁻¹. Converts a DAE animation
+    // quaternion (Collada bone frame) into the mesh GLB's bone frame (Blender-
+    // converted, axes differ — typically a ~90° X rotation). Computed once at Init.
+    private readonly Dictionary<string, Quaternion> _corrections = new();
 
     private string _current = "";
     private float _elapsed;
 
     public bool HasState(string state) => _clips.ContainsKey(state);
 
+    /// <summary>One-line diagnostic summary: current state + clip count + bone count.</summary>
+    public string Summary => $"state={_current} clips={_clips.Count} bones={_skeleton?.GetBoneCount() ?? -1}";
+
     public void Init(Skeleton3D skeleton, IReadOnlyDictionary<string, AnimClip> clips)
     {
         _skeleton = skeleton;
         foreach (var kv in clips)
             _clips[kv.Key] = kv.Value;
+        ComputeCorrections();
+    }
+
+    /// <summary>For each bone, derives the rotation that maps the DAE skeleton's bone
+    /// frame to the mesh GLB's bone frame, using the first clip that carries rest
+    /// data for that bone. All biped clips share the same rest pose, so one pass
+    /// covers every state.</summary>
+    private void ComputeCorrections()
+    {
+        if (_skeleton == null) return;
+        foreach (var clip in _clips.Values)
+        {
+            foreach (var kv in clip.RestRotations)
+            {
+                if (_corrections.ContainsKey(kv.Key)) continue;
+                int idx = _skeleton.FindBone(kv.Key);
+                if (idx < 0) continue;
+                var meshRest = _skeleton.GetBoneRest(idx).Basis.GetRotationQuaternion();
+                _corrections[kv.Key] = meshRest * kv.Value.Inverse();
+            }
+        }
     }
 
     public void Play(string state)
@@ -53,6 +81,14 @@ public sealed partial class ManualAnimator : Node
     {
         if (_skeleton == null || !_clips.TryGetValue(_current, out var clip)) return;
 
+        // Bone driving is DISABLED by default: the mesh GLBs are Blender-converted
+        // while the DAE animations are Godot-imported, and the two skeleton frames
+        // disagree (especially lower-body bone rolls), so naive per-bone correction
+        // distorts the character. Set ZEROAD_ANIM_DRIVE=1 to re-enable for testing
+        // the retargeting work in progress. The rest pose (set by Play→ResetToRest)
+        // is correct, so units still render properly standing.
+        if (System.Environment.GetEnvironmentVariable("ZEROAD_ANIM_DRIVE") != "1") return;
+
         _elapsed = clip.Length > 0f
             ? (_elapsed + (float)delta) % clip.Length
             : 0f;
@@ -61,7 +97,15 @@ public sealed partial class ManualAnimator : Node
         {
             int idx = BoneIdx(kv.Key);
             if (idx >= 0)
-                _skeleton.SetBonePoseRotation(idx, InterpRot(kv.Value, _elapsed));
+            {
+                var q = InterpRot(kv.Value, _elapsed);
+                // Re-express the DAE rotation in the mesh bone's frame.
+                // ZEROAD_NOCORRECT=1: skip correction (raw DAE quaternions) for A/B testing.
+                if (System.Environment.GetEnvironmentVariable("ZEROAD_NOCORRECT") != "1"
+                    && _corrections.TryGetValue(kv.Key, out var c))
+                    q = c * q;
+                _skeleton.SetBonePoseRotation(idx, q);
+            }
         }
         foreach (var kv in clip.Positions)
         {

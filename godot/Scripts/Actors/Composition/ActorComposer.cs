@@ -167,6 +167,9 @@ public sealed class ActorComposer
         try
         {
             var src = ModelLibrary.FindAnimationPlayer(temp);
+            // The DAE's own skeleton carries the reference rest rotations used to
+            // correct the Blender-converted mesh GLB's frame mismatch.
+            var daeSkel = AttachpointResolver.FindSkeleton(temp);
             if (src != null)
             {
                 // Collada import stores a single clip; grab the first across all libraries.
@@ -177,7 +180,11 @@ public sealed class ActorComposer
                     foreach (var animNameVar in lib.GetAnimationList())
                     {
                         var a = lib.GetAnimation(animNameVar.ToString());
-                        if (a != null) { result = ZeroAD.Godot.SkeletalAnim.AnimClipParser.Parse(a); break; }
+                        if (a != null)
+                        {
+                            result = ZeroAD.Godot.SkeletalAnim.AnimClipParser.Parse(a, daeSkel);
+                            break;
+                        }
                     }
                     if (result != null) break;
                 }
