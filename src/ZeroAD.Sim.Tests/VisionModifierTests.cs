@@ -51,7 +51,7 @@ public sealed class VisionModifierTests
         Assert.Equal(0, rm.Los.GetCount(1, 32, 25));
 
         cm.Modifiers.AddModifiers("tech_vision", new[] { Add("Vision/Range", 16f) }, playerEnt);
-        ValueModificationApplier.ReapplyVisionRangeAll(cm);
+        ValueModificationApplier.ReapplyVisionRangeAll(cm, rm);
 
         Assert.True(rm.Los.GetCount(1, 32, 25) > 0, "modified 32m range covers the vertex");
         Assert.True(rm.Los.IsVisible(1, 32, 25));
@@ -67,7 +67,7 @@ public sealed class VisionModifierTests
         var events = new List<Events.VisibilityChangedEvent>();
         cm.Events.VisibilityChanged += e => events.Add(e);
 
-        ValueModificationApplier.ReapplyVisionRangeAll(cm); // no modifier change
+        ValueModificationApplier.ReapplyVisionRangeAll(cm, rm); // no modifier change
         rm.UpdateVisibilityData();
 
         Assert.Empty(events);
@@ -83,7 +83,7 @@ public sealed class VisionModifierTests
         Assert.True(rm.Los.IsVisible(1, 28, 25), "12m vertex visible at range 16");
 
         cm.Modifiers.AddModifiers("debuff", new[] { Mul("Vision/Range", 0.5f) }, playerEnt);
-        ValueModificationApplier.ReapplyVisionRangeAll(cm);
+        ValueModificationApplier.ReapplyVisionRangeAll(cm, rm);
 
         Assert.False(rm.Los.IsVisible(1, 28, 25), "outside the shrunk 8m range");
         Assert.True(rm.Los.IsExplored(1, 28, 25), "explored never decays");
