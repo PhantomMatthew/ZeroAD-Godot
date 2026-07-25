@@ -241,6 +241,9 @@ namespace ZeroAD.Sim.Components
         private void OnEntityDestroyed(EntityId entity)
         {
             if (!_data.TryGetValue(entity, out var d)) return;
+            // Fogging cleanup first (mirrors MT_OwnershipChanged to=-1 on death): hidden
+            // mirages die with the parent, fogged ones are orphaned. Needs _data intact.
+            _cm.QueryInterface<FoggingComponent>(entity)?.OnOwnershipChanged(d.Owner, -1, _cm, this);
             if (d.LosAdded)
             {
                 Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
@@ -280,14 +283,21 @@ namespace ZeroAD.Sim.Components
         private void OnOwnerChanged(EntityId entity, int from, int to)
         {
             if (!_data.TryGetValue(entity, out var d)) return;
-            // OwnerChanged while counted: drop the old owner's circle first (the new
-            // owner's circle is added by SyncLos below if still a valid seer).
-            if (d.LosAdded && from > 0)
+            // Fogging activation/cleanup hook (mirrors Fogging.js OnOwnershipChanged).
+            _cm.QueryInterface<FoggingComponent>(entity)?.OnOwnershipChanged(from, to, _cm, this);
+            // OwnerChanged while counted under a stale owner: drop that owner's circle
+            // first (the new owner's circle is added by SyncLos below if still a valid
+            // seer). Uses d.Owner — the owner the circle was actually counted under —
+            // not `from`, so a Refresh that already updated the owner can't double-add.
+            if (d.LosAdded && d.Owner != to)
             {
-                Los.RemoveLos(from, d.X, d.Z, d.VisionRange);
-                _playerLosDirtyMask |= DirtyBit(from);
+                if (d.Owner > 0)
+                {
+                    Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
+                    _playerLosDirtyMask |= DirtyBit(d.Owner);
+                }
+                d.LosAdded = false;
             }
-            d.LosAdded = false;
             d.Owner = to;
             _data[entity] = d;
             _movedOrPlacedEntities.Add(entity); // ownership affects every player's chain
@@ -306,6 +316,15 @@ namespace ZeroAD.Sim.Components
             d.Size = obs?.GetSize().InternalValue ?? 0;
             var vis = _cm.QueryInterface<VisionComponent>(entity);
             d.VisionRange = vis?.Range ?? Fixed.Zero;
+            // Fog-of-war flags from components (mirrors m_EntityData flag fill in the
+            // original, which reads them off ICmpVisibility / ICmpMirage).
+            var visib = _cm.QueryInterface<VisibilityComponent>(entity);
+            if (visib?.RetainInFog == true)
+                d.Flags |= RangeEntityData.FlagRetainInFog;
+            else
+                d.Flags &= unchecked((byte)~RangeEntityData.FlagRetainInFog);
+            if (_cm.QueryInterface<MirageComponent>(entity) != null)
+                d.Flags |= RangeEntityData.FlagIsMirage;
             var pos = _cm.QueryInterface<PositionComponent>(entity);
             if (pos != null && !d.InWorld)
             {
@@ -464,8 +483,9 @@ namespace ZeroAD.Sim.Components
                 Old = oldVis,
                 New = newVis
             });
-            // Fogging/Mirage lifecycle hook (Task 5 fills the behavior).
-            _cm.QueryInterface<FoggingComponent>(e)?.OnVisibilityChanged(player, newVis, _cm);
+            // Fogging/Mirage lifecycle hooks (an entity carries at most one of the two).
+            _cm.QueryInterface<FoggingComponent>(e)?.OnVisibilityChanged(player, newVis, _cm, this);
+            _cm.QueryInterface<MirageComponent>(e)?.OnVisibilityChanged(player, newVis, _cm);
         }
 
         /// <summary>The visibility decision chain, faithfully ported from

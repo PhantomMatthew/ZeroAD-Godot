@@ -5,9 +5,15 @@ namespace ZeroAD.Sim.Components;
 /// <summary>
 /// Per-entity fog-of-war memory, ported from Fogging.js. Tracks, per player, whether the
 /// entity has ever been seen (seen), and whether a mirage currently replaces it (miraged).
-/// Task 3 ships the data + predicates consumed by RangeManager.ComputeLosVisibility;
-/// Task 5 adds the lifecycle behavior (OnVisibilityChanged → LoadMirage, swap-back).
 /// Masks are per-player bits (players 1..16) serialized as u32.
+///
+/// Lifecycle (mirrors Fogging.js):
+/// - VISIBLE → mark seen, clear miraged (the mirage entity is kept hidden for reuse).
+/// - FOGGED (when activated) → LoadMirage: spawn or refresh the frozen stand-in.
+/// - Ownership to a real player → Activate; on first activation, load mirages for
+///   players who already saw the entity but can't see it now (Fogging.js Activate).
+/// - Ownership to none (death/capture) → hidden mirages are destroyed, fogged ones
+///   are orphaned (they self-destruct when their tile is next scouted).
 /// </summary>
 [Component("Fogging", "Fogging")]
 public sealed class FoggingComponent : ComponentBase, IComponentMessageHandler
@@ -18,18 +24,78 @@ public sealed class FoggingComponent : ComponentBase, IComponentMessageHandler
     public uint MiragedMask;
     /// <summary>player → mirage entity standing in for this one.</summary>
     public EntityId?[] MirageOf = new EntityId?[LosGrid.MaxPlayers + 1];
+    /// <summary>Parent template name, needed to build the mirage's visuals (Task 8).</summary>
+    public string TemplateName = "";
 
     public bool WasSeen(int player) => (SeenMask & Bit(player)) != 0;
     public bool IsMiraged(int player) => (MiragedMask & Bit(player)) != 0;
 
     internal static uint Bit(int player) => 1u << (player - 1);
 
-    /// <summary>Visibility transition hook, called by RangeManager.EvaluateVisibility in a
-    /// deterministic order. Task 5 implements the lifecycle: VISIBLE → mark seen + clear
-    /// mirage; FOGGED → LoadMirage (spawn frozen stand-in).</summary>
-    public void OnVisibilityChanged(int player, LosVisibility vis, ComponentManager cm)
+    /// <summary>Fogging.js Activate(): on first activation, load a mirage for every
+    /// player who has seen this entity but currently cannot see it.</summary>
+    public void Activate(ComponentManager cm, RangeManager rm)
     {
-        // Task 5: lifecycle behavior. Skeleton intentionally does nothing.
+        if (Activated) return;
+        Activated = true;
+        for (int p = 1; p <= LosGrid.MaxPlayers; p++)
+            if (WasSeen(p) && rm.GetLosVisibility(Entity, p) != LosVisibility.Visible)
+                LoadMirage(p, cm, rm);
+    }
+
+    /// <summary>Fogging.js OnVisibilityChanged: VISIBLE marks seen + clears miraged;
+    /// FOGGED (activated only) loads the mirage.</summary>
+    public void OnVisibilityChanged(int player, LosVisibility vis, ComponentManager cm, RangeManager rm)
+    {
+        if (player < 1 || player > LosGrid.MaxPlayers) return;
+        if (vis == LosVisibility.Visible)
+        {
+            MiragedMask &= ~Bit(player);
+            SeenMask |= Bit(player);
+        }
+        else if (vis == LosVisibility.Fogged && Activated)
+        {
+            LoadMirage(player, cm, rm);
+        }
+    }
+
+    /// <summary>Fogging.js LoadMirage: mark miraged, spawn the stand-in on first use
+    /// or refresh the frozen data on reuse, then ask for a visibility re-eval of the
+    /// parent (it must flip to HIDDEN now that a mirage replaces it).</summary>
+    public void LoadMirage(int player, ComponentManager cm, RangeManager rm)
+    {
+        MiragedMask |= Bit(player);
+        MirageOf[player] ??= EntityAssembler.SpawnMirage(cm, rm, Entity, player, TemplateName);
+        EntityAssembler.RefreshMirageData(cm, Entity, MirageOf[player]!.Value);
+        rm.RequestVisibilityUpdate(Entity);
+    }
+
+    /// <summary>Fogging.js OnOwnershipChanged: gaining a real owner activates fogging;
+    /// losing the owner (death/capture) destroys hidden mirages and orphans fogged
+    /// ones (they self-destruct via MirageComponent when next scouted).</summary>
+    public void OnOwnershipChanged(int from, int to, ComponentManager cm, RangeManager rm)
+    {
+        if (to > 0)
+            Activate(cm, rm);
+        if (to != -1)
+            return;
+        for (int p = 1; p <= LosGrid.MaxPlayers; p++)
+        {
+            var mirageId = MirageOf[p];
+            if (mirageId == null) continue;
+            if (rm.GetLosVisibility(mirageId.Value, p) == LosVisibility.Hidden)
+            {
+                cm.DestroyEntity(mirageId.Value);
+                MirageOf[p] = null;
+                MiragedMask &= ~Bit(p);
+            }
+            else
+            {
+                var mirage = cm.QueryInterface<MirageComponent>(mirageId.Value);
+                if (mirage != null)
+                    mirage.Parent = default;
+            }
+        }
     }
 
     protected override void OnInit()
@@ -38,6 +104,7 @@ public sealed class FoggingComponent : ComponentBase, IComponentMessageHandler
         SeenMask = 0;
         MiragedMask = 0;
         MirageOf = new EntityId?[LosGrid.MaxPlayers + 1];
+        TemplateName = "";
     }
 
     public override void Serialize(ISerializer s)
@@ -47,6 +114,7 @@ public sealed class FoggingComponent : ComponentBase, IComponentMessageHandler
         s.NumberU32("mird", MiragedMask);
         for (int p = 1; p <= LosGrid.MaxPlayers; p++)
             s.NumberU32("mid", MirageOf[p]?.Value ?? 0);
+        s.StringASCII("tmpl", TemplateName);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -59,6 +127,7 @@ public sealed class FoggingComponent : ComponentBase, IComponentMessageHandler
             uint v = d.NumberU32("mid");
             MirageOf[p] = v == 0 ? null : new EntityId(v);
         }
+        TemplateName = d.StringASCII("tmpl");
     }
 
     public void HandleMessage(IMessage message) { }
@@ -66,20 +135,39 @@ public sealed class FoggingComponent : ComponentBase, IComponentMessageHandler
 
 /// <summary>
 /// Marks an entity as a mirage: a frozen stand-in for <see cref="Parent"/> in one player's
-/// fog, ported from Mirage.js. Holds last-seen data for GUI queries. Task 5 adds swap-back
-/// and self-destruct behavior; the visibility interlock lives in
-/// RangeManager.ComputeLosVisibility (mirage is HIDDEN while its tile is visible).
+/// fog, ported from Mirage.js. Holds last-seen data for GUI queries (health bars, resource
+/// amounts). The visibility interlock lives in RangeManager.ComputeLosVisibility (a mirage
+/// is HIDDEN while its tile is visible, FOGGED otherwise, and only ever for its player).
 /// </summary>
 [Component("Mirage", "Mirage")]
 public sealed class MirageComponent : ComponentBase, IComponentMessageHandler
 {
+    /// <summary>The real entity this mirage stands in for; default = orphaned
+    /// (parent destroyed — the mirage self-destructs when its tile is next visible).</summary>
     public EntityId Parent;
+    /// <summary>The one player this mirage is visible to.</summary>
     public int Player;
 
     // Last-seen data for GUI queries (health bars, resource amounts).
     public int FrozenHealthCurrent;
     public int FrozenHealthMax;
     public int FrozenResourceAmount = -1; // -1 = not a resource
+
+    /// <summary>Mirage.js OnVisibilityChanged: going HIDDEN for our player means the
+    /// real entity is back in sight — notify the swap-back, or self-destruct when orphaned.</summary>
+    public void OnVisibilityChanged(int player, LosVisibility vis, ComponentManager cm)
+    {
+        if (player != Player || vis != LosVisibility.Hidden) return;
+        if (Parent.Value == 0)
+            cm.DestroyEntity(Entity);
+        else
+            cm.Events.RaiseMirageSwapBack(new Events.MirageSwapBackEvent
+            {
+                Mirage = Entity,
+                Parent = Parent,
+                Player = Player
+            });
+    }
 
     protected override void OnInit()
     {
@@ -107,6 +195,27 @@ public sealed class MirageComponent : ComponentBase, IComponentMessageHandler
         FrozenHealthMax = d.NumberI32("fhm");
         FrozenResourceAmount = d.NumberI32("fra");
     }
+
+    public void HandleMessage(IMessage message) { }
+}
+
+/// <summary>
+/// Fog-of-war display flags, ported from the original's Visibility component
+/// (template_structure.xml / template_unit.xml: &lt;Visibility&gt;&lt;RetainInFog&gt;).
+/// RetainInFog=true (structures, gaia) keeps the entity standing in explored fog;
+/// false (units) hides it. The scripted-visibility part of the original component
+/// (per-player overrides) is deliberately not ported.
+/// </summary>
+[Component("Visibility", "Visibility")]
+public sealed class VisibilityComponent : ComponentBase, IComponentMessageHandler
+{
+    public bool RetainInFog;
+
+    protected override void OnInit() => RetainInFog = false;
+
+    public override void Serialize(ISerializer s) => s.Bool("retain", RetainInFog);
+
+    public override void Deserialize(IDeserializer d) => RetainInFog = d.Bool("retain");
 
     public void HandleMessage(IMessage message) { }
 }

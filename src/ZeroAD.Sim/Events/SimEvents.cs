@@ -110,6 +110,17 @@ namespace ZeroAD.Sim.Events
         public Components.LosVisibility New;
     }
 
+    /// <summary>Raised when a player loses sight of a position and back: the mirage that stood
+    /// in for <see cref="Parent"/> went HIDDEN because the real entity is visible again.
+    /// Mirrors MT_EntityRenamed { entity: mirage, newentity: parent } in the original — the
+    /// presentation layer swaps selection/GUI from the mirage back to the real entity.</summary>
+    public sealed class MirageSwapBackEvent
+    {
+        public EntityId Mirage;
+        public EntityId Parent;
+        public int Player;
+    }
+
     public sealed class SimEventBus
     {
         public event Action<PlayerCommandEvent>? PlayerCommand;
@@ -126,6 +137,7 @@ namespace ZeroAD.Sim.Events
         public event Action<PlayerWonEvent>? PlayerWon;
         public event Action<GameEndedEvent>? GameEnded;
         public event Action<VisibilityChangedEvent>? VisibilityChanged;
+        public event Action<MirageSwapBackEvent>? MirageSwapBack;
 
         public void RaisePlayerCommand(PlayerCommandEvent e) => PlayerCommand?.Invoke(e);
         public void RaiseTrainingQueued(TrainingQueuedEvent e) => TrainingQueued?.Invoke(e);
@@ -141,5 +153,6 @@ namespace ZeroAD.Sim.Events
         public void RaisePlayerWon(PlayerWonEvent e) => PlayerWon?.Invoke(e);
         public void RaiseGameEnded(GameEndedEvent e) => GameEnded?.Invoke(e);
         public void RaiseVisibilityChanged(VisibilityChangedEvent e) => VisibilityChanged?.Invoke(e);
+        public void RaiseMirageSwapBack(MirageSwapBackEvent e) => MirageSwapBack?.Invoke(e);
     }
 }

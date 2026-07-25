@@ -60,6 +60,20 @@ namespace ZeroAD.Sim
                 cm.QueryInterface<VisionComponent>(entity)!.Range = Fixed.FromInt(stats.VisionRange);
             }
 
+            // Fog-of-war: <Fogging/> templates (structures, gaia) spawn mirages in the fog;
+            // <Visibility><RetainInFog> keeps them standing in explored fog. Fields are set
+            // AFTER AddComponent — OnInit resets them.
+            if (stats != null && stats.HasFogging)
+            {
+                cm.AddComponent(entity, new FoggingComponent());
+                cm.QueryInterface<FoggingComponent>(entity)!.TemplateName = templateName;
+            }
+            if (stats != null && stats.RetainInFog)
+            {
+                cm.AddComponent(entity, new VisibilityComponent());
+                cm.QueryInterface<VisibilityComponent>(entity)!.RetainInFog = true;
+            }
+
             if (isVillager || stats?.CanGather == true)
             {
                 cm.AddComponent(entity, new ResourceGatherer());
@@ -138,6 +152,70 @@ namespace ZeroAD.Sim
 
             // Register the obstruction now that Position is set, so it's tracked from frame 1.
             cm.QueryInterface<ObstructionComponent>(entity)?.EnsureRegistered();
+        }
+
+        /// <summary>
+        /// Spawn a mirage: the lean frozen stand-in for <paramref name="parent"/> in one
+        /// player's fog (Fogging.js LoadMirage + the special/filter/mirage.xml derivation).
+        /// Carries only Mirage + Position + Ownership (+ Visibility when the parent retains
+        /// in fog) — no Vision (mirages don't see), no Health (can't be damaged), no
+        /// Identity (doesn't count for conquest/pop). Notifies the RangeManager so the
+        /// mirage enters the visibility chain with IsMirage+RetainInFog flags.
+        /// </summary>
+        public static EntityId SpawnMirage(ComponentManager cm, RangeManager rm,
+            EntityId parent, int player, string templateName)
+        {
+            var mirage = cm.CreateEntity();
+            cm.AddComponent(mirage, new MirageComponent());
+            var mc = cm.QueryInterface<MirageComponent>(mirage)!;
+            mc.Parent = parent;
+            mc.Player = player;
+
+            cm.AddComponent(mirage, new PositionComponent());
+            var parentOwner = cm.QueryInterface<OwnershipComponent>(parent);
+            if (parentOwner != null)
+                cm.AddComponent(mirage, new OwnershipComponent { PlayerId = parentOwner.PlayerId });
+            // The mirage filter keeps the parent's Visibility → retain-in-fog carries over.
+            if (cm.QueryInterface<VisibilityComponent>(parent)?.RetainInFog == true)
+            {
+                cm.AddComponent(mirage, new VisibilityComponent());
+                cm.QueryInterface<VisibilityComponent>(mirage)!.RetainInFog = true;
+            }
+
+            RefreshMirageData(cm, parent, mirage);
+            cm.NotifyEntityCreated(mirage);
+            rm.RefreshFromComponents(mirage); // flags IsMirage/RetainInFog, indexes position
+            return mirage;
+        }
+
+        /// <summary>
+        /// (Re)freeze a mirage's data from its parent: position + rotation (JumpTo semantics —
+        /// a position notification is sent, a no-op if the mirage isn't tracked yet) and the
+        /// last-seen health/resource amounts. Called on every fog cycle, so a reused mirage
+        /// reflects what the player saw most recently.
+        /// </summary>
+        public static void RefreshMirageData(ComponentManager cm, EntityId parent, EntityId mirage)
+        {
+            var parentPos = cm.QueryInterface<PositionComponent>(parent);
+            var miragePos = cm.QueryInterface<PositionComponent>(mirage);
+            if (parentPos != null && miragePos != null)
+            {
+                var old = new FixedVector2D(miragePos.Position.X, miragePos.Position.Z);
+                miragePos.Position = parentPos.Position;
+                miragePos.Rotation = parentPos.Rotation;
+                cm.NotifyPositionChanged(mirage, old,
+                    new FixedVector2D(parentPos.Position.X, parentPos.Position.Z));
+            }
+
+            var mc = cm.QueryInterface<MirageComponent>(mirage);
+            if (mc == null) return;
+            var health = cm.QueryInterface<HealthComponent>(parent);
+            if (health != null)
+            {
+                mc.FrozenHealthCurrent = health.Current;
+                mc.FrozenHealthMax = health.Max;
+            }
+            mc.FrozenResourceAmount = cm.QueryInterface<ResourceSupply>(parent)?.Amount ?? -1;
         }
     }
 }

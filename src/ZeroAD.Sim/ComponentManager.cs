@@ -109,6 +109,10 @@ namespace ZeroAD.Sim
             // Notify sim-internal listeners (RangeManager) so they index this entity. Separate from
             // the SimEventBus raise above which targets the presentation layer.
             NotifyEntityCreated(entity);
+            // Ownership assignment is an ownership change (mirrors MT_OwnershipChanged on init):
+            // activates Fogging for player-owned entities.
+            if (ownerPlayerId > 0)
+                NotifyOwnerChanged(entity, -1, ownerPlayerId);
             return entity;
         }
 

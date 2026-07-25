@@ -212,6 +212,18 @@ namespace ZeroAD.Sim.Content
                     stats.VisionRange = range.ToInt();
             }
 
+            // Fog-of-war: <Fogging/> (structures/gaia) enables mirage spawning;
+            // <Visibility><RetainInFog> keeps the entity standing in explored fog.
+            if (node.GetChild("Fogging").IsOk)
+                stats.HasFogging = true;
+            var visibility = node.GetChild("Visibility");
+            if (visibility.IsOk)
+            {
+                var retain = visibility.GetChild("RetainInFog");
+                if (retain.IsOk)
+                    stats.RetainInFog = retain.ToBool();
+            }
+
             var dropsite = node.GetChild("ResourceDropsite");
             if (dropsite.IsOk)
                 stats.IsDropsite = true;
@@ -332,6 +344,10 @@ namespace ZeroAD.Sim.Content
         public string ResourceTypeString = "";
         public float WalkSpeed = 8f;
         public int VisionRange = 20;
+        /// <summary>&lt;Fogging/&gt; 模板(建筑/gaia):雾中由 mirage 顶替。对齐 Fogging.js。</summary>
+        public bool HasFogging;
+        /// <summary>&lt;Visibility&gt;&lt;RetainInFog&gt;:已探索雾中保持可见(FOGGED)。单位 false,建筑/gaia true。</summary>
+        public bool RetainInFog;
         public bool IsDropsite;
         public bool CanTrain;
         public bool CanBuild;
