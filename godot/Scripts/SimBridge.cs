@@ -20,7 +20,7 @@ public sealed partial class SimBridge : Node
     private const double SimTickRate = 0.1;
 
     private readonly Dictionary<EntityId, Node3D> _entityNodes = new();
-    private readonly Dictionary<EntityId, AnimationPlayer> _animPlayers = new();
+    private readonly Dictionary<EntityId, SkeletalAnim.ManualAnimator> _animators = new();
     private readonly Dictionary<EntityId, string> _animState = new();
     private readonly Dictionary<EntityId, Vector3> _lastPos = new();
     private EntityId? _playerEntity;
@@ -512,7 +512,7 @@ public sealed partial class SimBridge : Node
             node.QueueFree();
             _entityNodes.Remove(entity);
         }
-        _animPlayers.Remove(entity);
+        _animators.Remove(entity);
         _animState.Remove(entity);
         _lastPos.Remove(entity);
         _lastVis.Remove(entity);
@@ -1232,10 +1232,10 @@ public sealed partial class SimBridge : Node
         _entityNodes[entity] = visual;
         _entityCacheDirty = true;
 
-        var animPlayer = ModelLibrary.FindAnimationPlayer(visual);
-        if (animPlayer != null)
+        var animator = ModelLibrary.FindManualAnimator(visual);
+        if (animator != null)
         {
-            _animPlayers[entity] = animPlayer;
+            _animators[entity] = animator;
             _animState[entity] = "idle";
             if (pos != null)
                 _lastPos[entity] = new Vector3(pos.Position.X.ToFloat(), 0, pos.Position.Z.ToFloat());
@@ -1259,8 +1259,8 @@ public sealed partial class SimBridge : Node
 
             node.Position = newPos;
 
-            if (_animPlayers.TryGetValue(kvp.Key, out var player))
-                UpdateUnitAnimation(kvp.Key, node, player, newPos);
+            if (_animators.TryGetValue(kvp.Key, out var animator))
+                UpdateUnitAnimation(kvp.Key, node, animator, newPos);
         }
     }
 
@@ -1320,7 +1320,8 @@ public sealed partial class SimBridge : Node
             SetFoggedVisualRecursive(child, fogged);
     }
 
-    private void UpdateUnitAnimation(EntityId entity, Node3D node, AnimationPlayer player, Vector3 newPos)
+    private void UpdateUnitAnimation(EntityId entity, Node3D node,
+        SkeletalAnim.ManualAnimator animator, Vector3 newPos)
     {
         Vector3 last = _lastPos.TryGetValue(entity, out var lp) ? lp : newPos;
         Vector3 delta = newPos - last;
@@ -1335,16 +1336,47 @@ public sealed partial class SimBridge : Node
             node.Rotation = new Vector3(0, yaw, 0);
         }
 
-        string want = moving ? "walk" : "idle";
+        string want = ResolveAnimationState(entity, moving);
         if (!_animState.TryGetValue(entity, out var cur) || cur != want)
         {
-            string clip = ModelLibrary.ResolveClip(player, want);
-            if (clip != "")
+            // Fall back to walk/idle when the unit lacks the exact state clip, so a
+            // gather/attack state never freezes a unit that has no matching DAE.
+            if (!animator.HasState(want))
+                want = moving ? "walk" : "idle";
+            if (animator.HasState(want))
             {
-                player.Play(clip);
+                animator.Play(want);
                 _animState[entity] = want;
             }
         }
+    }
+
+    /// <summary>
+    /// Maps sim state to the animation state names used by 0 A.D. actor variants:
+    /// idle/walk/gather_tree/gather_grain/.../build/attack_melee. Mirrors the
+    /// original's state-name-driven selection (VisualActor picks the variant whose
+    /// name matches the UnitAI state); clips that a unit doesn't have simply fall
+    /// through to walk/idle via <see cref="ModelLibrary.ResolveClip"/>.
+    /// </summary>
+    private string ResolveAnimationState(EntityId entity, bool moving)
+    {
+        var ai = _sim.QueryInterface<UnitAIComponent>(entity);
+        string fsm = ai?.FsmStateName ?? "";
+
+        if (fsm.StartsWith("GATHER.GATHERING", StringComparison.Ordinal))
+        {
+            var gatherer = _sim.QueryInterface<ResourceGatherer>(entity);
+            var supply = gatherer?.TargetSupply is EntityId s
+                ? _sim.QueryInterface<ResourceSupply>(s) : null;
+            string? specific = supply?.SpecificType;
+            return string.IsNullOrEmpty(specific) ? "gather_tree" : "gather_" + specific;
+        }
+        if (fsm.StartsWith("REPAIR.REPAIRING", StringComparison.Ordinal))
+            return "build";
+        if (fsm.StartsWith("COMBAT.ATTACKING", StringComparison.Ordinal))
+            return "attack_melee";
+
+        return moving ? "walk" : "idle";
     }
 
     public List<EntityId> GetEntitiesAtPosition(Vector3 worldPos, float radius = 3f)

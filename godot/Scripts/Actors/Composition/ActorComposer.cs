@@ -106,122 +106,97 @@ public sealed class ActorComposer
     public static void SetAnimationState(Node3D instance, string state)
     {
         if (string.IsNullOrEmpty(state)) return;
-        var player = ModelLibrary.FindAnimationPlayer(instance);
-        if (player == null) return;
-        string clip = ModelLibrary.ResolveClip(player, state);
-        if (!string.IsNullOrEmpty(clip))
-            player.Play(clip);
+        var animator = ModelLibrary.FindManualAnimator(instance);
+        animator?.Play(state);
     }
 
     private static readonly HashSet<string> _animWarned = new();
 
+    // Parsed DAE clips keyed by resolved animation path — shared across every unit
+    // (same DAE → same keyframes). Avoids re-parsing 200+ tracks per spawn.
+    private static readonly Dictionary<string, ZeroAD.Godot.SkeletalAnim.AnimClip> _clipCache = new();
+
     private static void TryLoadExternalAnimations(Node3D baseInstance, IReadOnlyList<AnimRef> animations)
     {
         if (animations.Count == 0) return;
-        var target = ModelLibrary.FindAnimationPlayer(baseInstance);
-        if (target == null) return;
 
-        if (!target.HasAnimationLibrary(""))
-            target.AddAnimationLibrary("", new AnimationLibrary());
-        var lib = target.GetAnimationLibrary("");
+        var skeleton = AttachpointResolver.FindSkeleton(baseInstance);
+        if (skeleton == null) return; // props (capes etc.) have no skeleton — skip.
 
+        var animator = new ZeroAD.Godot.SkeletalAnim.ManualAnimator { Name = "ManualAnimator" };
+        baseInstance.AddChild(animator);
+
+        var clips = new Dictionary<string, ZeroAD.Godot.SkeletalAnim.AnimClip>(System.StringComparer.OrdinalIgnoreCase);
         var added = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
 
         foreach (var anim in animations)
         {
             string stateName = anim.Name.ToLowerInvariant();
+            // All same-name candidates are tried in actor order until one resolves —
+            // a missing/stale conversion must not cost the whole animation state.
             if (added.Contains(stateName)) continue;
 
             var resolved = AssetPathResolver.Instance.ResolveAnimation(anim.File);
             if (!resolved.Found || resolved.Value == null) continue;
 
-            var scene = ModelLibrary.LoadGlb(resolved.Value);
-            if (scene == null) continue;
+            var clip = LoadClip(resolved.Value);
+            if (clip == null) continue;
 
-            var temp = scene.Instantiate();
-            if (temp == null) continue;
+            clips[stateName] = clip;
+            added.Add(stateName);
+        }
 
-            try
+        animator.Init(skeleton, clips);
+    }
+
+    /// <summary>Loads + parses a DAE/GLB animation scene into an <see cref="ZeroAD.Godot.SkeletalAnim.AnimClip"/>,
+    /// cached by resolved path.</summary>
+    private static ZeroAD.Godot.SkeletalAnim.AnimClip? LoadClip(string resolvedPath)
+    {
+        if (_clipCache.TryGetValue(resolvedPath, out var cached)) return cached;
+
+        var scene = ModelLibrary.LoadAnimationScene(resolvedPath);
+        if (scene == null) { _clipCache[resolvedPath] = null!; return null; }
+
+        var temp = scene.Instantiate();
+        if (temp == null) { _clipCache[resolvedPath] = null!; return null; }
+
+        ZeroAD.Godot.SkeletalAnim.AnimClip? result = null;
+        try
+        {
+            var src = ModelLibrary.FindAnimationPlayer(temp);
+            if (src != null)
             {
-                var src = ModelLibrary.FindAnimationPlayer(temp);
-                if (src == null) continue;
-
+                // Collada import stores a single clip; grab the first across all libraries.
                 foreach (var libNameVar in src.GetAnimationLibraryList())
                 {
-                    var srcLib = src.GetAnimationLibrary(libNameVar.ToString());
-                    if (srcLib == null) continue;
-                    foreach (var animNameVar in srcLib.GetAnimationList())
+                    var lib = src.GetAnimationLibrary(libNameVar.ToString());
+                    if (lib == null) continue;
+                    foreach (var animNameVar in lib.GetAnimationList())
                     {
-                        string an = animNameVar.ToString();
-                        if (!srcLib.HasAnimation(an)) continue;
-                        var clip = srcLib.GetAnimation(an);
-                        if (clip == null) continue;
-
-                        var dup = (Animation)clip.Duplicate();
-                        if (stateName.Contains("idle") || stateName.Contains("walk") || stateName.Contains("trot"))
-                            dup.LoopMode = Animation.LoopModeEnum.Linear;
-
-                        string clipName = stateName;
-                        if (lib.HasAnimation(clipName))
-                            clipName = stateName + "_" + added.Count;
-                        lib.AddAnimation(clipName, dup);
-                        added.Add(stateName);
-                        break;
+                        var a = lib.GetAnimation(animNameVar.ToString());
+                        if (a != null) { result = ZeroAD.Godot.SkeletalAnim.AnimClipParser.Parse(a); break; }
                     }
-                    break;
+                    if (result != null) break;
                 }
             }
-            finally
-            {
-                temp.QueueFree();
-            }
         }
+        finally
+        {
+            temp.QueueFree();
+        }
+
+        _clipCache[resolvedPath] = result!;
+        return result;
     }
 
     public static void LoadAnimationClips(Node3D baseInstance, IEnumerable<string> animGlbRelPaths)
     {
-        var target = ModelLibrary.FindAnimationPlayer(baseInstance);
-        if (target == null) return;
-
-        foreach (var relPath in animGlbRelPaths)
-        {
-            if (string.IsNullOrEmpty(relPath)) continue;
-            var scene = ModelLibrary.LoadGlb(relPath);
-            if (scene == null) continue;
-            var temp = scene.Instantiate();
-            if (temp == null) continue;
-
-            try
-            {
-                var src = ModelLibrary.FindAnimationPlayer(temp);
-                if (src == null) continue;
-                foreach (var libNameVar in src.GetAnimationLibraryList())
-                {
-                    string libName = libNameVar.ToString();
-                    var lib = src.GetAnimationLibrary(libName);
-                    if (lib == null) continue;
-
-                    if (target.HasAnimationLibrary(libName))
-                    {
-                        var existing = target.GetAnimationLibrary(libName);
-                        foreach (var animNameVar in lib.GetAnimationList())
-                        {
-                            string animName = animNameVar.ToString();
-                            if (!existing.HasAnimation(animName))
-                                existing.AddAnimation(animName, lib.GetAnimation(animName));
-                        }
-                    }
-                    else
-                    {
-                        target.AddAnimationLibrary(libName, lib);
-                    }
-                }
-            }
-            finally
-            {
-                temp.QueueFree();
-            }
-        }
+        // Legacy entry point — delegate to the manual-animator pipeline.
+        var refs = new List<AnimRef>();
+        foreach (var p in animGlbRelPaths)
+            if (!string.IsNullOrEmpty(p)) refs.Add(new AnimRef("clip", p, 1));
+        if (refs.Count > 0) TryLoadExternalAnimations(baseInstance, refs);
     }
 
     internal static ResolvedActorSpec? ResolveChildSpec(PropSpec prop) =>
@@ -243,11 +218,9 @@ public sealed class ActorComposer
 
     internal static void TryPlayIdle(Node3D instance)
     {
-        var player = ModelLibrary.FindAnimationPlayer(instance);
-        if (player == null) return;
-        string clip = ModelLibrary.ResolveClip(player, "idle");
-        if (!string.IsNullOrEmpty(clip))
-            player.Play(clip);
+        var animator = ModelLibrary.FindManualAnimator(instance);
+        if (animator == null) return;
+        if (animator.HasState("idle")) animator.Play("idle");
     }
 
     public static MeshInstance3D MakeFallbackBox(Color color)
