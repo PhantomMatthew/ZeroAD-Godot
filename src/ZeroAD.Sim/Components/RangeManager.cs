@@ -214,17 +214,19 @@ namespace ZeroAD.Sim.Components
             _data[entity] = d;
         }
 
-        /// <summary>Vision range changed (tech/aura): re-cover with the new range.
-        /// Mirrors MT_VisionRangeChanged → LosRemove(old)+LosAdd(new) in the original.</summary>
-        public void OnVisionRangeChanged(EntityId entity, Fixed oldRange, Fixed newRange)
+        /// <summary>Effective vision range changed (tech/aura via the modifiers pipeline):
+        /// re-cover with the new range. Mirrors MT_VisionRangeChanged → LosRemove(old)+LosAdd(new).
+        /// No-op when the range didn't actually change, so callers can re-apply freely.</summary>
+        public void OnVisionRangeChanged(EntityId entity, Fixed newRange)
         {
             if (!_data.TryGetValue(entity, out var d)) return;
-            if (d.LosAdded && oldRange > Fixed.Zero)
+            if (d.VisionRange == newRange) return;
+            if (d.LosAdded)
             {
-                Los.RemoveLos(d.Owner, d.X, d.Z, oldRange);
+                Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
                 _playerLosDirtyMask |= DirtyBit(d.Owner);
+                d.LosAdded = false;
             }
-            d.LosAdded = false;
             d.VisionRange = newRange;
             _data[entity] = d;
             SyncLos(entity, d);
@@ -315,7 +317,9 @@ namespace ZeroAD.Sim.Components
             var obs = _cm.QueryInterface<ObstructionComponent>(entity);
             d.Size = obs?.GetSize().InternalValue ?? 0;
             var vis = _cm.QueryInterface<VisionComponent>(entity);
-            d.VisionRange = vis?.Range ?? Fixed.Zero;
+            d.VisionRange = vis == null
+                ? Fixed.Zero
+                : ValueModificationApplier.EffectiveVisionRange(_cm, entity, vis);
             // Fog-of-war flags from components (mirrors m_EntityData flag fill in the
             // original, which reads them off ICmpVisibility / ICmpMirage).
             var visib = _cm.QueryInterface<VisibilityComponent>(entity);

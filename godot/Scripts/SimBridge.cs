@@ -473,6 +473,10 @@ public sealed partial class SimBridge : Node
         TickProductionQueues(dt);
         TickFoundations(dt);
         TickResearch(dt);
+        // Vision range through the modifiers pipeline: tech/aura changes re-cover seer
+        // circles in the LOS grid. Runs every turn (after research completes) so all
+        // players' ranges stay fresh without a research-completion hook per player.
+        ValueModificationApplier.ReapplyVisionRangeAll(_sim);
         // Settle any damage whose delay elapsed this turn, then advance the delay clock.
         _sim.DelayedDamage.TickPending(_sim);
         _sim.DelayedDamage.AdvanceTurn();
