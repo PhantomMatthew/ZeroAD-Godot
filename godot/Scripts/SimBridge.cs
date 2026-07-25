@@ -1323,26 +1323,26 @@ public sealed partial class SimBridge : Node
     private void UpdateUnitAnimation(EntityId entity, Node3D node,
         SkeletalAnim.ManualAnimator animator, Vector3 newPos)
     {
+        // Facing: rotate the visual to match travel direction on the frame the sim
+        // actually moved us (sim ticks at 10 Hz, so the delta is 0 between ticks —
+        // we only yaw on the nonzero step, which is correct).
         Vector3 last = _lastPos.TryGetValue(entity, out var lp) ? lp : newPos;
         Vector3 delta = newPos - last;
-        float distSq = delta.LengthSquared();
         _lastPos[entity] = newPos;
+        if (delta.LengthSquared() > 0.0001f)
+            node.Rotation = new Vector3(0, Mathf.Atan2(delta.X, delta.Z), 0);
 
-        bool moving = distSq > 0.0001f;
-
-        if (moving)
-        {
-            float yaw = Mathf.Atan2(delta.X, delta.Z);
-            node.Rotation = new Vector3(0, yaw, 0);
-        }
-
-        string want = ResolveAnimationState(entity, moving);
+        // Animation state is FSM-driven (not position-delta). Position deltas flip-flop
+        // at 10 Hz vs 60 fps render and would stutter walk/idle; the FSM state is stable
+        // between ticks. Mirrors the original VisualActor picking the variant by UnitAI
+        // state name.
+        string want = ResolveAnimationState(entity);
         if (!_animState.TryGetValue(entity, out var cur) || cur != want)
         {
             // Fall back to walk/idle when the unit lacks the exact state clip, so a
-            // gather/attack state never freezes a unit that has no matching DAE.
+            // gather/attack state never freezes a unit that has no matching clip.
             if (!animator.HasState(want))
-                want = moving ? "walk" : "idle";
+                want = ResolveAnimationState(entity).Contains("walk") ? "walk" : "idle";
             if (animator.HasState(want))
             {
                 animator.Play(want);
@@ -1352,18 +1352,16 @@ public sealed partial class SimBridge : Node
     }
 
     /// <summary>
-    /// Maps sim state to the animation state names used by 0 A.D. actor variants:
-    /// idle/walk/gather_tree/gather_grain/.../build/attack_melee. Mirrors the
-    /// original's state-name-driven selection (VisualActor picks the variant whose
-    /// name matches the UnitAI state); clips that a unit doesn't have simply fall
-    /// through to walk/idle via <see cref="ModelLibrary.ResolveClip"/>.
+    /// Maps the UnitAI FSM state to an animation state name (idle/walk/gather_*/build/
+    /// attack_melee). FSM state names are hierarchical paths produced by Fsm.cs
+    /// (e.g. "INDIVIDUAL.GATHER.GATHERING"), so we match by substring, not prefix.
     /// </summary>
-    private string ResolveAnimationState(EntityId entity, bool moving)
+    private string ResolveAnimationState(EntityId entity)
     {
         var ai = _sim.QueryInterface<UnitAIComponent>(entity);
         string fsm = ai?.FsmStateName ?? "";
 
-        if (fsm.StartsWith("GATHER.GATHERING", StringComparison.Ordinal))
+        if (fsm.Contains("GATHER.GATHERING"))
         {
             var gatherer = _sim.QueryInterface<ResourceGatherer>(entity);
             var supply = gatherer?.TargetSupply is EntityId s
@@ -1371,12 +1369,19 @@ public sealed partial class SimBridge : Node
             string? specific = supply?.SpecificType;
             return string.IsNullOrEmpty(specific) ? "gather_tree" : "gather_" + specific;
         }
-        if (fsm.StartsWith("REPAIR.REPAIRING", StringComparison.Ordinal))
+        if (fsm.Contains("REPAIR.REPAIRING"))
             return "build";
-        if (fsm.StartsWith("COMBAT.ATTACKING", StringComparison.Ordinal))
+        if (fsm.Contains("COMBAT.ATTACKING"))
             return "attack_melee";
 
-        return moving ? "walk" : "idle";
+        // Walking states: simple move (WALKING), approaching a target (*.APPROACHING),
+        // or returning resources (GATHER.RETURNINGRESOURCE).
+        if (fsm.EndsWith(".WALKING", StringComparison.Ordinal)
+            || fsm.Contains("APPROACHING")
+            || fsm.Contains("RETURNINGRESOURCE"))
+            return "walk";
+
+        return "idle";
     }
 
     public List<EntityId> GetEntitiesAtPosition(Vector3 worldPos, float radius = 3f)

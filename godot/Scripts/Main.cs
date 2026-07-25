@@ -550,15 +550,14 @@ public sealed partial class Main : Node3D
 	private int _captureFrames;
 	private bool _captureDone;
 	private Camera3D? _debugCam;
-	private EntityId _debugCamTarget;
 	private void TryDebugCapture()
 	{
 		if (System.Environment.GetEnvironmentVariable("ZEROAD_CAPTURE") != "1" || _captureDone) return;
 		_captureFrames++;
 
-		// At frame 175, spawn a dedicated debug Camera3D at the first visible civilian
+		// At frame 175, spawn a dedicated debug Camera3D on the first visible civilian
 		// unit. RTSCamera._Process fights manual position sets, so we add a separate
-		// current camera we fully control, capture at 180, then drop it.
+		// current camera we fully control and capture at 180.
 		if (_captureFrames == 175 && _debugCam == null)
 		{
 			foreach (var kvp in _sim.EntityNodes)
@@ -573,7 +572,6 @@ public sealed partial class Main : Node3D
 				_debugCam.GlobalPosition = new Vector3(p.X + 4f, p.Y + 3.5f, p.Z + 4f);
 				_debugCam.LookAt(p + new Vector3(0, 1f, 0), Vector3.Up);
 				_debugCam.Current = true;
-				_debugCamTarget = kvp.Key;
 				break;
 			}
 		}
@@ -592,15 +590,16 @@ public sealed partial class Main : Node3D
 		{
 			var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
 			string tmpl = ident?.TemplateName ?? ident?.Name ?? "?";
+			var fsm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.UnitAIComponent>(kvp.Key)?.FsmStateName ?? "";
 			var node = kvp.Value;
 			var anim = ModelLibrary.FindManualAnimator(node);
 			var mesh = _findFirstMesh(node);
 			int lp = (int)_sim.LocalPlayerId;
 			var vis = _sim.Range.GetLosVisibility(kvp.Key, lp);
 			var aabb = mesh?.GetAabb() ?? new Aabb();
-			sb.AppendLine($"eid={kvp.Key.Value} tmpl={tmpl} pos={node.Position:F1} " +
+			sb.AppendLine($"eid={kvp.Key.Value} tmpl={tmpl} fsm={fsm} " +
 				$"vis={vis} visible={node.Visible} " +
-				$"mesh={(mesh != null ? mesh.Name : "none")} aabb={aabb.Size:F2} globalPos={node.GlobalPosition:F1} " +
+				$"mesh={(mesh != null ? mesh.Name : "none")} aabb={aabb.Size:F2} " +
 				$"anim={(anim != null ? anim.Summary : "none")}");
 		}
 		System.IO.File.WriteAllText($"{dir}/entities.txt", sb.ToString());
