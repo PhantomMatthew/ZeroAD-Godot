@@ -592,14 +592,12 @@ public sealed partial class Main : Node3D
 			string tmpl = ident?.TemplateName ?? ident?.Name ?? "?";
 			var fsm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.UnitAIComponent>(kvp.Key)?.FsmStateName ?? "";
 			var gatherer = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.ResourceGatherer>(kvp.Key);
-			var pos = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.PositionComponent>(kvp.Key);
 			string gtarget = gatherer?.TargetSupply is EntityId gs ? $" gtarget={gs.Value}" : "";
 			var node = kvp.Value;
 			var anim = ModelLibrary.FindManualAnimator(node);
 			var mesh = _findFirstMesh(node);
 			int lp = (int)_sim.LocalPlayerId;
 			var vis = _sim.Range.GetLosVisibility(kvp.Key, lp);
-			var aabb = mesh?.GetAabb() ?? new Aabb();
 			sb.AppendLine($"eid={kvp.Key.Value} tmpl={tmpl} fsm={fsm} pos={node.GlobalPosition:F1}{gtarget} " +
 				$"vis={vis} mesh={(mesh != null ? mesh.Name : "none")} " +
 				$"anim={(anim != null ? anim.Summary : "none")}");

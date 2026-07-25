@@ -172,7 +172,11 @@ public sealed class ActorComposer
             var daeSkel = AttachpointResolver.FindSkeleton(temp);
             if (src != null)
             {
-                // Collada import stores a single clip; grab the first across all libraries.
+                // A GLB can carry several actions (e.g. gather_wood.dae has two); Blender's
+                // gltf export often emits an empty placeholder as the first one. Pick the
+                // animation with the most tracks rather than the first, so the real clip wins.
+                Animation? best = null;
+                int bestTracks = 0;
                 foreach (var libNameVar in src.GetAnimationLibraryList())
                 {
                     var lib = src.GetAnimationLibrary(libNameVar.ToString());
@@ -180,14 +184,15 @@ public sealed class ActorComposer
                     foreach (var animNameVar in lib.GetAnimationList())
                     {
                         var a = lib.GetAnimation(animNameVar.ToString());
-                        if (a != null)
+                        if (a != null && a.GetTrackCount() > bestTracks)
                         {
-                            result = ZeroAD.Godot.SkeletalAnim.AnimClipParser.Parse(a, daeSkel);
-                            break;
+                            best = a;
+                            bestTracks = a.GetTrackCount();
                         }
                     }
-                    if (result != null) break;
                 }
+                if (best != null)
+                    result = ZeroAD.Godot.SkeletalAnim.AnimClipParser.Parse(best, daeSkel);
             }
         }
         finally
