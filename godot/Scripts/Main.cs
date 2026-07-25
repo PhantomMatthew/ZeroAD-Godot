@@ -256,7 +256,9 @@ public sealed partial class Main : Node3D
 			try
 			{
 				var pmp = PmpMap.Load(pmpPath);
-				AddChild(TerrainRenderer.CreateFromHeightmap(pmp));
+				var terrainNode = TerrainRenderer.CreateFromHeightmap(pmp);
+				AddChild(terrainNode);
+				_sim.FogWorld.Attach(terrainNode, pmp.MapSizeMeters);
 				TerrainHeightService.Set(pmp.GetHeightWorld);
 				float h = pmp.GetHeightWorld(130, 122);
 				_camera.SetFocus(new Vector3(130, h, 122));
@@ -292,7 +294,9 @@ public sealed partial class Main : Node3D
 		}
 
 		var map = MapGenerator.GenerateContinents(8, 42);
-		AddChild(MapGenerator.CreateMeshFromGenerated(map));
+		var genTerrain = MapGenerator.CreateMeshFromGenerated(map);
+		AddChild(genTerrain);
+		_sim.FogWorld.Attach(genTerrain, map.TileSize * map.PatchesPerSide * 16);
 		TerrainHeightService.Set((x, z) =>
 		{
 			int gx = (int)(x / map.TileSize);

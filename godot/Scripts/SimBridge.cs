@@ -62,6 +62,8 @@ public sealed partial class SimBridge : Node
     public ObstructionManager Obstructions => _obstructions;
     public TerrainComponent Terrain => _terrain;
     public PathfinderComponent Pathfinder => _pathfinder;
+    public FogWorldRenderer FogWorld => _fogWorld;
+    private FogWorldRenderer _fogWorld = null!;
     public RangeManager Range => _range;
 
     public void InitWorld()
@@ -125,6 +127,7 @@ public sealed partial class SimBridge : Node
         SimSystem.SetPathfinder(_pathfinder);
         SimSystem.SetWaterManager(_sim.Water);
         Gui = new GuiInterface(_sim);
+        _fogWorld = new FogWorldRenderer(this);
 
         // A system entity to host the TerrainComponent so components can QueryInterface it.
         _terrainEntity = _sim.CreateEntity();
@@ -1219,6 +1222,7 @@ public sealed partial class SimBridge : Node
     private void SyncVisuals()
     {
         SyncVisibility();
+        _fogWorld.Update();
         foreach (var kvp in _entityNodes)
         {
             var pos = _sim.QueryInterface<PositionComponent>(kvp.Key);
@@ -1258,17 +1262,39 @@ public sealed partial class SimBridge : Node
     private static void ApplyVisibility(Node3D node, LosVisibility vis)
     {
         node.Visible = vis != LosVisibility.Hidden;
-        // FOGGED = frozen last-seen state: ghost it. MVP uses GeometryInstance3D.Transparency
-        // (single cheap property); Task 8 replaces this with proper mirage materials.
-        SetTransparencyRecursive(node, vis == LosVisibility.Fogged ? 0.45f : 0f);
+        // FOGGED = frozen last-seen state: darken every mesh's material via a surface
+        // override (cleared back to null when the entity returns to sight).
+        SetFoggedVisualRecursive(node, vis == LosVisibility.Fogged);
     }
 
-    private static void SetTransparencyRecursive(Node node, float transparency)
+    private static readonly Color FoggedTint = new(0.42f, 0.46f, 0.55f);
+
+    private static void SetFoggedVisualRecursive(Node node, bool fogged)
     {
-        if (node is GeometryInstance3D geo)
-            geo.Transparency = transparency;
+        if (node is MeshInstance3D mi)
+        {
+            int surfaces = mi.Mesh?.GetSurfaceCount() ?? 0;
+            for (int i = 0; i < surfaces; i++)
+            {
+                if (!fogged)
+                {
+                    mi.SetSurfaceOverrideMaterial(i, null);
+                    continue;
+                }
+                if (mi.GetActiveMaterial(i) is StandardMaterial3D active)
+                {
+                    var dimmed = (StandardMaterial3D)active.Duplicate();
+                    // AlbedoColor multiplies the texture — a gray-blue tint reads as
+                    // "in the fog" without touching the shared source materials.
+                    var c = active.AlbedoColor;
+                    dimmed.AlbedoColor = new Color(c.R * FoggedTint.R, c.G * FoggedTint.G,
+                        c.B * FoggedTint.B, c.A);
+                    mi.SetSurfaceOverrideMaterial(i, dimmed);
+                }
+            }
+        }
         foreach (var child in node.GetChildren())
-            SetTransparencyRecursive(child, transparency);
+            SetFoggedVisualRecursive(child, fogged);
     }
 
     private void UpdateUnitAnimation(EntityId entity, Node3D node, AnimationPlayer player, Vector3 newPos)
