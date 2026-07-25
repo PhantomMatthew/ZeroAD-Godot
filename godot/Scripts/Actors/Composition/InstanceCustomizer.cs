@@ -56,9 +56,21 @@ public static class InstanceCustomizer
         var baseTex = texPath != null ? LoadTextureCached(texPath) : null;
         var normTex = info.NormTexPath != null ? LoadTextureCached(info.NormTexPath) : null;
         var specTex = info.SpecTexPath != null ? LoadTextureCached(info.SpecTexPath) : null;
+        var objectColor = PickColor(info, entitySeed);
 
-        var mat = MaterialBuilder.Build(baseTex, normTex, specTex, teamColor, info.Material);
+        var mat = MaterialBuilder.Build(baseTex, normTex, specTex, teamColor, info.Material, objectColor);
         mi.MaterialOverride = mat;
+    }
+
+    /// <summary>Object color (hair tint) picked per instance like baseTex, so a
+    /// group of same-actor units gets varied hair colors from the variant pool.</summary>
+    private static Color? PickColor(ActorLayerInfo info, int entitySeed)
+    {
+        if (info.ColorVariants.Count == 0) return null;
+        var cv = info.ColorVariants.Count == 1
+            ? info.ColorVariants[0]
+            : info.ColorVariants[(HashCode.Combine(entitySeed, "color", info.ActorPath) & 0x7fffffff) % info.ColorVariants.Count];
+        return new Color(cv.R / 255f, cv.G / 255f, cv.B / 255f);
     }
 
     private static string? PickTexture(ActorLayerInfo info, int entitySeed)

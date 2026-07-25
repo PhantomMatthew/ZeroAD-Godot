@@ -52,15 +52,30 @@ void fragment() {
         !string.IsNullOrEmpty(materialName) &&
         materialName!.Contains("player", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// True for 0 A.D. objectcolor materials (objectcolor_norm_spec.xml — props
+    /// heads). Same alpha-masked tint formula as player color, but tinted by the
+    /// actor's &lt;color&gt; variant (hair color), not the team. Routing these to
+    /// the StandardMaterial path would alpha-scissor the hair region away.
+    /// </summary>
+    public static bool IsObjectColorMaterial(string? materialName) =>
+        !string.IsNullOrEmpty(materialName) &&
+        materialName!.Contains("objectcolor", StringComparison.OrdinalIgnoreCase);
+
     public static Material Build(
         ImageTexture? baseTex,
         ImageTexture? normTex,
         ImageTexture? specTex,
         Color teamColor,
-        string? materialName)
+        string? materialName,
+        Color? objectColor = null)
     {
         if (IsPlayerColorMaterial(materialName))
             return BuildPlayerColor(baseTex, normTex, specTex, teamColor);
+        if (IsObjectColorMaterial(materialName))
+            // Same mix formula as player color; white default = untinted when the
+            // actor defines no <color> variants.
+            return BuildPlayerColor(baseTex, normTex, specTex, objectColor ?? Colors.White);
         return BuildStandard(baseTex, normTex, specTex, teamColor);
     }
 

@@ -105,7 +105,8 @@ public static class ActorParser
         || el.Element("textures") != null
         || el.Element("props") != null
         || el.Element("animations") != null
-        || el.Element("material") != null;
+        || el.Element("material") != null
+        || el.Element("color") != null;
 
     private static ActorVariant BuildInline(XElement el, string name, int freq)
     {
@@ -118,7 +119,26 @@ public static class ActorParser
         string? material = el.Element("material")?.Value.Trim();
         if (string.IsNullOrEmpty(material)) material = null;
 
-        return new ActorVariant(name, freq, mesh, textures, props, anims, material);
+        return new ActorVariant(name, freq, mesh, textures, props, anims, material, ParseColor(el));
+    }
+
+    /// <summary>Parses &lt;color&gt;r g b&lt;/color&gt; — authored as 0-255 ints
+    /// (0-1 floats tolerated). Null when absent or malformed.</summary>
+    private static ColorVec? ParseColor(XElement el)
+    {
+        string? raw = el.Element("color")?.Value.Trim();
+        if (string.IsNullOrEmpty(raw)) return null;
+        var parts = raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 3) return null;
+        if (!float.TryParse(parts[0], out float r)
+            || !float.TryParse(parts[1], out float g)
+            || !float.TryParse(parts[2], out float b))
+            return null;
+        if (r <= 1f && g <= 1f && b <= 1f) { r *= 255f; g *= 255f; b *= 255f; }
+        return new ColorVec(
+            (byte)Math.Clamp((int)r, 0, 255),
+            (byte)Math.Clamp((int)g, 0, 255),
+            (byte)Math.Clamp((int)b, 0, 255));
     }
 
     private static ActorVariant MergeVariant(ActorVariant baseV, XElement inline, string name, int freq)
@@ -155,7 +175,8 @@ public static class ActorParser
             nameToUse, freqToUse, mesh,
             mergedTex, mergedProps,
             mergedAnims.Values.ToList(),
-            material);
+            material,
+            ParseColor(inline) ?? baseV.Color);
     }
 
     private static ActorVariant Rename(ActorVariant v, string name, int freq)

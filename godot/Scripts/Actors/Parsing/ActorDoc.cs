@@ -19,7 +19,8 @@ public sealed record ActorVariant(
     IReadOnlyDictionary<string, string> Textures,  // sampler -> path
     IReadOnlyDictionary<string, PropRef> Props,    // attachpoint -> prop
     IReadOnlyList<AnimRef> Animations,
-    string? Material)
+    string? Material,
+    ColorVec? Color = null)            // <color>r g b</color> object-color tint (hair etc.)
 {
     public static ActorVariant Empty(string name, int freq) =>
         new(
@@ -31,6 +32,10 @@ public sealed record ActorVariant(
             Animations: EmptyList<AnimRef>.Value,
             Material: null);
 }
+
+/// <summary>0 A.D. &lt;color&gt; variant field: an 0-255 RGB tint multiplied into
+/// objectcolor-material regions where baseTex alpha is 0 (male hair on props heads).</summary>
+public readonly record struct ColorVec(byte R, byte G, byte B);
 
 /// <summary>Attachpoint prop entry. A null <paramref name="ActorPath"/> is a CLEAR
 /// (&lt;prop attachpoint="x"/&gt; with no actor): the original erases whatever prop the

@@ -81,6 +81,15 @@ public sealed class ActorComposer
             int boneIdx = AttachpointResolver.FindBoneIndex(skeleton, attachpoint);
             if (boneIdx != -1)
             {
+                // Undo the asset pipeline's baked rotation: Blender's DAE→GLB
+                // pass rotates STATIC prop meshes +90°X (DAE +Z-up-in-prop-frame
+                // becomes GLB +Y-up — verified on helmet/spear/axe bounds), while
+                // skeleton bones keep the original DAE joint frames. Attaching a
+                // GLB prop raw therefore renders it 90° off (helmet jutting out
+                // behind the head). Rotating the prop root -90°X about the prop
+                // origin restores the DAE frame the bone expects. Skinned meshes
+                // are unaffected (their frames survived conversion intact).
+                childNode.Rotation = new Vector3(-Mathf.Pi / 2f, 0f, 0f);
                 var ba = new BoneAttachment3D();
                 skeleton.AddChild(ba);
                 ba.BoneIdx = boneIdx;

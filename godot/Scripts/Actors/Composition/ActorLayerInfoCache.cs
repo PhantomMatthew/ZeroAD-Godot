@@ -10,7 +10,8 @@ public sealed record ActorLayerInfo(
     IReadOnlyList<string> BaseTexVariants,
     string? NormTexPath,
     string? SpecTexPath,
-    string? Material);
+    string? Material,
+    IReadOnlyList<ColorVec> ColorVariants);
 
 public static class ActorLayerInfoCache
 {
@@ -44,10 +45,12 @@ public static class ActorLayerInfoCache
                 System.Array.Empty<string>(),
                 NormTexPath: null,
                 SpecTexPath: null,
-                Material: null);
+                Material: null,
+                ColorVariants: System.Array.Empty<ColorVec>());
 
         var paths = AssetPathResolver.Instance;
         var variants = new HashSet<string>();
+        var colors = new List<ColorVec>();
         string? normTex = null;
         string? specTex = null;
 
@@ -61,6 +64,9 @@ public static class ActorLayerInfoCache
                     if (vr.Found && vr.Value != null && vr.Value != meshGlbPath)
                         continue;
                 }
+
+                if (v.Color is ColorVec cv && !colors.Contains(cv))
+                    colors.Add(cv);
 
                 if (v.Textures.TryGetValue("baseTex", out var rawTex))
                 {
@@ -89,6 +95,7 @@ public static class ActorLayerInfoCache
             new List<string>(variants),
             normTex,
             specTex,
-            doc.Material);
+            doc.Material,
+            colors);
     }
 }

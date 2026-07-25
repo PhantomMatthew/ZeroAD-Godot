@@ -556,6 +556,7 @@ public sealed partial class Main : Node3D
 		if (string.IsNullOrEmpty(mode) || _captureDone) return;
 		bool gather = mode == "gather";
 		bool wide = mode == "wide"; // RTS default camera view — for terrain comparisons
+		bool train = mode == "train"; // train a spearman at the CC, verify trained-unit visuals
 		_captureFrames++;
 
 		// gather mode: frame 60 orders the first civilian to chop the nearest tree,
@@ -563,13 +564,31 @@ public sealed partial class Main : Node3D
 		if (gather && _captureFrames == 60)
 			_sim.DebugOrderFirstCivilianGatherNearest();
 
+		// train mode: frame 60 queues a spearman + a civilian at the first visible
+		// civil centre through the real command path.
+		if (train && _captureFrames == 60)
+		{
+			foreach (var kvp in _sim.EntityNodes)
+			{
+				var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
+				if (ident?.TemplateName?.Contains("civil_centre") != true) continue;
+				int lp = (int)_sim.LocalPlayerId;
+				if (_sim.Range.GetLosVisibility(kvp.Key, lp) == ZeroAD.Sim.Components.LosVisibility.Hidden) continue;
+				_sim.CommandTrainSoldier(kvp.Key);
+				_sim.CommandTrain(kvp.Key);
+				break;
+			}
+		}
+
 		// Mode "1": fixed frames (camera at 175, capture at 180). Mode "wide": RTS
 		// camera as-is, capture at 185. Mode "gather": wait until any civilian
 		// actually reaches GATHERING (walk time varies with tree distance), spawn
 		// the camera that frame, capture the next; hard cap at frame 3000.
+		// Mode "train": wait until a trained spearman exists and is visible
+		// (training takes ~15s sim), then frame it like the gather camera.
 		bool spawnCam;
 		bool captureNow;
-		if (!gather)
+		if (!gather && !train)
 		{
 			spawnCam = !wide && _captureFrames == 175 && _debugCam == null;
 			captureNow = _captureFrames == (wide ? 600 : 180);
@@ -577,15 +596,23 @@ public sealed partial class Main : Node3D
 		else
 		{
 			spawnCam = false;
-			if (_debugCam == null && _captureFrames >= 900)
+			if (_debugCam == null && _captureFrames >= (train ? 600 : 900))
 			{
-				bool gathering = false;
+				bool ready = false;
 				foreach (var kvp in _sim.EntityNodes)
 				{
+					if (train)
+					{
+						var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
+						if (ident?.TemplateName?.Contains("infantry_spearman") != true) continue;
+						int lp = (int)_sim.LocalPlayerId;
+						if (_sim.Range.GetLosVisibility(kvp.Key, lp) == ZeroAD.Sim.Components.LosVisibility.Hidden) continue;
+						ready = true; break;
+					}
 					var g = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.UnitAIComponent>(kvp.Key)?.FsmStateName ?? "";
-					if (g.Contains("GATHER.GATHERING")) { gathering = true; break; }
+					if (g.Contains("GATHER.GATHERING")) { ready = true; break; }
 				}
-				spawnCam = gathering || _captureFrames >= 3000;
+				spawnCam = ready || _captureFrames >= 3000;
 			}
 			captureNow = _debugCam != null; // the frame after the camera spawned
 		}
@@ -617,7 +644,11 @@ public sealed partial class Main : Node3D
 			foreach (var kvp in _sim.EntityNodes)
 			{
 				var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
-				if (ident?.TemplateName?.Contains("support_civilian") != true) continue;
+				// train mode frames the trained spearman; other modes frame civilians
+				// (ZEROAD_CAPTURE_TARGET overrides the template substring).
+				string want = train ? "infantry_spearman"
+					: System.Environment.GetEnvironmentVariable("ZEROAD_CAPTURE_TARGET") ?? "support_civilian";
+				if (ident?.TemplateName?.Contains(want) != true) continue;
 				int lp = (int)_sim.LocalPlayerId;
 				if (_sim.Range.GetLosVisibility(kvp.Key, lp) == ZeroAD.Sim.Components.LosVisibility.Hidden) continue;
 				firstCiv ??= kvp.Value;

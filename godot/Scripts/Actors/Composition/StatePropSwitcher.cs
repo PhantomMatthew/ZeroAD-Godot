@@ -51,8 +51,15 @@ public sealed partial class StatePropSwitcher : Node
             foreach (var kv in _spawned)
                 sb.Append(' ').Append(kv.Key).Append(kv.Value.Visible ? "=on" : "=off");
             foreach (var kv in _baseProps)
+            {
+                // Parent type proves how the prop rides the skeleton:
+                // BoneAttachment3D = follows animated bone; anything else = frozen.
+                var p = kv.Value.GetParent();
+                string pt = p is BoneAttachment3D ba ? $"bone{ba.BoneIdx}" : p?.GetType().Name ?? "?";
+                sb.Append(' ').Append(kv.Key).Append('@').Append(pt);
                 if (!kv.Value.Visible)
-                    sb.Append(" base:").Append(kv.Key).Append("=off");
+                    sb.Append("=off");
+            }
             return sb.ToString();
         }
     }
