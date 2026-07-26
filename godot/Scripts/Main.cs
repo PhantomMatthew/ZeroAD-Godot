@@ -28,6 +28,8 @@ public sealed partial class Main : Node3D
 	private bool _gameStarted;
 	private bool _isTutorial;
 	private TutorialPanel _tutorialPanel = null!;
+	private LoadingOverlay? _loadingOverlay;
+	private bool _pendingTutorialLoad;
 
 	public IReadOnlySet<EntityId> SelectedEntities => _selectedEntities;
 	public bool IsTutorial => _isTutorial;
@@ -88,7 +90,13 @@ public sealed partial class Main : Node3D
 
 	private void StartTutorial()
 	{
-		BeginGameplay(42, 1, tutorial: true);
+		// Show a loading overlay BEFORE the heavy synchronous work (template parse +
+		// terrain load + scenario spawn all happen in BeginGameplay). Deferring one
+		// frame lets the overlay render first so the user sees "Loading..." instead
+		// of a frozen lobby for several seconds.
+		_loadingOverlay = new LoadingOverlay("Loading Introductory Tutorial...");
+		AddChild(_loadingOverlay);
+		_pendingTutorialLoad = true;
 	}
 
 	private void StartSinglePlayer(uint seed)
@@ -546,6 +554,16 @@ public sealed partial class Main : Node3D
 
 	public override void _Process(double delta)
 	{
+		// Deferred tutorial load: the loading overlay has rendered at least once now,
+		// so the blocking scenario setup can run without freezing the lobby.
+		if (_pendingTutorialLoad)
+		{
+			_pendingTutorialLoad = false;
+			BeginGameplay(42, 1, tutorial: true);
+			_loadingOverlay?.QueueFree();
+			_loadingOverlay = null;
+		}
+
 		if (!_gameStarted) return;
 
 		UpdateSelectionMarkers();

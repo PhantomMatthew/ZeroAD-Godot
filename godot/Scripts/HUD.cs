@@ -151,20 +151,18 @@ public sealed partial class HUD : CanvasLayer
         _bottomBar.OffsetTop = -204;
         _bottomBar.CustomMinimumSize = new Vector2(0, 204);
 
-        var bg = new TextureRect
+        // C++ uses no full-bar background — each zone gets its own panel sprite
+        // (selectionDetailsPanel = hud_panels.png, others just border lines).
+        // A semi-transparent dark fill ties the zones together visually.
+        _bottomBar.AddThemeStyleboxOverride("panel", new StyleBoxFlat
         {
-            Texture = LoadTex("session_panel.png"),
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.Tile,
-        };
-        bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        _bottomBar.AddChild(bg);
+            BgColor = new Color(0, 0, 0, 0.55f),
+            BorderColor = new Color(0.38f, 0.32f, 0.2f, 0.8f),
+            BorderWidthTop = 2,
+        });
 
         // C++ layout: 4 zones spanning the full bottom width.
         //   Minimap (left) | Supplemental (center-left) | Selection (center) | Commands (right)
-        // The original centers at 50%-512..50%+512 (1024px min), but modern widescreens
-        // are wider; filling the full viewport edge-to-edge matches the user's request
-        // and avoids a floating centered strip on 16:9 displays.
         var hbox = new HBoxContainer();
         hbox.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         hbox.OffsetLeft = 8; hbox.OffsetTop = 8;
@@ -265,6 +263,23 @@ public sealed partial class HUD : CanvasLayer
     {
         var panel = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         panel.CustomMinimumSize = new Vector2(300, 0);
+
+        // C++ selectionDetailsPanel uses session/hud_panels.png (real_texture_placement
+        // 0 0 220 192) as the background — the same texture the original game shows
+        // behind the unit portrait + health bar.
+        var hudPanels = LoadTex("hud_panels.png");
+        if (hudPanels != null)
+        {
+            var bg = new TextureRect
+            {
+                Texture = hudPanels,
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Scale,
+            };
+            bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            bg.MouseFilter = Control.MouseFilterEnum.Ignore;
+            panel.AddChild(bg);
+        }
 
         var vbox = new VBoxContainer();
         vbox.AddThemeConstantOverride("separation", 8);
