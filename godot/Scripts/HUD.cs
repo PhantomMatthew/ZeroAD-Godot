@@ -150,24 +150,14 @@ public sealed partial class HUD : CanvasLayer
         _bottomBar.SetAnchorsPreset(Control.LayoutPreset.BottomWide);
         _bottomBar.OffsetTop = -204;
         _bottomBar.CustomMinimumSize = new Vector2(0, 204);
+        // Transparent base — C++ draws no full-bar background, each zone has its own frame.
+        _bottomBar.AddThemeStyleboxOverride("panel", new StyleBoxFlat { BgColor = new Color(0, 0, 0, 0) });
 
-        // C++ uses no full-bar background — each zone gets its own panel sprite
-        // (selectionDetailsPanel = hud_panels.png, others just border lines).
-        // A semi-transparent dark fill ties the zones together visually.
-        _bottomBar.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-        {
-            BgColor = new Color(0, 0, 0, 0.55f),
-            BorderColor = new Color(0.38f, 0.32f, 0.2f, 0.8f),
-            BorderWidthTop = 2,
-        });
-
-        // C++ layout: 4 zones spanning the full bottom width.
-        //   Minimap (left) | Supplemental (center-left) | Selection (center) | Commands (right)
         var hbox = new HBoxContainer();
         hbox.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        hbox.OffsetLeft = 8; hbox.OffsetTop = 8;
-        hbox.OffsetRight = -8; hbox.OffsetBottom = -8;
-        hbox.AddThemeConstantOverride("separation", 8);
+        hbox.OffsetLeft = 4; hbox.OffsetTop = 4;
+        hbox.OffsetRight = -4; hbox.OffsetBottom = -4;
+        hbox.AddThemeConstantOverride("separation", 4);
         _bottomBar.AddChild(hbox);
 
         SetupMinimapZone(hbox);
@@ -178,10 +168,58 @@ public sealed partial class HUD : CanvasLayer
         AddChild(_bottomBar);
     }
 
+    /// <summary>Wraps a zone Control with a C++-style border frame: 4 edge lines
+    /// (line_horiz/line_vert) + 4 corner pieces, drawn as children of the zone.
+    /// Mirrors the C++ sprites.xml pattern used by supplementalDetailsPanel and
+    /// unitCommandsPanel.</summary>
+    private static void AddBorderFrame(Control zone)
+    {
+        var horiz = LoadTex("session/line_horiz.png");
+        var vert = LoadTex("session/line_vert.png");
+        var ctl = LoadTex("session/corner_tl.png");
+        var ctr = LoadTex("session/corner_tr.png");
+        var cbl = LoadTex("session/corner_bl.png");
+        var cbr = LoadTex("session/corner_br.png");
+        const int bw = 4; // border width (matches texture_size in C++ sprites)
+
+        if (horiz != null)
+        {
+            var top = new TextureRect { Texture = horiz, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Tile };
+            top.SetAnchorsPreset(Control.LayoutPreset.TopWide); top.OffsetBottom = bw;
+            top.MouseFilter = Control.MouseFilterEnum.Ignore; zone.AddChild(top);
+
+            var bot = new TextureRect { Texture = horiz, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Tile };
+            bot.SetAnchorsPreset(Control.LayoutPreset.BottomWide); bot.OffsetTop = -bw;
+            bot.MouseFilter = Control.MouseFilterEnum.Ignore; zone.AddChild(bot);
+        }
+        if (vert != null)
+        {
+            var left = new TextureRect { Texture = vert, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Tile };
+            left.SetAnchorsPreset(Control.LayoutPreset.LeftWide); left.OffsetRight = bw;
+            left.MouseFilter = Control.MouseFilterEnum.Ignore; zone.AddChild(left);
+
+            var right = new TextureRect { Texture = vert, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Tile };
+            right.SetAnchorsPreset(Control.LayoutPreset.RightWide); right.OffsetLeft = -bw;
+            right.MouseFilter = Control.MouseFilterEnum.Ignore; zone.AddChild(right);
+        }
+        void AddCorner(Texture2D? tex, float left, float top)
+        {
+            if (tex == null) return;
+            var c = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize };
+            c.OffsetLeft = left; c.OffsetTop = top; c.OffsetRight = left + bw; c.OffsetBottom = top + bw;
+            c.MouseFilter = Control.MouseFilterEnum.Ignore; zone.AddChild(c);
+        }
+        AddCorner(ctl, 0, 0);
+        AddCorner(ctr, -bw, 0);
+        AddCorner(cbl, 0, -bw);
+        AddCorner(cbr, -bw, -bw);
+    }
+
     private void SetupMinimapZone(HBoxContainer parent)
     {
         var frame = new Control { CustomMinimumSize = new Vector2(200, 200) };
         frame.SizeFlagsHorizontal = Control.SizeFlags.Fill;
+        AddBorderFrame(frame);
 
         var ring = new TextureRect
         {
@@ -190,6 +228,7 @@ public sealed partial class HUD : CanvasLayer
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
         };
         ring.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        ring.MouseFilter = Control.MouseFilterEnum.Ignore;
         frame.AddChild(ring);
 
         _minimap = new Minimap(_sim, _main)
@@ -203,21 +242,20 @@ public sealed partial class HUD : CanvasLayer
     }
 
     /// <summary>Supplemental panel (C++ "selection_panels_left"): stance buttons,
-    /// garrison count, and formation placeholder. Mirrors the C++ layout slot even
-    /// when the backing systems aren't fully implemented, so the bar reads as
-    /// 4 zones instead of 3.</summary>
+    /// garrison count, and formation placeholder.</summary>
     private void SetupSupplementalZone(HBoxContainer parent)
     {
-        var panel = new PanelContainer
+        var panel = new Control
         {
             SizeFlagsHorizontal = Control.SizeFlags.Fill,
             CustomMinimumSize = new Vector2(180, 0),
         };
+        AddBorderFrame(panel);
 
         var vbox = new VBoxContainer();
         vbox.AddThemeConstantOverride("separation", 6);
-        vbox.OffsetLeft = 6; vbox.OffsetTop = 4;
-        vbox.OffsetRight = -6; vbox.OffsetBottom = -4;
+        vbox.OffsetLeft = 8; vbox.OffsetTop = 8;
+        vbox.OffsetRight = -8; vbox.OffsetBottom = -8;
         panel.AddChild(vbox);
 
         // Stance row: 5 stance icons (violent/aggressive/defensive/passive/standground).
@@ -261,18 +299,27 @@ public sealed partial class HUD : CanvasLayer
 
     private void SetupSelectionZone(HBoxContainer parent)
     {
-        var panel = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        panel.CustomMinimumSize = new Vector2(300, 0);
+        var panel = new Control
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(228, 0),
+        };
 
-        // C++ selectionDetailsPanel uses session/hud_panels.png (real_texture_placement
-        // 0 0 220 192) as the background — the same texture the original game shows
-        // behind the unit portrait + health bar.
+        // C++ selectionDetailsPanel uses session/hud_panels.png with
+        // real_texture_placement="0 0 220 192" — only the top-left 220×192 region
+        // of the 512×256 texture. AtlasTexture crops to that region so the panel
+        // shows the same carved-stone background as the original.
         var hudPanels = LoadTex("hud_panels.png");
         if (hudPanels != null)
         {
+            var atlas = new AtlasTexture
+            {
+                Atlas = hudPanels,
+                Region = new Rect2(0, 0, 220, 192),
+            };
             var bg = new TextureRect
             {
-                Texture = hudPanels,
+                Texture = atlas,
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 StretchMode = TextureRect.StretchModeEnum.Scale,
             };
@@ -280,9 +327,12 @@ public sealed partial class HUD : CanvasLayer
             bg.MouseFilter = Control.MouseFilterEnum.Ignore;
             panel.AddChild(bg);
         }
+        AddBorderFrame(panel);
 
         var vbox = new VBoxContainer();
         vbox.AddThemeConstantOverride("separation", 8);
+        vbox.OffsetLeft = 8; vbox.OffsetTop = 8;
+        vbox.OffsetRight = -8; vbox.OffsetBottom = -8;
         panel.AddChild(vbox);
 
         var header = new HBoxContainer();
@@ -341,9 +391,13 @@ public sealed partial class HUD : CanvasLayer
 
     private void SetupCommandZone(HBoxContainer parent)
     {
-        var panel = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.Fill };
+        var panel = new Control { SizeFlagsHorizontal = Control.SizeFlags.Fill };
+        AddBorderFrame(panel);
 
         var scroll = new ScrollContainer();
+        scroll.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        scroll.OffsetLeft = 8; scroll.OffsetTop = 8;
+        scroll.OffsetRight = -8; scroll.OffsetBottom = -8;
         scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
         panel.AddChild(scroll);
 
