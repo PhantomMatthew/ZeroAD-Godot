@@ -11,6 +11,12 @@ public sealed partial class RTSCamera : Camera3D
     private float _pitch = -0.7f;
     private float _distance = 120f;
     private Vector3 _focus = new(274f, 27f, 113f);
+    // Last seen mouse position. When the mouse hasn't been moved yet, Godot reports
+    // (0,0) — including via synthetic MouseMotion events on window creation/focus.
+    // Edge-pan is only enabled once we observe a real position change (different from
+    // the previous frame), so the camera doesn't drift before the user touches the mouse.
+    private Vector2 _lastMousePos = new(-1, -1);
+    private bool _edgePanEnabled;
 
     private const float DefaultFov = 45f;
 
@@ -57,11 +63,17 @@ public sealed partial class RTSCamera : Camera3D
         {
             var mp = vp.GetMousePosition();
             var sz = vp.GetVisibleRect().Size;
-            // Only edge-pan when the mouse is inside the viewport AND at a non-zero
-            // position. Godot reports (0,0) before any real mouse movement (including
-            // synthetic MouseMotion events fired on window creation/focus), which
-            // would false-trigger the top-left edge pan and steadily drift the camera.
-            if (mp.X > 0 && mp.Y > 0 && mp.X < sz.X && mp.Y < sz.Y)
+            // Detect the first REAL mouse movement: the position differs from the
+            // previous frame. Synthetic events on window creation report (0,0) every
+            // frame, so _lastMousePos stays (0,0) and the guard never opens. Once the
+            // user actually moves the mouse, the position changes and edge-pan unlocks.
+            if (mp != _lastMousePos)
+            {
+                if (_lastMousePos.X >= 0) // not the initial (-1,-1) sentinel
+                    _edgePanEnabled = true;
+                _lastMousePos = mp;
+            }
+            if (_edgePanEnabled)
             {
                 if (mp.X < EdgeMargin)       { _focus -= right * PanSpeed * dt; moved = true; }
                 else if (mp.X > sz.X - EdgeMargin) { _focus += right * PanSpeed * dt; moved = true; }
