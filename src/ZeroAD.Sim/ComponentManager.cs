@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
@@ -381,6 +382,93 @@ namespace ZeroAD.Sim
             var serializer = new Serialization.HashSerializer();
             SerializeFullState(serializer);
             return serializer.ComputeHash();
+        }
+
+        /// <summary>
+        /// Save-game serialization: like <see cref="SerializeFullState"/> but with
+        /// structural metadata (entity count, component count, component type names)
+        /// so the stream can be deserialized back. The OOS hash serializer omits
+        /// these because it only needs a deterministic byte sequence, not round-trip.
+        /// </summary>
+        public void SerializeSaveGame(Serialization.ISerializer s)
+        {
+            s.StringASCII("rng", _rng.Serialize());
+            s.NumberU32("nextEntityId", _entityManager.NextEntityId);
+
+            var nonLocal = _componentsByEntity
+                .Where(k => !k.Key.IsLocal)
+                .OrderBy(k => k.Key.Value)
+                .ToList();
+            s.NumberU32("entityCount", (uint)nonLocal.Count);
+
+            foreach (var kvp in nonLocal)
+            {
+                s.NumberU32("entityId", kvp.Key.Value);
+                var comps = kvp.Value.Values.OrderBy(c => c.GetType().Name).ToList();
+                s.NumberU32("compCount", (uint)comps.Count);
+                foreach (var comp in comps)
+                {
+                    // Write the [Component(name)] attribute value (e.g. "Position"),
+                    // NOT the C# class name ("PositionComponent") — the registry's
+                    // GetComponentType lookup uses the attribute name.
+                    var attr = (ComponentAttribute?)Attribute.GetCustomAttribute(
+                        comp.GetType(), typeof(ComponentAttribute));
+                    s.StringASCII("typeName", attr?.Name ?? comp.GetType().Name);
+                    comp.Serialize(s);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Restores the full simulation state from a save-game stream. Clears all
+        /// existing state first (ResetState), then recreates entities with their
+        /// original IDs and deserializes each component. After this call the caller
+        /// must rebuild derived state (RangeManager index, LOS grid, visual nodes).
+        /// </summary>
+        public void DeserializeSaveGame(Serialization.IDeserializer d,
+            System.Action<ComponentBase>? prepareComponent = null)
+        {
+            ResetState();
+
+            _rng.Deserialize(d.StringASCII("rng"));
+            _entityManager.RestoreNextEntityId(d.NumberU32("nextEntityId"));
+
+            uint entityCount = d.NumberU32("entityCount");
+            for (uint i = 0; i < entityCount; i++)
+            {
+                var id = new EntityId(d.NumberU32("entityId"));
+                _componentsByEntity[id] = new Dictionary<InterfaceId, IComponent>();
+                _allEntities.Add(id);
+
+                uint compCount = d.NumberU32("compCount");
+                for (uint j = 0; j < compCount; j++)
+                {
+                    string typeName = d.StringASCII("typeName");
+                    var cid = _registry.GetComponentType(typeName);
+                    if (!cid.IsValid)
+                        throw new InvalidDataException(
+                            $"Unknown component type '{typeName}' on entity {id} " +
+                            $"(entity {i+1}/{entityCount}, comp {j+1}/{compCount})");
+                    var comp = _registry.CreateComponent(cid);
+                    comp.SetEntity(id);
+                    var iid = _registry.GetInterfaceForComponent(cid);
+                    _componentsByEntity[id][iid] = comp;
+                    ((IComponent)comp).Init();
+                    // Let the caller inject external dependencies (RangeManager for
+                    // LosManagerComponent, etc.) before deserializing state.
+                    prepareComponent?.Invoke(comp);
+                    try
+                    {
+                        comp.Deserialize(d);
+                    }
+                    catch (System.Exception ex) when (ex is not InvalidDataException)
+                    {
+                        throw new InvalidDataException(
+                            $"Deserialize failed for '{typeName}' on entity {id} " +
+                            $"(entity {i+1}/{entityCount}, comp {j+1}/{compCount}): {ex.Message}");
+                    }
+                }
+            }
         }
     }
 

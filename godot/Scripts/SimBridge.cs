@@ -519,6 +519,44 @@ public sealed partial class SimBridge : Node
         _range.UpdateVisibilityData();
     }
 
+    /// <summary>Destroys every visual node and recreates one for each entity in the
+    /// restored simulation. Called after <see cref="SaveGameManager.Load"/>: the
+    /// old visual nodes referenced entities that were cleared + recreated by
+    /// DeserializeSaveGame (same IDs, new component instances), so every node must
+    /// be rebuilt from scratch. Also re-registers LOS/fog state.</summary>
+    public void RebuildAllVisuals()
+    {
+        // Tear down existing nodes.
+        foreach (var node in _entityNodes.Values)
+            node.QueueFree();
+        _entityNodes.Clear();
+        _animators.Clear();
+        _animState.Clear();
+        _lastPos.Clear();
+        _lastVis.Clear();
+        _entityCacheDirty = true;
+
+        // Recreate visuals for every entity in the restored sim.
+        foreach (var entity in GetAllEntitiesSnapshot())
+        {
+            var identity = _sim.QueryInterface<IdentityComponent>(entity);
+            string template = identity?.TemplateName ?? "";
+            var owner = _sim.QueryInterface<OwnershipComponent>(entity);
+            var color = GetPlayerColor(owner?.PlayerId ?? 0);
+
+            bool isBuilding = identity?.IsBuilding == true;
+            var health = _sim.QueryInterface<HealthComponent>(entity);
+            float size = isBuilding ? 4f : 1.5f;
+
+            CreateVisualFor(entity, color, size, isBuilding, templateName: template);
+
+            // Re-register for LOS so the entity isn't permanently hidden.
+            EntityAssembler.RegisterForLos(_sim, entity, template, null);
+        }
+
+        GD.Print($"[RebuildAllVisuals] recreated {_entityNodes.Count} visual nodes");
+    }
+
     private void OnSimEntityDestroyed(EntityId entity)
     {
         if (_entityNodes.TryGetValue(entity, out var node))

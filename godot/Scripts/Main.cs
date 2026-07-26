@@ -729,6 +729,17 @@ public sealed partial class Main : Node3D
 		}
 		System.IO.File.WriteAllText($"{dir}/entities.txt", sb.ToString());
 		GD.Print($"DEBUG_CAPTURE wrote {dir}/frame.png + entities.txt");
+
+		// Save/load round-trip smoke test (capture mode only).
+		if (SaveGameManager.Save(_sim) != null)
+		{
+			SaveGameManager.Load(_sim, prepareComponent: comp =>
+			{
+				if (comp is ZeroAD.Sim.Components.LosManagerComponent los)
+					los.Attach(_sim.Range);
+			});
+			GD.Print("[SaveLoadTest] round-trip OK");
+		}
 	}
 
 	private static MeshInstance3D? _findFirstMesh(Node n)
@@ -808,6 +819,8 @@ public sealed partial class Main : Node3D
 			if (key.Keycode == Key.T) TrainVillager(Input.IsKeyPressed(Key.Shift));
 			if (key.Keycode == Key.S) TrainSoldier(Input.IsKeyPressed(Key.Shift));
 			if (key.Keycode == Key.Escape) { _placeBuildingMode = false; _selectedEntities.Clear(); }
+			if (key.Keycode == Key.F5) QuickSave();
+			if (key.Keycode == Key.F9) QuickLoad();
 		}
 
 		if (@event is InputEventMouseButton mb && mb.Pressed)
@@ -1022,6 +1035,35 @@ public sealed partial class Main : Node3D
 				_sim.CommandResearch(eid, tech);
 				break;
 			}
+	}
+
+	private void QuickSave()
+	{
+		var path = SaveGameManager.Save(_sim);
+		if (path != null)
+			GD.Print($"[QuickSave] saved to {path}");
+	}
+
+	private void QuickLoad()
+	{
+		if (!SaveGameManager.Exists())
+		{
+			GD.PrintErr("[QuickLoad] no save file found");
+			return;
+		}
+		var turn = SaveGameManager.Load(_sim, prepareComponent: comp =>
+		{
+			// LosManagerComponent needs Attach(rangeManager) before deserialization.
+			if (comp is ZeroAD.Sim.Components.LosManagerComponent los)
+				los.Attach(_sim.Range);
+		});
+		if (turn == null) return;
+
+		// Rebuild the entire visual layer: the old entity nodes are stale (they
+		// reference entities that were cleared + recreated by DeserializeSaveGame).
+		// Destroy every visual node, then recreate one for each loaded entity.
+		_sim.RebuildAllVisuals();
+		GD.Print($"[QuickLoad] loaded turn {turn}, visuals rebuilt");
 	}
 
 	private void PlaceBuilding(Vector2 screenPos)
