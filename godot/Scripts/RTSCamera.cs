@@ -11,11 +11,6 @@ public sealed partial class RTSCamera : Camera3D
     private float _pitch = -0.7f;
     private float _distance = 120f;
     private Vector3 _focus = new(274f, 27f, 113f);
-    // Godot reports the mouse at (0,0) before the first MouseMotion event, which the
-    // edge-pan check would read as "cursor pinned to the top-left corner" and steadily
-    // drag the camera off-focus on the very first frame. Latch true on the first motion
-    // so edge-panning only activates once the player has actually moved the cursor.
-    private bool _mouseActive;
 
     private const float DefaultFov = 45f;
 
@@ -58,14 +53,21 @@ public sealed partial class RTSCamera : Camera3D
 		{ _distance = Mathf.Min(MaxDistance, _distance * Mathf.Pow(2.0f, dt)); moved = true; }
 
         var vp = GetViewport();
-        if (vp != null && _mouseActive)
+        if (vp != null)
         {
             var mp = vp.GetMousePosition();
             var sz = vp.GetVisibleRect().Size;
-            if (mp.X < EdgeMargin)       { _focus -= right * PanSpeed * dt; moved = true; }
-            else if (mp.X > sz.X - EdgeMargin) { _focus += right * PanSpeed * dt; moved = true; }
-            if (mp.Y < EdgeMargin)       { _focus -= forward * PanSpeed * dt; moved = true; }
-            else if (mp.Y > sz.Y - EdgeMargin) { _focus += forward * PanSpeed * dt; moved = true; }
+            // Only edge-pan when the mouse is inside the viewport AND at a non-zero
+            // position. Godot reports (0,0) before any real mouse movement (including
+            // synthetic MouseMotion events fired on window creation/focus), which
+            // would false-trigger the top-left edge pan and steadily drift the camera.
+            if (mp.X > 0 && mp.Y > 0 && mp.X < sz.X && mp.Y < sz.Y)
+            {
+                if (mp.X < EdgeMargin)       { _focus -= right * PanSpeed * dt; moved = true; }
+                else if (mp.X > sz.X - EdgeMargin) { _focus += right * PanSpeed * dt; moved = true; }
+                if (mp.Y < EdgeMargin)       { _focus -= forward * PanSpeed * dt; moved = true; }
+                else if (mp.Y > sz.Y - EdgeMargin) { _focus += forward * PanSpeed * dt; moved = true; }
+            }
         }
 
         if (moved)
@@ -77,9 +79,6 @@ public sealed partial class RTSCamera : Camera3D
 
     public override void _Input(InputEvent @event)
     {
-        // First MouseMotion wakes the edge-pan logic (see _mouseActive comment above).
-        if (@event is InputEventMouseMotion)
-            _mouseActive = true;
         if (@event is InputEventMouseButton mb && mb.Pressed)
         {
 			if (mb.ButtonIndex == MouseButton.WheelUp)
