@@ -299,9 +299,11 @@ public sealed partial class HUD : CanvasLayer
 
     private void SetupSelectionZone(HBoxContainer parent)
     {
+        // C++ selectionDetailsPanel is a fixed ~228px wide panel. Fill (not Expand)
+        // so the Commands zone gets the remaining horizontal space.
         var panel = new Control
         {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsHorizontal = Control.SizeFlags.Fill,
             CustomMinimumSize = new Vector2(228, 0),
         };
 
@@ -391,7 +393,14 @@ public sealed partial class HUD : CanvasLayer
 
     private void SetupCommandZone(HBoxContainer parent)
     {
-        var panel = new Control { SizeFlagsHorizontal = Control.SizeFlags.Fill };
+        // C++ unitCommandsPanel is the widest zone (~402px). ExpandFill so it
+        // claims remaining horizontal space after the minimap/supplemental/selection
+        // fixed-width zones are laid out.
+        var panel = new Control
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(300, 0),
+        };
         AddBorderFrame(panel);
 
         var scroll = new ScrollContainer();
