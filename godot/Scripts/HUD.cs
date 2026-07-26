@@ -20,6 +20,7 @@ public sealed partial class HUD : CanvasLayer
     private ProgressBar _selHealth = null!;
     private Label _selHealthText = null!;
     private Label _selExtra = null!;
+    private Label _selGarrison = null!;
     private HBoxContainer _commandBox = null!;
 
     private static readonly string[] _resNames = { "food", "wood", "stone", "metal" };
@@ -62,6 +63,39 @@ public sealed partial class HUD : CanvasLayer
         var popCounter = CreateResourceCounter("resources/population.png");
         _resourceCounters.Add(popCounter);
         hbox.AddChild(popCounter.Root);
+
+        // Right-aligned menu buttons (match C++ MenuButtons + IconButtons):
+        // Menu, Game Speed, Diplomacy, Trade, Match Settings. These open placeholder
+        // panels — wired to tooltips so the UI structure matches the original.
+        var menuBox = new HBoxContainer();
+        menuBox.SetAnchorsPreset(Control.LayoutPreset.TopRight);
+        menuBox.OffsetLeft = -200; menuBox.OffsetTop = 2;
+        menuBox.OffsetRight = -4; menuBox.OffsetBottom = 34;
+        menuBox.AddThemeConstantOverride("separation", 4);
+        _topBar.AddChild(menuBox);
+
+        AddMenuButton(menuBox, "menu", "Menu", () => { });
+        AddMenuButton(menuBox, "time_small", "Game Speed", () => { });
+        AddMenuButton(menuBox, "diplomacy", "Diplomacy", () => { });
+        AddMenuButton(menuBox, "economics", "Trade", () => { });
+        AddMenuButton(menuBox, "match-settings", "Settings", () => { });
+    }
+
+    private void AddMenuButton(HBoxContainer parent, string icon, string tooltip, System.Action onPressed)
+    {
+        var btn = new Button
+        {
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(28, 28),
+            TooltipText = tooltip,
+            ExpandIcon = true,
+            IconAlignment = HorizontalAlignment.Center,
+            VerticalIconAlignment = VerticalAlignment.Center,
+        };
+        var tex = LoadIcon(icon);
+        if (tex != null) btn.Icon = tex;
+        btn.Pressed += onPressed;
+        parent.AddChild(btn);
     }
 
     private ResourceCounter CreateResourceCounter(string iconPath)
@@ -126,14 +160,20 @@ public sealed partial class HUD : CanvasLayer
         bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         _bottomBar.AddChild(bg);
 
+        // C++ layout: 4 zones spanning the full bottom width.
+        //   Minimap (left) | Supplemental (center-left) | Selection (center) | Commands (right)
+        // The original centers at 50%-512..50%+512 (1024px min), but modern widescreens
+        // are wider; filling the full viewport edge-to-edge matches the user's request
+        // and avoids a floating centered strip on 16:9 displays.
         var hbox = new HBoxContainer();
         hbox.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         hbox.OffsetLeft = 8; hbox.OffsetTop = 8;
         hbox.OffsetRight = -8; hbox.OffsetBottom = -8;
-        hbox.AddThemeConstantOverride("separation", 12);
+        hbox.AddThemeConstantOverride("separation", 8);
         _bottomBar.AddChild(hbox);
 
         SetupMinimapZone(hbox);
+        SetupSupplementalZone(hbox);
         SetupSelectionZone(hbox);
         SetupCommandZone(hbox);
 
@@ -162,6 +202,63 @@ public sealed partial class HUD : CanvasLayer
         frame.AddChild(_minimap);
 
         parent.AddChild(frame);
+    }
+
+    /// <summary>Supplemental panel (C++ "selection_panels_left"): stance buttons,
+    /// garrison count, and formation placeholder. Mirrors the C++ layout slot even
+    /// when the backing systems aren't fully implemented, so the bar reads as
+    /// 4 zones instead of 3.</summary>
+    private void SetupSupplementalZone(HBoxContainer parent)
+    {
+        var panel = new PanelContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.Fill,
+            CustomMinimumSize = new Vector2(180, 0),
+        };
+
+        var vbox = new VBoxContainer();
+        vbox.AddThemeConstantOverride("separation", 6);
+        vbox.OffsetLeft = 6; vbox.OffsetTop = 4;
+        vbox.OffsetRight = -6; vbox.OffsetBottom = -4;
+        panel.AddChild(vbox);
+
+        // Stance row: 5 stance icons (violent/aggressive/defensive/passive/standground).
+        // Placeholder — clicking changes selection highlight only (no sim wiring yet).
+        var stanceLabel = new Label { Text = "Stance" };
+        stanceLabel.AddThemeFontSizeOverride("font_size", 11);
+        stanceLabel.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
+        stanceLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+        stanceLabel.AddThemeConstantOverride("outline_size", 2);
+        vbox.AddChild(stanceLabel);
+
+        var stanceRow = new HBoxContainer();
+        stanceRow.AddThemeConstantOverride("separation", 2);
+        vbox.AddChild(stanceRow);
+        foreach (var stance in new[] { "violent", "aggressive", "defensive", "passive", "standground" })
+        {
+            var btn = new Button
+            {
+                Theme = UITheme.GetTheme(),
+                CustomMinimumSize = new Vector2(28, 28),
+                TooltipText = stance,
+                ExpandIcon = true,
+                IconAlignment = HorizontalAlignment.Center,
+                VerticalIconAlignment = VerticalAlignment.Center,
+            };
+            var tex = LoadIcon($"stances/{stance}");
+            if (tex != null) btn.Icon = tex;
+            stanceRow.AddChild(btn);
+        }
+
+        // Garrison indicator (placeholder count).
+        _selGarrison = new Label { Text = "" };
+        _selGarrison.AddThemeFontSizeOverride("font_size", 12);
+        _selGarrison.AddThemeColorOverride("font_color", new Color(0.85f, 0.80f, 0.65f));
+        _selGarrison.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _selGarrison.AddThemeConstantOverride("outline_size", 2);
+        vbox.AddChild(_selGarrison);
+
+        parent.AddChild(panel);
     }
 
     private void SetupSelectionZone(HBoxContainer parent)
@@ -512,5 +609,15 @@ public sealed partial class HUD : CanvasLayer
         if (!System.IO.File.Exists(path)) return null;
         var img = Image.LoadFromFile(path);
         return img != null ? ImageTexture.CreateFromImage(img) : null;
+    }
+
+    /// <summary>Loads a session icon (diplomacy/garrison/stance/menu etc.),
+    /// searching the session/icons/ subdirectory. Accepts either a bare name
+    /// ("diplomacy") or a relative path ("stances/aggressive").</summary>
+    private static Texture2D? LoadIcon(string name)
+    {
+        // Preserve subdirectories (stances/aggressive) but strip file extension.
+        string withoutExt = System.IO.Path.ChangeExtension(name, null);
+        return LoadTex($"session/icons/{withoutExt}.png");
     }
 }
