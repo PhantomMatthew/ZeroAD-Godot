@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Godot;
 
@@ -81,15 +82,17 @@ public sealed class ActorComposer
             int boneIdx = AttachpointResolver.FindBoneIndex(skeleton, attachpoint);
             if (boneIdx != -1)
             {
-                // Undo the asset pipeline's baked rotation on STATIC prop meshes.
-                // Blender's DAE→GLB pass bakes a -90°X into static vertices
-                // (DAE prop-frame +Z becomes GLB +Y — bounds-verified on helmet/
-                // spear/head), while skeleton bones keep DAE joint frames, so a
-                // bone-attached prop renders -90°X off: faces tipped skyward,
-                // helmet jutting backward, spear horizontal. +90°X about the prop
-                // origin restores the DAE frame. Verified: pilos on head, lambda
-                // blazon facing out, spear planted vertically, faces forward.
-                childNode.Rotation = new Vector3(Mathf.Pi / 2f, 0f, 0f);
+                // Static prop meshes carry a baked -90°X from the DAE→GLB
+                // conversion (DAE prop-frame +Z becomes GLB +Y — bounds-verified).
+                // Whether to undo it depends on the bone class: LEAF prop bones
+                // (helmet, weapon_R/L, shield_arm, ammo...) kept the DAE joint
+                // frame through conversion, so their props need +90°X; CHAIN
+                // bones (head, neck, spine) were reoriented by Blender's
+                // Y-along-child convention, which already cancels the bake —
+                // compensating them double-rotates (-90°X put faces skyward,
+                // +90°X planted them on the ground; raw/identity was correct).
+                if (!attachpoint.Equals("head", StringComparison.OrdinalIgnoreCase))
+                    childNode.Rotation = new Vector3(Mathf.Pi / 2f, 0f, 0f);
                 var ba = new BoneAttachment3D();
                 skeleton.AddChild(ba);
                 ba.BoneIdx = boneIdx;

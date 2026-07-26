@@ -677,6 +677,7 @@ public sealed partial class Main : Node3D
 		var sb = new System.Text.StringBuilder();
 		sb.AppendLine($"frame={_captureFrames} entities={_sim.EntityNodes.Count}");
 		sb.AppendLine($"camera_pos={_camera.GlobalPosition:F1} camera_focus={_camera.Focus:F1}");
+		sb.AppendLine($"debugcam={(_debugCam != null ? _debugCam.GlobalPosition.ToString("F1") : "null")} current={GetViewport().GetCamera3D()?.Name ?? "none"}");
 		foreach (var kvp in _sim.EntityNodes)
 		{
 			var ident = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(kvp.Key);
