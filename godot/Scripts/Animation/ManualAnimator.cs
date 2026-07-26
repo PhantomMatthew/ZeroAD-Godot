@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using Godot;
 
 namespace ZeroAD.Godot.SkeletalAnim;
@@ -31,6 +33,9 @@ public sealed partial class ManualAnimator : Node
 
     /// <summary>One-line diagnostic summary: current state + clip count + bone count.</summary>
     public string Summary => $"state={_current} clips={_clips.Count} bones={_skeleton?.GetBoneCount() ?? -1}";
+
+    /// <summary>Comma-separated list of loaded clip state names (debug dump only).</summary>
+    public string StatesCsv => string.Join(",", _clips.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
 
     public void Init(Skeleton3D skeleton, IReadOnlyDictionary<string, AnimClip> clips)
     {
@@ -115,6 +120,13 @@ public sealed partial class ManualAnimator : Node
             if (idx >= 0)
                 _skeleton.SetBonePoseScale(idx, InterpVec(kv.Value, _elapsed));
         }
+
+        // Godot 4.7 Skeleton3D does not auto-propagate SetBonePose* calls to the
+        // skinned mesh within the same frame — the mesh keeps rendering the last
+        // processed pose. Force the skeleton to recompute global transforms + skin
+        // so the new bone poses are visible THIS frame. Without this, units stand
+        // in their rest/idle pose even while the animator advances walk/run cycles.
+        _skeleton.ForceUpdateAllBoneTransforms();
     }
 
     private int BoneIdx(string name)

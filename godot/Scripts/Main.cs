@@ -621,7 +621,9 @@ public sealed partial class Main : Node3D
 						ready = true; break;
 					}
 					var g = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.UnitAIComponent>(kvp.Key)?.FsmStateName ?? "";
-					if (g.Contains("GATHER.GATHERING")) { ready = true; break; }
+					// Trigger on APPROACHING (mid-walk) OR GATHERING so we can capture both the
+					// walk cycle and the gather cycle from a single capture session.
+					if (g.Contains("GATHER.APPROACHING") || g.Contains("GATHER.GATHERING")) { ready = true; break; }
 				}
 				spawnCam = ready || _captureFrames >= 3000;
 			}
@@ -686,7 +688,7 @@ public sealed partial class Main : Node3D
 			GetViewport().GetTexture().GetImage().SavePng($"{dir}/frame.png");
 
 		var sb = new System.Text.StringBuilder();
-		sb.AppendLine($"frame={_captureFrames} entities={_sim.EntityNodes.Count}");
+		sb.AppendLine($"frame={_captureFrames} entities={_sim.EntityNodes.Count} turn={_sim.NetTurn.CurrentTurn}");
 		sb.AppendLine($"camera_pos={_camera.GlobalPosition:F1} camera_focus={_camera.Focus:F1}");
 		sb.AppendLine($"debugcam={(_debugCam != null ? _debugCam.GlobalPosition.ToString("F1") : "null")} current={GetViewport().GetCamera3D()?.Name ?? "none"}");
 		foreach (var kvp in _sim.EntityNodes)
@@ -704,7 +706,7 @@ public sealed partial class Main : Node3D
 			var vis = _sim.Range.GetLosVisibility(kvp.Key, lp);
 			sb.AppendLine($"eid={kvp.Key.Value} tmpl={tmpl} fsm={fsm} pos={node.GlobalPosition:F1}{gtarget} " +
 				$"vis={vis} mesh={(mesh != null ? mesh.Name : "none")} " +
-				$"anim={(anim != null ? anim.Summary : "none")} " +
+				$"anim={(anim != null ? anim.Summary : "none")} clips={(anim != null ? anim.StatesCsv : "")} " +
 				$"props={(props != null ? props.Summary : "-")}");
 		}
 		System.IO.File.WriteAllText($"{dir}/entities.txt", sb.ToString());
