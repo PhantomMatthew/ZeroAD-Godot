@@ -347,6 +347,11 @@ public sealed partial class SimBridge : Node
         EntityAssembler.RegisterForLos(_sim, entity, def.Template, stats);
 
         CreateVisualFor(entity, GetPlayerColor(def.Player), Math.Max(fpSize * 0.5f, 4f), isBuilding: true);
+        // Apply the scenario's authored yaw (Atlas stores <Orientation y="rad"/> per entity).
+        // SyncVisuals only updates Position, never Rotation, so this persists for the life of
+        // the entity. Matches C++ CmpPosition::SetYRotation at scenario load.
+        if (_entityNodes.TryGetValue(entity, out var bldgNode) && def.OrientationY != 0f)
+            bldgNode.Rotation = new Vector3(0, def.OrientationY, 0);
         return entity;
     }
 
@@ -369,6 +374,11 @@ public sealed partial class SimBridge : Node
         // Re-register now that ownership is set: activates fogging and indexes the entity
         // under its owner (the in-SpawnUnit call ran ownerless). Idempotent.
         EntityAssembler.RegisterForLos(_sim, entity, def.Template, stats);
+
+        // Authored yaw — overruled the first time the unit walks (UpdateUnitAnimation
+        // yaws to travel direction), but until then the unit should face as placed.
+        if (_entityNodes.TryGetValue(entity, out var unitNode) && def.OrientationY != 0f)
+            unitNode.Rotation = new Vector3(0, def.OrientationY, 0);
 
         return entity;
     }
@@ -421,6 +431,8 @@ public sealed partial class SimBridge : Node
             isTree ? new Color(0.1f, 0.5f, 0.1f) : new Color(0.5f, 0.5f, 0.3f),
             isTree ? 2.5f : 1.5f);
         EntityAssembler.RegisterForLos(_sim, entity, def.Template, stats);
+        if (_entityNodes.TryGetValue(entity, out var gaiaNode) && def.OrientationY != 0f)
+            gaiaNode.Rotation = new Vector3(0, def.OrientationY, 0);
         return entity;
     }
 

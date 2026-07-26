@@ -11,6 +11,11 @@ public sealed partial class RTSCamera : Camera3D
     private float _pitch = -0.7f;
     private float _distance = 120f;
     private Vector3 _focus = new(274f, 27f, 113f);
+    // Godot reports the mouse at (0,0) before the first MouseMotion event, which the
+    // edge-pan check would read as "cursor pinned to the top-left corner" and steadily
+    // drag the camera off-focus on the very first frame. Latch true on the first motion
+    // so edge-panning only activates once the player has actually moved the cursor.
+    private bool _mouseActive;
 
     private const float DefaultFov = 45f;
 
@@ -53,7 +58,7 @@ public sealed partial class RTSCamera : Camera3D
 		{ _distance = Mathf.Min(MaxDistance, _distance * Mathf.Pow(2.0f, dt)); moved = true; }
 
         var vp = GetViewport();
-        if (vp != null)
+        if (vp != null && _mouseActive)
         {
             var mp = vp.GetMousePosition();
             var sz = vp.GetVisibleRect().Size;
@@ -72,6 +77,9 @@ public sealed partial class RTSCamera : Camera3D
 
     public override void _Input(InputEvent @event)
     {
+        // First MouseMotion wakes the edge-pan logic (see _mouseActive comment above).
+        if (@event is InputEventMouseMotion)
+            _mouseActive = true;
         if (@event is InputEventMouseButton mb && mb.Pressed)
         {
 			if (mb.ButtonIndex == MouseButton.WheelUp)
@@ -97,6 +105,28 @@ public sealed partial class RTSCamera : Camera3D
     {
         _focus = focus;
         _focus.Y = TerrainHeightService.Sample(_focus.X, _focus.Z);
+        UpdateTransform();
+    }
+
+    /// <summary>Positions the orbit camera so its world position matches the scenario's
+    /// authored &lt;Camera&gt; element, deriving yaw/pitch/distance from the delta between
+    /// the camera position and the current focus (look-at). This is how 0 A.D. starts a
+    /// scenario: the Atlas editor's last camera pose is baked into the XML, and the game
+    /// restores it on launch. Subsequent user pan/rotate then update the orbit params
+    /// normally.</summary>
+    public void PlaceFromScenarioCamera(Vector3 camWorldPos)
+    {
+        Vector3 delta = camWorldPos - _focus;
+        float horizDist = Mathf.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
+        // offset = (hd*sin(yaw), vd, hd*cos(yaw)) → yaw = atan2(delta.X, delta.Z).
+        // Sign matches because both offset.X and delta.X are world-space camera offsets
+        // from focus along the same axes.
+        _yaw = Mathf.Atan2(delta.X, delta.Z);
+        _distance = Mathf.Sqrt(delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z);
+        // offset.Y = distance * sin(-pitch); positive offset.Y (camera above focus) needs
+        // negative pitch (looking down). Inverted atan2 to land on the right sign directly.
+        _pitch = -Mathf.Atan2(delta.Y, horizDist);
+        _pitch = Mathf.Clamp(_pitch, MinPitch, MaxPitch);
         UpdateTransform();
     }
 

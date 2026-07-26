@@ -422,24 +422,35 @@ public sealed partial class Main : Node3D
 			if (scenario != null)
 			{
 				GD.Print($"[Tutorial] scenario loaded: {scenario.Entities.Count} entities, camera=({scenario.CameraX},{scenario.CameraZ})");
-				// The scenario's <Camera> position comes from the original 0 A.D. Atlas editor and
-				// doesn't line up with this rewrite's coordinate space (e.g. tutorial stores
-				// z=-55, off-map). Frame the player's (P1) town centre instead so the player can
-				// actually see and click their base at start. Fall back to the scenario camera
-				// only if no P1 civic centre is found.
-				float camX = scenario.CameraX, camZ = scenario.CameraZ;
+				// The scenario's <Camera> position is the Atlas editor's last pose — restore
+				// it on launch (matches 0 A.D.'s "start where the designer left off"). The
+				// look-at (focus) is the player's (P1) civic centre so the base is centered;
+				// if no CC is found we fall back to focusing the scenario's camera position.
+				float focusX = scenario.CameraX, focusZ = scenario.CameraZ;
+				bool foundCc = false;
 				foreach (var ent in scenario.Entities)
 				{
 					if (ent.Player != 1 || !ent.IsSimulationEntity) continue;
 					if (ent.Template.Contains("civil_centre") || ent.Template.Contains("civic_centre"))
 					{
-						camX = ent.X; camZ = ent.Z;
-						GD.Print($"[Tutorial] framing P1 civic centre at ({camX},{camZ})");
+						focusX = ent.X; focusZ = ent.Z;
+						GD.Print($"[Tutorial] focusing P1 civic centre at ({focusX},{focusZ})");
+						foundCc = true;
 						break;
 					}
 				}
-				float h = TerrainHeightService.Sample(camX, camZ);
-				_camera.SetFocus(new Vector3(camX, h, camZ));
+				float h = TerrainHeightService.Sample(focusX, focusZ);
+				_camera.SetFocus(new Vector3(focusX, h, focusZ));
+				// Restore the designer's camera pose (yaw/pitch/distance derived from the
+				// scenario Camera → focus vector). Skip when the focus fell back to the
+				// camera position itself (no CC) — PlaceFromScenarioCamera needs a non-zero
+				// delta to derive a meaningful orbit.
+				if (foundCc)
+				{
+					var camPos = new Vector3(scenario.CameraX, scenario.CameraY, scenario.CameraZ);
+					_camera.PlaceFromScenarioCamera(camPos);
+					GD.Print($"[Tutorial] restored scenario camera pose from {camPos} toward focus ({focusX},{focusZ})");
+				}
 			}
 			else
 			{
