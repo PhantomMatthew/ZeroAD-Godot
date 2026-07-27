@@ -30,3 +30,11 @@ source/
 
 # Local diagnostic output (asset-parsing reports, regenerated on demand).
 godot/actor_diag.txt
+
+# godot-mcp inspection tooling — local dev/inspection addon, not game code.
+# Re-enabled in the editor on demand (Project Settings → Plugins); its autoload
+# entries in project.godot are regenerated automatically when the plugin is enabled.
+godot/addons/godot_mcp/
+
+# Local MCP client config (machine-specific paths/ports). Copy from .mcp.json.example.
+.mcp.json
