@@ -73,6 +73,12 @@ namespace ZeroAD.Sim.Content
         {
             var stats = new TemplateStats();
 
+            // <Auras> 是 <Entity> 直接子(datatype="tokens"),不在 <Identity> 内。
+            // 空格分隔的 aura 文件名,供 AuraComponent 装配时读取。
+            var auras = node.GetChild("Auras");
+            if (auras.IsOk)
+                stats.Auras = auras.ToString();
+
             var identity = node.GetChild("Identity");
             if (identity.IsOk)
             {
@@ -312,6 +318,9 @@ namespace ZeroAD.Sim.Content
         public string Category = "";
         public string Classes = "";
         public string VisibleClasses = "";
+        /// <summary>&lt;Auras datatype="tokens"&gt;:空格分隔的 aura 文件名(units/heroes/iber_hero_indibil)。
+        /// 是 &lt;Entity&gt; 直接子节点(非 &lt;Identity&gt;)。空 = 无光环。</summary>
+        public string Auras = "";
         public string TemplateName = "";
         public int MaxHealth = 100;
         public int WoodCost;

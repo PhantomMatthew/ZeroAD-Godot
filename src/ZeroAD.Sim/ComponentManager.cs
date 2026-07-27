@@ -63,6 +63,11 @@ namespace ZeroAD.Sim
         /// </summary>
         public Components.ModifiersManager Modifiers { get; }
 
+        /// <summary>光环定义目录(对齐原版全局 AuraTemplates)。世界初始化时由
+        /// <c>AuraLoader.LoadAll</c> 注入;AuraComponent.Tick 查此解析 template &lt;Auras&gt; 名。
+        /// 纯查询只读快照,无 mutable 状态。</summary>
+        public Content.AuraCatalog? Auras { get; set; }
+
         public ComponentManager(uint rngSeed, ComponentRegistry? registry = null,
             TemplateLoader? templates = null, SimEventBus? events = null)
         {

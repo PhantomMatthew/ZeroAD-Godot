@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
@@ -134,6 +135,16 @@ namespace ZeroAD.Sim
             if (stats != null && !string.IsNullOrEmpty(stats.TrainingCategory))
                 cm.AddComponent(entity, new TrainingRestrictionsComponent { Category = stats.TrainingCategory });
 
+            // Auras: <Auras datatype="tokens"> 空格分词的 aura 文件名。仅当模板声明非空 aura
+            // 才挂组件(避免给每个单位挂空组件)。Configure 注入 cm 引用供 OnDeinit 清残留。
+            if (stats != null && !string.IsNullOrWhiteSpace(stats.Auras))
+            {
+                var auraCmp = new AuraComponent();
+                auraCmp.Configure(
+                    stats.Auras.Split(' ', StringSplitOptions.RemoveEmptyEntries), cm);
+                cm.AddComponent(entity, auraCmp);
+            }
+
             // Obstruction: unit circle so other units route around it and it can't be walked through.
             // Template may override the radius; default to ~1m clearance. Registered with the
             // ObstructionManager on EnsureRegistered (called by SimBridge after spawn completes).
@@ -183,6 +194,17 @@ namespace ZeroAD.Sim
             {
                 cm.AddComponent(entity, new VisibilityComponent());
                 cm.QueryInterface<VisibilityComponent>(entity)!.RetainInFog = true;
+            }
+
+            // Auras:建筑/foundation/legacy 路径补挂(这些不走 AssembleUnit)。AssembleUnit
+            // 已为 unit 挂过 → QueryInterface 幂等判定跳过,不重复。
+            if (stats != null && !string.IsNullOrWhiteSpace(stats.Auras)
+                && cm.QueryInterface<AuraComponent>(entity) == null)
+            {
+                var auraCmp = new AuraComponent();
+                auraCmp.Configure(
+                    stats.Auras.Split(' ', StringSplitOptions.RemoveEmptyEntries), cm);
+                cm.AddComponent(entity, auraCmp);
             }
 
             cm.NotifyEntityCreated(entity); // RangeManager subscribes → indexes + Refresh

@@ -63,23 +63,9 @@ public static class TechnologyLoader
         var cost = root.TryGetProperty("cost", out var c) ? c : default;
         bool hasCost = root.TryGetProperty("cost", out _);
 
-        var techAffects = TryGetAffects(root, out var ta) ? ta : (IReadOnlyList<string>)Array.Empty<string>();
-
-        var mods = new List<Modification>();
-        if (root.TryGetProperty("modifications", out var modsEl) && modsEl.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var m in modsEl.EnumerateArray())
-            {
-                if (!m.TryGetProperty("value", out var v) || v.ValueKind != JsonValueKind.String) continue;
-                var affects = TryGetAffects(m, out var ma) ? ma : techAffects;
-                mods.Add(new Modification(
-                    v.GetString()!,
-                    TryGetNumber(m, "add", out var a) ? a : null,
-                    TryGetNumber(m, "multiply", out var mu) ? mu : null,
-                    m.TryGetProperty("replace", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null,
-                    affects));
-            }
-        }
+        var techAffects = ModificationParser.TryGetAffects(root, out var ta)
+            ? ta : (IReadOnlyList<string>)Array.Empty<string>();
+        var mods = ModificationParser.Derive(root, techAffects);
 
         return new TechnologyDefinition(
             name,
@@ -88,7 +74,7 @@ public static class TechnologyLoader
             hasCost ? GetInt(cost, "food") : 0,
             hasCost ? GetInt(cost, "stone") : 0,
             hasCost ? GetInt(cost, "metal") : 0,
-            TryGetNumber(root, "researchTime", out var t) ? t : 0f,
+            ModificationParser.TryGetNumber(root, "researchTime", out var t) ? t : 0f,
             ParseRequirements(root),
             mods,
             root.TryGetProperty("autoResearch", out var ar) && ar.ValueKind == JsonValueKind.True,
@@ -143,33 +129,6 @@ public static class TechnologyLoader
                 result.AddRange(reqs);
         }
         return result;
-    }
-
-    /// <summary>affects 形态:string(可空格分词)或 string[]。统一成列表。</summary>
-    private static bool TryGetAffects(JsonElement el, out IReadOnlyList<string> affects)
-    {
-        affects = Array.Empty<string>();
-        if (!el.TryGetProperty("affects", out var a)) return false;
-        if (a.ValueKind == JsonValueKind.String)
-        {
-            affects = new List<string> { a.GetString()! };
-            return true;
-        }
-        if (a.ValueKind == JsonValueKind.Array)
-        {
-            affects = a.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String)
-                .Select(e => e.GetString()!).ToList();
-            return true;
-        }
-        return false;
-    }
-
-    private static bool TryGetNumber(JsonElement el, string key, out float value)
-    {
-        value = 0f;
-        if (!el.TryGetProperty(key, out var n) || n.ValueKind != JsonValueKind.Number) return false;
-        value = n.GetSingle();
-        return true;
     }
 
     private static int GetInt(JsonElement cost, string key) =>
