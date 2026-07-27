@@ -58,6 +58,12 @@ public sealed partial class SimBridge : Node
     public NetTurnManager NetTurn => _netTurn;
     public uint LocalPlayerId { get; private set; } = 1;
 
+    /// <summary>Per-sim-turn AI think hook. Invoked inside the lockstep while-loop after
+    /// TickSimulation and before AdvanceTurn, so AI commands land in the current turn's
+    /// outbox and reach the queue at currentTurn+commandDelay exactly like human commands.
+    /// Wired by Main.cs to the PetraAI brain; null in MP (AI disabled until Phase 2).</summary>
+    public Action? AiThink;
+
     /// <summary>Read-only query facade for HUD/Minimap/AI. Consolidates the scattered
     /// QueryInterface + entity-list iteration that previously lived inline in the GUI.</summary>
     public GuiInterface Gui { get; private set; } = null!;
@@ -496,6 +502,10 @@ public sealed partial class SimBridge : Node
             _stallLogged = false;
             _simAccumulator -= SimTickRate;
             TickSimulation((float)SimTickRate);
+            // AI think fires once per advanced sim turn, after this turn's world state is
+            // computed and before the outbox is drained — so SubmitLocalCommand here behaves
+            // identically to a human command issued on a render frame.
+            AiThink?.Invoke();
             _netTurn.AdvanceTurn();
         }
         SyncVisuals();
@@ -893,7 +903,7 @@ public sealed partial class SimBridge : Node
         CommandGather(civ.Value, tree.Value);
     }
 
-    private static string MapBuildNameToTemplate(string name) => name switch
+    public static string MapBuildNameToTemplate(string name) => name switch
     {
         "House" => "structures/spart/house",
         "Storehouse" => "structures/spart/storehouse",
@@ -1126,52 +1136,13 @@ public sealed partial class SimBridge : Node
 
     public void SubmitCommand(NetCommand cmd) => _netTurn.SubmitLocalCommand(cmd);
 
-    /// <summary>
-    /// Synchronous foundation spawn + build order for the single-player AI scripts ONLY.
-    /// The AI is non-deterministic and disabled in multiplayer (design doc §9), so it does
-    /// not participate in lockstep and may touch the sim directly. Returns the foundation
-    /// entity so the AI can track it for "don't build a second barracks" checks. Player
-    /// commands must NEVER use this — they go through <see cref="CommandBuild"/>.
-    /// </summary>
-    public EntityId SpawnFoundationDirect(float x, float z, string name, float buildTime)
+    /// <summary>Idempotently assign/release an entity's owning player. Sandbox spawn paths
+    /// (SpawnUnit/SpawnBuilding) create ownerless entities; this attaches the OwnershipComponent
+    /// the AI owned-list scan and SimCommandExecutor routing rely on.</summary>
+    public void AssignOwner(EntityId entity, int playerId)
     {
-        string fullTemplate = MapBuildNameToTemplate(name);
-        var entity = _sim.CreateEntity();
-        _sim.AddComponent(entity, new PositionComponent());
-        _sim.AddComponent(entity, new FoundationComponent());
-        TemplateStats? stats = null;
-        try { stats = Templates?.ExtractStats(fullTemplate); } catch { }
-        _sim.AddComponent(entity, new IdentityComponent
-        {
-            Name = name + " (building)",
-            TemplateName = fullTemplate,
-            IsBuilding = true,
-            IsUnit = false,
-            Classes = stats?.GetClassList() ?? new List<string> { name }
-        });
-        _sim.AddComponent(entity, new HealthComponent { Current = 200, Max = 200 });
-        _sim.AddComponent(entity, new OwnershipComponent { PlayerId = 1 });
-        _sim.QueryInterface<FoundationComponent>(entity)?.Configure(fullTemplate, buildTime);
-        var pos = _sim.QueryInterface<PositionComponent>(entity);
-        if (pos != null)
-            pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
-        CreateVisualFor(entity, new Color(0.6f, 0.5f, 0.4f, 0.3f), 6f, isBuilding: true, isGhost: true);
-        return entity;
-    }
-
-    /// <summary>
-    /// Order a builder to repair a specific foundation, synchronously. AI-only counterpart
-    /// to <see cref="SpawnFoundationDirect"/>: the AI drives the sim directly outside lockstep.
-    /// Player builds must use <see cref="CommandBuild"/> so they route through the turn queue.
-    /// </summary>
-    public void OrderRepairDirect(EntityId builder, EntityId foundation)
-    {
-        var ai = _sim.QueryInterface<UnitAIComponent>(builder);
-        if (ai != null)
-            ai.Repair(foundation);
-        else
-            _sim.QueryInterface<BuilderComponent>(builder)?.Build(foundation);
-        Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "repair", Target = foundation });
+        if (_sim.QueryInterface<OwnershipComponent>(entity) == null)
+            _sim.AddComponent(entity, new OwnershipComponent { PlayerId = playerId });
     }
 
     public void MoveEntity(EntityId entity, float x, float z) =>

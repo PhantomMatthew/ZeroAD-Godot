@@ -160,7 +160,10 @@ public sealed partial class Main : Node3D
 			var role = isMultiplayer
 				? (isHost ? ZeroAD.Sim.Net.NetRole.Host : ZeroAD.Sim.Net.NetRole.Client)
 				: ZeroAD.Sim.Net.NetRole.Standalone;
-			int playerCount = isMultiplayer ? 2 : 1;
+			// Sandbox (non-tutorial) and MP both use 2 slots. Tutorial stays single-player
+			// (no AI). In sandbox slot 2 is the AI opponent; in MP both slots are humans and
+			// the AI is gated off inside SetupGameWorld until its state is serializable.
+			int playerCount = tutorial ? 1 : 2;
 			_sim.InitWorld(templatesPath, seed, playerId, role, playerCount);
 			GD.Print("[Tutorial] InitWorld done");
 
@@ -217,7 +220,7 @@ public sealed partial class Main : Node3D
 				GD.Print("[Tutorial] SetupTutorialWorld done");
 			}
 			else
-				SetupGameWorld(playerId);
+				SetupGameWorld(playerId, isMultiplayer);
 
 			GD.Print(_isTutorial
 				? "[Tutorial] Introductory Tutorial started"
@@ -487,7 +490,7 @@ public sealed partial class Main : Node3D
 		GD.Print("[Tutorial] SetupTutorialWorld complete");
 	}
 
-	private void SetupGameWorld(uint playerId)
+	private void SetupGameWorld(uint playerId, bool isMultiplayer)
 	{
 		SetupTerrain();
 
@@ -524,22 +527,38 @@ public sealed partial class Main : Node3D
 				_sim.SpawnTree(120 + Mathf.Cos(angle) * dist, 120 + Mathf.Sin(angle) * dist);
 		}
 
-		var aiPlayer = _sim.Sim.CreateEntity();
-		_sim.Sim.AddComponent(aiPlayer, new PlayerComponent { Wood = 200, Food = 200 });
-
-		var aiTownCenter = _sim.SpawnBuilding(200, 200, "AI Town Center");
-		for (int i = 0; i < 3; i++)
+		// AI opponent (player 2) — sandbox/SP dev mode only. MP disables the AI until
+		// Phase 2: its brain state isn't serialized into the OOS hash yet, so two peers
+		// would diverge. InitWorld already registered player 2 with PlayerComponent +
+		// TechnologyManager + OwnershipComponent + EntityLimits, so adopt that entity
+		// instead of creating a ghost player (the old path had no OwnershipComponent and
+		// no TechnologyManager, which silently no-op'd AI research). SpawnUnit/SpawnBuilding
+		// create ownerless entities, so stamp owner=2 — the AI owned-list scan and
+		// SimCommandExecutor routing both key off OwnershipComponent.
+		if (!isMultiplayer)
 		{
-			var u = _sim.SpawnUnit(210 + i * 4, 200, isVillager: true);
-			_ai.RegisterUnit(u);
+			const int aiPlayerId = 2;
+			var aiPlayerEntity = _sim.Sim.GetPlayerEntityId(aiPlayerId);
+			if (aiPlayerEntity != null)
+			{
+				var aiTownCenter = _sim.SpawnBuilding(200, 200, "AI Town Center");
+				_sim.AssignOwner(aiTownCenter, aiPlayerId);
+				for (int i = 0; i < 3; i++)
+				{
+					var u = _sim.SpawnUnit(210 + i * 4, 200, isVillager: true);
+					_sim.AssignOwner(u, aiPlayerId);
+				}
+				for (int i = 0; i < 2; i++)
+				{
+					var u = _sim.SpawnUnit(210 + i * 4, 210, isSoldier: true);
+					_sim.AssignOwner(u, aiPlayerId);
+				}
+				_ai.Init(_sim, aiPlayerEntity.Value, aiPlayerId);
+				// TickAI fires once per advanced sim turn from inside SimBridge's lockstep
+				// while-loop, so AI commands land in the turn outbox exactly like human ones.
+				_sim.AiThink += () => _ai.TickAI();
+			}
 		}
-		for (int i = 0; i < 2; i++)
-		{
-			var u = _sim.SpawnUnit(210 + i * 4, 210, isSoldier: true);
-			_ai.RegisterUnit(u);
-		}
-		_ai.RegisterBuilding(aiTownCenter);
-		_ai.Init(_sim, aiPlayer);
 
 		_sim.SpawnUnit(80, 80, isSoldier: true);
 		_sim.SpawnUnit(85, 85, isSoldier: true);

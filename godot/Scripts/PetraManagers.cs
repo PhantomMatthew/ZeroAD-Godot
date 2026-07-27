@@ -1,22 +1,31 @@
-using Godot;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
+using ZeroAD.Sim.Maths;
+using ZeroAD.Sim.Net;
 
 namespace ZeroAD.Godot;
+
+// All managers issue orders via NetCommand + SimBridge.SubmitCommand, stamping _playerId
+// (the AI's player slot). This routes every decision through the lockstep queue →
+// SimCommandExecutor, the single SP/MP chokepoint, so the AI can never diverge from a
+// human player's command path. Timer fields count THINKS (not seconds): PetraAI calls
+// Update once per think (~every 5 sim turns), so thresholds are scaled to preserve the
+// original cadence (e.g. BuildManager fires every 10 thinks ≈ 5s, matching the old 0.5s
+// frame-timer × 10).
 
 public sealed class EconomyManager
 {
     private readonly SimBridge _sim;
-    private readonly EntityId _player;
+    private readonly uint _playerId;
     private readonly List<EntityId> _units;
 
     private int _targetVillagers = 12;
-    private float _allocTimer;
+    private int _allocThinkCount;
 
-    public EconomyManager(SimBridge sim, EntityId player, List<EntityId> units)
-    { _sim = sim; _player = player; _units = units; }
+    public EconomyManager(SimBridge sim, uint playerId, List<EntityId> units)
+    { _sim = sim; _playerId = playerId; _units = units; }
 
     public void Update(AISnapshot snap)
     {
@@ -38,7 +47,7 @@ public sealed class EconomyManager
             if (!identity.Name.Contains("Center") && !identity.Name.Contains("civil_centre")) continue;
             if (queue.QueueCount > 0) continue;
 
-            _sim.CommandTrain(building);
+            _sim.SubmitCommand(NetCommand.Train(_playerId, building.Value, "units/spart/support_civilian"));
             return;
         }
     }
@@ -53,7 +62,7 @@ public sealed class EconomyManager
             ResourceType target = DetermineNeededResource(snap.Player);
             var resource = FindNearest(villager, target);
             if (resource.HasValue)
-                _sim.CommandGather(villager, resource.Value);
+                _sim.SubmitCommand(NetCommand.Gather(_playerId, villager.Value, resource.Value.Value));
         }
     }
 
@@ -68,9 +77,9 @@ public sealed class EconomyManager
 
     private void ManageGatherRatios(AISnapshot snap)
     {
-        _allocTimer += 0.5f;
-        if (_allocTimer < 10f) return;
-        _allocTimer = 0;
+        // Fires every 20 thinks ≈ 10s (was _allocTimer >= 10f at 0.5s/think).
+        if (++_allocThinkCount < 20) return;
+        _allocThinkCount = 0;
 
         if (snap.Player.Food > 500 && snap.Player.Wood < 200)
         {
@@ -78,7 +87,7 @@ public sealed class EconomyManager
             {
                 var v = snap.Villagers[i];
                 var r = FindNearest(v, ResourceType.Wood);
-                if (r.HasValue) _sim.CommandGather(v, r.Value);
+                if (r.HasValue) _sim.SubmitCommand(NetCommand.Gather(_playerId, v.Value, r.Value.Value));
             }
         }
     }
@@ -98,20 +107,20 @@ public sealed class EconomyManager
 public sealed class BuildManager
 {
     private readonly SimBridge _sim;
-    private readonly EntityId _player;
+    private readonly uint _playerId;
     private readonly List<EntityId> _buildings;
     private readonly List<EntityId> _units;
 
-    private float _buildTimer;
+    private int _buildThinkCount;
 
-    public BuildManager(SimBridge sim, EntityId player, List<EntityId> buildings, List<EntityId> units)
-    { _sim = sim; _player = player; _buildings = buildings; _units = units; }
+    public BuildManager(SimBridge sim, uint playerId, List<EntityId> buildings, List<EntityId> units)
+    { _sim = sim; _playerId = playerId; _buildings = buildings; _units = units; }
 
     public void Update(AISnapshot snap)
     {
-        _buildTimer += 0.5f;
-        if (_buildTimer < 5f) return;
-        _buildTimer = 0;
+        // Fires every 10 thinks ≈ 5s (was _buildTimer >= 5f at 0.5s/think).
+        if (++_buildThinkCount < 10) return;
+        _buildThinkCount = 0;
 
         if (snap.Player.Wood < 150) return;
 
@@ -153,36 +162,40 @@ public sealed class BuildManager
         var tcPos = _sim.Sim.QueryInterface<PositionComponent>(tc);
         if (tcPos == null) return;
 
-        float bx = tcPos.Position.X.ToFloat() + 35 + GD.Randf() * 15;
-        float bz = tcPos.Position.Z.ToFloat() + GD.Randf() * 15;
+        // Deterministic jitter from the kernel RNG (serialized into the OOS hash + save
+        // state) — GD.Randf would diverge across MP peers and across save/reload.
+        double jitterX = _sim.Sim.RNG.NextDouble() * 15.0;
+        double jitterZ = _sim.Sim.RNG.NextDouble() * 15.0;
+        float bx = tcPos.Position.X.ToFloat() + 35f + (float)jitterX;
+        float bz = tcPos.Position.Z.ToFloat() + (float)jitterZ;
 
-        var player = snap.Player;
-        if (player.Wood < 100) return;
-        player.Wood -= 100;
-
-        var foundation = _sim.SpawnFoundationDirect(bx, bz, name, 8.0f);
-        _sim.OrderRepairDirect(builder, foundation);
-        _buildings.Add(foundation);
+        // One lockstep command replaces the old 3-line bypass. SimCommandExecutor.ApplyBuild
+        // charges the cost (CanAfford + Spend), spawns the foundation with owner=_playerId,
+        // and assigns the builder — all at the execution turn. The foundation joins
+        // _ownedBuildings on the next think via PetraAI.RebuildOwned (owner match).
+        _sim.SubmitCommand(NetCommand.Build(_playerId, builder.Value,
+            SimBridge.MapBuildNameToTemplate(name), Fixed.FromFloat(bx), Fixed.FromFloat(bz)));
     }
 }
 
 public sealed class ResearchManager
 {
     private readonly SimBridge _sim;
-    private readonly EntityId _player;
+    private readonly uint _playerId;
+    private readonly EntityId _playerEntity; // for TechnologyManager.CanResearch reads
     private readonly List<EntityId> _buildings;
-    private float _researchTimer;
+    private int _researchThinkCount;
 
-    public ResearchManager(SimBridge sim, EntityId player, List<EntityId> buildings)
-    { _sim = sim; _player = player; _buildings = buildings; }
+    public ResearchManager(SimBridge sim, uint playerId, EntityId playerEntity, List<EntityId> buildings)
+    { _sim = sim; _playerId = playerId; _playerEntity = playerEntity; _buildings = buildings; }
 
     public void Update(AISnapshot snap)
     {
-        _researchTimer += 0.5f;
-        if (_researchTimer < 15f) return;
-        _researchTimer = 0;
+        // Fires every 30 thinks ≈ 15s (was _researchTimer >= 15f at 0.5s/think).
+        if (++_researchThinkCount < 30) return;
+        _researchThinkCount = 0;
 
-        var techMgr = _sim.Sim.QueryInterface<TechnologyManager>(_player);
+        var techMgr = _sim.Sim.QueryInterface<TechnologyManager>(_playerEntity);
         if (techMgr == null) return;
 
         foreach (var building in snap.Buildings)
@@ -192,14 +205,14 @@ public sealed class ResearchManager
 
             string? tech = PickNextTech(snap, techMgr);
             if (tech != null)
-                researcher.StartResearch(tech, techMgr, snap.Player);
+                _sim.SubmitCommand(NetCommand.Research(_playerId, building.Value, tech));
         }
     }
 
     private string? PickNextTech(AISnapshot snap, TechnologyManager techMgr)
     {
         // 真实 JSON 科技名(数据驱动重写后)。CanResearch 已含前置/pair/重复判定;
-        // 资源是否够由 StartResearch 的 CanAfford 把关(不够则本次放弃,15s 后重试)。
+        // 资源是否够由 SimCommandExecutor.ApplyResearch 的 CanAfford 把关(不够则本次放弃,15s 后重试)。
         if (techMgr.CanResearch("phase_town_generic")) return "phase_town_generic";
         if (techMgr.CanResearch("gather_capacity_wheelbarrow")) return "gather_capacity_wheelbarrow";
         if (techMgr.CanResearch("gather_lumbering_sharpaxes")) return "gather_lumbering_sharpaxes";
@@ -212,12 +225,12 @@ public sealed class ResearchManager
 public sealed class DefenseManager
 {
     private readonly SimBridge _sim;
-    private readonly EntityId _player;
+    private readonly uint _playerId;
     private readonly List<EntityId> _units;
     private readonly List<EntityId> _buildings;
 
-    public DefenseManager(SimBridge sim, EntityId player, List<EntityId> units, List<EntityId> buildings)
-    { _sim = sim; _player = player; _units = units; _buildings = buildings; }
+    public DefenseManager(SimBridge sim, uint playerId, List<EntityId> units, List<EntityId> buildings)
+    { _sim = sim; _playerId = playerId; _units = units; _buildings = buildings; }
 
     public void Update(AISnapshot snap)
     {
@@ -230,7 +243,7 @@ public sealed class DefenseManager
         {
             var attack = _sim.Sim.QueryInterface<AttackComponent>(soldier);
             if (attack == null || attack.State == AttackComponent.AttackState.Attacking) continue;
-            _sim.CommandAttack(soldier, threat.Value);
+            _sim.SubmitCommand(NetCommand.Attack(_playerId, soldier.Value, threat.Value.Value));
         }
     }
 
@@ -259,25 +272,24 @@ public sealed class DefenseManager
 public sealed class AttackManager
 {
     private readonly SimBridge _sim;
-    private readonly EntityId _player;
+    private readonly uint _playerId;
     private readonly List<EntityId> _units;
-    private float _attackTimer;
+    private int _attackThinkCount;
     private const int AttackWaveSize = 5;
-    private const float AttackInterval = 20f;
+    private const int AttackIntervalThinks = 40; // ≈ 20s (was 20f at 0.5s/think)
 
-    public AttackManager(SimBridge sim, EntityId player, List<EntityId> units)
-    { _sim = sim; _player = player; _units = units; }
+    public AttackManager(SimBridge sim, uint playerId, List<EntityId> units)
+    { _sim = sim; _playerId = playerId; _units = units; }
 
     public void Update(AISnapshot snap)
     {
         EnsureMilitaryProduction(snap);
 
-        _attackTimer += 0.5f;
-        if (_attackTimer < AttackInterval) return;
+        if (++_attackThinkCount < AttackIntervalThinks) return;
         if (snap.Soldiers.Count < AttackWaveSize) return;
         if (snap.EnemyBuildings.Count == 0 && snap.EnemyUnits.Count == 0) return;
 
-        _attackTimer = 0;
+        _attackThinkCount = 0;
         LaunchAttack(snap);
     }
 
@@ -294,7 +306,7 @@ public sealed class AttackManager
             if (!identity.Name.Contains("Barracks") && !identity.Name.Contains("Center")) continue;
             if (queue.QueueCount > 0) continue;
 
-            _sim.CommandTrainSoldier(building);
+            _sim.SubmitCommand(NetCommand.Train(_playerId, building.Value, "units/spart/infantry_spearman_b"));
             return;
         }
     }
@@ -309,6 +321,6 @@ public sealed class AttackManager
         if (tpos == null) return;
 
         foreach (var soldier in snap.Soldiers)
-            _sim.CommandAttack(soldier, target.Value);
+            _sim.SubmitCommand(NetCommand.Attack(_playerId, soldier.Value, target.Value.Value));
     }
 }
