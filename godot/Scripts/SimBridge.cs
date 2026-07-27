@@ -84,6 +84,7 @@ public sealed partial class SimBridge : Node
         // Wire templates + events into the sim so SpawnEntity / EnqueueTraining can run headless.
         TemplateLoader? templates = null;
         TechCatalog? techCatalog = null;
+        AuraCatalog? auraCatalog = null;
         if (templatesPath != null && System.IO.Directory.Exists(templatesPath))
         {
             templates = new TemplateLoader(templatesPath);
@@ -98,9 +99,16 @@ public sealed partial class SimBridge : Node
                 System.IO.Path.Combine(templatesPath, "..", "data", "technologies"));
             techCatalog = TechnologyLoader.LoadAll(techDir);
             GD.Print($"Technologies: {techCatalog.Technologies.Count} (+{techCatalog.Pairs.Count} pairs)");
+
+            // 光环 JSON 同根(simulation/data/auras)。MVP 仅收 range/global/player 三型。
+            var auraDir = System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(templatesPath, "..", "data", "auras"));
+            auraCatalog = AuraLoader.LoadAll(auraDir);
+            GD.Print($"Auras: {auraCatalog.Auras.Count} entries (range/global/player only)");
         }
 
         _sim = new ComponentManager(seed, registry, templates);
+        if (auraCatalog != null) _sim.Auras = auraCatalog;
         SimSystem.Init(_sim);
         Templates = templates;
         LocalPlayerId = localPlayerId;
@@ -491,6 +499,20 @@ public sealed partial class SimBridge : Node
         SyncVisuals();
     }
 
+    /// <summary>推进所有光环(对齐 TickResearch)。遍历 AllEntities,对挂 AuraComponent 的
+    /// 实体调 Tick:range 型 ExecuteQuery+diff,global/player 型玩家实体+reqTech 门控。
+    /// 派生态每 tick 重建,无累积。</summary>
+    private void TickAuras(float dt)
+    {
+        var catalog = _sim.Auras;
+        if (catalog == null || catalog.Auras.Count == 0) return;
+        foreach (var entity in _sim.AllEntities)
+        {
+            var aura = _sim.QueryInterface<AuraComponent>(entity);
+            if (aura != null) aura.Tick(_sim, _range, catalog);
+        }
+    }
+
     private void TickSimulation(float dt)
     {
         RemoveDeadEntities();
@@ -502,6 +524,9 @@ public sealed partial class SimBridge : Node
         TickProductionQueues(dt);
         TickFoundations(dt);
         TickResearch(dt);
+        // 光环:每 tick 应用/移除(range diff + global/player reqTech 门控)。放 TickResearch 后、
+        // ReapplyVisionScopeAll 前,使 vision aura 的修正值本轮即被 LOS 重算吃到。
+        TickAuras(dt);
         // Vision range through the modifiers pipeline: tech/aura changes re-cover seer
         // circles in the LOS grid. Runs every turn (after research completes) so all
         // players' ranges stay fresh without a research-completion hook per player.
