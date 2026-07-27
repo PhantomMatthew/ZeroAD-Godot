@@ -23,6 +23,8 @@ public sealed partial class SimBridge : Node
     private readonly Dictionary<EntityId, SkeletalAnim.ManualAnimator> _animators = new();
     private readonly Dictionary<EntityId, string> _animState = new();
     private readonly Dictionary<EntityId, Vector3> _lastPos = new();
+    // 表现层位置插值器:消除 10Hz sim tick 的单位瞬移(见 SyncVisuals / _Process)。
+    private readonly VisualInterpolator _interpolator = new();
     private EntityId? _playerEntity;
     private ObstructionManager _obstructions = null!;
     private RangeManager _range = null!;
@@ -497,6 +499,9 @@ public sealed partial class SimBridge : Node
             _netTurn.AdvanceTurn();
         }
         SyncVisuals();
+        // 渲染插值:用 tick 余数作 alpha,在两次 tick 之间平滑单位位置(消除 10Hz 瞬移)。
+        _interpolator.SetAlpha((float)(_simAccumulator / SimTickRate));
+        _interpolator.ApplyRenderPositions();
     }
 
     /// <summary>推进所有光环(对齐 TickResearch)。遍历 AllEntities,对挂 AuraComponent 的
@@ -559,6 +564,7 @@ public sealed partial class SimBridge : Node
         _animState.Clear();
         _lastPos.Clear();
         _lastVis.Clear();
+        _interpolator.Clear();
         _entityCacheDirty = true;
 
         // Recreate visuals for every entity in the restored sim.
@@ -593,6 +599,7 @@ public sealed partial class SimBridge : Node
         _animState.Remove(entity);
         _lastPos.Remove(entity);
         _lastVis.Remove(entity);
+        _interpolator.Remove(entity);
     }
 
     private void RemoveDeadEntities()
@@ -1374,7 +1381,9 @@ public sealed partial class SimBridge : Node
                 TerrainHeightService.Sample(pos.Position.X.ToFloat(), pos.Position.Z.ToFloat()),
                 pos.Position.Z.ToFloat());
 
-            node.Position = newPos;
+            // 推给插值器记录 prev/curr(新单位/传送 snap 内置);渲染帧在 _Process 末尾
+            // 按 alpha 插值写入 node.Position,而非每 tick 直接 snap(那会造成 10Hz 瞬移)。
+            _interpolator.RecordTick(kvp.Key, node, newPos);
 
             if (_animators.TryGetValue(kvp.Key, out var animator))
                 UpdateUnitAnimation(kvp.Key, node, animator, newPos);
