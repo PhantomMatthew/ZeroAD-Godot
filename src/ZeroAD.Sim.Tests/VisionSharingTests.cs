@@ -1,7 +1,9 @@
 using System.Collections.Generic;
+using System.Linq;
 using Xunit;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Maths;
+using ZeroAD.Sim.Net;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Sim.Tests;
@@ -132,6 +134,31 @@ public sealed class VisionSharingTests
         Assert.Equal(new List<int> { 2 }, cm.Players.GetMutualAllies(1));
         Assert.Equal(new List<int> { 1 }, cm.Players.GetMutualAllies(2));
         Assert.Empty(cm.Players.GetMutualAllies(3));
+    }
+
+    [Fact]
+    public void DiplomacyFromSlotTable_TwoHumanTeamVsTwoAiTeam()
+    {
+        // The MP lobby slot table (Task #10) derives the team map that seeds diplomacy.
+        // Two humans on team 0, two AI on team 1 → humans allied together, AI allied
+        // together, cross-team enemies. Pins the slot-table → SeedDiplomacyFromTeams path.
+        var (cm, _, _) = NewWorld(players: 4);
+        var slots = new List<PlayerSlotSetup>
+        {
+            new() { PlayerId = 1, Kind = PlayerSlotKind.Human, Civ = "athen", Team = 0 },
+            new() { PlayerId = 2, Kind = PlayerSlotKind.Human, Civ = "athen", Team = 0 },
+            new() { PlayerId = 3, Kind = PlayerSlotKind.AI,    Civ = "gaul",  Team = 1 },
+            new() { PlayerId = 4, Kind = PlayerSlotKind.AI,    Civ = "gaul",  Team = 1 },
+        };
+        var teamMap = slots
+            .Where(s => s.Kind != PlayerSlotKind.Closed)
+            .ToDictionary(s => s.PlayerId, s => s.Team);
+        cm.Players.SeedDiplomacyFromTeams(teamMap);
+
+        Assert.Equal(new List<int> { 2 }, cm.Players.GetMutualAllies(1));
+        Assert.Equal(new List<int> { 1 }, cm.Players.GetMutualAllies(2));
+        Assert.Equal(new List<int> { 4 }, cm.Players.GetMutualAllies(3));
+        Assert.Equal(new List<int> { 3 }, cm.Players.GetMutualAllies(4));
     }
 
     [Fact]
