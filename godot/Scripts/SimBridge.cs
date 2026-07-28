@@ -154,6 +154,7 @@ public sealed partial class SimBridge : Node
         {
             var playerEntity = _sim.CreateEntity();
             _sim.AddComponent(playerEntity, new PlayerComponent { Civ = civ });
+            _sim.AddComponent(playerEntity, new DiplomacyComponent());
             var techMgr = new TechnologyManager();
             _sim.AddComponent(playerEntity, techMgr);
             _sim.AddComponent(playerEntity, new OwnershipComponent { PlayerId = pid });
@@ -168,6 +169,10 @@ public sealed partial class SimBridge : Node
             if (pid == (int)localPlayerId)
                 _playerEntity = playerEntity;
         }
+
+        // Seed diplomacy from teams: empty map → every pair mutual enemies (the original's
+        // no-team free-for-all). Scenarios carrying Team data re-seed after loading players.
+        _sim.Players.SeedDiplomacyFromTeams(new Dictionary<int, int>());
 
         var expectedPlayers = Enumerable.Range(1, playerCount).Select(i => (uint)i).ToHashSet();
         _netTurn = new NetTurnManager(_sim, commandDelay: 2, localPlayerId, role, expectedPlayers);
@@ -191,6 +196,13 @@ public sealed partial class SimBridge : Node
         var scenario = ScenarioLoader.Load(xmlPath);
         ApplyScenarioPlayers(scenario);
         SpawnScenarioEntities(scenario);
+        // Re-seed diplomacy from the scenario's Team assignments (covers the enemy player
+        // created in ApplyScenarioPlayers): same-team → mutual ally, else enemy. No-op for
+        // a 1v1 tutorial with no Team data.
+        var teams = new Dictionary<int, int>();
+        foreach (var pd in scenario.Players)
+            teams[pd.PlayerId] = pd.Team;
+        _sim.Players.SeedDiplomacyFromTeams(teams);
         GD.Print($"Loaded tutorial scenario: {scenario.Entities.Count} entities ({scenario.Name})");
         return scenario;
     }
@@ -223,6 +235,7 @@ public sealed partial class SimBridge : Node
                     PopulationLimit = 20
                 });
                 _sim.AddComponent(enemy, new OwnershipComponent { PlayerId = pd.PlayerId });
+                _sim.AddComponent(enemy, new DiplomacyComponent());
             }
         }
     }

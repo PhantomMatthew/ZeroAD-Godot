@@ -28,6 +28,9 @@ namespace ZeroAD.Sim.Content
         public int Food;
         public int Stone;
         public int Metal;
+        /// <summary>Team id from the scenario's PlayerData (-1 = no team / solo). Drives
+        /// alliance shared-LOS seeding (same team → mutual ally). Default -1.</summary>
+        public int Team = -1;
     }
 
     public sealed class ScenarioData
@@ -103,6 +106,8 @@ namespace ZeroAD.Sim.Content
                     pd.Civ = civ.GetString() ?? "";
                 if (player.TryGetProperty("Name", out var pname))
                     pd.Name = pname.GetString() ?? "";
+                if (player.TryGetProperty("Team", out var team) && team.TryGetInt32(out var teamId))
+                    pd.Team = teamId;
                 if (player.TryGetProperty("Resources", out var res))
                 {
                     pd.Wood = res.TryGetProperty("wood", out var w) ? w.GetInt32() : 0;

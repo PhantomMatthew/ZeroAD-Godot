@@ -54,6 +54,66 @@ public sealed class PlayerManager
     public int GetNumPlayers() => _playerEntities.Count;
 
     /// <summary>
+    /// Players mutually allied with <paramref name="player"/> (A.IsAlly(B) AND B.IsAlly(A)),
+    /// in ascending id order for determinism. Mirrors Diplomacy.js GetMutualAllies — the
+    /// precondition for alliance shared LOS (Pathway B of VisionSharing). Returns empty when
+    /// this player or any candidate lacks a DiplomacyComponent (e.g. pre-seeding or old saves).
+    /// </summary>
+    public List<int> GetMutualAllies(int player)
+    {
+        var result = new List<int>();
+        if (!_playerEntities.TryGetValue(player, out var selfEntity)) return result;
+        var selfDip = _cm.QueryInterface<DiplomacyComponent>(selfEntity);
+        if (selfDip == null) return result;
+        foreach (var other in GetNonGaiaPlayerIds())
+        {
+            if (other == player) continue;
+            if (!selfDip.IsAlly(other)) continue;
+            if (!_playerEntities.TryGetValue(other, out var otherEntity)) continue;
+            var otherDip = _cm.QueryInterface<DiplomacyComponent>(otherEntity);
+            if (otherDip != null && otherDip.IsAlly(player)) result.Add(other);
+        }
+        result.Sort();
+        return result;
+    }
+
+    /// <summary>
+    /// Seed every player's <see cref="DiplomacyComponent"/> from team assignments: same
+    /// team (id &gt;= 0) → mutual ally; otherwise → mutual enemy. Idempotent — overwrites
+    /// prior stances. Call once at world setup after all player entities are registered.
+    /// </summary>
+    public void SeedDiplomacyFromTeams(IReadOnlyDictionary<int, int> teamByPlayer)
+    {
+        var ids = new List<int>(GetNonGaiaPlayerIds());
+        ids.Sort();
+        foreach (var a in ids)
+        {
+            if (!_playerEntities.TryGetValue(a, out var aEntity)) continue;
+            var dipA = _cm.QueryInterface<DiplomacyComponent>(aEntity);
+            if (dipA == null) continue;
+            int ta = teamByPlayer.TryGetValue(a, out var va) ? va : -1;
+            foreach (var b in ids)
+            {
+                if (b == a) continue;
+                if (!_playerEntities.TryGetValue(b, out var bEntity)) continue;
+                var dipB = _cm.QueryInterface<DiplomacyComponent>(bEntity);
+                if (dipB == null) continue;
+                int tb = teamByPlayer.TryGetValue(b, out var vb) ? vb : -1;
+                if (ta >= 0 && ta == tb)
+                {
+                    dipA.SetAlly(b);
+                    dipB.SetAlly(a);
+                }
+                else
+                {
+                    dipA.SetEnemy(b);
+                    dipB.SetEnemy(a);
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Adjust pop usage for a player when an entity's ownership changes. Mirrors how
     /// Player.js reacts to MT_OwnershipChanged (To = INVALID_PLAYER means death/loss).
     /// Pop is charged by CostComponent.PopulationCost.

@@ -171,6 +171,24 @@ namespace ZeroAD.Sim.Components
 
         private static uint DirtyBit(int player) => 1u << (player - 1);
 
+        // VisionSharing (Pathway B): a seer's vision circle is mirrored into every mutual
+        // ally's LOS grid, so allies see what allies see. Mirrors Diplomacy.js
+        // SetSharedLos → m_SharedLosMask, which merges ally vision at the LOS-grid count
+        // level. Owner first, allies in ascending id order (deterministic). Empty (owner
+        // only) when diplomacy is unset or the player has no allies.
+        private IEnumerable<int> SeerPlayers(int owner)
+        {
+            yield return owner;
+            foreach (var ally in _cm.Players.GetMutualAllies(owner)) yield return ally;
+        }
+
+        private uint OwnerPlusAlliesDirty(int owner)
+        {
+            uint mask = DirtyBit(owner);
+            foreach (var ally in _cm.Players.GetMutualAllies(owner)) mask |= DirtyBit(ally);
+            return mask;
+        }
+
         /// <summary>After a full-state load (LosGrid.Deserialize restored the state words
         /// and zeroed the counts): re-apply the reveal-all mask, re-add every live seer's
         /// circle in sorted order (deterministic count rebuild), and mark all players dirty
@@ -201,15 +219,17 @@ namespace ZeroAD.Sim.Components
             bool want = d.InWorld && d.Owner > 0 && d.VisionRange > Fixed.Zero;
             if (want && !d.LosAdded)
             {
-                Los.AddLos(d.Owner, d.X, d.Z, d.VisionRange);
+                foreach (var p in SeerPlayers(d.Owner))
+                    Los.AddLos(p, d.X, d.Z, d.VisionRange);
                 d.LosAdded = true;
-                _playerLosDirtyMask |= DirtyBit(d.Owner);
+                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
             }
             else if (!want && d.LosAdded)
             {
-                Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
+                foreach (var p in SeerPlayers(d.Owner))
+                    Los.RemoveLos(p, d.X, d.Z, d.VisionRange);
                 d.LosAdded = false;
-                _playerLosDirtyMask |= DirtyBit(d.Owner);
+                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
             }
             _data[entity] = d;
         }
@@ -223,8 +243,9 @@ namespace ZeroAD.Sim.Components
             if (d.VisionRange == newRange) return;
             if (d.LosAdded)
             {
-                Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
-                _playerLosDirtyMask |= DirtyBit(d.Owner);
+                foreach (var p in SeerPlayers(d.Owner))
+                    Los.RemoveLos(p, d.X, d.Z, d.VisionRange);
+                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
                 d.LosAdded = false;
             }
             d.VisionRange = newRange;
@@ -248,8 +269,9 @@ namespace ZeroAD.Sim.Components
             _cm.QueryInterface<FoggingComponent>(entity)?.OnOwnershipChanged(d.Owner, -1, _cm, this);
             if (d.LosAdded)
             {
-                Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
-                _playerLosDirtyMask |= DirtyBit(d.Owner);
+                foreach (var p in SeerPlayers(d.Owner))
+                    Los.RemoveLos(p, d.X, d.Z, d.VisionRange);
+                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
             }
             if (d.InWorld)
             {
@@ -274,8 +296,9 @@ namespace ZeroAD.Sim.Components
             _subdivision.Move(entity, d.X, d.Z, to.X, to.Y, size);
             if (d.LosAdded)
             {
-                Los.MoveLos(d.Owner, d.X, d.Z, to.X, to.Y, d.VisionRange);
-                _playerLosDirtyMask |= DirtyBit(d.Owner);
+                foreach (var p in SeerPlayers(d.Owner))
+                    Los.MoveLos(p, d.X, d.Z, to.X, to.Y, d.VisionRange);
+                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
             }
             d.X = to.X; d.Z = to.Y;
             _data[entity] = d;
@@ -295,8 +318,9 @@ namespace ZeroAD.Sim.Components
             {
                 if (d.Owner > 0)
                 {
-                    Los.RemoveLos(d.Owner, d.X, d.Z, d.VisionRange);
-                    _playerLosDirtyMask |= DirtyBit(d.Owner);
+                    foreach (var p in SeerPlayers(d.Owner))
+                        Los.RemoveLos(p, d.X, d.Z, d.VisionRange);
+                    _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
                 }
                 d.LosAdded = false;
             }
