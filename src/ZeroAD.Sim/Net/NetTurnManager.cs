@@ -41,6 +41,9 @@ namespace ZeroAD.Sim.Net
         private uint _currentTurn;
         private readonly List<NetCommand> _outbox = new();
         private readonly Dictionary<uint, List<NetCommand>> _bundles = new();
+        /// <summary>AI 本地命令通道:各端确定性同生成,永不进网络 outbox/bundle。key = 执行回合。
+        /// AI 无需 _expectedPlayers 槽——命令不走网络,故 Host/Client 各自本地产生相同序列。</summary>
+        private readonly Dictionary<uint, List<NetCommand>> _aiBundles = new();
         private readonly Dictionary<uint, Dictionary<uint, List<NetCommand>>> _incoming = new();
 
         private byte[]? _lastLocalHash;
@@ -78,6 +81,18 @@ namespace ZeroAD.Sim.Net
 
         public void SubmitLocalCommand(NetCommand cmd) => _outbox.Add(cmd);
 
+        /// <summary>AI 专用命令通道(Phase 2)。与 <see cref="SubmitLocalCommand"/> 同延迟入队
+        /// (currentTurn + <see cref="CommandDelay"/> 执行),但永不进 <c>_outbox</c>/网络 batch。
+        /// 各端 AIComponent 确定性同生成相同命令 → 各端 <c>_aiBundles</c> 内容一致 → 无 OOS、
+        /// AI 无需网络玩家槽。MP 下若误用 SubmitLocalCommand,Host+Client 双端会重复生成 → OOS。</summary>
+        public void SubmitAiCommand(NetCommand cmd)
+        {
+            uint execTurn = _currentTurn + (uint)_commandDelay;
+            if (!_aiBundles.TryGetValue(execTurn, out var list))
+            { list = new List<NetCommand>(); _aiBundles[execTurn] = list; }
+            list.Add(cmd);
+        }
+
         /// <summary>Host only: turns [0, commandDelay) can never contain commands, so
         /// their bundles are produced empty up front and the game can start immediately.</summary>
         public void HostBootstrap()
@@ -108,6 +123,15 @@ namespace ZeroAD.Sim.Net
             {
                 _bundles.Remove(_currentTurn);
                 foreach (var cmd in commands)
+                    _executor.Apply(cmd);
+            }
+
+            // AI 命令通道:与网络 bundle 同回合边界排空,执行时序一致(currentTurn + delay)。
+            // 各端本地生成、内容相同;网络命令先行(按 player 排序),AI 命令按提交序在后。
+            if (_aiBundles.TryGetValue(_currentTurn, out var aiCommands))
+            {
+                _aiBundles.Remove(_currentTurn);
+                foreach (var cmd in aiCommands)
                     _executor.Apply(cmd);
             }
 

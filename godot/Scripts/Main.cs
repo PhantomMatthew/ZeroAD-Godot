@@ -24,7 +24,6 @@ public sealed partial class Main : Node3D
 	private bool _isDragging;
 	private bool _placeBuildingMode;
 	private string _buildTemplate = "";
-	private PetraAI _ai = null!;
 	private bool _gameStarted;
 	private bool _isTutorial;
 	private TutorialPanel _tutorialPanel = null!;
@@ -64,9 +63,6 @@ public sealed partial class Main : Node3D
 
 		_mp = new MultiplayerController { Name = "Multiplayer" };
 		AddChild(_mp);
-
-		_ai = new PetraAI { Name = "PetraAI" };
-		AddChild(_ai);
 
 		_lobby = new LobbyUI();
 		AddChild(_lobby);
@@ -500,31 +496,45 @@ public sealed partial class Main : Node3D
 		if (useRealTemplates)
 		{
 			GD.Print($"Spawning {civ} civilization units from real templates");
-			_sim.SpawnFromTemplate($"structures/{civ}/civil_centre", 120, 120);
-			_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", 132, 118);
-			_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", 136, 118);
-			_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", 140, 118);
-			_sim.SpawnFromTemplate($"units/{civ}/infantry_spearman_b", 132, 124);
-			_sim.SpawnFromTemplate($"units/{civ}/infantry_spearman_b", 136, 124);
-			_sim.SpawnFromTemplate($"units/{civ}/cavalry_swordsman_b", 140, 124);
+			// Player 1 base = Arcadia's real spart start (NE corner, 604/637). These are literal
+			// map-XML entity coords (binaries/.../arcadia.xml) in the same world-metre space as the
+			// PMP terrain + the resized sim bounds (768m), so they land on the rendered map. The old
+			// 120/120 sat in the SW corner — Arcadia's player-2 spot — which is why the layout read
+			// as "reversed" vs the C++ original.
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"structures/{civ}/civil_centre", 604, 637), (int)playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", 612, 631), (int)playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", 616, 631), (int)playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", 620, 631), (int)playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/infantry_spearman_b", 612, 625), (int)playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/infantry_spearman_b", 616, 625), (int)playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/cavalry_swordsman_b", 620, 625), (int)playerId);
 		}
 		else
 		{
-			_sim.SpawnBuilding(120, 120, "Town Center");
+			_sim.AssignOwner(_sim.SpawnBuilding(604, 637, "Town Center"), (int)playerId);
 			for (int i = 0; i < 5; i++)
-				_sim.SpawnUnit(130 + i * 4, 120, isVillager: true);
+				_sim.AssignOwner(_sim.SpawnUnit(612 + i * 4, 631, isVillager: true), (int)playerId);
 			for (int i = 0; i < 3; i++)
-				_sim.SpawnUnit(130 + i * 4, 130, isSoldier: true);
+				_sim.AssignOwner(_sim.SpawnUnit(612 + i * 4, 625, isSoldier: true), (int)playerId);
 		}
 
-		for (int i = 0; i < 30; i++)
+		// Tree clusters around BOTH bases. The AI's EconomyManager FindNearest-scans for the
+		// nearest wood; concentrating all trees at one base (the earlier single ring at player 1)
+		// starved player 2 — its villagers had nothing to gather and stood idle, which reads as
+		// "no animation" (an idle villager only runs ManualAnimator's subtle idle loop; it needs a
+		// gather target to walk/chop). 18 per base = fair local wood for each start.
+		(float cx, float cz)[] treeCenters = { (604f, 637f), (104f, 147f) };
+		foreach (var (cx, cz) in treeCenters)
 		{
-			float angle = i * 0.4f;
-			float dist = 30 + (i % 3) * 8;
-			if (useRealTemplates)
-				_sim.SpawnFromTemplate("gaia/tree/oak", 120 + Mathf.Cos(angle) * dist, 120 + Mathf.Sin(angle) * dist);
-			else
-				_sim.SpawnTree(120 + Mathf.Cos(angle) * dist, 120 + Mathf.Sin(angle) * dist);
+			for (int i = 0; i < 18; i++)
+			{
+				float angle = i * 0.4f;
+				float dist = 30 + (i % 3) * 8;
+				if (useRealTemplates)
+					_sim.SpawnFromTemplate("gaia/tree/oak", cx + Mathf.Cos(angle) * dist, cz + Mathf.Sin(angle) * dist);
+				else
+					_sim.SpawnTree(cx + Mathf.Cos(angle) * dist, cz + Mathf.Sin(angle) * dist);
+			}
 		}
 
 		// AI opponent (player 2) — sandbox/SP dev mode only. MP disables the AI until
@@ -541,27 +551,31 @@ public sealed partial class Main : Node3D
 			var aiPlayerEntity = _sim.Sim.GetPlayerEntityId(aiPlayerId);
 			if (aiPlayerEntity != null)
 			{
-				var aiTownCenter = _sim.SpawnBuilding(200, 200, "AI Town Center");
+				// Player 2 (AI) base = Arcadia's real gaul start (SW corner, 104/147) — the
+				// opposite diagonal from player 1, matching the C++ original's layout.
+				var aiTownCenter = _sim.SpawnBuilding(104, 147, "AI Town Center");
 				_sim.AssignOwner(aiTownCenter, aiPlayerId);
 				for (int i = 0; i < 3; i++)
 				{
-					var u = _sim.SpawnUnit(210 + i * 4, 200, isVillager: true);
+					var u = _sim.SpawnUnit(112 + i * 4, 141, isVillager: true);
 					_sim.AssignOwner(u, aiPlayerId);
 				}
 				for (int i = 0; i < 2; i++)
 				{
-					var u = _sim.SpawnUnit(210 + i * 4, 210, isSoldier: true);
+					var u = _sim.SpawnUnit(112 + i * 4, 135, isSoldier: true);
 					_sim.AssignOwner(u, aiPlayerId);
 				}
-				_ai.Init(_sim, aiPlayerEntity.Value, aiPlayerId);
-				// TickAI fires once per advanced sim turn from inside SimBridge's lockstep
-				// while-loop, so AI commands land in the turn outbox exactly like human ones.
-				_sim.AiThink += () => _ai.TickAI();
+				// AI 大脑内核驻留(Phase 2):AIComponent 挂玩家实体 → brain 状态进 OOS hash + 存档。
+				// TickAI 从 SimBridge 锁步循环每回合推进;命令走 SubmitAiCommand 本地通道(各端确定性
+				// 同生成,不走网络)。MP 闸门暂保留(Commit 2 撤)。
+				_sim.AttachAi(aiPlayerId);
 			}
 		}
 
-		_sim.SpawnUnit(80, 80, isSoldier: true);
-		_sim.SpawnUnit(85, 85, isSoldier: true);
+		// Ownerless neutral soldiers — mid-map (768m world → centre ~384) so they overlap neither
+		// base (P1 NE ~604/637, P2 SW ~104/147). The old 80/80 sat on player 2's new base.
+		_sim.SpawnUnit(380, 380, isSoldier: true);
+		_sim.SpawnUnit(385, 385, isSoldier: true);
 
 		// Initial buildings/units were spawned AFTER the map-load RebuildGrid, so their static
 		// obstructions aren't in the navcell grid yet. Rebuild once more so pathing accounts for
@@ -576,7 +590,7 @@ public sealed partial class Main : Node3D
 		// the camera's stale default focus. Matches what SetupTutorialWorld does after scenario
 		// load. Without this, the camera stays wherever _Ready left it and the player can't see
 		// (or click) their own TC without panning first.
-		_camera.SetFocus(new Vector3(120, 0, 120));
+		_camera.SetFocus(new Vector3(604, 0, 637));
 	}
 
 	private readonly List<Node3D> _selectionMarkers = new();
@@ -756,6 +770,8 @@ public sealed partial class Main : Node3D
 			{
 				if (comp is ZeroAD.Sim.Components.LosManagerComponent los)
 					los.Attach(_sim.Range);
+				if (comp is ZeroAD.Sim.Components.AIComponent ai)
+					ai.Configure(_sim.Sim, _sim.NetTurn);
 			});
 			GD.Print("[SaveLoadTest] round-trip OK");
 		}
@@ -1075,6 +1091,10 @@ public sealed partial class Main : Node3D
 			// LosManagerComponent needs Attach(rangeManager) before deserialization.
 			if (comp is ZeroAD.Sim.Components.LosManagerComponent los)
 				los.Attach(_sim.Range);
+			// AIComponent needs Configure(cm, net) before deserialization(与 AuraComponent 同模式:
+			// manager 由 Configure 构造,Deserialize 还原计数器)。漏此 → 首 Tick NullRef。
+			if (comp is ZeroAD.Sim.Components.AIComponent ai)
+				ai.Configure(_sim.Sim, _sim.NetTurn);
 		});
 		if (turn == null) return;
 

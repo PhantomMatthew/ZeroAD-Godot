@@ -58,12 +58,6 @@ public sealed partial class SimBridge : Node
     public NetTurnManager NetTurn => _netTurn;
     public uint LocalPlayerId { get; private set; } = 1;
 
-    /// <summary>Per-sim-turn AI think hook. Invoked inside the lockstep while-loop after
-    /// TickSimulation and before AdvanceTurn, so AI commands land in the current turn's
-    /// outbox and reach the queue at currentTurn+commandDelay exactly like human commands.
-    /// Wired by Main.cs to the PetraAI brain; null in MP (AI disabled until Phase 2).</summary>
-    public Action? AiThink;
-
     /// <summary>Read-only query facade for HUD/Minimap/AI. Consolidates the scattered
     /// QueryInterface + entity-list iteration that previously lived inline in the GUI.</summary>
     public GuiInterface Gui { get; private set; } = null!;
@@ -502,16 +496,28 @@ public sealed partial class SimBridge : Node
             _stallLogged = false;
             _simAccumulator -= SimTickRate;
             TickSimulation((float)SimTickRate);
-            // AI think fires once per advanced sim turn, after this turn's world state is
-            // computed and before the outbox is drained — so SubmitLocalCommand here behaves
-            // identically to a human command issued on a render frame.
-            AiThink?.Invoke();
+            // AI 大脑内核驻留(Phase 2):遍历 AllEntities 推进 AIComponent.Tick。AI 是对世界的
+            // "反应"而非世界推进的一部分,故独立于 TickSimulation;Tick 内经 SubmitAiCommand 入
+            // currentTurn+commandDelay 本地通道,与人手同路径同延迟,各端确定性同生成。
+            TickAI();
             _netTurn.AdvanceTurn();
         }
         SyncVisuals();
         // 渲染插值:用 tick 余数作 alpha,在两次 tick 之间平滑单位位置(消除 10Hz 瞬移)。
         _interpolator.SetAlpha((float)(_simAccumulator / SimTickRate));
         _interpolator.ApplyRenderPositions();
+    }
+
+    /// <summary>推进所有 AI 大脑(Phase 2 内核驻留)。遍历 AllEntities,对挂 AIComponent 的玩家
+    /// 实体调 Tick:回合计流 + 从 OwnershipComponent 派生 playerId + 5 manager 决策 →
+    /// SubmitAiCommand(本地 AI 通道,永不进网络 outbox)。各端确定性同跑同生成,故 AI 无需网络槽。</summary>
+    private void TickAI()
+    {
+        foreach (var entity in _sim.AllEntities)
+        {
+            var ai = _sim.QueryInterface<AIComponent>(entity);
+            if (ai != null) ai.Tick();
+        }
     }
 
     /// <summary>推进所有光环(对齐 TickResearch)。遍历 AllEntities,对挂 AuraComponent 的
@@ -1006,18 +1012,39 @@ public sealed partial class SimBridge : Node
         {
             try { stats = Templates.ExtractStats(templateName); } catch { }
         }
+
+        // Dispatch by template kind so static entities aren't assembled as movable units.
+        // SpawnUnit otherwise adds UnitMotion + IsUnit=true unconditionally, which made Town
+        // Centres and trees selectable-and-movable (right-click moved them). 0 A.D. namespaces
+        // templates as structures/ (buildings), gaia/ (resources), units/ (mobile); a non-zero
+        // ResourceAmount marks gatherable gaia (trees/stone/metal) vs. decor/animals.
+        bool isStructure = templateName.StartsWith("structures/", StringComparison.OrdinalIgnoreCase);
+        bool isResource = (stats?.ResourceAmount ?? 0) > 0;
+
         return SpawnUnit(x, z,
             isVillager: stats?.CanGather == true,
             isSoldier: stats?.AttackDamage > 0,
-            stats: stats);
+            stats: stats,
+            isStructure: isStructure,
+            isResource: isResource,
+            templateName: templateName);
     }
 
-    public EntityId SpawnUnit(float x, float z, bool isVillager = false, bool isSoldier = false, TemplateStats? stats = null)
+    public EntityId SpawnUnit(float x, float z, bool isVillager = false, bool isSoldier = false,
+        TemplateStats? stats = null, bool isStructure = false, bool isResource = false,
+        string? templateName = null)
     {
         var entity = _sim.CreateEntity();
         _sim.AddComponent(entity, new PositionComponent());
-        _sim.AddComponent(entity, new UnitMotion());
-        _sim.AddComponent(entity, new UnitAIComponent());
+        // Motion + unit AI belong only to mobile units. Structures (Town Centre) and resources
+        // (trees) are static — giving them UnitMotion made them move on right-click, and IsUnit
+        // made them drag-selectable as if they were troops.
+        bool isMobile = !isStructure && !isResource;
+        if (isMobile)
+        {
+            _sim.AddComponent(entity, new UnitMotion());
+            _sim.AddComponent(entity, new UnitAIComponent());
+        }
 
         string name = stats?.Name ?? (isSoldier ? "Soldier" : isVillager ? "Villager" : "Unit");
         int maxHp = stats?.MaxHealth ?? (isSoldier ? 80 : 50);
@@ -1026,7 +1053,8 @@ public sealed partial class SimBridge : Node
         {
             Name = name,
             TemplateName = stats?.TemplateName ?? "",
-            IsUnit = true,
+            IsUnit = isMobile,
+            IsBuilding = isStructure,
             Classes = stats?.GetClassList() ?? new List<string>()
         };
         if (isSoldier && !identity.HasClass("CitizenSoldier"))
@@ -1036,6 +1064,29 @@ public sealed partial class SimBridge : Node
         var motion = _sim.QueryInterface<UnitMotion>(entity);
         if (motion != null && stats != null)
             motion.Speed = Fixed.FromFloat(stats.WalkSpeed);
+
+        // Resource node (tree/stone/metal): gatherable supply, nothing else.
+        if (isResource)
+        {
+            int amt = stats?.ResourceAmount > 0 ? stats.ResourceAmount : 100;
+            _sim.AddComponent(entity, new ResourceSupply
+            {
+                Type = stats?.ResourceType ?? ResourceType.Wood,
+                Amount = amt,
+                MaxAmount = amt
+            });
+        }
+
+        // Structures train units and accept dropsite deliveries per their template (Civil Centre
+        // has both). Without these a real-template TC couldn't train — the fallback SpawnBuilding
+        // hardcodes them.
+        if (isStructure && stats != null)
+        {
+            if (stats.CanTrain)
+                _sim.AddComponent(entity, new ProductionQueue());
+            if (stats.IsDropsite)
+                _sim.AddComponent(entity, new ResourceDropsite());
+        }
 
         if (isVillager || stats?.CanGather == true)
         {
@@ -1084,7 +1135,22 @@ public sealed partial class SimBridge : Node
             pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
 
         Color color = _lastPlayerColor;
-        CreateVisualFor(entity, color, 1.5f);
+        float visualSize = isStructure ? 8f : isResource ? 2.5f : 1.5f;
+        // Resolve the visual from the authoritative template name (SpawnFromTemplate passes the
+        // real one). Don't use stats.TemplateName — ExtractStats leaves it empty, which made
+        // every entity fall through to the factory cube. Don't fall back to the shared
+        // _lastSpawnedTemplate either — SpawnBuilding contaminates it with civil_centre, which
+        // made stats-less units render as Town Centres. Direct callers with no template (AI
+        // villagers, sandbox soldiers) get a role-appropriate default instead.
+        string visualTemplate = templateName ?? string.Empty;
+        if (visualTemplate.Length == 0 && !isStructure && !isResource)
+        {
+            visualTemplate = isVillager ? "units/athen/support_female_citizen"
+                          : isSoldier ? "units/athen/infantry_spearman_b"
+                          : string.Empty;
+        }
+        CreateVisualFor(entity, color, visualSize, isBuilding: isStructure,
+            templateName: visualTemplate.Length > 0 ? visualTemplate : null);
         // Ownerless at this point (scenario callers re-register after assigning an owner);
         // still indexes the entity so fog visibility applies to it.
         EntityAssembler.RegisterForLos(_sim, entity, stats?.TemplateName ?? "", stats);
@@ -1130,19 +1196,42 @@ public sealed partial class SimBridge : Node
         return entity;
     }
 
+    /// <summary>把 AI 大脑挂到指定玩家实体上(Phase 2 内核驻留)。Main.cs 在 InitWorld 后调用:
+    /// 解析玩家实体 → new AIComponent → Configure(_sim, _netTurn)(AddComponent 前注入,与
+    /// AuraComponent.Configure 同模式)→ AddComponent。TickAI 每回合推进;save/load 由
+    /// SaveGameManager.Load 的 prepareComponent 重注入 Configure。</summary>
+    public void AttachAi(int playerId)
+    {
+        var playerEntity = _sim.GetPlayerEntityId(playerId);
+        if (playerEntity == null) return;
+        var ai = new AIComponent();
+        ai.Configure(_sim, _netTurn);
+        _sim.AddComponent(playerEntity.Value, ai);
+    }
+
     // --- Commands (ALL player commands funnel into the lockstep queue; in standalone
     // they execute COMMAND_DELAY turns later, exactly as in multiplayer — one code path,
     // no SP/MP divergence. Presentation-only validation stays in Main.) ---
 
     public void SubmitCommand(NetCommand cmd) => _netTurn.SubmitLocalCommand(cmd);
 
-    /// <summary>Idempotently assign/release an entity's owning player. Sandbox spawn paths
+    /// <summary>Idempotently assign an entity's owning player. Sandbox spawn paths
     /// (SpawnUnit/SpawnBuilding) create ownerless entities; this attaches the OwnershipComponent
-    /// the AI owned-list scan and SimCommandExecutor routing rely on.</summary>
+    /// the AI owned-list scan and SimCommandExecutor routing rely on, AND re-syncs the
+    /// RangeManager index so the entity counts for conquest. SpawnUnit/SpawnBuilding add Position
+    /// + Ownership post-creation, but neither fires the events RangeManager._data relies on
+    /// (PositionComponent.Position is a plain field; AddComponent doesn't NotifyOwnerChanged), so
+    /// the auto-fired OnEntityCreated leaves _data at {Owner=-1, InWorld=false}. Without this
+    /// refresh, GetEntitiesByPlayer returns empty → TickVictory flags the player defeated at the
+    /// first tick. RefreshFromComponents is the documented post-assembly re-read (mirrors the
+    /// mirage registration path in EntityAssembler).</summary>
     public void AssignOwner(EntityId entity, int playerId)
     {
         if (_sim.QueryInterface<OwnershipComponent>(entity) == null)
+        {
             _sim.AddComponent(entity, new OwnershipComponent { PlayerId = playerId });
+            _range.RefreshFromComponents(entity);
+        }
     }
 
     public void MoveEntity(EntityId entity, float x, float z) =>
@@ -1212,13 +1301,6 @@ public sealed partial class SimBridge : Node
             var s = _sim.QueryInterface<ResourceSupply>(e);
             return s != null && !s.IsEmpty && s.Type == type;
         }, fromPos);
-    }
-
-    public EntityId? FindNearestEntity(EntityId from, Func<EntityId, bool> predicate)
-    {
-        var fromPos = _sim.QueryInterface<PositionComponent>(from);
-        if (fromPos == null) return null;
-        return FindNearest(from, predicate, fromPos);
     }
 
     private EntityId? FindNearest(EntityId from, Func<EntityId, bool> predicate, PositionComponent fromPos)
