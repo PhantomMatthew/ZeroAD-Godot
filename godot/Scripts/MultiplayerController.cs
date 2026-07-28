@@ -1,16 +1,24 @@
 using Godot;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim.Net;
 
 namespace ZeroAD.Godot;
 
 /// <summary>
-/// Pure transport for the host-authoritative lockstep. Owns no game logic:
-/// clients ship per-turn command batches to the host (RpcId 1), the host
-/// broadcasts aggregated turn bundles, state hashes go to the host for
-/// arbitration, and OOS is broadcast back so every peer dumps its state.
-/// Godot peer ids (ENet connection ids) and game player ids are separate
-/// namespaces; the host assigns the mapping in GameStart.
+/// Transport + lobby state machine for the host-authoritative lockstep. Owns no game logic.
+/// Two phases:
+///  - <b>Lobby</b> (<c>_lobbyActive</c>): peers join, the host assigns each slot
+///    <see cref="PlayerSlotKind"/> (Human/AI/Closed) + civ + team, broadcasting the slot table
+///    via <see cref="ReceiveLobbyState"/>. No sim runs.
+///  - <b>Game</b>: the host clicks Start → <see cref="HostStartGame"/> freezes the slot table and
+///    broadcasts it via <see cref="ReceiveGameStart"/>; every peer raises
+///    <see cref="OnGameStart"/> and builds the world deterministically from the shared table.
+/// Per-turn transport (command batches, turn bundles, OOS hashes) is unchanged: clients ship
+/// batches to the host, the host broadcasts bundles, hashes go to the host for arbitration.
+/// Godot peer ids (ENet connection ids) and game player ids are separate namespaces; the host
+/// owns the mapping. AI slots never enter <c>_expectedPlayers</c> — their commands ride the local
+/// <c>_aiBundles</c> channel, so they need no network slot.
 /// </summary>
 public sealed partial class MultiplayerController : Node
 {
@@ -21,16 +29,34 @@ public sealed partial class MultiplayerController : Node
     private uint _seed;
     private readonly Dictionary<int, uint> _peerToPlayer = new();
 
+    /// <summary>The host-authoritative lobby slot table. Defaults: slot 1 = host (Human),
+    /// slot 2 = open Human (so the first client to join claims a 1v1), slots 3/4 Closed.
+    /// The host edits this in the lobby; it is frozen at Start and broadcast to all peers.</summary>
+    private List<PlayerSlotSetup> _slots = new()
+    {
+        new() { PlayerId = 1, Kind = PlayerSlotKind.Human,  Civ = "athen", Team = -1 },
+        new() { PlayerId = 2, Kind = PlayerSlotKind.Human,  Civ = "athen", Team = -1 },
+        new() { PlayerId = 3, Kind = PlayerSlotKind.Closed },
+        new() { PlayerId = 4, Kind = PlayerSlotKind.Closed },
+    };
+    private bool _lobbyActive;
+
     public NetTurnManager? NetTurn => _netTurn;
     public uint LocalPlayerId => _localPlayerId;
     public uint Seed => _seed;
     public bool IsHost => _isHost;
+    public IReadOnlyList<PlayerSlotSetup> Slots => _slots;
     public new bool IsConnected =>
         _peer != null && _peer.GetConnectionStatus() == MultiplayerPeer.ConnectionStatus.Connected;
 
-    /// <summary>Raised on every peer once the host has assigned player ids and fixed
-    /// the shared seed. (seed, localPlayerId).</summary>
-    public event System.Action<uint, uint>? OnGameStart;
+    /// <summary>Raised on every peer once the host has frozen the slot table and fixed the shared
+    /// seed. (seed, localPlayerId, frozen slot table). Carries the slot table so each peer can
+    /// build an identical world.</summary>
+    public event System.Action<uint, uint, IReadOnlyList<PlayerSlotSetup>>? OnGameStart;
+    /// <summary>Raised whenever the lobby slot table changes (peer join/leave, host slot edit).
+    /// Host raises it locally after broadcasting; clients raise it from
+    /// <see cref="ReceiveLobbyState"/>. Main refreshes the lobby UI from it.</summary>
+    public event System.Action<IReadOnlyList<PlayerSlotSetup>>? OnLobbyStateChanged;
     public event System.Action<string>? OnOOS;
 
     public void StartHost(int port, uint seed)
@@ -38,6 +64,7 @@ public sealed partial class MultiplayerController : Node
         _isHost = true;
         _localPlayerId = 1;
         _seed = seed;
+        _lobbyActive = true;
         _peer = new ENetMultiplayerPeer();
         _peer.CreateServer(port, 4);
         Multiplayer.MultiplayerPeer = _peer;
@@ -50,6 +77,7 @@ public sealed partial class MultiplayerController : Node
     public void StartClient(string address, int port)
     {
         _isHost = false;
+        _lobbyActive = true;
         _peer = new ENetMultiplayerPeer();
         _peer.CreateClient(address, port);
         Multiplayer.MultiplayerPeer = _peer;
@@ -88,41 +116,101 @@ public sealed partial class MultiplayerController : Node
     private void OnPeerConnected(long id)
     {
         GD.Print($"Peer connected: {id}");
-        if (!_isHost || _netTurn != null) return; // 2-player scope: start on first client
-        uint playerId = (uint)(_peerToPlayer.Count + 1);
-        _peerToPlayer[(int)id] = playerId;
-
-        var peers = new List<int>();
-        var players = new List<int>();
-        foreach (var kvp in _peerToPlayer)
+        if (!_isHost) return;
+        // Lobby phase only: claim a Human slot for the new peer, then broadcast the lobby
+        // state. The host does NOT start the game here — that waits for HostStartGame so the
+        // host can configure AI slots first. Host owns slot 1; clients fill slots 2..K in
+        // connect order. AI/Closed slots are host-assigned, never connect-assigned.
+        if (!_peerToPlayer.ContainsKey((int)id))
         {
-            peers.Add(kvp.Key);
-            players.Add((int)kvp.Value);
+            int claimedSlot = _slots
+                .Where(s => s.Kind == PlayerSlotKind.Human && s.PlayerId > 1
+                            && !_peerToPlayer.ContainsValue((uint)s.PlayerId))
+                .Select(s => s.PlayerId)
+                .OrderBy(p => p)
+                .DefaultIfEmpty(-1)
+                .First();
+            if (claimedSlot == -1)
+            {
+                GD.PrintErr($"No free Human slot for peer {id} (lobby full)");
+                return;
+            }
+            _peerToPlayer[(int)id] = (uint)claimedSlot;
         }
-        Rpc(nameof(ReceiveGameStart), _seed, peers.ToArray(), players.ToArray());
-        OnGameStart?.Invoke(_seed, _localPlayerId); // host starts its own game
+        BroadcastLobbyState();
     }
 
     private void OnPeerDisconnected(long id)
     {
         GD.Print($"Peer disconnected: {id}");
         _peerToPlayer.Remove((int)id);
-        // Reconnection/host migration: out of scope (design doc §9).
+        if (_lobbyActive && _isHost) BroadcastLobbyState();
+        // Mid-game leave: out of scope (no reconnection/host migration — design doc §9).
+    }
+
+    /// <summary>Host → all: broadcast the current peer map + slot table. Clients store it and
+    /// refresh their lobby UI; the host refreshes its own UI via the local event raise.</summary>
+    private void BroadcastLobbyState()
+    {
+        var (kinds, civs, teams) = PlayerSlotSetupCodec.Pack(_slots);
+        var peers = _peerToPlayer.Keys.ToArray();
+        var players = _peerToPlayer.Values.Select(v => (int)v).ToArray();
+        Rpc(nameof(ReceiveLobbyState), peers, players, kinds, civs, teams);
+        OnLobbyStateChanged?.Invoke(_slots);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void ReceiveGameStart(uint seed, int[] peers, int[] players)
+    private void ReceiveLobbyState(int[] peers, int[] players, int[] kinds, string[] civs, int[] teams)
+    {
+        _peerToPlayer.Clear();
+        for (int i = 0; i < peers.Length; i++)
+            _peerToPlayer[peers[i]] = (uint)players[i];
+        long myPeer = Multiplayer.GetUniqueId();
+        _localPlayerId = _peerToPlayer.TryGetValue((int)myPeer, out var pid) ? pid : 1;
+        _slots = PlayerSlotSetupCodec.Unpack(kinds, civs, teams);
+        OnLobbyStateChanged?.Invoke(_slots);
+    }
+
+    /// <summary>Host-only: edit one slot's kind/civ/team. Slot 1 is locked Human (the host).
+    /// Emits a lobby broadcast so clients see the change.</summary>
+    public void HostSetSlot(int playerId, PlayerSlotKind kind, string civ, int team)
+    {
+        if (!_isHost || !_lobbyActive) return;
+        int idx = _slots.FindIndex(s => s.PlayerId == playerId);
+        if (idx < 0 || playerId == 1) return;
+        _slots[idx] = _slots[idx] with { Kind = kind, Civ = civ, Team = team };
+        BroadcastLobbyState();
+    }
+
+    /// <summary>Host-only: freeze the slot table and start the game. Requires every Human slot
+    /// to be claimed by a connected peer (unclaimed Human slots would deadlock the host, since
+    /// expectedPlayers = Human slots and the host waits for each to submit a batch).</summary>
+    public void HostStartGame()
+    {
+        if (!_isHost || !_lobbyActive) return;
+        int humanSlots = _slots.Count(s => s.Kind == PlayerSlotKind.Human);
+        if (humanSlots != _peerToPlayer.Count)
+        {
+            GD.PrintErr($"Cannot start: {_peerToPlayer.Count} connected peer(s) but {humanSlots} Human slot(s). "
+                        + "Each Human slot must be claimed (adjust slots to match).");
+            return;
+        }
+        _lobbyActive = false;
+        var (kinds, civs, teams) = PlayerSlotSetupCodec.Pack(_slots);
+        Rpc(nameof(ReceiveGameStart), _seed, kinds, civs, teams);
+        OnGameStart?.Invoke(_seed, _localPlayerId, _slots); // host starts its own game
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void ReceiveGameStart(uint seed, int[] kinds, string[] civs, int[] teams)
     {
         _seed = seed;
+        _lobbyActive = false;
+        _slots = PlayerSlotSetupCodec.Unpack(kinds, civs, teams);
         long myPeer = Multiplayer.GetUniqueId();
-        for (int i = 0; i < peers.Length; i++)
-        {
-            _peerToPlayer[peers[i]] = (uint)players[i];
-            if (peers[i] == myPeer)
-                _localPlayerId = (uint)players[i];
-        }
-        GD.Print($"Game starting: seed={seed}, localPlayer={_localPlayerId}");
-        OnGameStart?.Invoke(seed, _localPlayerId);
+        _localPlayerId = _peerToPlayer.TryGetValue((int)myPeer, out var pid) ? pid : 1;
+        GD.Print($"Game starting: seed={seed}, localPlayer={_localPlayerId}, slots={_slots.Count}");
+        OnGameStart?.Invoke(seed, _localPlayerId, _slots);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]

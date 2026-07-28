@@ -67,10 +67,16 @@ public sealed partial class Main : Node3D
 		_lobby = new LobbyUI();
 		AddChild(_lobby);
 
-		_lobby.OnHostStart += (port, seed) => StartGame(true, port, seed);
-		_lobby.OnClientConnect += (addr, port) => StartGame(false, addr, port);
+		_lobby.OnHostStart += (port, seed) => StartMpHost(port, seed);
+		_lobby.OnClientConnect += (addr, port) => StartMpClient(addr, port);
+		// Lobby slot editing (host only): each edit re-broadcasts the slot table to clients.
+		_lobby.OnSlotEdit += (id, kind, civ, team) => _mp.HostSetSlot(id, kind, civ, team);
+		_lobby.OnStartGameRequested += () => _mp.HostStartGame();
 		_lobby.OnSinglePlayer += seed => StartSinglePlayer(seed);
 		_lobby.OnTutorialStart += () => StartTutorial();
+		// Lobby-state refresh: clients repaint their read-only slot list from the host's table.
+		// The host is the source of truth (its rows are editable) and never repaints from events.
+		_mp.OnLobbyStateChanged += slots => { if (!_mp.IsHost) _lobby.RefreshSlotDisplay(slots); };
 
 		_camera.SetFocus(new Vector3(128, 0, 128));
 
@@ -110,34 +116,30 @@ public sealed partial class Main : Node3D
 		BeginGameplay(seed, 1);
 	}
 
-	private void StartGame(bool isHost, int param1, uint seed)
+	/// <summary>Host enters the lobby (transport up, slot table editable). The game does NOT start
+	/// here — the host configures AI/civ/team slots, then clicks Start → HostStartGame → GameStart.
+	/// OnGameStart carries the frozen slot table so host + client build identical worlds.</summary>
+	private void StartMpHost(int port, uint seed)
 	{
-		// Host selects the seed; the client learns it from the host's GameStart message.
-		// Both peers defer world creation until GameStart fires so they share one seed.
-		if (isHost)
-		{
-			_mp.StartHost(param1, seed);
-			_mp.OnGameStart += (s, pid) => BeginGameplay(s, pid, isMultiplayer: true, isHost: true);
-		}
-		else
-		{
-			_mp.StartClient("127.0.0.1", param1);
-			_mp.OnGameStart += (s, pid) => BeginGameplay(s, pid, isMultiplayer: true, isHost: false);
-		}
-
-		_lobby.SetStatus("Waiting for players...");
+		_mp.StartHost(port, seed);
+		_mp.OnGameStart += (s, pid, slots) => BeginGameplay(s, pid, slots, isMultiplayer: true, isHost: true);
+		_lobby.ShowSlotLobby(isHost: true, _mp.Slots);
+		_lobby.SetStatus($"Hosting on port {port} — configure slots, then Start.");
 	}
 
-	private void StartGame(bool isHost, string addr, int port)
+	/// <summary>Client connects and waits in the lobby. Its slot is claimed by the host on
+	/// connect; the host's slot table broadcasts keep this client's read-only view in sync.
+	/// World creation is deferred until the host fires GameStart.</summary>
+	private void StartMpClient(string addr, int port)
 	{
-		_ = isHost;
 		_mp.StartClient(addr, port);
-		_mp.OnGameStart += (s, pid) => BeginGameplay(s, pid, isMultiplayer: true, isHost: false);
-		_lobby.SetStatus("Connecting...");
+		_mp.OnGameStart += (s, pid, slots) => BeginGameplay(s, pid, slots, isMultiplayer: true, isHost: false);
+		_lobby.ShowSlotLobby(isHost: false, null);
+		_lobby.SetStatus($"Connecting to {addr}:{port} — waiting for host…");
 	}
 
-	private void BeginGameplay(uint seed, uint playerId, bool tutorial = false,
-		bool isMultiplayer = false, bool isHost = false)
+	private void BeginGameplay(uint seed, uint playerId, IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? slots = null,
+		bool tutorial = false, bool isMultiplayer = false, bool isHost = false)
 	{
 		if (_gameStarted) return;
 		_gameStarted = true;
@@ -151,16 +153,26 @@ public sealed partial class Main : Node3D
 			GD.Print($"[Tutorial] templatesPath={templatesPath ?? "null"}");
 
 			// One InitWorld path for SP/MP/tutorial: seed + player slots + role all flow in
-			// here. In MP the host assigned the seed and player ids over GameStart, so every
-			// peer constructs the same world and the same NetTurnManager.
+			// here. In MP the host assigned the seed + the frozen slot table over GameStart, so
+			// every peer constructs the same world and the same NetTurnManager.
 			var role = isMultiplayer
 				? (isHost ? ZeroAD.Sim.Net.NetRole.Host : ZeroAD.Sim.Net.NetRole.Client)
 				: ZeroAD.Sim.Net.NetRole.Standalone;
-			// Sandbox (non-tutorial) and MP both use 2 slots. Tutorial stays single-player
-			// (no AI). In sandbox slot 2 is the AI opponent; in MP both slots are humans and
-			// the AI is gated off inside SetupGameWorld until its state is serializable.
-			int playerCount = tutorial ? 1 : 2;
-			_sim.InitWorld(templatesPath, seed, playerId, role, playerCount);
+			// Effective slot table: MP passes the host's frozen table verbatim. SP/sandbox
+			// default to a 1v1 Human-vs-AI table (slot 1 = this player, slot 2 = AI opponent);
+			// tutorial is single-player (one Human slot, no AI). Slot count is data-driven now.
+			IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> effectiveSlots = slots
+				?? (tutorial
+					? new List<ZeroAD.Sim.Net.PlayerSlotSetup>
+					{
+						new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "athen" },
+					}
+					: new List<ZeroAD.Sim.Net.PlayerSlotSetup>
+					{
+						new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "athen", Team = -1 },
+						new() { PlayerId = 2, Kind = ZeroAD.Sim.Net.PlayerSlotKind.AI,    Civ = "gaul",  Team = -1 },
+					});
+			_sim.InitWorld(templatesPath, seed, playerId, role, effectiveSlots);
 			GD.Print("[Tutorial] InitWorld done");
 
 			if (isMultiplayer)
@@ -216,7 +228,7 @@ public sealed partial class Main : Node3D
 				GD.Print("[Tutorial] SetupTutorialWorld done");
 			}
 			else
-				SetupGameWorld(playerId, isMultiplayer);
+				SetupGameWorld(playerId, effectiveSlots, isMultiplayer);
 
 			GD.Print(_isTutorial
 				? "[Tutorial] Introductory Tutorial started"
@@ -486,111 +498,105 @@ public sealed partial class Main : Node3D
 		GD.Print("[Tutorial] SetupTutorialWorld complete");
 	}
 
-	private void SetupGameWorld(uint playerId, bool isMultiplayer)
+	/// <summary>Deterministic corner start positions, shared by every peer (Task #10). P1/P2 are
+	/// Arcadia's authored starts (NE/SW); P3/P4 are the symmetric NW/SE corners so 3–4 player
+	/// games still spread out. Same table on both peers → same world from the same seed.</summary>
+	private static readonly (float x, float z)[] StartPositions =
 	{
-		SetupTerrain();
+		(604f, 637f),  // P1 — Arcadia NE (authored)
+		(104f, 147f),  // P2 — Arcadia SW (authored)
+		(104f, 637f),  // P3 — symmetric NW
+		(604f, 147f),  // P4 — symmetric SE
+	};
 
+	/// <summary>One player's starting base: civil centre + 3 villagers + 2 spearmen + 1 cavalry,
+	/// laid out relative to the corner. Unified on real templates when available (deterministic
+	/// across peers since the template cache is identical); falls back to fake-template dev
+	/// spawns otherwise. Owner is stamped so the owned-list scan + SimCommandExecutor routing
+	/// (which key off OwnershipComponent) find these units.</summary>
+	private void SpawnStartingBase(int playerId, string civ, float x, float z)
+	{
 		bool useRealTemplates = _sim.Templates != null;
-		string civ = "athen";
-
 		if (useRealTemplates)
 		{
-			GD.Print($"Spawning {civ} civilization units from real templates");
-			// Player 1 base = Arcadia's real spart start (NE corner, 604/637). These are literal
-			// map-XML entity coords (binaries/.../arcadia.xml) in the same world-metre space as the
-			// PMP terrain + the resized sim bounds (768m), so they land on the rendered map. The old
-			// 120/120 sat in the SW corner — Arcadia's player-2 spot — which is why the layout read
-			// as "reversed" vs the C++ original.
-			_sim.AssignOwner(_sim.SpawnFromTemplate($"structures/{civ}/civil_centre", 604, 637), (int)playerId);
-			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", 612, 631), (int)playerId);
-			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", 616, 631), (int)playerId);
-			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", 620, 631), (int)playerId);
-			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/infantry_spearman_b", 612, 625), (int)playerId);
-			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/infantry_spearman_b", 616, 625), (int)playerId);
-			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/cavalry_swordsman_b", 620, 625), (int)playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"structures/{civ}/civil_centre", x, z), playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", x + 8, z - 6), playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", x + 12, z - 6), playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/support_female_citizen", x + 16, z - 6), playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/infantry_spearman_b", x + 8, z - 12), playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/infantry_spearman_b", x + 12, z - 12), playerId);
+			_sim.AssignOwner(_sim.SpawnFromTemplate($"units/{civ}/cavalry_swordsman_b", x + 16, z - 12), playerId);
 		}
 		else
 		{
-			_sim.AssignOwner(_sim.SpawnBuilding(604, 637, "Town Center"), (int)playerId);
+			_sim.AssignOwner(_sim.SpawnBuilding(x, z, "Town Center"), playerId);
 			for (int i = 0; i < 5; i++)
-				_sim.AssignOwner(_sim.SpawnUnit(612 + i * 4, 631, isVillager: true), (int)playerId);
+				_sim.AssignOwner(_sim.SpawnUnit(x + 8 + i * 4, z - 6, isVillager: true), playerId);
 			for (int i = 0; i < 3; i++)
-				_sim.AssignOwner(_sim.SpawnUnit(612 + i * 4, 625, isSoldier: true), (int)playerId);
+				_sim.AssignOwner(_sim.SpawnUnit(x + 8 + i * 4, z - 12, isSoldier: true), playerId);
 		}
+	}
 
-		// Tree clusters around BOTH bases. The AI's EconomyManager FindNearest-scans for the
-		// nearest wood; concentrating all trees at one base (the earlier single ring at player 1)
-		// starved player 2 — its villagers had nothing to gather and stood idle, which reads as
-		// "no animation" (an idle villager only runs ManualAnimator's subtle idle loop; it needs a
-		// gather target to walk/chop). 18 per base = fair local wood for each start.
-		(float cx, float cz)[] treeCenters = { (604f, 637f), (104f, 147f) };
-		foreach (var (cx, cz) in treeCenters)
+	/// <summary>18-tree cluster around a base. The AI's EconomyManager FindNearest-scans for the
+	/// nearest wood; without local wood a base's villagers idle (read as "no animation" since an
+	/// idle villager only runs the subtle idle loop — it needs a gather target to walk/chop).</summary>
+	private void SpawnTreeCluster(float cx, float cz, bool useRealTemplates)
+	{
+		for (int i = 0; i < 18; i++)
 		{
-			for (int i = 0; i < 18; i++)
-			{
-				float angle = i * 0.4f;
-				float dist = 30 + (i % 3) * 8;
-				if (useRealTemplates)
-					_sim.SpawnFromTemplate("gaia/tree/oak", cx + Mathf.Cos(angle) * dist, cz + Mathf.Sin(angle) * dist);
-				else
-					_sim.SpawnTree(cx + Mathf.Cos(angle) * dist, cz + Mathf.Sin(angle) * dist);
-			}
+			float angle = i * 0.4f;
+			float dist = 30 + (i % 3) * 8;
+			if (useRealTemplates)
+				_sim.SpawnFromTemplate("gaia/tree/oak", cx + Mathf.Cos(angle) * dist, cz + Mathf.Sin(angle) * dist);
+			else
+				_sim.SpawnTree(cx + Mathf.Cos(angle) * dist, cz + Mathf.Sin(angle) * dist);
 		}
+	}
 
-		// AI opponent (player 2) — sandbox/SP dev mode only. MP disables the AI until
-		// Phase 2: its brain state isn't serialized into the OOS hash yet, so two peers
-		// would diverge. InitWorld already registered player 2 with PlayerComponent +
-		// TechnologyManager + OwnershipComponent + EntityLimits, so adopt that entity
-		// instead of creating a ghost player (the old path had no OwnershipComponent and
-		// no TechnologyManager, which silently no-op'd AI research). SpawnUnit/SpawnBuilding
-		// create ownerless entities, so stamp owner=2 — the AI owned-list scan and
-		// SimCommandExecutor routing both key off OwnershipComponent.
-		if (!isMultiplayer)
+	private void SetupGameWorld(uint playerId, IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> slots, bool isMultiplayer)
+	{
+		SetupTerrain();
+		bool useRealTemplates = _sim.Templates != null;
+
+		// Every non-Closed slot gets a starting base + local tree cluster in its deterministic
+		// corner. This also fixes the old MP bug where slot 2 was an inert shell with no base or
+		// units: now every player — human or AI — starts with a TC, villagers, and soldiers.
+		foreach (var slot in slots)
 		{
-			const int aiPlayerId = 2;
-			var aiPlayerEntity = _sim.Sim.GetPlayerEntityId(aiPlayerId);
-			if (aiPlayerEntity != null)
-			{
-				// Player 2 (AI) base = Arcadia's real gaul start (SW corner, 104/147) — the
-				// opposite diagonal from player 1, matching the C++ original's layout.
-				var aiTownCenter = _sim.SpawnBuilding(104, 147, "AI Town Center");
-				_sim.AssignOwner(aiTownCenter, aiPlayerId);
-				for (int i = 0; i < 3; i++)
-				{
-					var u = _sim.SpawnUnit(112 + i * 4, 141, isVillager: true);
-					_sim.AssignOwner(u, aiPlayerId);
-				}
-				for (int i = 0; i < 2; i++)
-				{
-					var u = _sim.SpawnUnit(112 + i * 4, 135, isSoldier: true);
-					_sim.AssignOwner(u, aiPlayerId);
-				}
-				// AI 大脑内核驻留(Phase 2):AIComponent 挂玩家实体 → brain 状态进 OOS hash + 存档。
-				// TickAI 从 SimBridge 锁步循环每回合推进;命令走 SubmitAiCommand 本地通道(各端确定性
-				// 同生成,不走网络)。MP 闸门暂保留(Commit 2 撤)。
-				_sim.AttachAi(aiPlayerId);
-			}
+			if (slot.Kind == ZeroAD.Sim.Net.PlayerSlotKind.Closed) continue;
+			int idx = slot.PlayerId - 1;
+			if ((uint)idx >= StartPositions.Length) continue;
+			var (bx, bz) = StartPositions[idx];
+			SpawnStartingBase(slot.PlayerId, slot.Civ, bx, bz);
+			SpawnTreeCluster(bx, bz, useRealTemplates);
 		}
 
-		// Ownerless neutral soldiers — mid-map (768m world → centre ~384) so they overlap neither
-		// base (P1 NE ~604/637, P2 SW ~104/147). The old 80/80 sat on player 2's new base.
+		// AI brains are kernel-resident (Phase 2): AIComponent on the player entity → brain state
+		// enters the OOS hash + save streams; TickAI advances it each lockstep turn; commands ride
+		// SubmitAiCommand's local _aiBundles channel (each peer generates them identically, never
+		// the network). The old `if (!isMultiplayer)` gate is gone — AI slots work in MP and SP.
+		foreach (var slot in slots)
+		{
+			if (slot.Kind == ZeroAD.Sim.Net.PlayerSlotKind.AI)
+				_sim.AttachAi(slot.PlayerId);
+		}
+
+		// Ownerless neutral soldiers — mid-map (768m world → centre ~384) so they overlap no base.
 		_sim.SpawnUnit(380, 380, isSoldier: true);
 		_sim.SpawnUnit(385, 385, isSoldier: true);
 
-		// Initial buildings/units were spawned AFTER the map-load RebuildGrid, so their static
-		// obstructions aren't in the navcell grid yet. Rebuild once more so pathing accounts for
-		// the town centres and any scenario buildings.
+		// Initial buildings/units were spawned AFTER the map-load RebuildGrid; rebuild once more so
+		// pathing accounts for the town centres and any scenario buildings.
 		_sim.Pathfinder.RebuildGrid();
 
-		// The sandbox world spawns owner-less entities (no seers) — reveal the map so the
-		// dev world isn't shrouded. Scenario/tutorial paths keep real fog.
-		_sim.Range.SetLosRevealAll(1, true);
+		// Fog: sandbox/SP spawns owner-less world-dev entities with no seers, so reveal the map so
+		// the dev world isn't shrouded. MP keeps real fog — each human only sees their own vision.
+		_sim.Range.SetLosRevealAll((int)playerId, isMultiplayer ? false : true);
 
-		// Frame the player's starting town centre so the game opens on the player's base, not on
-		// the camera's stale default focus. Matches what SetupTutorialWorld does after scenario
-		// load. Without this, the camera stays wherever _Ready left it and the player can't see
-		// (or click) their own TC without panning first.
-		_camera.SetFocus(new Vector3(604, 0, 637));
+		// Frame the player's starting town centre so the game opens on their base. StartPositions
+		// is 0-indexed by player id - 1; clamp guards against an out-of-range local player id.
+		var (fx, fz) = StartPositions[Math.Clamp((int)playerId - 1, 0, StartPositions.Length - 1)];
+		_camera.SetFocus(new Vector3(fx, 0, fz));
 	}
 
 	private readonly List<Node3D> _selectionMarkers = new();

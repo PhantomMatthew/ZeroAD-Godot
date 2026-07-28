@@ -1,5 +1,6 @@
 using Godot;
 using System.Collections.Generic;
+using ZeroAD.Sim.Net;
 
 namespace ZeroAD.Godot;
 
@@ -21,6 +22,23 @@ public sealed partial class LobbyUI : CanvasLayer
     public event System.Action<string, int>? OnClientConnect;
     public event System.Action<uint>? OnSinglePlayer;
     public event System.Action? OnTutorialStart;
+
+    // --- Slot-lobby events (Task #10): host edits slots, host starts the game ---
+    /// <summary>Host edited a slot (playerId, kind, civ, team). Wired to
+    /// <c>MultiplayerController.HostSetSlot</c>.</summary>
+    public event System.Action<int, PlayerSlotKind, string, int>? OnSlotEdit;
+    /// <summary>Host clicked Start Game. Wired to <c>MultiplayerController.HostStartGame</c>.</summary>
+    public event System.Action? OnStartGameRequested;
+
+    /// <summary>Lobby civ choices offered in each slot's civ dropdown.</summary>
+    private static readonly string[] CivChoices = { "athen", "spart", "gaul" };
+
+    // Per-slot row controls, indexed by slot PlayerId-1. The host's rows are editable (built once
+    // in ShowSlotLobby); the client's rows are disabled and repainted by RefreshSlotDisplay.
+    private readonly OptionButton?[] _kindOpts = new OptionButton?[PlayerSlotSetupCodec.MaxSlots];
+    private readonly OptionButton?[] _civOpts = new OptionButton?[PlayerSlotSetupCodec.MaxSlots];
+    private readonly SpinBox?[] _teamSpins = new SpinBox?[PlayerSlotSetupCodec.MaxSlots];
+    private bool _lobbyIsHost;
 
     private sealed record MenuItem(string Caption, string Tooltip, System.Action? OnPress, MenuItem[]? Submenu = null);
 
@@ -330,6 +348,166 @@ public sealed partial class LobbyUI : CanvasLayer
         row.AddChild(edit);
         parent.AddChild(row);
         return edit;
+    }
+
+    /// <summary>Build the slot-config lobby. Called by Main after transport is up:
+    /// host (isHost=true, initialSlots = the host's editable slot table) or client
+    /// (isHost=false, initialSlots=null — rows built as disabled placeholders, populated by
+    /// <see cref="RefreshSlotDisplay"/> when the host's table arrives).</summary>
+    public void ShowSlotLobby(bool isHost, IReadOnlyList<PlayerSlotSetup>? initialSlots)
+    {
+        _lobbyIsHost = isHost;
+        if (_lobbyPanel != null) { _lobbyPanel.QueueFree(); _lobbyPanel = null; }
+        for (int i = 0; i < _kindOpts.Length; i++)
+        {
+            _kindOpts[i] = null;
+            _civOpts[i] = null;
+            _teamSpins[i] = null;
+        }
+
+        var panel = new Panel { Theme = UITheme.GetTheme() };
+        panel.SetAnchorsPreset(Control.LayoutPreset.Center);
+        panel.Position = new Vector2(-260, -220);
+        panel.Size = new Vector2(520, 440);
+        AddChild(panel);
+        _lobbyPanel = panel;
+
+        var vbox = new VBoxContainer();
+        vbox.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        vbox.OffsetLeft = 20; vbox.OffsetTop = 20;
+        vbox.OffsetRight = -20; vbox.OffsetBottom = -20;
+        vbox.AddThemeConstantOverride("separation", 8);
+        panel.AddChild(vbox);
+
+        var title = new Label { Text = "Game Lobby", HorizontalAlignment = HorizontalAlignment.Center };
+        title.AddThemeFontSizeOverride("font_size", 22);
+        vbox.AddChild(title);
+
+        // Column header.
+        var header = new HBoxContainer();
+        header.AddThemeConstantOverride("separation", 8);
+        header.AddChild(new Label { Text = "Slot",  CustomMinimumSize = new Vector2(50, 0) });
+        header.AddChild(new Label { Text = "Kind",  CustomMinimumSize = new Vector2(110, 0) });
+        header.AddChild(new Label { Text = "Civ",   CustomMinimumSize = new Vector2(110, 0) });
+        header.AddChild(new Label { Text = "Team",  CustomMinimumSize = new Vector2(60, 0) });
+        vbox.AddChild(header);
+
+        var slots = initialSlots ?? DefaultFourSlots();
+        int n = System.Math.Min(slots.Count, PlayerSlotSetupCodec.MaxSlots);
+        for (int i = 0; i < n; i++)
+            BuildSlotRow(vbox, slots[i], editable: isHost);
+
+        _statusLabel = new Label { Text = "", HorizontalAlignment = HorizontalAlignment.Center };
+        vbox.AddChild(_statusLabel);
+
+        if (isHost)
+        {
+            var btnStart = new Button { Text = "Start Game", Theme = UITheme.GetTheme() };
+            btnStart.Pressed += () => OnStartGameRequested?.Invoke();
+            vbox.AddChild(btnStart);
+        }
+        else
+        {
+            vbox.AddChild(new Label
+            {
+                Text = "Waiting for host to start…",
+                HorizontalAlignment = HorizontalAlignment.Center,
+            });
+        }
+
+        var btnCancel = new Button { Text = "Cancel", Theme = UITheme.GetTheme() };
+        btnCancel.Pressed += () => { panel.QueueFree(); _lobbyPanel = null; };
+        vbox.AddChild(btnCancel);
+    }
+
+    /// <summary>One slot row. Items are added in enum/array order so the OptionButton index
+    /// equals the enum value (Closed/Human/AI → 0/1/2) or the CivChoices index, letting us
+    /// read/write via <c>.Selected</c>. Slot 1 (the host) is fully locked — its edits are
+    /// rejected by <c>HostSetSlot</c>, so allowing them would leave the UI stale.</summary>
+    private void BuildSlotRow(VBoxContainer parent, PlayerSlotSetup slot, bool editable)
+    {
+        int idx = slot.PlayerId - 1;
+        bool locked = slot.PlayerId == 1;
+
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 8);
+        row.AddChild(new Label { Text = $"P{slot.PlayerId}", CustomMinimumSize = new Vector2(50, 0) });
+
+        // Kind: Closed(0) / Human(1) / AI(2) — index == enum value.
+        var kind = new OptionButton { CustomMinimumSize = new Vector2(110, 0) };
+        kind.AddItem("Closed", (int)PlayerSlotKind.Closed);
+        kind.AddItem("Human", (int)PlayerSlotKind.Human);
+        kind.AddItem("AI", (int)PlayerSlotKind.AI);
+        kind.Selected = (int)slot.Kind;
+        kind.Disabled = !editable || locked;
+        row.AddChild(kind);
+        _kindOpts[idx] = kind;
+
+        // Civ: index into CivChoices.
+        var civ = new OptionButton { CustomMinimumSize = new Vector2(110, 0) };
+        foreach (var c in CivChoices) civ.AddItem(c);
+        int civSel = System.Array.IndexOf(CivChoices, slot.Civ);
+        civ.Selected = civSel >= 0 ? civSel : 0;
+        civ.Disabled = !editable || locked;
+        row.AddChild(civ);
+        _civOpts[idx] = civ;
+
+        // Team: -1 = FFA, 0+ = allied team.
+        var team = new SpinBox
+        {
+            MinValue = -1, MaxValue = 3, Value = slot.Team,
+            CustomMinimumSize = new Vector2(60, 0),
+            Editable = editable && !locked,
+        };
+        row.AddChild(team);
+        _teamSpins[idx] = team;
+
+        if (editable && !locked)
+        {
+            // Read fresh control values at emit time (closures capture slot.PlayerId, a constant).
+            void Emit() => OnSlotEdit?.Invoke(
+                slot.PlayerId,
+                (PlayerSlotKind)kind.Selected,
+                CivChoices[civ.Selected],
+                (int)team.Value);
+            kind.ItemSelected += _ => Emit();
+            civ.ItemSelected += _ => Emit();
+            team.ValueChanged += _ => Emit();
+        }
+
+        parent.AddChild(row);
+    }
+
+    /// <summary>Client-only: repaint the disabled slot rows from the host's broadcast table.
+    /// The host is the source of truth (editable rows) and never repaints — repainting would
+    /// rebuild mid-edit and lose input focus.</summary>
+    public void RefreshSlotDisplay(IReadOnlyList<PlayerSlotSetup> slots)
+    {
+        if (_lobbyIsHost) return;
+        int n = System.Math.Min(slots.Count, PlayerSlotSetupCodec.MaxSlots);
+        for (int i = 0; i < n; i++)
+        {
+            var s = slots[i];
+            int idx = s.PlayerId - 1;
+            if (idx < 0 || idx >= _kindOpts.Length) continue;
+            if (_kindOpts[idx] is { } k) k.Selected = (int)s.Kind;
+            if (_civOpts[idx] is { } c)
+            {
+                int sel = System.Array.IndexOf(CivChoices, s.Civ);
+                c.Selected = sel >= 0 ? sel : 0;
+            }
+            if (_teamSpins[idx] is { } t) t.Value = s.Team;
+        }
+    }
+
+    /// <summary>Placeholder 4-slot table (all Closed) for a client before the host's first
+    /// lobby broadcast arrives — gives RefreshSlotDisplay rows to populate.</summary>
+    private static IReadOnlyList<PlayerSlotSetup> DefaultFourSlots()
+    {
+        var list = new List<PlayerSlotSetup>(PlayerSlotSetupCodec.MaxSlots);
+        for (int i = 1; i <= PlayerSlotSetupCodec.MaxSlots; i++)
+            list.Add(new PlayerSlotSetup { PlayerId = i, Kind = PlayerSlotKind.Closed });
+        return list;
     }
 
     private static Theme CreateStoneButtonTheme()

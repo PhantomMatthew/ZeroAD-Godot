@@ -77,8 +77,26 @@ public sealed partial class SimBridge : Node
     /// <param name="localPlayerId">This peer's game player id (host=1, clients assigned by host).</param>
     /// <param name="role">Standalone for SP; Host/Client for MP. Governs turn-barrier behaviour.</param>
     /// <param name="playerCount">Number of player slots to create. Host + each client own one.</param>
+    /// <remarks>Back-compat shim — maps the count + civ onto N Human slots and delegates to
+    /// the slot-table overload. SP/tutorial/sandbox still call this; MP passes the host's
+    /// frozen slot table directly.</remarks>
     public void InitWorld(string? templatesPath, uint seed = 42, uint localPlayerId = 1,
         NetRole role = NetRole.Standalone, int playerCount = 1, string civ = "athen")
+        => InitWorld(templatesPath, seed, localPlayerId, role,
+            Enumerable.Range(1, playerCount)
+                .Select(i => new PlayerSlotSetup { PlayerId = i, Kind = PlayerSlotKind.Human, Civ = civ })
+                .ToList());
+
+    /// <summary>
+    /// Slot-driven InitWorld (Task #10): the host→client setup contract. Every peer feeds in
+    /// the same frozen slot table + the same seed, so they build identical worlds. Human slots
+    /// enter <c>NetTurnManager._expectedPlayers</c> (they ship network batches); AI slots get an
+    /// AIComponent attached later in SetupGameWorld and ride the local <c>_aiBundles</c> channel;
+    /// Closed slots are not instantiated at all. This is the only overload that should grow new
+    /// world-construction logic.
+    /// </summary>
+    public void InitWorld(string? templatesPath, uint seed, uint localPlayerId, NetRole role,
+        IReadOnlyList<PlayerSlotSetup> slots)
     {
         var registry = new ComponentRegistry();
         registry.AutoRegister(typeof(PositionComponent).Assembly);
@@ -150,10 +168,12 @@ public sealed partial class SimBridge : Node
         losComp.Attach(_range);
         _sim.AddComponent(_terrainEntity, losComp);
 
-        for (int pid = 1; pid <= playerCount; pid++)
+        foreach (var slot in slots)
         {
+            if (slot.Kind == PlayerSlotKind.Closed) continue;
+            int pid = slot.PlayerId;
             var playerEntity = _sim.CreateEntity();
-            _sim.AddComponent(playerEntity, new PlayerComponent { Civ = civ });
+            _sim.AddComponent(playerEntity, new PlayerComponent { Civ = slot.Civ });
             _sim.AddComponent(playerEntity, new DiplomacyComponent());
             var techMgr = new TechnologyManager();
             _sim.AddComponent(playerEntity, techMgr);
@@ -162,7 +182,7 @@ public sealed partial class SimBridge : Node
             _sim.RegisterPlayer(pid, playerEntity);
             if (techCatalog != null)
             {
-                techMgr.Configure(techCatalog, civ);
+                techMgr.Configure(techCatalog, slot.Civ);
                 // 开局即满足的 autoResearch 科技(phase_village、civ 加成)免费落地
                 techMgr.UpdateAutoResearch(_sim);
             }
@@ -170,11 +190,24 @@ public sealed partial class SimBridge : Node
                 _playerEntity = playerEntity;
         }
 
-        // Seed diplomacy from teams: empty map → every pair mutual enemies (the original's
-        // no-team free-for-all). Scenarios carrying Team data re-seed after loading players.
-        _sim.Players.SeedDiplomacyFromTeams(new Dictionary<int, int>());
+        // Seed diplomacy from the slot table's team assignments. Closed slots are excluded; a
+        // team of -1 (the default) means FFA — players on -1 each form their own singleton team
+        // and are mutual enemies (SeedDiplomacyFromTeams only allies on team >= 0 equality).
+        // Slot-table teams derive from the lobby (Task #10) or default to FFA in SP/sandbox.
+        // Scenarios carrying Team data re-seed after loading players.
+        var teamMap = slots
+            .Where(s => s.Kind != PlayerSlotKind.Closed)
+            .ToDictionary(s => s.PlayerId, s => s.Team);
+        _sim.Players.SeedDiplomacyFromTeams(teamMap);
 
-        var expectedPlayers = Enumerable.Range(1, playerCount).Select(i => (uint)i).ToHashSet();
+        // CRITICAL deadlock guard: only HUMAN slots submit network batches, so only they enter
+        // _expectedPlayers. AI commands ride the local _aiBundles channel and never reach the
+        // network — including an AI player id here would block the host forever waiting for a
+        // batch that never arrives. (NetTurnManager.HostIngestBatch waits for all expected.)
+        var expectedPlayers = slots
+            .Where(s => s.Kind == PlayerSlotKind.Human)
+            .Select(s => (uint)s.PlayerId)
+            .ToHashSet();
         _netTurn = new NetTurnManager(_sim, commandDelay: 2, localPlayerId, role, expectedPlayers);
     }
 
