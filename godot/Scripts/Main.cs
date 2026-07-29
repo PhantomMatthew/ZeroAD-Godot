@@ -296,6 +296,7 @@ public sealed partial class Main : Node3D
 				var terrainNode = TerrainRenderer.CreateFromHeightmap(pmp);
 				AddChild(terrainNode);
 				_sim.FogWorld.Attach(terrainNode, pmp.MapSizeMeters);
+				_sim.TerritoryWorld.Attach(terrainNode, pmp.MapSizeMeters);
 				TerrainHeightService.Set(pmp.GetHeightWorld);
 				float h = pmp.GetHeightWorld(130, 122);
 				_camera.SetFocus(new Vector3(130, h, 122));

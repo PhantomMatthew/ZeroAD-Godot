@@ -320,6 +320,35 @@ namespace ZeroAD.Sim.Content
                 if (root.IsOk) stats.TerritoryInfluenceRoot = root.ToBool();
             }
 
+            // TerritoryDecay(建筑默认 template_structure:20 点/秒,"neutral enemy"):
+            // DecayRate="Infinity" → 归属跟随领土模式(本数据无实例,标志照原版保留)。
+            var territoryDecay = node.GetChild("TerritoryDecay");
+            if (territoryDecay.IsOk)
+            {
+                stats.HasTerritoryDecay = true;
+                var decayRate = territoryDecay.GetChild("DecayRate");
+                if (decayRate.IsOk)
+                {
+                    if (decayRate.ToString().Trim() == "Infinity") stats.TerritoryDecayOwnership = true;
+                    else stats.TerritoryDecayRate = decayRate.ToFixed();
+                }
+                var decayTerritory = territoryDecay.GetChild("Territory");
+                if (decayTerritory.IsOk) stats.TerritoryDecayTerritory = decayTerritory.ToString().Trim();
+            }
+
+            // Capturable(template_structure:500 CP,regen 5/秒):占领点池,TerritoryDecay 下游。
+            var capturable = node.GetChild("Capturable");
+            if (capturable.IsOk)
+            {
+                stats.HasCapturable = true;
+                var cp = capturable.GetChild("CapturePoints");
+                if (cp.IsOk) stats.CapturablePoints = cp.ToFixed();
+                var regen = capturable.GetChild("RegenRate");
+                if (regen.IsOk) stats.CapturableRegenRate = regen.ToFixed();
+                var garrisonRegen = capturable.GetChild("GarrisonRegenRate");
+                if (garrisonRegen.IsOk) stats.CapturableGarrisonRegenRate = garrisonRegen.ToFixed();
+            }
+
             return stats;
         }
 
@@ -417,6 +446,18 @@ namespace ZeroAD.Sim.Content
         public Maths.Fixed TerritoryInfluenceRadius = Maths.Fixed.Zero;
         public int TerritoryInfluenceWeight = 1;
         public bool TerritoryInfluenceRoot;
+
+        // TerritoryDecay:HasTerritoryDecay=false → 不装配(单位无衰减)。
+        public bool HasTerritoryDecay;
+        public Maths.Fixed TerritoryDecayRate = Maths.Fixed.Zero;
+        public string TerritoryDecayTerritory = "";
+        public bool TerritoryDecayOwnership;
+
+        // Capturable:HasCapturable=false → 不装配。
+        public bool HasCapturable;
+        public Maths.Fixed CapturablePoints = Maths.Fixed.Zero;
+        public Maths.Fixed CapturableRegenRate = Maths.Fixed.Zero;
+        public Maths.Fixed CapturableGarrisonRegenRate = Maths.Fixed.Zero;
 
         public List<string> GetClassList() =>
             EntityClassHelper.BuildClassList(Classes, VisibleClasses,

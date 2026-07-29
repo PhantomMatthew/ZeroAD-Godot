@@ -23,12 +23,21 @@ public sealed class TerritoryManager
     /// <summary>Metres per territory cell.</summary>
     public const int CellSize = 4;
 
+    /// <summary>网格边长(cell 数),表现层纹理尺寸用。</summary>
+    public int GridWidth => _gridW;
+
     private const int MaxPlayers = LosGrid.MaxPlayers;
     private readonly ComponentManager _cm;
     private int _gridW;
     private byte[] _owner = Array.Empty<byte>();
     private bool[] _connected = Array.Empty<bool>();
     private bool _dirty = true;
+    // TerritoryDecay 组件驱动的 blink 覆盖(cell → 闪烁):原版 SetTerritoryBlinking。
+    // 非派生态(重算不清),SetBounds 才清;仅影响表现层,不影响建造判定(走 IsConnected)。
+    private readonly Dictionary<int, bool> _blinkOverride = new();
+
+    /// <summary>派生网格/覆盖每次变化自增,表现层据以重建纹理;不进 OOS hash。</summary>
+    public int Version { get; private set; }
 
     public TerritoryManager(ComponentManager cm, int worldMeters)
     {
@@ -49,7 +58,9 @@ public sealed class TerritoryManager
         int n = _gridW * _gridW;
         _owner = new byte[n];
         _connected = new bool[n];
+        _blinkOverride.Clear();
         _dirty = true;
+        Version++;
     }
 
     /// <summary>世界坐标(米)处的领土 owner;越界 = gaia(0)。</summary>
@@ -68,8 +79,66 @@ public sealed class TerritoryManager
         return idx >= 0 && _connected[idx];
     }
 
-    /// <summary>原版 BuildRestrictions 的 isConnected = !IsTerritoryBlinking 契约。</summary>
-    public bool IsTerritoryBlinking(Fixed x, Fixed z) => !IsConnected(x, z);
+    /// <summary>原版 BuildRestrictions 的 isConnected = !IsTerritoryBlinking 契约,叠加
+    /// TerritoryDecay 的 SetTerritoryBlinking 覆盖(未连通但获盟军连通背书时不闪)。</summary>
+    public bool IsTerritoryBlinking(Fixed x, Fixed z)
+    {
+        EnsureComputed();
+        int idx = CellIndex(x, z);
+        if (idx < 0) return false;
+        if (_blinkOverride.TryGetValue(idx, out bool blink)) return blink;
+        return !_connected[idx] && _owner[idx] != 0;
+    }
+
+    /// <summary>原版 CCmpTerritoryManager::SetTerritoryBlinking:TerritoryDecay 逐实体覆盖
+    /// 某 cell 的闪烁(gaia/无主 cell 忽略——原版 blinking 只对有主领土有意义)。</summary>
+    public void SetTerritoryBlinking(Fixed x, Fixed z, bool blinking)
+    {
+        EnsureComputed();
+        int idx = CellIndex(x, z);
+        if (idx < 0 || _owner[idx] == 0) return;
+        if (_blinkOverride.TryGetValue(idx, out bool cur) && cur == blinking) return;
+        _blinkOverride[idx] = blinking;
+        Version++;
+    }
+
+    /// <summary>原版 CCmpTerritoryManager::GetNeighbours(pos, onlyConnected):对 pos 所在
+    /// 同主区域 BFS,统计区域 4 邻外侧每玩家的相邻 cell 数(下标 0=gaia)。
+    /// TerritoryDecay 据它决定 decay 的 CP 流向(分给连通邻主,无邻居则归 gaia)。</summary>
+    public int[] GetNeighbours(Fixed x, Fixed z, bool onlyConnected)
+    {
+        var counts = new int[MaxPlayers + 1];
+        EnsureComputed();
+        int start = CellIndex(x, z);
+        if (start < 0 || _owner[start] == 0) return counts;
+        byte owner = _owner[start];
+        int w = _gridW;
+        var visited = new bool[w * w];
+        var queue = new Queue<int>();
+        visited[start] = true;
+        queue.Enqueue(start);
+        while (queue.Count > 0)
+        {
+            int c = queue.Dequeue();
+            int cx = c % w, cz = c / w;
+            if (cx > 0) Visit(c - 1);
+            if (cx < w - 1) Visit(c + 1);
+            if (cz > 0) Visit(c - w);
+            if (cz < w - 1) Visit(c + w);
+
+            void Visit(int nb)
+            {
+                if (_owner[nb] == owner)
+                {
+                    if (!visited[nb]) { visited[nb] = true; queue.Enqueue(nb); }
+                    return;
+                }
+                if (onlyConnected && !_connected[nb]) return;
+                counts[_owner[nb]]++;
+            }
+        }
+        return counts;
+    }
 
     /// <summary>
     /// 建造领土限制(逐行对齐 BuildRestrictions.js:186-240):own 需 "own"(未连通还需
@@ -173,6 +242,7 @@ public sealed class TerritoryManager
             if (hasRoot)
                 foreach (int c in region) _connected[c] = true;
         }
+        Version++;
     }
 
     /// <summary>放射衰减 stamp:falloff = (r²−d²)/r²(d&lt;r),16.16 定点整数,无浮点。

@@ -2,6 +2,7 @@ using Godot;
 using System.Collections.Generic;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
+using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Godot;
 
@@ -50,6 +51,8 @@ public sealed partial class Minimap : Control
 
         float worldSize = _sim.Terrain.MapSize * _sim.Terrain.TileSize;
         if (worldSize <= 0) { _texture.Update(_image); QueueRedraw(); return; }
+
+        BlendTerritory(worldSize);
 
         int lp = (int)_sim.LocalPlayerId;
         foreach (var kvp in GetAllEntityNodes())
@@ -124,6 +127,36 @@ public sealed partial class Minimap : Control
                 rgba[o] = (byte)(rgba[o] * bright / 255);
                 rgba[o + 1] = (byte)(rgba[o + 1] * bright / 255);
                 rgba[o + 2] = (byte)(rgba[o + 2] * bright / 255);
+            }
+        }
+        _image.SetData(MapSize, MapSize, false, Image.Format.Rgba8, rgba);
+    }
+
+    /// <summary>Territory tint under the entity dots(对齐原版小地图领土着色):owner 色
+    /// 半透明填充,未连通(blinking)区域随时间脉冲。与 BlendFog 同套路:整图 raw buffer
+    /// 一次 GetData/SetData,避免 40k 次 SetPixel。闪烁相位用墙钟,纯表现不进模拟。</summary>
+    private void BlendTerritory(float worldSize)
+    {
+        var tm = _sim.Territory;
+        if (tm == null || tm.GridWidth <= 0) return;
+        float blink = 0.55f + 0.45f * Mathf.Sin(Time.GetTicksMsec() / 1000f * 4f);
+        byte[] rgba = _image.GetData();
+        for (int pz = 0; pz < MapSize; pz++)
+        {
+            float wz = (pz + 0.5f) / MapSize * worldSize;
+            var fz = Fixed.FromFloat(wz);
+            for (int px = 0; px < MapSize; px++)
+            {
+                var fx = Fixed.FromFloat((px + 0.5f) / MapSize * worldSize);
+                int owner = tm.GetOwner(fx, fz);
+                if (owner <= 0) continue;
+                Color c = SimBridge.GetPlayerColor(owner);
+                float a = 0.35f * (tm.IsTerritoryBlinking(fx, fz) ? blink : 1f);
+                int cr = (int)(c.R * 255), cg = (int)(c.G * 255), cb = (int)(c.B * 255);
+                int o = (pz * MapSize + px) * 4;
+                rgba[o] = (byte)(rgba[o] + (cr - rgba[o]) * a);
+                rgba[o + 1] = (byte)(rgba[o + 1] + (cg - rgba[o + 1]) * a);
+                rgba[o + 2] = (byte)(rgba[o + 2] + (cb - rgba[o + 2]) * a);
             }
         }
         _image.SetData(MapSize, MapSize, false, Image.Format.Rgba8, rgba);

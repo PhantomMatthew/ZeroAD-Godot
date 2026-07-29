@@ -67,6 +67,8 @@ public sealed partial class SimBridge : Node
     public PathfinderComponent Pathfinder => _pathfinder;
     public FogWorldRenderer FogWorld => _fogWorld;
     private FogWorldRenderer _fogWorld = null!;
+    public TerritoryWorldRenderer TerritoryWorld => _territoryWorld;
+    private TerritoryWorldRenderer _territoryWorld = null!;
     public RangeManager Range => _range;
     public TerritoryManager Territory => _territory;
 
@@ -163,6 +165,7 @@ public sealed partial class SimBridge : Node
         SimSystem.SetWaterManager(_sim.Water);
         Gui = new GuiInterface(_sim);
         _fogWorld = new FogWorldRenderer(this);
+        _territoryWorld = new TerritoryWorldRenderer(this);
 
         // A system entity to host the TerrainComponent so components can QueryInterface it.
         _terrainEntity = _sim.CreateEntity();
@@ -585,6 +588,22 @@ public sealed partial class SimBridge : Node
         }
     }
 
+    /// <summary>领土衰减闭环(原版 TerritoryDecay.js 事件驱动 → 本移植每回合刷新,回合边界
+    /// 取值一致):1) 每个 TerritoryDecayComponent 重算 decaying + 邻主表 + blink 覆盖;
+    /// 2) 每个 CapturableComponent TimerTick(decay 抽干分给邻主/gaia + regen 恢复)。
+    /// 原地主翻面在 Capturable 内走 NotifyOwnerChanged,与各端同序 → 确定性。</summary>
+    private void TickTerritoryDecay(float dt)
+    {
+        var fixedDt = Fixed.FromFloat(dt);
+        foreach (var entity in _sim.AllEntities)
+        {
+            var decay = _sim.QueryInterface<TerritoryDecayComponent>(entity);
+            if (decay != null) decay.Refresh(_sim, _territory);
+            var capturable = _sim.QueryInterface<CapturableComponent>(entity);
+            if (capturable != null) capturable.TimerTick(_sim, fixedDt);
+        }
+    }
+
     private void TickSimulation(float dt)
     {
         RemoveDeadEntities();
@@ -599,6 +618,10 @@ public sealed partial class SimBridge : Node
         // 光环:每 tick 应用/移除(range diff + global/player reqTech 门控)。放 TickResearch 后、
         // ReapplyVisionScopeAll 前,使 vision aura 的修正值本轮即被 LOS 重算吃到。
         TickAuras(dt);
+        // 领土衰减(对齐原版 TerritoryDecay/Capturable 的 1s 定时器,本处每回合 0.1s×rate):
+        // 先刷新 decaying/blink 状态(读本周期的领土网格),再让 Capturable 抽干/恢复 CP。
+        // 放 UpdateVisibilityData 前:翻面触发的 OwnerChanged 本周期即被 LOS 重算吃到。
+        TickTerritoryDecay(dt);
         // Vision range through the modifiers pipeline: tech/aura changes re-cover seer
         // circles in the LOS grid. Runs every turn (after research completes) so all
         // players' ranges stay fresh without a research-completion hook per player.
@@ -1409,7 +1432,7 @@ public sealed partial class SimBridge : Node
         new(0.20f, 0.20f, 0.22f),  // P8: dark gray
     };
 
-    private static Color GetPlayerColor(int playerId) =>
+    public static Color GetPlayerColor(int playerId) =>
         playerId >= 0 && playerId < PlayerColors.Length ? PlayerColors[playerId] : new Color(0.6f, 0.5f, 0.4f);
 
     private string _lastSpawnedTemplate = "";
@@ -1474,6 +1497,7 @@ public sealed partial class SimBridge : Node
     {
         SyncVisibility();
         _fogWorld.Update();
+        _territoryWorld.Update();
         foreach (var kvp in _entityNodes)
         {
             var pos = _sim.QueryInterface<PositionComponent>(kvp.Key);

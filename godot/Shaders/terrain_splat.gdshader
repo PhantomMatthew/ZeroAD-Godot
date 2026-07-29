@@ -13,6 +13,9 @@ uniform sampler2D idx_a : filter_nearest, repeat_disable;
 uniform sampler2D idx_b : filter_nearest, repeat_disable;
 uniform sampler2D weight_b : filter_linear, repeat_disable;
 uniform sampler2D fog_texture : filter_linear, repeat_disable;
+uniform sampler2D territory_texture : filter_nearest, repeat_disable;
+uniform vec4 player_colors[17];
+uniform float territory_cells = 64.0;
 uniform float world_size = 256.0;
 uniform float tiles_per_side = 192.0;
 // Terrain texture world repeat: 0.25 = one texture repeat per 4m tile.
@@ -37,6 +40,26 @@ void fragment() {
 	// unexplored → near black, explored → ~55%, visible → full (0 A.D.-style).
 	float bright = mix(0.12, 1.0, smoothstep(0.0, 1.0, fog));
 	ALBEDO = base * bright;
+
+	// Territory overlay: 4m cell grid, R = owner id, G = blink flag. Border where a
+	// 4-neighbour has a different owner; unconnected (blink) regions pulse with TIME.
+	{
+		ivec2 tc = clamp(ivec2(floor(tile_f)), ivec2(0), ivec2(int(territory_cells) - 1));
+		vec4 terr = texelFetch(territory_texture, tc, 0);
+		int towner = int(terr.r * 255.0 + 0.5);
+		if (towner > 0) {
+			ivec2 tmax = ivec2(int(territory_cells) - 1);
+			bool border =
+				int(texelFetch(territory_texture, clamp(tc + ivec2(1, 0), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner ||
+				int(texelFetch(territory_texture, clamp(tc - ivec2(1, 0), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner ||
+				int(texelFetch(territory_texture, clamp(tc + ivec2(0, 1), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner ||
+				int(texelFetch(territory_texture, clamp(tc - ivec2(0, 1), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner;
+			float blink = terr.g > 0.5 ? 0.55 + 0.45 * sin(TIME * 4.0) : 1.0;
+			float strength = border ? 0.55 : 0.12;
+			ALBEDO = mix(ALBEDO, player_colors[towner].rgb, strength * blink);
+		}
+	}
+
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 }

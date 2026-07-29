@@ -219,6 +219,31 @@ namespace ZeroAD.Sim
                 });
             }
 
+            // TerritoryDecay + Capturable(原版 template_structure 默认件):领土衰减闭环。
+            // Capturable 首主 CP 拉满须在 Ownership 已读后(对齐原版首个 OnOwnershipChanged)。
+            if (stats != null && stats.HasTerritoryDecay
+                && cm.QueryInterface<TerritoryDecayComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new TerritoryDecayComponent
+                {
+                    DecayRate = stats.TerritoryDecayRate,
+                    Territory = stats.TerritoryDecayTerritory,
+                    TerritoryOwnership = stats.TerritoryDecayOwnership,
+                });
+            }
+            if (stats != null && stats.HasCapturable
+                && cm.QueryInterface<CapturableComponent>(entity) == null)
+            {
+                var capturable = new CapturableComponent
+                {
+                    MaxCapturePoints = stats.CapturablePoints,
+                    RegenRate = stats.CapturableRegenRate,
+                    GarrisonRegenRate = stats.CapturableGarrisonRegenRate,
+                };
+                cm.AddComponent(entity, capturable);
+                capturable.InitForOwner(cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId ?? -1);
+            }
+
             cm.NotifyEntityCreated(entity); // RangeManager subscribes → indexes + Refresh
             int owner = cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId ?? -1;
             if (owner > 0)
