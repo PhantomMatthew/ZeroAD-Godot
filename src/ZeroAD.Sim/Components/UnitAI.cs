@@ -603,15 +603,14 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         int count = d.NumberI32("orders");
         for (int i = 0; i < count; i++)
         {
-            var o = new UnitOrder
-            {
-                Type = d.StringASCII("type"),
-                Position = new FixedVector2D(d.NumberFixed("px"), d.NumberFixed("pz")),
-                Force = d.Bool("force"),
-                Queued = d.Bool("queued")
-            };
+            // 读取顺序必须与 Serialize 写入逐位一致(type/target/px/pz/force/queued)——
+            // BinaryDeserializer 是位置流,对象初始化器把 target 拖到最后会整体错位。
+            var o = new UnitOrder { Type = d.StringASCII("type") };
             uint t = d.NumberU32("target");
             o.Target = t != 0 ? new EntityId(t) : null;
+            o.Position = new FixedVector2D(d.NumberFixed("px"), d.NumberFixed("pz"));
+            o.Force = d.Bool("force");
+            o.Queued = d.Bool("queued");
             _orderQueue.AddLast(o);
         }
     }

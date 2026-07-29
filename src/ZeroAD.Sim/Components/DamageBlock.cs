@@ -101,14 +101,13 @@ public sealed class DamageBlock
 
     public static DamageBlock Deserialize(IDeserializer d, string prefix)
     {
-        return new DamageBlock
-        {
-            Capture = d.NumberI32(prefix + "_capture")
-        }
-        .Set(DamageType.Hack, d.NumberI32(prefix + "_hack"))
-        .Set(DamageType.Pierce, d.NumberI32(prefix + "_pierce"))
-        .Set(DamageType.Crush, d.NumberI32(prefix + "_crush"));
+        // 读取顺序必须与 Serialize 写入顺序逐位一致(hack/pierce/crush/capture)——
+        // BinaryDeserializer 是位置流,对象初始化器会先跑 capture 造成整体错位。
+        var block = new DamageBlock();
+        block.Amounts[DamageType.Hack] = d.NumberI32(prefix + "_hack");
+        block.Amounts[DamageType.Pierce] = d.NumberI32(prefix + "_pierce");
+        block.Amounts[DamageType.Crush] = d.NumberI32(prefix + "_crush");
+        block.Capture = d.NumberI32(prefix + "_capture");
+        return block;
     }
-
-    private DamageBlock Set(DamageType t, int v) { Amounts[t] = v; return this; }
 }
