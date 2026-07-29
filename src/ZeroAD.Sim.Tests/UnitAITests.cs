@@ -169,4 +169,40 @@ public sealed class UnitAITests
 
         Assert.Equal(hash1, hash2);
     }
+
+    [Fact]
+    public void Gather_RejectedWithoutGatherer_FinishesOrder_NoFsmCrash()
+    {
+        var cm = new ComponentManager(rngSeed: 1);
+        var unit = MakeUnit(cm);            // 无 ResourceGatherer → 必须拒收
+        var tree = cm.CreateEntity();
+        cm.AddComponent(tree, new PositionComponent());
+        cm.AddComponent(tree, new ResourceSupply());
+
+        var ai = cm.QueryInterface<UnitAIComponent>(unit)!;
+        ai.Gather(tree);
+        // 拒令须 FinishOrder 出队(对齐原版):残留会让同 Tick 的 Timer 在无 handler 的
+        // IDLE 态抛 InvalidOperationException,并每 Tick 重复派发。
+        ai.Tick(0.1f, cm);
+        ai.Tick(0.1f, cm);
+
+        Assert.EndsWith("IDLE", ai.FsmStateName);
+    }
+
+    [Fact]
+    public void Repair_RejectedWithoutBuilder_FinishesOrder_NoFsmCrash()
+    {
+        var cm = new ComponentManager(rngSeed: 1);
+        var unit = MakeUnit(cm);            // 无 BuilderComponent → 必须拒收
+        var foundation = cm.CreateEntity();
+        cm.AddComponent(foundation, new PositionComponent());
+        cm.AddComponent(foundation, new FoundationComponent());
+
+        var ai = cm.QueryInterface<UnitAIComponent>(unit)!;
+        ai.Repair(foundation);
+        ai.Tick(0.1f, cm);
+        ai.Tick(0.1f, cm);
+
+        Assert.EndsWith("IDLE", ai.FsmStateName);
+    }
 }

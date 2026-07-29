@@ -198,8 +198,10 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
         ind.On("Order.Gather", (u, m) =>
         {
+            // 拒收路径一律 FinishOrder 出队(对齐原版,同 Order.Attack):仅置 IDLE 会让
+            // 订单残留队列,同 Tick 的 Timer 在无 handler 的 IDLE 态抛出。
             var gatherer = m.Cm!.QueryInterface<ResourceGatherer>(u.Entity);
-            if (gatherer == null) { u.FsmNextState = "IDLE"; return; }
+            if (gatherer == null) { u.FinishOrder(); return; }
             if (m.Order!.Target is { } target)
             {
                 gatherer.TargetSupply = target;
@@ -230,8 +232,9 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
         ind.On("Order.Repair", (u, m) =>
         {
+            // 拒收路径一律 FinishOrder 出队(对齐原版,同 Order.Attack/Gather)。
             var builder = m.Cm!.QueryInterface<BuilderComponent>(u.Entity);
-            if (builder == null || m.Order!.Target == null) { u.FsmNextState = "IDLE"; return; }
+            if (builder == null || m.Order!.Target == null) { u.FinishOrder(); return; }
             builder.Build(m.Order.Target.Value);
             MoveToTarget(u, m.Order.Target.Value, m.Cm!);
             u.FsmNextState = "REPAIR.APPROACHING";
