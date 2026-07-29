@@ -207,6 +207,18 @@ namespace ZeroAD.Sim
                 cm.AddComponent(entity, auraCmp);
             }
 
+            // TerritoryInfluence:同 auras —— 建筑/foundation 路径补挂,QueryInterface 幂等。
+            if (stats != null && stats.TerritoryInfluenceRadius > Maths.Fixed.Zero
+                && cm.QueryInterface<TerritoryInfluenceComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new TerritoryInfluenceComponent
+                {
+                    Radius = stats.TerritoryInfluenceRadius,
+                    Weight = stats.TerritoryInfluenceWeight,
+                    Root = stats.TerritoryInfluenceRoot,
+                });
+            }
+
             cm.NotifyEntityCreated(entity); // RangeManager subscribes → indexes + Refresh
             int owner = cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId ?? -1;
             if (owner > 0)

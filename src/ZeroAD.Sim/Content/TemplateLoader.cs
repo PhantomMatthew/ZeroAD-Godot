@@ -298,6 +298,28 @@ namespace ZeroAD.Sim.Content
                     : true;
             }
 
+            // BuildRestrictions/Territory:空格分隔的 own/ally/neutral/enemy tokens(模板继承链
+            // 已合并 —— template_structure 默认 "own",CC/殖民地 "own neutral")。无节点 = 空串
+            // (非建筑,无领土限制)。
+            var buildRestrictions = node.GetChild("BuildRestrictions");
+            if (buildRestrictions.IsOk)
+            {
+                var territory = buildRestrictions.GetChild("Territory");
+                if (territory.IsOk) stats.BuildRestrictionsTerritory = territory.ToString();
+            }
+
+            // TerritoryInfluence:无节点 → Radius=0,不装配 TerritoryInfluenceComponent。
+            var territoryInfluence = node.GetChild("TerritoryInfluence");
+            if (territoryInfluence.IsOk)
+            {
+                var radius = territoryInfluence.GetChild("Radius");
+                if (radius.IsOk) stats.TerritoryInfluenceRadius = radius.ToFixed();
+                var weight = territoryInfluence.GetChild("Weight");
+                if (weight.IsOk) stats.TerritoryInfluenceWeight = weight.ToInt();
+                var root = territoryInfluence.GetChild("Root");
+                if (root.IsOk) stats.TerritoryInfluenceRoot = root.ToBool();
+            }
+
             return stats;
         }
 
@@ -386,6 +408,15 @@ namespace ZeroAD.Sim.Content
         public int ResistancePierce;
         public int ResistanceCrush;
         public int ResistanceCapture;
+
+        /// <summary>BuildRestrictions/Territory tokens(空格分隔 own/ally/neutral/enemy)。
+        /// 空串 = 无领土限制(非建筑)。</summary>
+        public string BuildRestrictionsTerritory = "";
+
+        // TerritoryInfluence:Radius=0 → 不装配 TerritoryInfluenceComponent(无影响力)。
+        public Maths.Fixed TerritoryInfluenceRadius = Maths.Fixed.Zero;
+        public int TerritoryInfluenceWeight = 1;
+        public bool TerritoryInfluenceRoot;
 
         public List<string> GetClassList() =>
             EntityClassHelper.BuildClassList(Classes, VisibleClasses,

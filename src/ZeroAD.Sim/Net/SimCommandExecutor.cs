@@ -18,14 +18,19 @@ namespace ZeroAD.Sim.Net
     {
         private readonly ComponentManager _cm;
         private readonly PathfinderComponent? _pathfinder;
+        private readonly Components.TerritoryManager? _territory;
 
         /// <param name="pathfinder">Optional explicit pathfinder for build-placement
         /// validation. When null, falls back to <see cref="SimSystem.Pathfinder"/>
         /// (the production wiring); tests can inject one to avoid the static.</param>
-        public SimCommandExecutor(ComponentManager cm, PathfinderComponent? pathfinder = null)
+        /// <param name="territory">Optional explicit territory manager for the build
+        /// territory restriction. When null, falls back to <see cref="SimSystem.Territory"/>.</param>
+        public SimCommandExecutor(ComponentManager cm, PathfinderComponent? pathfinder = null,
+            Components.TerritoryManager? territory = null)
         {
             _cm = cm;
             _pathfinder = pathfinder;
+            _territory = territory;
         }
 
         public void Apply(NetCommand cmd)
@@ -136,6 +141,15 @@ namespace ZeroAD.Sim.Net
                 var result = pathfinder.CheckBuildingPlacement(
                     x, z, Fixed.FromFloat(halfSize), Fixed.FromFloat(halfSize));
                 if (result != PlacementResult.Success) return;
+            }
+
+            // 领土限制(对齐 BuildRestrictions.js:186-240,双端同判定):own/ally/neutral/enemy
+            // + 未连通需 neutral。tokens 空 = 无限制(非建筑)。
+            var territory = _territory ?? Components.SimSystem.Territory;
+            if (territory != null)
+            {
+                string tokens = stats?.BuildRestrictionsTerritory ?? "";
+                if (!territory.CanBuildHere(tokens, (int)cmd.Player, x, z)) return;
             }
 
             player.Spend(wood, food, stone, metal);

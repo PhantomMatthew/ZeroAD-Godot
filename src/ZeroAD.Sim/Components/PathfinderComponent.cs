@@ -11,7 +11,8 @@ namespace ZeroAD.Sim.Components
         Success,
         FailOutOfBounds,
         FailTerrain,            // water / cliff tile under the footprint
-        FailObstructsFoundation // overlaps another foundation-blocking shape
+        FailObstructsFoundation, // overlaps another foundation-blocking shape
+        FailTerritory           // BuildRestrictions/Territory 领土限制(own/ally/neutral/enemy)
     }
 
     /// <summary>

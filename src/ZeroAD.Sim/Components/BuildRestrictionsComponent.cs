@@ -20,14 +20,18 @@ namespace ZeroAD.Sim.Components
     /// <summary>
     /// Per-building placement rules. Mirrors <c>BuildRestrictions.js</c>: a building can only be
     /// placed where terrain + obstructions allow, within optional min/max distance of another
-    /// building class (e.g. a Civil Centre must be near a Settlement). Territory and LOS checks
-    /// from the original are skipped (those systems aren't ported).
+    /// building class (e.g. a Civil Centre must be near a Settlement), and inside an allowed
+    /// territory type (own/ally/neutral/enemy; unconnected own/ally needs "neutral" too).
+    /// The LOS check from the original is skipped ( fog-of-war placement masking isn't ported).
     /// </summary>
     [Component("BuildRestrictions", "BuildRestrictions")]
     public sealed class BuildRestrictionsComponent : ComponentBase, IComponentMessageHandler
     {
         public BuildPlacementType PlacementType = BuildPlacementType.Land;
         public string Category = "";
+        /// <summary>BuildRestrictions/Territory tokens(空格分隔 own/ally/neutral/enemy)。
+        /// 空串 = 无领土限制。装配自模板(template_structure 默认 "own")。</summary>
+        public string Territory = "";
         // Distance constraint: must be within [MinDistance, MaxDistance] of some building whose
         // Identity matches FromClass. Empty FromClass = no distance constraint.
         public string FromClass = "";
@@ -86,6 +90,17 @@ namespace ZeroAD.Sim.Components
                 }
             }
 
+            // Territory check(对齐 BuildRestrictions.js:186-240):own/ally/neutral/enemy,
+            // 未连通 own/ally 还需 "neutral"。玩家归属取本实体 OwnershipComponent。
+            var territory = SimSystem.Territory;
+            var owner = SimSystem.GetComponent<OwnershipComponent>(Entity);
+            if (territory != null && owner != null && owner.PlayerId > 0
+                && !territory.CanBuildHere(Territory, owner.PlayerId, x, z))
+            {
+                result.Reason = PlacementResult.FailTerritory;
+                return result;
+            }
+
             // Optional distance-to-class constraint (e.g. "must be within 60m of a CivilCentre").
             if (!string.IsNullOrEmpty(FromClass) && MaxDistance > Fixed.Zero)
             {
@@ -117,6 +132,7 @@ namespace ZeroAD.Sim.Components
         {
             s.NumberI32("placement", (int)PlacementType);
             s.StringASCII("cat", Category);
+            s.StringASCII("terr", Territory);
             s.StringASCII("from", FromClass);
             s.NumberFixed("min", MinDistance);
             s.NumberFixed("max", MaxDistance);
@@ -126,6 +142,7 @@ namespace ZeroAD.Sim.Components
         {
             PlacementType = (BuildPlacementType)d.NumberI32("placement");
             Category = d.StringASCII("cat");
+            Territory = d.StringASCII("terr");
             FromClass = d.StringASCII("from");
             MinDistance = d.NumberFixed("min");
             MaxDistance = d.NumberFixed("max");

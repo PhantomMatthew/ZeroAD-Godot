@@ -28,6 +28,7 @@ public sealed partial class SimBridge : Node
     private EntityId? _playerEntity;
     private ObstructionManager _obstructions = null!;
     private RangeManager _range = null!;
+    private TerritoryManager _territory = null!;
     private PathfinderComponent _pathfinder = null!;
     private TerrainComponent _terrain = null!;
     private EntityId _terrainEntity;
@@ -67,6 +68,7 @@ public sealed partial class SimBridge : Node
     public FogWorldRenderer FogWorld => _fogWorld;
     private FogWorldRenderer _fogWorld = null!;
     public RangeManager Range => _range;
+    public TerritoryManager Territory => _territory;
 
     public void InitWorld()
     {
@@ -155,6 +157,8 @@ public sealed partial class SimBridge : Node
         _pathfinder.SetTerrain(_terrain);
         _range = new RangeManager(_sim, Fixed.FromFloat(worldSize), Fixed.FromFloat(worldSize));
         SimSystem.SetRangeManager(_range);
+        _territory = new TerritoryManager(_sim, (int)worldSize);
+        SimSystem.SetTerritoryManager(_territory);
         SimSystem.SetPathfinder(_pathfinder);
         SimSystem.SetWaterManager(_sim.Water);
         Gui = new GuiInterface(_sim);
@@ -395,6 +399,7 @@ public sealed partial class SimBridge : Node
         {
             PlacementType = BuildPlacementType.Land,
             Category = stats?.Category ?? "Building",
+            Territory = stats?.BuildRestrictionsTerritory ?? "",
         });
         obstruction.EnsureRegistered();
 
