@@ -20,6 +20,7 @@ public sealed class AuraComponentTests
         var player = cm.CreateEntity();
         cm.AddComponent(player, new PlayerComponent());
         cm.AddComponent(player, new OwnershipComponent { PlayerId = 1 });
+        cm.AddComponent(player, new DiplomacyComponent());
         var tm = new TechnologyManager();
         cm.AddComponent(player, tm);
         // 空科技目录 + 一个 phase_town 占位(reqTech 门控测试用)。
@@ -59,11 +60,21 @@ public sealed class AuraComponentTests
         cm.Auras = catalog;
     }
 
+    /// <summary>注册一个带 DiplomacyComponent 的非 gaia 玩家(affectedPlayers 测试用)。</summary>
+    private static void AddPlayerWithDiplomacy(ComponentManager cm, int playerId)
+    {
+        var e = cm.CreateEntity();
+        cm.AddComponent(e, new PlayerComponent());
+        cm.AddComponent(e, new OwnershipComponent { PlayerId = playerId });
+        cm.AddComponent(e, new DiplomacyComponent());
+        cm.Players.AddPlayer(playerId, e);
+    }
+
     private static AuraCatalog RangeCatalog(string name, float radius, float multiply,
-        IReadOnlyList<string> affects, bool stackable = false) =>
+        IReadOnlyList<string> affects, bool stackable = false, IReadOnlyList<string>? affectedPlayers = null) =>
         new(new Dictionary<string, AuraDefinition>
         {
-            [name] = new(name, "range", radius, affects, new[] { "Player" },
+            [name] = new(name, "range", radius, affects, affectedPlayers ?? new[] { "Player" },
                 new[] { new Modification("ResourceGatherer/Rates/food.grain", null, multiply, null, affects) },
                 null, stackable, name, "")
         });
@@ -245,5 +256,161 @@ public sealed class AuraComponentTests
         cm.DestroyEntity(src); // 触发 OnDeinit → 清残留 modifier。
 
         Assert.Equal(GatherPath, cm.Modifiers.Apply(Path, GatherPath, worker), 0.01f);
+    }
+
+    // ---------- affectedPlayers(Ally/MutualAlly/ExclusiveMutualAlly/Enemy)----------
+
+    [Fact]
+    public void RangeAura_Ally_Buffs_Ally_And_Self_Not_Enemy()
+    {
+        // Ally 单向 + 含自身(Player.js IsAlly(self) 恒真)。teams {1,2}=0 同队,{3}=1 敌。
+        var (cm, rm, _, _) = NewWorld();
+        AddPlayerWithDiplomacy(cm, 2);
+        AddPlayerWithDiplomacy(cm, 3);
+        cm.Players.SeedDiplomacyFromTeams(new Dictionary<int, int> { [1] = 0, [2] = 0, [3] = 1 });
+        var catalog = RangeCatalog("test/ally", radius: 10, multiply: 1.5f,
+            affects: new[] { "Worker" }, affectedPlayers: new[] { "Ally" });
+        var src = Spawn(cm, rm, 10, 10, owner: 1);
+        AttachAura(cm, src, catalog, "test/ally");
+        var own = Spawn(cm, rm, 12, 10, owner: 1, classes: new[] { "Worker" });
+        var ally = Spawn(cm, rm, 12, 11, owner: 2, classes: new[] { "Worker" });
+        var enemy = Spawn(cm, rm, 12, 12, owner: 3, classes: new[] { "Worker" });
+
+        cm.QueryInterface<AuraComponent>(src)!.Tick(cm, rm, catalog);
+
+        Assert.Equal(15f, cm.Modifiers.Apply(Path, GatherPath, own), 0.01f);
+        Assert.Equal(15f, cm.Modifiers.Apply(Path, GatherPath, ally), 0.01f);
+        Assert.Equal(GatherPath, cm.Modifiers.Apply(Path, GatherPath, enemy), 0.01f);
+    }
+
+    [Fact]
+    public void RangeAura_Enemy_Debuffs_Enemy_Only()
+    {
+        // Enemy 单向、不含自身(对齐 carnyx.json:敌方 Soldier −10% 攻击)。
+        var (cm, rm, _, _) = NewWorld();
+        AddPlayerWithDiplomacy(cm, 2);
+        AddPlayerWithDiplomacy(cm, 3);
+        cm.Players.SeedDiplomacyFromTeams(new Dictionary<int, int> { [1] = 0, [2] = 0, [3] = 1 });
+        var catalog = RangeCatalog("test/enemy", radius: 10, multiply: 0.9f,
+            affects: new[] { "Worker" }, affectedPlayers: new[] { "Enemy" });
+        var src = Spawn(cm, rm, 10, 10, owner: 1);
+        AttachAura(cm, src, catalog, "test/enemy");
+        var own = Spawn(cm, rm, 12, 10, owner: 1, classes: new[] { "Worker" });
+        var ally = Spawn(cm, rm, 12, 11, owner: 2, classes: new[] { "Worker" });
+        var enemy = Spawn(cm, rm, 12, 12, owner: 3, classes: new[] { "Worker" });
+
+        cm.QueryInterface<AuraComponent>(src)!.Tick(cm, rm, catalog);
+
+        Assert.Equal(9f, cm.Modifiers.Apply(Path, GatherPath, enemy), 0.01f);
+        Assert.Equal(GatherPath, cm.Modifiers.Apply(Path, GatherPath, own), 0.01f);
+        Assert.Equal(GatherPath, cm.Modifiers.Apply(Path, GatherPath, ally), 0.01f);
+    }
+
+    [Fact]
+    public void RangeAura_MutualAlly_Requires_Both_Directions()
+    {
+        // 单向结盟不算 MutualAlly:1→2 ally 但 2→1 neutral → 2 不吃 1 的光环;补 2→1 后成立。
+        var (cm, rm, player, _) = NewWorld();
+        AddPlayerWithDiplomacy(cm, 2);
+        var dip1 = cm.QueryInterface<DiplomacyComponent>(player)!;
+        var dip2 = cm.QueryInterface<DiplomacyComponent>(cm.Players.GetPlayerEntityId(2)!.Value)!;
+        dip1.SetAlly(2);
+        var catalog = RangeCatalog("test/mutual", radius: 10, multiply: 1.5f,
+            affects: new[] { "Worker" }, affectedPlayers: new[] { "MutualAlly" });
+        var src = Spawn(cm, rm, 10, 10, owner: 1);
+        AttachAura(cm, src, catalog, "test/mutual");
+        var other = Spawn(cm, rm, 12, 10, owner: 2, classes: new[] { "Worker" });
+        var aura = cm.QueryInterface<AuraComponent>(src)!;
+
+        aura.Tick(cm, rm, catalog);
+        Assert.Equal(GatherPath, cm.Modifiers.Apply(Path, GatherPath, other), 0.01f);
+
+        dip2.SetAlly(1); // 双向成立 → re-Tick diff 补 apply(外交翻转无需事件)。
+        aura.Tick(cm, rm, catalog);
+        Assert.Equal(15f, cm.Modifiers.Apply(Path, GatherPath, other), 0.01f);
+    }
+
+    [Fact]
+    public void GlobalAura_MutualAlly_Applies_To_Ally_PlayerEntity()
+    {
+        // teambonus 形状(spart_player_teambonus):global + MutualAlly → 自身与盟友玩家实体
+        // 都吃,敌方不吃。
+        var (cm, rm, _, _) = NewWorld();
+        AddPlayerWithDiplomacy(cm, 2);
+        AddPlayerWithDiplomacy(cm, 3);
+        cm.Players.SeedDiplomacyFromTeams(new Dictionary<int, int> { [1] = 0, [2] = 0, [3] = 1 });
+        var catalog = new AuraCatalog(new Dictionary<string, AuraDefinition>
+        {
+            ["test/teambonus"] = new("test/teambonus", "global", 0f, new[] { "Hero" },
+                new[] { "MutualAlly" },
+                new[] { new Modification("Cost/BuildTime", null, 0.9f, null, new[] { "Hero" }) },
+                null, false, "tb", "")
+        });
+        var src = Spawn(cm, rm, 10, 10, owner: 1);
+        AttachAura(cm, src, catalog, "test/teambonus");
+        var ownHero = Spawn(cm, rm, 20, 20, owner: 1, classes: new[] { "Hero" });
+        var allyHero = Spawn(cm, rm, 30, 30, owner: 2, classes: new[] { "Hero" });
+        var enemyHero = Spawn(cm, rm, 40, 40, owner: 3, classes: new[] { "Hero" });
+
+        cm.QueryInterface<AuraComponent>(src)!.Tick(cm, rm, catalog);
+
+        Assert.Equal(90f, cm.Modifiers.Apply("Cost/BuildTime", 100f, ownHero), 0.01f);
+        Assert.Equal(90f, cm.Modifiers.Apply("Cost/BuildTime", 100f, allyHero), 0.01f);
+        Assert.Equal(100f, cm.Modifiers.Apply("Cost/BuildTime", 100f, enemyHero), 0.01f);
+    }
+
+    [Fact]
+    public void PlayerAura_ExclusiveMutualAlly_Excludes_Self()
+    {
+        // ExclusiveMutualAlly:只盟友,排自身(对齐 Player.js IsExclusiveMutualAlly)。
+        var (cm, rm, _, _) = NewWorld();
+        AddPlayerWithDiplomacy(cm, 2);
+        cm.Players.SeedDiplomacyFromTeams(new Dictionary<int, int> { [1] = 0, [2] = 0 });
+        var catalog = new AuraCatalog(new Dictionary<string, AuraDefinition>
+        {
+            ["test/exclusive"] = new("test/exclusive", "player", 0f, Array.Empty<string>(),
+                new[] { "ExclusiveMutualAlly" },
+                new[] { new Modification("Cost/BuildTime", null, 0.8f, null, Array.Empty<string>()) },
+                null, false, "ex", "")
+        });
+        var src = Spawn(cm, rm, 10, 10, owner: 1);
+        AttachAura(cm, src, catalog, "test/exclusive");
+        var own = Spawn(cm, rm, 20, 20, owner: 1, classes: new[] { "Structure" });
+        var ally = Spawn(cm, rm, 30, 30, owner: 2, classes: new[] { "Structure" });
+
+        cm.QueryInterface<AuraComponent>(src)!.Tick(cm, rm, catalog);
+
+        Assert.Equal(100f, cm.Modifiers.Apply("Cost/BuildTime", 100f, own), 0.01f);
+        Assert.Equal(80f, cm.Modifiers.Apply("Cost/BuildTime", 100f, ally), 0.01f);
+    }
+
+    [Fact]
+    public void PlayerAura_Diplomacy_Flip_Removes_Target()
+    {
+        // 外交翻转:盟友反目 → re-Tick diff 移除其玩家实体上的 modifier,自身保留。
+        var (cm, rm, _, _) = NewWorld();
+        AddPlayerWithDiplomacy(cm, 2);
+        cm.Players.SeedDiplomacyFromTeams(new Dictionary<int, int> { [1] = 0, [2] = 0 });
+        var catalog = new AuraCatalog(new Dictionary<string, AuraDefinition>
+        {
+            ["test/flip"] = new("test/flip", "player", 0f, Array.Empty<string>(),
+                new[] { "MutualAlly" },
+                new[] { new Modification("Cost/BuildTime", null, 0.8f, null, Array.Empty<string>()) },
+                null, false, "fl", "")
+        });
+        var src = Spawn(cm, rm, 10, 10, owner: 1);
+        AttachAura(cm, src, catalog, "test/flip");
+        var own = Spawn(cm, rm, 20, 20, owner: 1, classes: new[] { "Structure" });
+        var ally = Spawn(cm, rm, 30, 30, owner: 2, classes: new[] { "Structure" });
+        var aura = cm.QueryInterface<AuraComponent>(src)!;
+
+        aura.Tick(cm, rm, catalog);
+        Assert.Equal(80f, cm.Modifiers.Apply("Cost/BuildTime", 100f, ally), 0.01f);
+
+        cm.QueryInterface<DiplomacyComponent>(cm.Players.GetPlayerEntityId(2)!.Value)!.SetEnemy(1);
+        aura.Tick(cm, rm, catalog);
+
+        Assert.Equal(100f, cm.Modifiers.Apply("Cost/BuildTime", 100f, ally), 0.01f);
+        Assert.Equal(80f, cm.Modifiers.Apply("Cost/BuildTime", 100f, own), 0.01f);
     }
 }

@@ -20,8 +20,12 @@ namespace ZeroAD.Sim.Components;
 /// 非 stack → <c>aura/&lt;name&gt;</c>。AddModifiers 拒重保证 range 每 tick 对在范围内 target
 /// 重复 Add 安全(幂等)。
 ///
-/// affectedPlayers:内核无 Diplomacy,MVP 只支持 <c>["Player"]</c>(默认值,Auras.js:116)。
-/// range 预过滤 owner == source owner;非 ["Player"] 的 aura 整体跳过。
+/// affectedPlayers(对齐 Auras.js CalculateAffectedPlayers):支持全 5 token ——
+/// <c>Player</c>=自身;<c>Ally</c>=视 owner 为盟友的玩家(单向,含自身);
+/// <c>MutualAlly</c>=双向盟友(含自身);<c>ExclusiveMutualAlly</c>=双向盟友(排自身);
+/// <c>Enemy</c>=视 owner 为敌的玩家(不含自身;gaia 无玩家实体自然排除)。
+/// range 预过滤 target owner ∈ affected 集合;global/player 应用于每个受影响玩家实体。
+/// 外交翻转无需事件:每 tick 重算 affected 集合 + diff(与 reqTech 翻转同机制)。
 ///
 /// 生命周期(D4):源销毁时 OnDeinit 清残留 modifier。OnDeinit 无参,故 Configure 注入
 /// ComponentManager 引用。派生态(_rangeTargets / _appliedByModId)不序列化,靠 tick 重建。
@@ -67,29 +71,30 @@ public sealed class AuraComponent : ComponentBase
         foreach (var name in _names)
         {
             if (!catalog.Auras.TryGetValue(name, out var def)) continue;
-            // MVP:affectedPlayers 只支持 ["Player"];其余(Diplomacy 相关)跳过。
-            if (!IsPlayerOnly(def.AffectedPlayers)) continue;
             // 空修正值(纯描述 aura)无 effect,跳过避免空 AddModifiers。
             if (def.Modifications.Count == 0) continue;
+
+            var affected = ComputeAffectedPlayers(cm, def.AffectedPlayers, owner.PlayerId);
+            if (affected.Count == 0) continue;
 
             string modId = ModId(def);
             switch (def.Type)
             {
                 case "range":
-                    TickRange(cm, range, def, modId, owner.PlayerId);
+                    TickRange(cm, range, def, modId, affected);
                     break;
                 case "global":
                 case "player":
-                    TickPlayerLevel(cm, def, modId, playerEntity.Value, techMgr);
+                    TickPlayerLevel(cm, def, modId, affected, techMgr);
                     break;
             }
         }
     }
 
     private void TickRange(ComponentManager cm, RangeManager range, AuraDefinition def,
-        string modId, int ownerPlayerId)
+        string modId, HashSet<int> affected)
     {
-        // ExecuteQuery predicate:有 Identity + affects 命中 + 同 owner(affectedPlayers "Player")。
+        // ExecuteQuery predicate:有 Identity + affects 命中 + target owner ∈ affected 集合。
         var current = new HashSet<EntityId>(range.ExecuteQuery(
             Entity, Maths.Fixed.Zero, Maths.Fixed.FromFloat(def.Radius),
             eid =>
@@ -98,7 +103,7 @@ public sealed class AuraComponent : ComponentBase
                 if (id == null) return false;
                 if (!AffectsTarget(def.Affects, id)) return false;
                 var o = cm.QueryInterface<OwnershipComponent>(eid);
-                return o != null && o.PlayerId == ownerPlayerId;
+                return o != null && affected.Contains(o.PlayerId);
             }));
 
         _rangeTargets.TryGetValue(def.Name, out var prev);
@@ -120,22 +125,33 @@ public sealed class AuraComponent : ComponentBase
     }
 
     private void TickPlayerLevel(ComponentManager cm, AuraDefinition def, string modId,
-        EntityId playerEntity, TechnologyManager? techMgr)
+        HashSet<int> affected, TechnologyManager? techMgr)
     {
-        // reqTech 门控:无 → 恒真;有 → 每 tick 重判(内核无 OnGlobalResearchFinished 事件)。
+        // reqTech 门控看 SOURCE owner 的科技(对齐原版 IsAuraReqsMet),每 tick 重判。
         bool reqMet = def.RequiredTechnology == null
             || (techMgr != null && techMgr.IsResearched(def.RequiredTechnology));
-        bool wasApplied = _appliedByModId.TryGetValue(modId, out var set) && set.Contains(playerEntity);
+        var current = new HashSet<EntityId>();
+        if (reqMet)
+            foreach (var pid in affected)
+            {
+                var pe = cm.GetPlayerEntityId(pid);
+                if (pe != null) current.Add(pe.Value);
+            }
 
-        if (reqMet && !wasApplied)
+        _appliedByModId.TryGetValue(modId, out var prev);
+        prev ??= new HashSet<EntityId>();
+
+        // diff 应用/移除(reqTech 翻转 + 外交翻转同机制)。先 materialize:Track 就地改
+        // _appliedByModId[modId](与 prev 同集合),不能边枚举边改。
+        foreach (var added in current.Except(prev).ToList())
         {
-            cm.Modifiers.AddModifiers(modId, def.Modifications, playerEntity);
-            Track(modId, playerEntity, true);
+            cm.Modifiers.AddModifiers(modId, def.Modifications, added);
+            Track(modId, added, true);
         }
-        else if (!reqMet && wasApplied)
+        foreach (var removed in prev.Except(current).ToList())
         {
-            cm.Modifiers.RemoveAllModifiers(modId, playerEntity);
-            Track(modId, playerEntity, false);
+            cm.Modifiers.RemoveAllModifiers(modId, removed);
+            Track(modId, removed, false);
         }
     }
 
@@ -177,8 +193,41 @@ public sealed class AuraComponent : ComponentBase
     private string ModId(AuraDefinition def) =>
         def.Stackable ? $"aura/{def.Name}{Entity.Value}" : $"aura/{def.Name}";
 
-    private static bool IsPlayerOnly(IReadOnlyList<string> affectedPlayers) =>
-        affectedPlayers.Count == 1 && affectedPlayers[0] == "Player";
+    /// <summary>对齐 Auras.js CalculateAffectedPlayers:Player=自身;Ally=视 owner 为盟友的
+    /// 玩家(单向,含自身 —— Player.js IsAlly(self) 恒真);MutualAlly=双向盟友(含自身);
+    /// ExclusiveMutualAlly=双向盟友(排自身);Enemy=视 owner 为敌的玩家(不含自身;gaia
+    /// 无玩家实体自然排除)。</summary>
+    private static HashSet<int> ComputeAffectedPlayers(ComponentManager cm,
+        IReadOnlyList<string> tokens, int ownerPlayerId)
+    {
+        var affected = new HashSet<int>();
+        if (tokens.Contains("Player") || tokens.Contains("Ally") || tokens.Contains("MutualAlly"))
+            affected.Add(ownerPlayerId);
+
+        bool wantsAlly = tokens.Contains("Ally");
+        bool wantsMutual = tokens.Contains("MutualAlly") || tokens.Contains("ExclusiveMutualAlly");
+        bool wantsEnemy = tokens.Contains("Enemy");
+        if (!wantsAlly && !wantsMutual && !wantsEnemy) return affected;
+
+        DiplomacyComponent? ownerDip = null;
+        var ownerEntity = cm.GetPlayerEntityId(ownerPlayerId);
+        if (ownerEntity != null)
+            ownerDip = cm.QueryInterface<DiplomacyComponent>(ownerEntity.Value);
+
+        foreach (var pid in cm.Players.GetNonGaiaPlayerIds())
+        {
+            if (pid == ownerPlayerId) continue;
+            var pe = cm.GetPlayerEntityId(pid);
+            if (pe == null) continue;
+            var dip = cm.QueryInterface<DiplomacyComponent>(pe.Value);
+            if (dip == null) continue;
+            bool alliesOwner = dip.IsAlly(ownerPlayerId);
+            if (wantsAlly && alliesOwner) affected.Add(pid);
+            if (wantsMutual && alliesOwner && ownerDip != null && ownerDip.IsAlly(pid)) affected.Add(pid);
+            if (wantsEnemy && dip.IsEnemy(ownerPlayerId)) affected.Add(pid);
+        }
+        return affected;
+    }
 
     /// <summary>affects 过滤:空=全中;数组任一 term 命中(term 内空格分词 AND,对齐原版)。</summary>
     private static bool AffectsTarget(IReadOnlyList<string> affects, IdentityComponent id)
