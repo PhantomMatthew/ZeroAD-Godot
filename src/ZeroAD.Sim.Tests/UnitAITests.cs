@@ -63,7 +63,9 @@ public sealed class UnitAITests
     {
         var cm = new ComponentManager(rngSeed: 1);
         var attacker = MakeUnit(cm);
-        var target = MakeUnit(cm);
+        // 目标须是另一玩家(敌对校验对齐原版 CanAttack:同玩家目标必拒)。两玩家均未注册
+        // 玩家实体/外交 → IsEnemy 兜底=敌(原版开局默认外交)。
+        var target = MakeUnit(cm, player: 2);
         cm.AddComponent(attacker, new AttackComponent());
         cm.AddComponent(target, new HealthComponent());
 

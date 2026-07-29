@@ -210,8 +210,20 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
         ind.On("Order.Attack", (u, m) =>
         {
+            // 拒收路径一律 FinishOrder 出队(对齐原版):仅置 IDLE 会让订单残留队列,
+            // 同 Tick 的 Timer 在无 handler 的 IDLE 态抛出。
             var attack = m.Cm!.QueryInterface<AttackComponent>(u.Entity);
-            if (attack == null || m.Order!.Target == null) { u.FsmNextState = "IDLE"; return; }
+            if (attack == null || m.Order!.Target == null) { u.FinishOrder(); return; }
+            // 敌对校验(对齐原版 CanAttack):self/盟友/中立目标拒收;无外交数据默认=敌,
+            // 无 OwnershipComponent 的目标(gaia 资源等)不拦。
+            var own = m.Cm.QueryInterface<OwnershipComponent>(u.Entity);
+            var targetOwn = m.Cm.QueryInterface<OwnershipComponent>(m.Order.Target.Value);
+            if (own != null && targetOwn != null
+                && !m.Cm.Players.IsEnemy(own.PlayerId, targetOwn.PlayerId))
+            {
+                u.FinishOrder();
+                return;
+            }
             attack.AttackTarget(m.Order.Target.Value);
             u.FsmNextState = "COMBAT.APPROACHING";
         });

@@ -78,6 +78,25 @@ public sealed class PlayerManager
     }
 
     /// <summary>
+    /// Combat-facing enemy test, mirroring Player.js IsEnemy's combat semantics:
+    /// self → false; gaia (0) → true (the original's <c>IsEnemy(0) == true</c>); an
+    /// unregistered self-player or a missing <see cref="DiplomacyComponent"/> (legacy
+    /// worlds/tests) → true, matching the original's default stance of enemy-before-setup;
+    /// otherwise the seeded <see cref="DiplomacyComponent"/> stance decides.
+    /// Neutral stance = non-belligerent: IsEnemy is false, so neutral players can neither
+    /// be attack-ordered nor auto-acquired by the AI (中立语义).
+    /// </summary>
+    public bool IsEnemy(int selfPlayer, int otherPlayer)
+    {
+        if (otherPlayer == selfPlayer) return false;
+        if (otherPlayer <= 0) return true; // gaia / invalid owner is hostile to all
+        if (!_playerEntities.TryGetValue(selfPlayer, out var selfEntity)) return true;
+        var dip = _cm.QueryInterface<DiplomacyComponent>(selfEntity);
+        if (dip == null) return true;
+        return dip.IsEnemy(otherPlayer);
+    }
+
+    /// <summary>
     /// Seed every player's <see cref="DiplomacyComponent"/> from team assignments: same
     /// team (id &gt;= 0) → mutual ally; otherwise → mutual enemy. Idempotent — overwrites
     /// prior stances. Call once at world setup after all player entities are registered.

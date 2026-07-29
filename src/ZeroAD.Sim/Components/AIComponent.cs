@@ -118,7 +118,8 @@ public sealed class AIComponent : ComponentBase
         foreach (var entity in _cm!.AllEntities)
         {
             var o = _cm.QueryInterface<OwnershipComponent>(entity);
-            if (o == null || o.PlayerId == playerId) continue;
+            // 外交敌对过滤(对齐原版):盟友/中立不入列;gaia(0)=敌;无外交数据默认=敌。
+            if (o == null || !_cm.Players.IsEnemy((int)playerId, o.PlayerId)) continue;
             var identity = _cm.QueryInterface<IdentityComponent>(entity);
             var attack = _cm.QueryInterface<AttackComponent>(entity);
             if (identity != null && identity.IsUnit && attack != null)
@@ -133,7 +134,8 @@ public sealed class AIComponent : ComponentBase
         foreach (var entity in _cm!.AllEntities)
         {
             var o = _cm.QueryInterface<OwnershipComponent>(entity);
-            if (o == null || o.PlayerId == playerId) continue;
+            // 外交敌对过滤(对齐原版):盟友/中立不入列;gaia(0)=敌;无外交数据默认=敌。
+            if (o == null || !_cm.Players.IsEnemy((int)playerId, o.PlayerId)) continue;
             var identity = _cm.QueryInterface<IdentityComponent>(entity);
             if (identity != null && identity.IsBuilding)
                 result.Add(entity);
