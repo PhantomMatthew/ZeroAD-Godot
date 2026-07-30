@@ -19,6 +19,7 @@ public sealed partial class HUD : CanvasLayer
     private Label _selName = null!;
     private ProgressBar _selHealth = null!;
     private Label _selHealthText = null!;
+    private CaptureBar _selCapture = null!;
     private Label _selExtra = null!;
     private Label _selGarrison = null!;
     private HBoxContainer _commandBox = null!;
@@ -383,6 +384,17 @@ public sealed partial class HUD : CanvasLayer
         _selHealthText.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
         healthRow.AddChild(_selHealthText);
 
+        // 占领条(原版 selection_details 的 capture bar):选中可占领实体时显示,
+        // 分段=各玩家 CP 占比(玩家色,升序确定),tooltip 给数值明细。
+        _selCapture = new CaptureBar
+        {
+            CustomMinimumSize = new Vector2(200, 7),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            Visible = false,
+            TooltipText = "",
+        };
+        vbox.AddChild(_selCapture);
+
         _selExtra = new Label { Text = "", AutowrapMode = TextServer.AutowrapMode.WordSmart };
         _selExtra.AddThemeFontSizeOverride("font_size", 13);
         _selExtra.AddThemeColorOverride("font_color", new Color(0.85f, 0.80f, 0.65f));
@@ -614,6 +626,7 @@ public sealed partial class HUD : CanvasLayer
             _selName.Text = "";
             _selHealth.Value = 0;
             _selHealthText.Text = "";
+            _selCapture.Visible = false;
             _selExtra.Text = "";
             _selIcon.Texture = null;
             return;
@@ -637,6 +650,29 @@ public sealed partial class HUD : CanvasLayer
         {
             _selHealth.Value = 100;
             _selHealthText.Text = "";
+        }
+
+        // 占领条:仅可占领实体(Capturable)显示;分段宽=CP/max,玩家色,升序确定。
+        var capturable = _sim.Sim.QueryInterface<CapturableComponent>(first);
+        float maxCp = capturable?.MaxCapturePoints.ToFloat() ?? 0f;
+        if (capturable != null && maxCp > 0f)
+        {
+            int n = System.Math.Min(capturable.CapturePoints.Length, CaptureBar.MaxPlayers);
+            var sb = new System.Text.StringBuilder("Capture");
+            for (int p = 0; p < n; p++)
+            {
+                float cp = capturable.CapturePoints[p].ToFloat();
+                _selCapture.Fractions[p] = cp / maxCp;
+                if (cp > 0f) sb.Append($"  P{p}:{(int)cp}");
+            }
+            _selCapture.Count = n;
+            _selCapture.TooltipText = sb.Append($"/{(int)maxCp}").ToString();
+            _selCapture.Visible = true;
+            _selCapture.QueueRedraw();
+        }
+        else
+        {
+            _selCapture.Visible = false;
         }
 
         var supply = _sim.Sim.QueryInterface<ResourceSupply>(first);
@@ -697,5 +733,33 @@ public sealed partial class HUD : CanvasLayer
         // Preserve subdirectories (stances/aggressive) but strip file extension.
         string withoutExt = System.IO.Path.ChangeExtension(name, null);
         return LoadTex($"session/icons/{withoutExt}.png");
+    }
+
+    /// <summary>占领条(对齐原版 selection_details 的 capture bar):自绘分段堆叠条,
+    /// 每段=一玩家 CP 占比(玩家色,下标升序=确定性)。Fractions/Count 由 HUD 每帧填,
+    /// QueueRedraw 触发重绘。</summary>
+    private sealed partial class CaptureBar : Control
+    {
+        public const int MaxPlayers = 17;   // gaia(0) + 16 玩家(对齐 LosGrid.MaxPlayers+1)
+        public readonly float[] Fractions = new float[MaxPlayers];
+        public int Count;
+
+        public override void _Draw()
+        {
+            var rect = new Rect2(Vector2.Zero, Size);
+            DrawRect(rect, new Color(0f, 0f, 0f, 0.6f));
+            float x = 0f;
+            for (int p = 0; p < Count; p++)
+            {
+                float f = Fractions[p];
+                if (f <= 0f) continue;
+                float w = rect.Size.X * f;
+                // 收尾段贴齐右缘,吸收浮点累计误差(条总宽恒=满宽)。
+                if (x + w > rect.Size.X) w = rect.Size.X - x;
+                DrawRect(new Rect2(x, 0, w, rect.Size.Y), SimBridge.GetPlayerColor(p));
+                x += w;
+            }
+            DrawRect(rect, new Color(0f, 0f, 0f, 0.8f), filled: false, width: 1f);
+        }
     }
 }
