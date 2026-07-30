@@ -84,6 +84,28 @@ namespace ZeroAD.Sim.Components
             return true;
         }
 
+        /// <summary>Port of CCmpObstruction::SetActive: deactivate drops the registered shape
+        /// (turreted units stop blocking pathing); reactivate re-registers. No-op when the
+        /// manager isn't wired (kernel tests) — the flag still flips.</summary>
+        public void SetActive(bool active)
+        {
+            if (Active == active) return;
+            Active = active;
+            if (!active)
+            {
+                if (!_registered) return;
+                if (SimSystem.Sim != null)
+                    SimSystem.Sim.PositionChanged -= OnPositionChanged;
+                SimSystem.Obstructions?.RemoveShape(_tag);
+                _tag = default;
+                _registered = false;
+            }
+            else
+            {
+                EnsureRegistered();
+            }
+        }
+
         private void OnPositionChanged(EntityId entity, FixedVector2D from, FixedVector2D to)
         {
             if (entity != Entity || !_registered) return;

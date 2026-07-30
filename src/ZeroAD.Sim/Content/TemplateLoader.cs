@@ -249,8 +249,113 @@ namespace ZeroAD.Sim.Content
             var garrisonHolder = node.GetChild("GarrisonHolder");
             if (garrisonHolder.IsOk)
             {
+                stats.HasGarrisonHolder = true;
                 stats.GarrisonCapacity = garrisonHolder.GetChild("Max").IsOk
                     ? garrisonHolder.GetChild("Max").ToInt() : 10;
+                // GarrisonHolder.js 行为字段(List 必需;EjectHealth/Pickup 可选)。
+                var ghList = garrisonHolder.GetChild("List");
+                if (ghList.IsOk) stats.GarrisonHolderList = ghList.ToString().Trim();
+                var ghEject = garrisonHolder.GetChild("EjectClassesOnDestroy");
+                if (ghEject.IsOk) stats.GarrisonHolderEjectClasses = ghEject.ToString().Trim();
+                var ghHeal = garrisonHolder.GetChild("BuffHeal");
+                if (ghHeal.IsOk) stats.GarrisonHolderBuffHeal = ghHeal.ToFixed().ToFloat();
+                var ghRange = garrisonHolder.GetChild("LoadingRange");
+                if (ghRange.IsOk) stats.GarrisonHolderLoadingRange = ghRange.ToFixed().ToFloat();
+                var ghEjectHealth = garrisonHolder.GetChild("EjectHealth");
+                if (ghEjectHealth.IsOk) stats.GarrisonHolderEjectHealth = ghEjectHealth.ToFixed().ToFloat();
+                var ghPickup = garrisonHolder.GetChild("Pickup");
+                if (ghPickup.IsOk) stats.GarrisonHolderPickup = ghPickup.ToBool();
+            }
+
+            // Garrisonable(可驻防单位;template_unit 默认 Size=1)。
+            var garrisonable = node.GetChild("Garrisonable");
+            if (garrisonable.IsOk)
+            {
+                stats.GarrisonableSize = garrisonable.GetChild("Size").IsOk
+                    ? garrisonable.GetChild("Size").ToInt() : 1;
+            }
+
+            // Turretable(可上炮塔点;远程兵系)。Schema 为 <empty/>,存在即挂。
+            if (node.GetChild("Turretable").IsOk)
+                stats.HasTurretable = true;
+
+            // TurretHolder(城墙/哨塔的命名炮塔点;子元素名即点位名)。
+            var turretHolder = node.GetChild("TurretHolder");
+            if (turretHolder.IsOk)
+            {
+                var points = turretHolder.GetChild("TurretPoints");
+                if (points.IsOk)
+                {
+                    stats.HasTurretHolder = true;
+                    // ParamNode.Children 为排序字典:点位按名序(确定性;记录:原版按模板书写序)。
+                    foreach (var (pointName, pointNode) in points.Children)
+                    {
+                        var def = new TurretPointDef
+                        {
+                            Name = pointName,
+                            X = pointNode.GetChild("X").ToFloat(),
+                            Y = pointNode.GetChild("Y").ToFloat(),
+                            Z = pointNode.GetChild("Z").ToFloat(),
+                            AllowedClasses = pointNode.GetChild("AllowedClasses").IsOk
+                                ? pointNode.GetChild("AllowedClasses").ToString().Trim() : "",
+                            Angle = pointNode.GetChild("Angle").IsOk
+                                ? pointNode.GetChild("Angle").ToFloat() * (float)(System.Math.PI / 180) : null,
+                            Template = pointNode.GetChild("Template").IsOk
+                                ? pointNode.GetChild("Template").ToString().Trim() : "",
+                            Ejectable = !pointNode.GetChild("Ejectable").IsOk
+                                || pointNode.GetChild("Ejectable").ToBool(),
+                        };
+                        stats.TurretPoints.Add(def);
+                    }
+                }
+                var thRange = turretHolder.GetChild("LoadingRange");
+                if (thRange.IsOk) stats.TurretHolderLoadingRange = thRange.ToFixed().ToFloat();
+                var thPickup = turretHolder.GetChild("Pickup");
+                if (thPickup.IsOk) stats.TurretHolderPickup = thPickup.ToBool();
+            }
+
+            // Formation(编队控制器;special/formations/* 模板;Formation.js 行为件)。
+            // SortingClasses 按 "|" 分层存为字符串列表(每层原文);SortingOrder/MinColumns/
+            // MaxColumns/MaxRows/CenterGap 可选(模板缺省 = 0/"")。
+            var formation = node.GetChild("Formation");
+            if (formation.IsOk)
+            {
+                stats.HasFormation = true;
+                var fReq = formation.GetChild("RequiredMemberCount");
+                if (fReq.IsOk) stats.FormationRequiredMemberCount = fReq.ToInt();
+                var fSpeed = formation.GetChild("SpeedMultiplier");
+                if (fSpeed.IsOk) stats.FormationSpeedMultiplier = fSpeed.ToFixed().ToFloat();
+                var fShape = formation.GetChild("FormationShape");
+                if (fShape.IsOk) stats.FormationShape = fShape.ToString().Trim();
+                var fTurn = formation.GetChild("MaxTurningAngle");
+                if (fTurn.IsOk) stats.FormationMaxTurningAngle = fTurn.ToFixed().ToFloat();
+                var fSort = formation.GetChild("SortingClasses");
+                if (fSort.IsOk)
+                {
+                    foreach (var level in fSort.ToString().Split('|',
+                        System.StringSplitOptions.RemoveEmptyEntries | System.StringSplitOptions.TrimEntries))
+                        stats.FormationSortingClasses.Add(level);
+                }
+                var fSortOrder = formation.GetChild("SortingOrder");
+                if (fSortOrder.IsOk) stats.FormationSortingOrder = fSortOrder.ToString().Trim();
+                var fShift = formation.GetChild("ShiftRows");
+                if (fShift.IsOk) stats.FormationShiftRows = fShift.ToBool();
+                var fSepW = formation.GetChild("UnitSeparationWidthMultiplier");
+                if (fSepW.IsOk) stats.FormationSepWidthMultiplier = fSepW.ToFixed().ToFloat();
+                var fSepD = formation.GetChild("UnitSeparationDepthMultiplier");
+                if (fSepD.IsOk) stats.FormationSepDepthMultiplier = fSepD.ToFixed().ToFloat();
+                var fSlop = formation.GetChild("Sloppiness");
+                if (fSlop.IsOk) stats.FormationSloppiness = fSlop.ToFixed().ToFloat();
+                var fRatio = formation.GetChild("WidthDepthRatio");
+                if (fRatio.IsOk) stats.FormationWidthDepthRatio = fRatio.ToFixed().ToFloat();
+                var fMinC = formation.GetChild("MinColumns");
+                if (fMinC.IsOk) stats.FormationMinColumns = fMinC.ToInt();
+                var fMaxC = formation.GetChild("MaxColumns");
+                if (fMaxC.IsOk) stats.FormationMaxColumns = fMaxC.ToInt();
+                var fMaxR = formation.GetChild("MaxRows");
+                if (fMaxR.IsOk) stats.FormationMaxRows = fMaxR.ToInt();
+                var fGap = formation.GetChild("CenterGap");
+                if (fGap.IsOk) stats.FormationCenterGap = fGap.ToFixed().ToFloat();
             }
 
             // Footprint: physical extent used for spawn-point search (FootprintComponent) and click
@@ -349,6 +454,89 @@ namespace ZeroAD.Sim.Content
                 if (garrisonRegen.IsOk) stats.CapturableGarrisonRegenRate = garrisonRegen.ToFixed();
             }
 
+            // Heal(治疗者单位):Range 米、Health 每次治疗量、Interval 毫秒(→ 秒)、
+            // HealableClasses/UnhealableClasses token 串(空格分隔,语义同 MatchesClassList)。
+            var healNode = node.GetChild("Heal");
+            if (healNode.IsOk)
+            {
+                stats.HasHeal = true;
+                var range = healNode.GetChild("Range");
+                if (range.IsOk) stats.HealRange = range.ToFixed().ToFloat();
+                var healHealth = healNode.GetChild("Health");
+                if (healHealth.IsOk) stats.HealAmount = healHealth.ToInt();
+                var interval = healNode.GetChild("Interval");
+                if (interval.IsOk) stats.HealInterval = interval.ToInt() / 1000f;
+                var healable = healNode.GetChild("HealableClasses");
+                if (healable.IsOk) stats.HealHealableClasses = healable.ToString().Trim();
+                var unhealable = healNode.GetChild("UnhealableClasses");
+                if (unhealable.IsOk) stats.HealUnhealableClasses = unhealable.ToString().Trim();
+            }
+
+            // Pack(攻城器):Time 毫秒(→ 秒)、Entity 换形目标模板、State 初始形态。
+            var packNode = node.GetChild("Pack");
+            if (packNode.IsOk)
+            {
+                stats.HasPack = true;
+                var ptime = packNode.GetChild("Time");
+                if (ptime.IsOk) stats.PackTime = ptime.ToInt() / 1000f;
+                var pentity = packNode.GetChild("Entity");
+                if (pentity.IsOk) stats.PackEntity = pentity.ToString().Trim();
+                var pstate = packNode.GetChild("State");
+                if (pstate.IsOk) stats.PackStartsPacked = pstate.ToString().Trim() == "packed";
+            }
+
+            // TreasureCollector(单位收集宝物;template_unit 默认件):MaxDistance 米。
+            var tcNode = node.GetChild("TreasureCollector");
+            if (tcNode.IsOk)
+            {
+                stats.HasTreasureCollector = true;
+                var maxDist = tcNode.GetChild("MaxDistance");
+                if (maxDist.IsOk) stats.TreasureCollectorMaxDistance = maxDist.ToFixed().ToFloat();
+            }
+
+            // Treasure(gaia 宝物):CollectTime 毫秒(→ 秒)+ Resources 四资源。
+            var treasureNode = node.GetChild("Treasure");
+            if (treasureNode.IsOk)
+            {
+                stats.HasTreasure = true;
+                var collectTime = treasureNode.GetChild("CollectTime");
+                if (collectTime.IsOk) stats.TreasureCollectTime = collectTime.ToInt() / 1000f;
+                var resources = treasureNode.GetChild("Resources");
+                if (resources.IsOk)
+                {
+                    var food = resources.GetChild("Food");
+                    if (food.IsOk) stats.TreasureFood = food.ToInt();
+                    var wood = resources.GetChild("Wood");
+                    if (wood.IsOk) stats.TreasureWood = wood.ToInt();
+                    var stone = resources.GetChild("Stone");
+                    if (stone.IsOk) stats.TreasureStone = stone.ToInt();
+                    var metal = resources.GetChild("Metal");
+                    if (metal.IsOk) stats.TreasureMetal = metal.ToInt();
+                }
+            }
+
+            // Trader(贸易单位):GainMultiplier 基准倍率 + 可选 GarrisonGainMultiplier。
+            var traderNode = node.GetChild("Trader");
+            if (traderNode.IsOk)
+            {
+                stats.HasTrader = true;
+                var gainMult = traderNode.GetChild("GainMultiplier");
+                if (gainMult.IsOk) stats.TraderGainMultiplier = gainMult.ToFixed().ToFloat();
+                var garrisonMult = traderNode.GetChild("GarrisonGainMultiplier");
+                if (garrisonMult.IsOk) stats.TraderGarrisonGainMultiplier = garrisonMult.ToFixed().ToFloat();
+            }
+
+            // Market(市场/船坞):TradeType token 串(land/naval)+ InternationalBonus。
+            var marketNode = node.GetChild("Market");
+            if (marketNode.IsOk)
+            {
+                stats.HasMarket = true;
+                var tradeType = marketNode.GetChild("TradeType");
+                if (tradeType.IsOk) stats.MarketTradeTypes = tradeType.ToString().Trim();
+                var intlBonus = marketNode.GetChild("InternationalBonus");
+                if (intlBonus.IsOk) stats.MarketInternationalBonus = intlBonus.ToFixed().ToFloat();
+            }
+
             return stats;
         }
 
@@ -414,6 +602,41 @@ namespace ZeroAD.Sim.Content
         public bool CanGather;
         public bool IsBuilding;
         public int GarrisonCapacity;
+        /// <summary>模板含 &lt;GarrisonHolder&gt; 块(GarrisonHolder.js 行为件标记)。</summary>
+        public bool HasGarrisonHolder;
+        public string GarrisonHolderList = "";
+        public string GarrisonHolderEjectClasses = "";
+        public float GarrisonHolderBuffHeal;
+        public float GarrisonHolderLoadingRange = 2f;
+        public float GarrisonHolderEjectHealth = -1f;   // -1 = 无阈值(原版 undefined)
+        public bool GarrisonHolderPickup;
+        /// <summary>&lt;Garrisonable&gt;&lt;Size&gt;;0 = 无该组件。</summary>
+        public int GarrisonableSize;
+        /// <summary>&lt;Turretable/&gt; 存在(schema 为空元素)。</summary>
+        public bool HasTurretable;
+        public bool HasTurretHolder;
+        public float TurretHolderLoadingRange = 2f;
+        public bool TurretHolderPickup;
+        public readonly List<TurretPointDef> TurretPoints = new();
+        /// <summary>模板含 &lt;Formation&gt; 块(编队控制器;Formation.js 行为件标记)。
+        /// 为真时 EntityAssembler 走 AssembleFormationController 分支(非普通单位)。</summary>
+        public bool HasFormation;
+        public int FormationRequiredMemberCount = 2;
+        public float FormationSpeedMultiplier = 1f;
+        public string FormationShape = "square";
+        public float FormationMaxTurningAngle = 1f;
+        /// <summary>SortingClasses 按 "|" 分层(每层原文,如 "Melee Ranged")。</summary>
+        public readonly List<string> FormationSortingClasses = new();
+        public string FormationSortingOrder = "";
+        public bool FormationShiftRows;
+        public float FormationSepWidthMultiplier = 1f;
+        public float FormationSepDepthMultiplier = 1f;
+        public float FormationSloppiness;
+        public float FormationWidthDepthRatio = 1f;
+        public int FormationMinColumns;
+        public int FormationMaxColumns;
+        public int FormationMaxRows;
+        public float FormationCenterGap;
         /// <summary>TrainingRestrictions/Category (Civilian/Hero/WarDog/...). Empty if absent.</summary>
         public string TrainingCategory = "";
 
@@ -459,8 +682,62 @@ namespace ZeroAD.Sim.Content
         public Maths.Fixed CapturableRegenRate = Maths.Fixed.Zero;
         public Maths.Fixed CapturableGarrisonRegenRate = Maths.Fixed.Zero;
 
+        // Heal(治疗者;template_unit_support_healer 等):HasHeal=false → 不装配。
+        public bool HasHeal;
+        public float HealRange = 15f;
+        public int HealAmount = 5;
+        /// <summary>Heal/Interval(模板毫秒 → 秒)。</summary>
+        public float HealInterval = 2f;
+        public string HealHealableClasses = "";
+        public string HealUnhealableClasses = "";
+
+        // Pack(攻城器打包;template_unit_siege_*):HasPack=false → 不装配。
+        public bool HasPack;
+        /// <summary>Pack/Time(模板毫秒 → 秒)。</summary>
+        public float PackTime = 5f;
+        /// <summary>Pack/Entity:打包完成换成的模板名。</summary>
+        public string PackEntity = "";
+        /// <summary>Pack/State == "packed":该模板本身是打包态( packed 变体模板)。</summary>
+        public bool PackStartsPacked;
+
+        // TreasureCollector(template_unit 默认件):HasTreasureCollector=false → 不装配。
+        public bool HasTreasureCollector;
+        public float TreasureCollectorMaxDistance = 5f;
+
+        // Treasure(gaia 宝物;template_gaia_treasure):HasTreasure=false → 不装配。
+        public bool HasTreasure;
+        /// <summary>Treasure/CollectTime(模板毫秒 → 秒)。</summary>
+        public float TreasureCollectTime = 1f;
+        public int TreasureFood;
+        public int TreasureWood;
+        public int TreasureStone;
+        public int TreasureMetal;
+
+        // Trader(贸易单位;template_unit_support_trader 等):HasTrader=false → 不装配。
+        public bool HasTrader;
+        public float TraderGainMultiplier = 0.75f;
+        /// <summary>Trader/GarrisonGainMultiplier(可选;0 = 无舰载商人加成)。</summary>
+        public float TraderGarrisonGainMultiplier;
+
+        // Market(市场/船坞;template_structure_economic_market):HasMarket=false → 不装配。
+        public bool HasMarket;
+        /// <summary>Market/TradeType 原文("land"/"naval",可空格分隔两者)。</summary>
+        public string MarketTradeTypes = "";
+        public float MarketInternationalBonus = 0.2f;
+
         public List<string> GetClassList() =>
             EntityClassHelper.BuildClassList(Classes, VisibleClasses,
                 string.IsNullOrWhiteSpace(Category) ? GenericName : Category);
+    }
+
+    /// <summary>&lt;TurretHolder&gt;&lt;TurretPoints&gt; 下的一个命名点位(TurretHolder.js)。</summary>
+    public struct TurretPointDef
+    {
+        public string Name;
+        public float X, Y, Z;
+        public string AllowedClasses;
+        public float? Angle;      // 弧度(模板为度,解析时换算)
+        public string Template;
+        public bool Ejectable;
     }
 }

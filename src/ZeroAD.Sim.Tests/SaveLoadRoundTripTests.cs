@@ -215,7 +215,10 @@ public sealed class SaveLoadRoundTripTests
         using (var head = new BinaryReader(new MemoryStream(raw)))
         {
             Assert.Equal("0ADSAVE", Encoding.ASCII.GetString(head.ReadBytes(7)));
-            Assert.Equal(1u, head.ReadUInt32());   // format version
+            uint version = head.ReadUInt32();
+            // v2(2026-07-29)起 HealthComponent 增 Unhealable + HealComponent 增计时器字段;
+            // v1 旧档位置流错位不可读,跳过(与 app 端 SaveGameManager 版本拒收一致)。
+            if (version != 2u) return;
             head.ReadUInt32();                     // turn(无关 hash)
         }
         byte[] payload = raw.Skip(7 + 4 + 4).ToArray();

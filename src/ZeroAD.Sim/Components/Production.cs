@@ -360,6 +360,34 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         }
     }
 
+    /// <summary>贸易品概率表(原版 Player.js tradingGoods:可贸易资源按步进 5 等概率,
+    /// GUI 可调)。默认值活在字段初始化器;Deserialize 先清后填。</summary>
+    public readonly List<KeyValuePair<ResourceType, int>> TradingGoods = new()
+    {
+        new(ResourceType.Food, 25),
+        new(ResourceType.Wood, 25),
+        new(ResourceType.Stone, 25),
+        new(ResourceType.Metal, 25),
+    };
+
+    /// <summary>Port of Player.js GetNextTradingGoods:按概率表掷下一程贸易品。
+    /// 用共享确定性 RNG(原版 randFloat(0,100))。</summary>
+    public ResourceType GetNextTradingGoods(ComponentManager cm)
+    {
+        if (TradingGoods.Count == 0)
+            return ResourceType.Metal;
+        double value = cm.RNG.NextDouble() * 100.0;
+        int last = TradingGoods.Count - 1;
+        int sumProba = 0;
+        for (int i = 0; i < last; ++i)
+        {
+            sumProba += TradingGoods[i].Value;
+            if (value < sumProba)
+                return TradingGoods[i].Key;
+        }
+        return TradingGoods[last].Key;
+    }
+
     public override void Serialize(ISerializer s)
     {
         s.NumberI32("wood", Wood);
@@ -371,6 +399,12 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         s.NumberI32("popCap", MaxPopCap);
         s.NumberI32("state", (int)State);
         s.StringASCII("civ", Civ);
+        s.NumberI32("tradeGoods_n", TradingGoods.Count);
+        foreach (var (goods, proba) in TradingGoods)
+        {
+            s.NumberI32("goods", (int)goods);
+            s.NumberI32("proba", proba);
+        }
     }
 
     public override void Deserialize(IDeserializer d)
@@ -384,6 +418,11 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         MaxPopCap = d.NumberI32("popCap");
         State = (PlayerState)d.NumberI32("state");
         Civ = d.StringASCII("civ");
+        TradingGoods.Clear();
+        int tn = d.NumberI32("tradeGoods_n");
+        for (int i = 0; i < tn; i++)
+            TradingGoods.Add(new KeyValuePair<ResourceType, int>(
+                (ResourceType)d.NumberI32("goods"), d.NumberI32("proba")));
     }
 
     public void HandleMessage(IMessage message) { }

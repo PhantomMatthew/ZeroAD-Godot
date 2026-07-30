@@ -7,8 +7,13 @@ namespace ZeroAD.Sim.Components;
 [Component("Health", "Health")]
 public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
 {
-    public int Current;
-    public int Max;
+    // 默认值活在字段初始化器上(不覆写 OnInit):`new HealthComponent { Current = 50 }` 的
+    // 调用方在 AddComponent 后保值——此前 OnInit 无条件重置 100/100,静默吞掉所有
+    // 指定值(EntityAssembler 的模板 HP 就中招)。同 OwnershipComponent 修复模式。
+    public int Current = 100;
+    public int Max = 100;
+    /// <summary>模板 Health/Unhealable(原版 Heal.js CanHeal 检查):不可被治疗,只能修理。</summary>
+    public bool Unhealable;
     /// <summary>模板基值(修正值管线的输入)。0 = 未显式设置,回退用 Max
     /// (既有创建点只管 Max,语义等价)。科技改变 Max 时由
     /// <see cref="ValueModificationApplier.RescaleHealth"/> 按比例缩放 Current。</summary>
@@ -17,13 +22,12 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
     /// <summary>修正值查询用的基值:BaseMax > 0 优先,否则 Max。</summary>
     public int BaseMaxOrMax => BaseMax > 0 ? BaseMax : Max;
 
-    protected override void OnInit()
-    {
-        Current = 100;
-        Max = 100;
-    }
+    protected override void OnInit() { }
 
     public float HealthFraction => Max > 0 ? (float)Current / Max : 0f;
+
+    /// <summary>原版 Health.js IsInjured:hp &lt; maxHp(Heal 的目标校验 + 补满即停判定)。</summary>
+    public bool IsInjured => Current < Max;
 
     /// <summary>Apply a post-resistance damage block directly to health. This is the sink at the
     /// end of the Attack → DelayedDamage → Resistance → Health pipeline. Capture is handled
@@ -52,6 +56,7 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
         s.NumberI32("cur", Current);
         s.NumberI32("max", Max);
         s.NumberI32("bmax", BaseMax);
+        s.Bool("unhealable", Unhealable);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -59,6 +64,7 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
         Current = d.NumberI32("cur");
         Max = d.NumberI32("max");
         BaseMax = d.NumberI32("bmax");
+        Unhealable = d.Bool("unhealable");
     }
 
     public void HandleMessage(IMessage message) { }

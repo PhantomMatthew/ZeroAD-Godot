@@ -125,11 +125,11 @@ public sealed class P1StubsRoundTripTests
         {
             Shape = "line",
             MaxRowsUsed = 4,
-            MaxColumnsUsed = 8,
             Width = 12f,
             Depth = 6f,
             FormationSeparation = 2.5f,
         };
+        c.MaxColumnsUsed.Add(8);
         c.Members.Add(new EntityId(10));
         c.Members.Add(new EntityId(11));
         c.FinishedEntities.Add(new EntityId(10));
@@ -141,7 +141,7 @@ public sealed class P1StubsRoundTripTests
 
         Assert.Equal("line", round.Shape);
         Assert.Equal(4, round.MaxRowsUsed);
-        Assert.Equal(8, round.MaxColumnsUsed);
+        Assert.Equal(new[] { 8 }, round.MaxColumnsUsed);
         Assert.Equal(12f, round.Width);
         Assert.Equal(6f, round.Depth);
         Assert.Equal(2.5f, round.FormationSeparation);

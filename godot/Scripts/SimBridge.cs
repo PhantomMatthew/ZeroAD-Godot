@@ -604,6 +604,18 @@ public sealed partial class SimBridge : Node
         }
     }
 
+    private void TickGarrisonHolders(float dt)
+    {
+        foreach (var entity in _sim.AllEntities)
+            _sim.QueryInterface<GarrisonHolderComponent>(entity)?.Tick(dt, _sim);
+    }
+
+    private void TickTurrets(float dt)
+    {
+        foreach (var entity in _sim.AllEntities)
+            _sim.QueryInterface<TurretableComponent>(entity)?.UpdatePosition(_sim);
+    }
+
     private void TickSimulation(float dt)
     {
         RemoveDeadEntities();
@@ -622,6 +634,12 @@ public sealed partial class SimBridge : Node
         // 先刷新 decaying/blink 状态(读本周期的领土网格),再让 Capturable 抽干/恢复 CP。
         // 放 UpdateVisibilityData 前:翻面触发的 OwnerChanged 本周期即被 LOS 重算吃到。
         TickTerritoryDecay(dt);
+        // 驻军持有者:BuffHeal 每秒回血(原版 1s HealTimeout)+ EjectHealth 低血逐出。
+        // 放 UpdateVisibilityData 前:逐出回世界的单位本周期即被 LOS 重算吃到。
+        TickGarrisonHolders(dt);
+        // 炮塔跟拍(原版 Position.SetTurretParent 的引擎联动):在点单位锁到持有者
+        // 位置+旋转偏移。放 UpdateVisibilityData 前:随行位移本周期即被 LOS 重算吃到。
+        TickTurrets(dt);
         // Vision range through the modifiers pipeline: tech/aura changes re-cover seer
         // circles in the LOS grid. Runs every turn (after research completes) so all
         // players' ranges stay fresh without a research-completion hook per player.
@@ -712,6 +730,21 @@ public sealed partial class SimBridge : Node
                 // Pop accounting: dying means the entity leaves its owner. Mirrors how Player.js
                 // reacts to MT_OwnershipChanged (To = INVALID_PLAYER).
                 _sim.ApplyOwnershipPopChange(entity, fromPlayer, -1);
+                // 驻军持有者被毁兜底:逐出可逐类别,其余随主同灭(原版 EjectOrKill;
+                // EjectHealth 阈值内的通常已被 Tick 提前逐出)。
+                _sim.QueryInterface<GarrisonHolderComponent>(entity)?.EjectOrKillAll(_sim);
+                // 炮塔持有者在点单位强制下塔(原版 TurretHolder OnOwnershipChanged →
+                // EjectOrKill);塔上单位死亡则让出点位(原版 Turretable.OnOwnershipChanged)。
+                _sim.QueryInterface<TurretHolderComponent>(entity)?.EjectOrKillAll(_sim);
+                var turretable = _sim.QueryInterface<TurretableComponent>(entity);
+                if (turretable is { Holder: not null })
+                    turretable.LeaveTurret(_sim, forced: true);
+                // 编队成员死亡:从所属编队移除(低于 RequiredMemberCount 时编队解散,
+                // 原版同;成员位释放,Offsets 作废待下次重排)。
+                var memberAi = _sim.QueryInterface<UnitAIComponent>(entity);
+                if (memberAi?.FormationController is { } formationCtrl)
+                    _sim.QueryInterface<FormationComponent>(formationCtrl)
+                        ?.RemoveMembers(_sim, new List<EntityId> { entity });
                 _sim.DestroyEntity(entity);
                 _entityCacheDirty = true;
             }
@@ -1053,6 +1086,9 @@ public sealed partial class SimBridge : Node
         // only one that goes through this event for freshly-assembled entities.
         if (_entityNodes.ContainsKey(e.Entity)) return;
 
+        // special/* 虚拟实体(编队控制器等):无视觉不渲染,不占人口(无 CostComponent)。
+        if (e.TemplateName.StartsWith("special/", StringComparison.Ordinal)) return;
+
         var owner = _sim.QueryInterface<OwnershipComponent>(e.Entity);
         int playerId = owner?.PlayerId ?? e.OwnerPlayerId;
         Color color = GetPlayerColor(playerId);
@@ -1339,6 +1375,63 @@ public sealed partial class SimBridge : Node
     public void CommandTrainSoldier(EntityId building)
     {
         CommandTrain(building, "units/spart/infantry_spearman_b");
+    }
+
+    /// <summary>编队行走(原版 Commands.js 编队创建流:过滤可编队成员 → 生成
+    /// special/formations/{shape} 控制器 → SetMembers → 控制器 Walk)。成员不足
+    /// RequiredMemberCount 或模板缺失时退化为逐个普通行走(原版默认 NULL_FORMATION
+    /// 不成队,编队只能显式选择)。未接锁步:NetCommand 无实体列表参数,MP 编队
+    /// 指令随 GUI 编队选择器一起做;SP 直接执行(命令点确定,控制器 spawn/布阵
+    /// 全在内核确定性路径上)。</summary>
+    public void CommandFormationWalk(IReadOnlyList<EntityId> entities, float x, float z, string shape = "box")
+    {
+        // 原版编队按玩家分组:取首个合格成员的属主,仅纳入同主成员。
+        int owner = -1;
+        var members = new List<EntityId>();
+        foreach (var e in entities)
+        {
+            var ai = _sim.QueryInterface<UnitAIComponent>(e);
+            if (ai == null || ai.IsGarrisoned || ai.IsTurret
+                || ai.FormationController != null || ai.IsFormationController)
+                continue;
+            int eOwner = _sim.QueryInterface<OwnershipComponent>(e)?.PlayerId ?? -1;
+            if (owner < 0) owner = eOwner;
+            if (eOwner != owner) continue;
+            members.Add(e);
+        }
+        string template = "special/formations/" + shape;
+        TemplateStats? stats = null;
+        try { stats = Templates?.ExtractStats(template); } catch { }
+        int required = stats?.FormationRequiredMemberCount ?? int.MaxValue;
+        if (stats == null || members.Count < required)
+        {
+            foreach (var m in members)
+                MoveEntity(m, x, z);
+            return;
+        }
+        // 控制器生成于成员质心(SetMembers 的 MoveToMembersCenter 同样会归位)。
+        float ax = 0, az = 0;
+        foreach (var m in members)
+        {
+            var p = _sim.QueryInterface<PositionComponent>(m);
+            if (p == null) continue;
+            ax += p.Position.X.ToFloat();
+            az += p.Position.Z.ToFloat();
+        }
+        ax /= members.Count;
+        az /= members.Count;
+        var controller = _sim.SpawnEntity(template, ax, az, owner);
+        var formation = _sim.QueryInterface<FormationComponent>(controller);
+        if (formation == null)
+        {
+            // 模板未解析出编队件(不应发生)——保险退化:逐个行走。
+            foreach (var m in members)
+                MoveEntity(m, x, z);
+            return;
+        }
+        formation.SetMembers(_sim, members);
+        _sim.QueryInterface<UnitAIComponent>(controller)
+            ?.Walk(new FixedVector2D(Fixed.FromFloat(x), Fixed.FromFloat(z)));
     }
 
     public PlayerComponent? GetPlayer() =>

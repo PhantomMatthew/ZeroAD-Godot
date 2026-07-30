@@ -21,7 +21,9 @@ namespace ZeroAD.Godot;
 public static class SaveGameManager
 {
     private const string Magic = "0ADSAVE";
-    private const uint Version = 1;
+    // v2(2026-07-29):HealthComponent 增 Unhealable 字段 + HealComponent 增计时器字段(MS5)。
+    // 旧 v1 档位置流错位,加载方按版本号拒收。
+    private const uint Version = 2;
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 

@@ -8,6 +8,9 @@ public sealed class PositionComponent : ComponentBase, IComponentMessageHandler
 {
     public FixedVector3D Position;
     public FixedVector3D Rotation;
+    /// <summary>Port of CCmpPosition::m_InWorld:驻防/搭载时移出世界(false)——
+    /// 离开空间索引与 LOS、不渲染、不参与范围查询。RangeManager 经 SetInWorld 同步。</summary>
+    public bool InWorld = true;
 
     protected override void OnInit()
     {
@@ -23,6 +26,7 @@ public sealed class PositionComponent : ComponentBase, IComponentMessageHandler
         serializer.NumberFixed("rx", Rotation.X);
         serializer.NumberFixed("ry", Rotation.Y);
         serializer.NumberFixed("rz", Rotation.Z);
+        serializer.Bool("inWorld", InWorld);
     }
 
     public override void Deserialize(IDeserializer deserializer)
@@ -35,6 +39,7 @@ public sealed class PositionComponent : ComponentBase, IComponentMessageHandler
         var rz = deserializer.NumberFixed("rz");
         Position = new FixedVector3D(x, y, z);
         Rotation = new FixedVector3D(rx, ry, rz);
+        InWorld = deserializer.Bool("inWorld");
     }
 
     public void HandleMessage(IMessage message) { }

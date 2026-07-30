@@ -253,6 +253,35 @@ namespace ZeroAD.Sim.Components
             SyncLos(entity, d);
         }
 
+        /// <summary>Move an entity in/out of the world (garrison/ungarrison, mirroring the
+        /// original's Position.MoveOutOfWorld / JumpTo effects on the range manager):
+        /// out-of-world entities leave the spatial index, drop their vision circle, and turn
+        /// HIDDEN for every player; re-entering re-adds them at their component position.</summary>
+        public void SetInWorld(EntityId entity, bool inWorld)
+        {
+            if (!_data.TryGetValue(entity, out var d)) return;
+            if (d.InWorld == inWorld) return;
+            var size = Fixed.FromInt(0).WithInternalValue(d.Size);
+            if (!inWorld)
+            {
+                _subdivision.Remove(entity, d.X, d.Z, size);
+                d.InWorld = false;
+                _data[entity] = d;
+                _movedOrPlacedEntities.Add(entity);   // becomes HIDDEN for every player
+                SyncLos(entity, d);                    // drops its vision circle
+            }
+            else
+            {
+                var pos = _cm.QueryInterface<PositionComponent>(entity);
+                if (pos == null) return;
+                d.X = pos.Position.X; d.Z = pos.Position.Z; d.InWorld = true;
+                _subdivision.Add(entity, d.X, d.Z, size);
+                _data[entity] = d;
+                _movedOrPlacedEntities.Add(entity);
+                SyncLos(entity, d);
+            }
+        }
+
         private void OnEntityCreated(EntityId entity)
         {
             if (_data.ContainsKey(entity)) return;
@@ -287,6 +316,15 @@ namespace ZeroAD.Sim.Components
             var size = Fixed.FromInt(0).WithInternalValue(d.Size);
             if (!d.InWorld)
             {
+                // 驻防中(PositionComponent.InWorld=false):只记录坐标,留在索引之外——
+                // 否则一条游离的位置通知就会把舱内单位错误放回世界。
+                var posComp = _cm.QueryInterface<PositionComponent>(entity);
+                if (posComp is { InWorld: false })
+                {
+                    d.X = to.X; d.Z = to.Y;
+                    _data[entity] = d;
+                    return;
+                }
                 d.X = to.X; d.Z = to.Y; d.InWorld = true;
                 _subdivision.Add(entity, d.X, d.Z, size);
                 _movedOrPlacedEntities.Add(entity);
@@ -353,15 +391,14 @@ namespace ZeroAD.Sim.Components
                 d.Flags &= unchecked((byte)~RangeEntityData.FlagRetainInFog);
             if (_cm.QueryInterface<MirageComponent>(entity) != null)
                 d.Flags |= RangeEntityData.FlagIsMirage;
+            // In-world state follows PositionComponent.InWorld (garrison moves units out of
+            // world). First placement goes through SetInWorld too (created entities start
+            // out-of-world in _data): it indexes the position and queues a visibility pass.
             var pos = _cm.QueryInterface<PositionComponent>(entity);
-            if (pos != null && !d.InWorld)
+            if (pos != null && d.InWorld != pos.InWorld)
             {
-                d.X = pos.Position.X; d.Z = pos.Position.Z; d.InWorld = true;
-                _subdivision.Add(entity, d.X, d.Z, Fixed.Zero.WithInternalValue(d.Size));
-                // First placement without a position message (the SpawnEntity path notifies
-                // only NotifyEntityCreated): still re-evaluate for every player next turn,
-                // or enemies wouldn't see a freshly spawned unit until it first moves.
-                _movedOrPlacedEntities.Add(entity);
+                SetInWorld(entity, pos.InWorld);
+                d = _data[entity];
             }
             _data[entity] = d;
             SyncLos(entity, d);

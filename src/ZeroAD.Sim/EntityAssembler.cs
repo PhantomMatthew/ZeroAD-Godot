@@ -24,6 +24,14 @@ namespace ZeroAD.Sim
         public static void AssembleUnit(ComponentManager cm, EntityId entity,
             string templateName, TemplateStats? stats, float x, float z)
         {
+            // Formation controller(special/formations/* 模板):虚拟实体,非战斗单位——
+            // 无 Health/Cost/Obstruction/Vision,不占人口,不可被攻击。
+            if (stats?.HasFormation == true)
+            {
+                AssembleFormationController(cm, entity, templateName, stats, x, z);
+                return;
+            }
+
             bool isVillager = stats?.CanGather == true && stats.AttackDamage == 0;
             bool isSoldier = stats != null && (stats.AttackDamage > 0
                 || stats.GetClassList().Contains("CitizenSoldier"));
@@ -103,6 +111,90 @@ namespace ZeroAD.Sim
                     Rate = stats?.AttackRate ?? 1.0f,
                     IsRanged = stats?.AttackIsRanged ?? false
                 });
+            }
+
+            // Heal(治疗者;template_unit_support_healer 系):Heal.js 行为件,UnitAI HEAL 状态驱动。
+            if (stats != null && stats.HasHeal && cm.QueryInterface<HealComponent>(entity) == null)
+            {
+                var heal = new HealComponent
+                {
+                    HealAmount = stats.HealAmount,
+                    Range = stats.HealRange,
+                    Rate = stats.HealInterval,
+                };
+                cm.AddComponent(entity, heal);
+                heal.HealableClasses.AddRange(Content.EntityClassHelper.ParseClassTokens(stats.HealHealableClasses));
+                heal.UnhealableClasses.AddRange(Content.EntityClassHelper.ParseClassTokens(stats.HealUnhealableClasses));
+            }
+
+            // Pack(攻城器打包/展开;template_unit_siege_*):Pack.js 行为件。
+            if (stats != null && stats.HasPack && cm.QueryInterface<PackComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new PackComponent
+                {
+                    PackTime = stats.PackTime,
+                    Packed = stats.PackStartsPacked,
+                    PackEntity = stats.PackEntity,
+                });
+            }
+
+            // TreasureCollector(template_unit 默认件):TreasureCollector.js 行为件。
+            if (stats != null && stats.HasTreasureCollector
+                && cm.QueryInterface<TreasureCollectorComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new TreasureCollectorComponent
+                {
+                    MaxDistance = stats.TreasureCollectorMaxDistance,
+                });
+            }
+
+            // Trader(贸易单位;template_unit_support_trader 系):Trader.js 行为件。
+            if (stats != null && stats.HasTrader && cm.QueryInterface<TraderComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new TraderComponent
+                {
+                    GainMultiplier = stats.TraderGainMultiplier,
+                    GarrisonGainMultiplier = stats.TraderGarrisonGainMultiplier,
+                });
+            }
+
+            // Garrisonable(可驻防;template_unit 默认 Size=1):Garrisonable.js 行为件。
+            if (stats != null && stats.GarrisonableSize > 0
+                && cm.QueryInterface<GarrisonableComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new GarrisonableComponent { Size = stats.GarrisonableSize });
+            }
+
+            // GarrisonHolder(载客单位如船/攻城器;建筑走 RegisterForLos):GarrisonHolder.js 行为件。
+            if (stats != null && stats.HasGarrisonHolder
+                && cm.QueryInterface<GarrisonHolderComponent>(entity) == null)
+            {
+                var holderCmp = new GarrisonHolderComponent
+                {
+                    Max = stats.GarrisonCapacity,
+                    BuffHeal = stats.GarrisonHolderBuffHeal,
+                    LoadingRange = stats.GarrisonHolderLoadingRange,
+                    EjectHealth = stats.GarrisonHolderEjectHealth,
+                    Pickup = stats.GarrisonHolderPickup,
+                    EjectClassesOnDestroy = stats.GarrisonHolderEjectClasses,
+                };
+                cm.AddComponent(entity, holderCmp);
+                holderCmp.AllowedClasses.AddRange(
+                    Content.EntityClassHelper.ParseClassTokens(stats.GarrisonHolderList));
+            }
+
+            // Turretable(可上炮塔点;远程兵系):Turretable.js 行为件。
+            if (stats != null && stats.HasTurretable
+                && cm.QueryInterface<TurretableComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new TurretableComponent());
+            }
+
+            // TurretHolder(载具/船侧炮塔点;城墙走 RegisterForLos):TurretHolder.js 行为件。
+            if (stats != null && stats.HasTurretHolder
+                && cm.QueryInterface<TurretHolderComponent>(entity) == null)
+            {
+                AddTurretHolder(cm, entity, stats);
             }
 
             // Resistance: anything with Health can resist damage. Attached unconditionally for
@@ -219,6 +311,58 @@ namespace ZeroAD.Sim
                 });
             }
 
+            // Treasure(gaia 宝物;template_gaia_treasure):同走建筑/gaia 装配路径补挂。
+            if (stats != null && stats.HasTreasure
+                && cm.QueryInterface<TreasureComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new TreasureComponent
+                {
+                    CollectTimeSec = stats.TreasureCollectTime,
+                    Food = stats.TreasureFood,
+                    Wood = stats.TreasureWood,
+                    Stone = stats.TreasureStone,
+                    Metal = stats.TreasureMetal,
+                });
+            }
+
+            // Market(市场/船坞;template_structure_economic_market):Trader.js 贸易端点。
+            if (stats != null && stats.HasMarket
+                && cm.QueryInterface<MarketComponent>(entity) == null)
+            {
+                var marketCmp = new MarketComponent
+                {
+                    InternationalBonus = stats.MarketInternationalBonus,
+                };
+                cm.AddComponent(entity, marketCmp);
+                marketCmp.TradeTypes.AddRange(
+                    Content.EntityClassHelper.ParseClassTokens(stats.MarketTradeTypes));
+            }
+
+            // GarrisonHolder(驻军建筑;civil_centre/fortress 等):GarrisonHolder.js 行为件。
+            if (stats != null && stats.HasGarrisonHolder
+                && cm.QueryInterface<GarrisonHolderComponent>(entity) == null)
+            {
+                var holderCmp = new GarrisonHolderComponent
+                {
+                    Max = stats.GarrisonCapacity,
+                    BuffHeal = stats.GarrisonHolderBuffHeal,
+                    LoadingRange = stats.GarrisonHolderLoadingRange,
+                    EjectHealth = stats.GarrisonHolderEjectHealth,
+                    Pickup = stats.GarrisonHolderPickup,
+                    EjectClassesOnDestroy = stats.GarrisonHolderEjectClasses,
+                };
+                cm.AddComponent(entity, holderCmp);
+                holderCmp.AllowedClasses.AddRange(
+                    Content.EntityClassHelper.ParseClassTokens(stats.GarrisonHolderList));
+            }
+
+            // TurretHolder(城墙/哨塔炮塔点):TurretHolder.js 行为件。
+            if (stats != null && stats.HasTurretHolder
+                && cm.QueryInterface<TurretHolderComponent>(entity) == null)
+            {
+                AddTurretHolder(cm, entity, stats);
+            }
+
             // TerritoryDecay + Capturable(原版 template_structure 默认件):领土衰减闭环。
             // Capturable 首主 CP 拉满须在 Ownership 已读后(对齐原版首个 OnOwnershipChanged)。
             if (stats != null && stats.HasTerritoryDecay
@@ -248,6 +392,77 @@ namespace ZeroAD.Sim
             int owner = cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId ?? -1;
             if (owner > 0)
                 cm.NotifyOwnerChanged(entity, -1, owner); // activates fogging (MT_OwnershipChanged)
+        }
+
+        /// <summary>
+        /// Assemble a formation controller (special/formations/* templates). Port of the original
+        /// controller entity: Position + UnitMotion + UnitAI(FormationController) + Formation.
+        /// Deliberately NO Health/Cost/Obstruction/Vision — the controller is virtual: it can't
+        /// be damaged, costs no pop, blocks nothing, and provides no LOS. Ownership is applied
+        /// by the caller (ComponentManager.SpawnEntity) as usual.
+        /// </summary>
+        private static void AssembleFormationController(ComponentManager cm, EntityId entity,
+            string templateName, TemplateStats stats, float x, float z)
+        {
+            cm.AddComponent(entity, new PositionComponent());
+            cm.AddComponent(entity, new UnitMotion());
+            var ai = new UnitAIComponent();
+            cm.AddComponent(entity, ai);
+            ai.InitAsFormationController();
+            cm.AddComponent(entity, new IdentityComponent
+            {
+                Name = "Formation",
+                TemplateName = templateName,
+                IsUnit = false,
+                Classes = new List<string> { "Formation" },
+            });
+            var formation = new FormationComponent
+            {
+                RequiredMemberCount = stats.FormationRequiredMemberCount,
+                SpeedMultiplier = stats.FormationSpeedMultiplier,
+                Shape = stats.FormationShape,
+                MaxTurningAngle = stats.FormationMaxTurningAngle,
+                SortingOrder = stats.FormationSortingOrder,
+                ShiftRows = stats.FormationShiftRows,
+                UnitSeparationWidthMultiplier = stats.FormationSepWidthMultiplier,
+                UnitSeparationDepthMultiplier = stats.FormationSepDepthMultiplier,
+                Sloppiness = stats.FormationSloppiness,
+                WidthDepthRatio = stats.FormationWidthDepthRatio,
+                MinColumns = stats.FormationMinColumns,
+                MaxColumns = stats.FormationMaxColumns,
+                MaxRows = stats.FormationMaxRows,
+                CenterGap = stats.FormationCenterGap,
+            };
+            cm.AddComponent(entity, formation);
+            formation.SortingClasses.AddRange(stats.FormationSortingClasses);
+
+            var pos = cm.QueryInterface<PositionComponent>(entity);
+            if (pos != null)
+                pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+        }
+
+        /// <summary>Attach a TurretHolder with its template-defined named points
+        /// (TurretHolder.js Init). Shared by the unit and structure assembly paths.</summary>
+        private static void AddTurretHolder(ComponentManager cm, EntityId entity, TemplateStats stats)
+        {
+            var th = new TurretHolderComponent
+            {
+                LoadingRange = stats.TurretHolderLoadingRange,
+                Pickup = stats.TurretHolderPickup,
+            };
+            cm.AddComponent(entity, th);
+            foreach (var def in stats.TurretPoints)
+                th.TurretPoints.Add(new TurretHolderComponent.TurretPoint
+                {
+                    Name = def.Name,
+                    OffsetX = def.X,
+                    OffsetY = def.Y,
+                    OffsetZ = def.Z,
+                    AllowedClasses = def.AllowedClasses,
+                    Angle = def.Angle,
+                    Template = def.Template,
+                    Ejectable = def.Ejectable,
+                });
         }
 
         /// <summary>
