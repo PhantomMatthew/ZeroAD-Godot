@@ -876,7 +876,7 @@ public sealed partial class Main : Node3D
 				_isDragging = false;
 			}
 			else if (mb.ButtonIndex == MouseButton.Right)
-				HandleRightClick(mb.Position);
+				HandleRightClick(mb.Position, mb.CtrlPressed);
 		}
 
 		if (@event is InputEventMouseMotion mm && _dragSelecting && mm.Position.DistanceTo(_dragStart) > 8f)
@@ -926,7 +926,7 @@ public sealed partial class Main : Node3D
 		}
 	}
 
-	private void HandleRightClick(Vector2 screenPos)
+	private void HandleRightClick(Vector2 screenPos, bool allowCapture)
 	{
 		var worldPos = ScreenToWorld(screenPos);
 		if (worldPos == null) return;
@@ -958,8 +958,14 @@ public sealed partial class Main : Node3D
 			targetEntity = eid;
 			isResource = _sim.Sim.QueryInterface<ResourceSupply>(eid) != null;
 			var owner = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
-			isEnemy = _sim.Sim.QueryInterface<AttackComponent>(eid) != null &&
-				owner != null && owner.PlayerId > 1;
+			// 敌对判定走内核外交(对齐原版):敌军建筑/单位/gaia 野兽一视同仁——
+			// 旧判定 AttackComponent+PlayerId>1 把敌军建筑(无攻击件)漏成 Move,
+			// 也把 gaia(0)排除在可猎杀外。须可攻击(Health 或 Capturable),
+			// 树木等资源实体不算敌。
+			isEnemy = owner != null
+				&& _sim.Sim.Players.IsEnemy((int)_sim.LocalPlayerId, owner.PlayerId)
+				&& (_sim.Sim.QueryInterface<HealthComponent>(eid) != null
+					|| _sim.Sim.QueryInterface<CapturableComponent>(eid) != null);
 			break;
 		}
 
@@ -967,7 +973,9 @@ public sealed partial class Main : Node3D
 		{
 			if (isEnemy && targetEntity.HasValue && _sim.Sim.QueryInterface<AttackComponent>(unit) != null)
 			{
-				_sim.CommandAttack(unit, targetEntity.Value);
+				// Ctrl+右键 = 捕获(原版 Ctrl+click → attack allowCapture=true);
+				// 无捕获能力的单位自动退化普通攻击(GetBestAttackAgainst 选型)。
+				_sim.CommandAttack(unit, targetEntity.Value, allowCapture);
 			}
 			else if (isResource && targetEntity.HasValue)
 			{

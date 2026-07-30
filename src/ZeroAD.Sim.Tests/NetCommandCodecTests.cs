@@ -14,6 +14,7 @@ public sealed class NetCommandCodecTests
             NetCommand.Move(1, 10, Fixed.FromFloat(3.5f), Fixed.FromFloat(-7.25f)),
             NetCommand.Gather(1, 10, 55),
             NetCommand.Attack(2, 11, 66),
+            NetCommand.Attack(2, 16, 88, allowCapture: true),   // IntParam2 载 allowCapture
             NetCommand.Build(1, 12, "structures/spart/house", Fixed.FromFloat(100f), Fixed.FromFloat(64f)),
             NetCommand.Train(2, 13, "units/spart/infantry_spearman_b", count: 5),
             NetCommand.Research(1, 14, "phase_town_generic"),
@@ -30,6 +31,7 @@ public sealed class NetCommandCodecTests
             Assert.Equal(commands[i].Type, decoded[i].Type);
             Assert.Equal(commands[i].EntityId, decoded[i].EntityId);
             Assert.Equal(commands[i].IntParam1, decoded[i].IntParam1);
+            Assert.Equal(commands[i].IntParam2, decoded[i].IntParam2);
             Assert.Equal(commands[i].FixedParam1, decoded[i].FixedParam1);
             Assert.Equal(commands[i].FixedParam2, decoded[i].FixedParam2);
             Assert.Equal(commands[i].TemplateName, decoded[i].TemplateName);
