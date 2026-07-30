@@ -22,8 +22,9 @@ public static class SaveGameManager
 {
     private const string Magic = "0ADSAVE";
     // v2(2026-07-29):HealthComponent 增 Unhealable 字段 + HealComponent 增计时器字段(MS5)。
-    // 旧 v1 档位置流错位,加载方按版本号拒收。
-    private const uint Version = 2;
+    // v3(2026-07-30):单位捕获——DamageBlock.Capture int→Fixed、AttackComponent 增 Capture
+    // 攻击类型六字段、UnitOrder 增 AllowCapture。旧档位置流错位,加载方按版本号拒收。
+    private const uint Version = 3;
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 

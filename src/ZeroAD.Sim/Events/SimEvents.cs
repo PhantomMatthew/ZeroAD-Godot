@@ -76,6 +76,9 @@ namespace ZeroAD.Sim.Events
         public EntityId Target;
         public EntityId Attacker;
         public int DamageDealt;
+        /// <summary>本次命中实际抽走的占领点(原版 MT_Attacked 的 capture 字段;
+        /// 表现层占领条/进度反馈用)。</summary>
+        public float CaptureDealt;
     }
 
     /// <summary>Raised when a player is eliminated (lost all units + buildings in conquest).

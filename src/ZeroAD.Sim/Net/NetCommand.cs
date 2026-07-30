@@ -118,9 +118,10 @@ namespace ZeroAD.Sim.Net
         public static NetCommand Gather(uint player, uint unitId, uint targetId) =>
             new(player, NetCommandType.Gather, unitId, (int)targetId);
 
-        /// <summary>Attack: IntParam1 = target entity id.</summary>
-        public static NetCommand Attack(uint player, uint attackerId, uint targetId) =>
-            new(player, NetCommandType.Attack, attackerId, (int)targetId);
+        /// <summary>Attack: IntParam1 = target entity id; IntParam2 = allowCapture (0/1,
+        /// 原版 cmd.allowCapture,GUI Ctrl+攻击)。</summary>
+        public static NetCommand Attack(uint player, uint attackerId, uint targetId, bool allowCapture = false) =>
+            new(player, NetCommandType.Attack, attackerId, (int)targetId, allowCapture ? 1 : 0);
 
         /// <summary>Build: EntityId = builder, TemplateName = full building template,
         /// FixedParam1/2 = world x/z. Cost charge + foundation spawn happen at execution.</summary>

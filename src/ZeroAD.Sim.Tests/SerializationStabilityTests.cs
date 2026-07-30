@@ -164,13 +164,13 @@ public sealed class SerializationStabilityTests
         d1.Amounts[DamageType.Hack] = 10;
         d1.Amounts[DamageType.Pierce] = 20;
         d1.Amounts[DamageType.Crush] = 5;
-        d1.Capture = 3;
+        d1.Capture = Fixed.FromInt(3);
 
         var d2 = new DamageBlock();
         d2.Amounts[DamageType.Crush] = 5;
         d2.Amounts[DamageType.Hack] = 10;
         d2.Amounts[DamageType.Pierce] = 20;
-        d2.Capture = 3;
+        d2.Capture = Fixed.FromInt(3);
 
         var s1 = new HashSerializer(); d1.Serialize(s1, "dmg");
         var s2 = new HashSerializer(); d2.Serialize(s2, "dmg");

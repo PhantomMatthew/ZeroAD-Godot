@@ -74,7 +74,7 @@ public sealed class UseSiteModifierTests
         var attack = cm.QueryInterface<AttackComponent>(soldier)!;
         var health = cm.QueryInterface<HealthComponent>(target)!;
 
-        attack.AttackTarget(target);
+        attack.AttackTarget(cm, target);
         attack.PerformAttack(cm);
         cm.DelayedDamage.TickPending(cm);
         Assert.Equal(90, health.Current); // 研究前:10 点
@@ -99,7 +99,7 @@ public sealed class UseSiteModifierTests
 
         tm.ApplyResearch("attack_ranged_01", cm);
         var attack = cm.QueryInterface<AttackComponent>(civilian)!;
-        attack.AttackTarget(target);
+        attack.AttackTarget(cm, target);
         attack.PerformAttack(cm);
         cm.DelayedDamage.TickPending(cm);
         Assert.Equal(90, cm.QueryInterface<HealthComponent>(target)!.Current); // 不受加成
@@ -128,7 +128,7 @@ public sealed class UseSiteModifierTests
 
         tm.ApplyResearch("melee_hack", cm);
         var attack = cm.QueryInterface<AttackComponent>(soldier)!;
-        attack.AttackTarget(target);
+        attack.AttackTarget(cm, target);
         attack.PerformAttack(cm);
         cm.DelayedDamage.TickPending(cm);
         Assert.Equal(80, cm.QueryInterface<HealthComponent>(target)!.Current); // 10 × 2

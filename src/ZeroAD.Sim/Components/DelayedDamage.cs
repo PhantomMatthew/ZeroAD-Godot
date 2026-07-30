@@ -74,12 +74,13 @@ public sealed class DelayedDamage
         _pending.RemoveRange(write, _pending.Count - write);
     }
 
-    // Central settlement: apply Resistance → Health. Mirrors AttackHelper.HandleAttackEffects
-    // (invulnerability check, resistance reduction, then Health.TakeDamage).
+    // Central settlement: apply Resistance → Health, then route the Capture channel.
+    // Mirrors AttackHelper.HandleAttackEffects (invulnerability check, resistance reduction,
+    // then receivers in registry order: Damage(order 1) → Capture(order 2)).
     private static void ApplyDirect(ComponentManager cm, EntityId attacker, EntityId target, DamageBlock raw)
     {
         var health = cm.QueryInterface<HealthComponent>(target);
-        if (health == null || health.IsDead) return;
+        if (health != null && health.IsDead) return;
 
         var resistance = cm.QueryInterface<ResistanceComponent>(target);
         if (resistance != null && resistance.IsInvulnerable()) return;
@@ -94,8 +95,24 @@ public sealed class DelayedDamage
             final = raw;
         }
 
-        health.TakeDamage(final);
-        // Capture channel would route to a Capturable component (P1); not present in P0, so skip.
+        health?.TakeDamage(final);
+
+        // 捕获通道(对齐原版 g_AttackEffects 接收序:Damage 先结算,Capture 读扣血后 hp)。
+        // GetTotalAttackEffects 的 hp 缩放:total /= 0.1 + 0.9×hp/maxHp(血越少越易占领);
+        // 目标无 Health → 无缩放(原版 cmpHealth 缺失分支)。
+        Maths.Fixed captureDealt = Maths.Fixed.Zero;
+        if (final.Capture > Maths.Fixed.Zero)
+        {
+            var capturable = cm.QueryInterface<CapturableComponent>(target);
+            var attackerOwn = cm.QueryInterface<OwnershipComponent>(attacker);
+            if (capturable != null && attackerOwn != null && attackerOwn.PlayerId >= 0)
+            {
+                Maths.Fixed scale = health != null && health.Max > 0
+                    ? Maths.Fixed.FromFloat(0.1f) + Maths.Fixed.FromFloat(0.9f) * health.Current / health.Max
+                    : Maths.Fixed.FromInt(1);
+                captureDealt = capturable.Capture(cm, final.Capture / scale, attacker, attackerOwn.PlayerId);
+            }
+        }
 
         // Award XP to the attacker's Promotion component if it has one.
         var promotion = cm.QueryInterface<PromotionComponent>(attacker);
@@ -107,7 +124,8 @@ public sealed class DelayedDamage
         {
             Target = target,
             Attacker = attacker,
-            DamageDealt = final.TotalPhysical
+            DamageDealt = final.TotalPhysical,
+            CaptureDealt = captureDealt.ToFloat(),
         });
     }
 

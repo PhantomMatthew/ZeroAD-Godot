@@ -99,7 +99,7 @@ public sealed class SaveLoadRoundTripTests
         atk.Damage.Amounts[DamageType.Hack] = 11;
         atk.Damage.Amounts[DamageType.Pierce] = 22;
         atk.Damage.Amounts[DamageType.Crush] = 33;
-        atk.Damage.Capture = 44;
+        atk.Damage.Capture = Fixed.FromInt(44);
         cm.AddComponent(unit, atk);
         cm.AddComponent(unit, new ResourceGatherer());
 
@@ -216,9 +216,10 @@ public sealed class SaveLoadRoundTripTests
         {
             Assert.Equal("0ADSAVE", Encoding.ASCII.GetString(head.ReadBytes(7)));
             uint version = head.ReadUInt32();
-            // v2(2026-07-29)起 HealthComponent 增 Unhealable + HealComponent 增计时器字段;
-            // v1 旧档位置流错位不可读,跳过(与 app 端 SaveGameManager 版本拒收一致)。
-            if (version != 2u) return;
+            // v3(2026-07-30)起 DamageBlock.Capture 改 Fixed + AttackComponent 增捕获字段
+            // + UnitOrder 增 AllowCapture;旧档位置流错位不可读,跳过(与 app 端
+            // SaveGameManager 版本拒收一致)。
+            if (version != 3u) return;
             head.ReadUInt32();                     // turn(无关 hash)
         }
         byte[] payload = raw.Skip(7 + 4 + 4).ToArray();

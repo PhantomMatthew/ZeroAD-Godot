@@ -1204,7 +1204,8 @@ public sealed partial class SimBridge : Node
             _sim.AddComponent(entity, new BuilderComponent());
         }
 
-        if (isSoldier || (stats != null && stats.AttackDamage > 0))
+        if (isSoldier || (stats != null && (stats.AttackDamage > 0
+            || stats.AttackCaptureStrength > Fixed.Zero)))
         {
             var dmg = new DamageBlock();
             if (stats != null)
@@ -1212,7 +1213,6 @@ public sealed partial class SimBridge : Node
                 if (stats.AttackHack > 0) dmg.Amounts[DamageType.Hack] = stats.AttackHack;
                 if (stats.AttackPierce > 0) dmg.Amounts[DamageType.Pierce] = stats.AttackPierce;
                 if (stats.AttackCrush > 0) dmg.Amounts[DamageType.Crush] = stats.AttackCrush;
-                dmg.Capture = stats.AttackCapture;
             }
             else
             {
@@ -1225,6 +1225,16 @@ public sealed partial class SimBridge : Node
                 Rate = stats?.AttackRate ?? 1.0f
             };
             _sim.AddComponent(entity, atk);
+            // Capture 攻击类型(对齐 EntityAssembler):AddComponent 后赋值。
+            if (stats != null)
+            {
+                atk.CaptureStrength = stats.AttackCaptureStrength;
+                atk.CaptureRange = stats.AttackCaptureRange;
+                atk.CaptureRate = stats.AttackCaptureRate;
+                atk.CaptureRestrictedClasses = stats.AttackCaptureRestrictedClasses;
+                atk.PreferredClasses = stats.AttackPreferredClasses;
+                atk.PhysicalRestrictedClasses = stats.AttackPhysicalRestrictedClasses;
+            }
 
             // Resistance (mirror EntityAssembler so sim-trained units also resist damage).
             if (stats != null &&
@@ -1351,8 +1361,8 @@ public sealed partial class SimBridge : Node
     public void CommandGather(EntityId unit, EntityId target) =>
         SubmitCommand(NetCommand.Gather(LocalPlayerId, unit.Value, target.Value));
 
-    public void CommandAttack(EntityId attacker, EntityId target) =>
-        SubmitCommand(NetCommand.Attack(LocalPlayerId, attacker.Value, target.Value));
+    public void CommandAttack(EntityId attacker, EntityId target, bool allowCapture = false) =>
+        SubmitCommand(NetCommand.Attack(LocalPlayerId, attacker.Value, target.Value, allowCapture));
 
     /// <summary>Issue a build order: cost charge + foundation spawn happen in the sim
     /// at the execution turn (SimCommandExecutor). `template` is the FULL template name.</summary>

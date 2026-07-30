@@ -678,7 +678,7 @@ namespace ZeroAD.Sim.Tutorial
                         var atk = ctx.Sim.QueryInterface<AttackComponent>(attacker);
                         if (atk != null)
                         {
-                            atk.AttackTarget(target.Value);
+                            atk.AttackTarget(ctx.Sim, target.Value);
                             continue;
                         }
 

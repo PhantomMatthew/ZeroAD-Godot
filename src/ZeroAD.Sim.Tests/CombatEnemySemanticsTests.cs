@@ -34,6 +34,8 @@ public sealed class CombatEnemySemanticsTests
         cm.AddComponent(e, new IdentityComponent());
         cm.AddComponent(e, new UnitAIComponent());
         cm.AddComponent(e, new AttackComponent());
+        // 物理型须确有伤害(原版该型不存在即跳过;零伤害=型不存在)——裸组件默认无伤害。
+        cm.QueryInterface<AttackComponent>(e)!.Damage.Amounts[DamageType.Hack] = 5;
         cm.AddComponent(e, new HealthComponent());
         cm.AddComponent(e, new OwnershipComponent { PlayerId = player });
         return e;

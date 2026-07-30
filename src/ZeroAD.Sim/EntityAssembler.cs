@@ -89,16 +89,17 @@ namespace ZeroAD.Sim
                 cm.AddComponent(entity, new BuilderComponent());
             }
 
-            if (isSoldier || (stats != null && stats.AttackDamage > 0))
+            if (isSoldier || (stats != null && (stats.AttackDamage > 0
+                || stats.AttackCaptureStrength > Maths.Fixed.Zero)))
             {
-                // Build the multi-type damage block from template stats.
+                // Build the multi-type damage block from template stats (physical only;
+                // Capture 攻击类型独立成组件字段,一次命中只用一型——对齐原版)。
                 var dmg = new Components.DamageBlock();
                 if (stats != null)
                 {
                     if (stats.AttackHack > 0) dmg.Amounts[Components.DamageType.Hack] = stats.AttackHack;
                     if (stats.AttackPierce > 0) dmg.Amounts[Components.DamageType.Pierce] = stats.AttackPierce;
                     if (stats.AttackCrush > 0) dmg.Amounts[Components.DamageType.Crush] = stats.AttackCrush;
-                    dmg.Capture = stats.AttackCapture;
                 }
                 else
                 {
@@ -111,6 +112,16 @@ namespace ZeroAD.Sim
                     Rate = stats?.AttackRate ?? 1.0f,
                     IsRanged = stats?.AttackIsRanged ?? false
                 });
+                if (stats != null)
+                {
+                    var atk = cm.QueryInterface<AttackComponent>(entity)!;
+                    atk.CaptureStrength = stats.AttackCaptureStrength;
+                    atk.CaptureRange = stats.AttackCaptureRange;
+                    atk.CaptureRate = stats.AttackCaptureRate;
+                    atk.CaptureRestrictedClasses = stats.AttackCaptureRestrictedClasses;
+                    atk.PreferredClasses = stats.AttackPreferredClasses;
+                    atk.PhysicalRestrictedClasses = stats.AttackPhysicalRestrictedClasses;
+                }
             }
 
             // Heal(治疗者;template_unit_support_healer 系):Heal.js 行为件,UnitAI HEAL 状态驱动。

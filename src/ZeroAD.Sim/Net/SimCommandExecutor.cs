@@ -89,11 +89,12 @@ namespace ZeroAD.Sim.Net
         private void ApplyAttack(EntityId entity, NetCommand cmd)
         {
             var target = new EntityId((uint)cmd.IntParam1);
+            bool allowCapture = cmd.IntParam2 != 0;
             var ai = _cm.QueryInterface<UnitAIComponent>(entity);
             if (ai != null)
-                ai.Attack(target);
+                ai.Attack(target, allowCapture);
             else
-                _cm.QueryInterface<AttackComponent>(entity)?.AttackTarget(target);
+                _cm.QueryInterface<AttackComponent>(entity)?.AttackTarget(_cm, target, allowCapture);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "attack", Target = target });
         }
 

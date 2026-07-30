@@ -33,8 +33,9 @@ public sealed class DamageBlock
     /// <summary>Per-type raw damage. Missing types are treated as 0.</summary>
     public Dictionary<DamageType, int> Amounts = new();
 
-    /// <summary>Capture points (separate damage channel for structure conversion).</summary>
-    public int Capture;
+    /// <summary>Capture points (separate damage channel for structure conversion).
+    /// Fixed:模板值是小数(infantry 2.5 / cavalry 1.75)。</summary>
+    public Maths.Fixed Capture;
 
     public DamageBlock() { }
 
@@ -49,7 +50,7 @@ public sealed class DamageBlock
     /// <summary>Total physical damage (sum across types). Used for HUD/summary display.</summary>
     public int TotalPhysical => Get(DamageType.Hack) + Get(DamageType.Pierce) + Get(DamageType.Crush);
 
-    public bool IsEmpty => TotalPhysical == 0 && Capture == 0;
+    public bool IsEmpty => TotalPhysical == 0 && Capture <= Maths.Fixed.Zero;
 
     /// <summary>
     /// Return a new block with each type reduced by resistance. Mirrors
@@ -58,7 +59,7 @@ public sealed class DamageBlock
     /// </summary>
     public DamageBlock WithResistanceApplied(IReadOnlyDictionary<DamageType, int> resistance, int captureResistance)
     {
-        var result = new DamageBlock { Capture = ApplyResistance(Capture, captureResistance) };
+        var result = new DamageBlock { Capture = ApplyResistanceFixed(Capture, captureResistance) };
         foreach (var (type, raw) in Amounts)
         {
             int r = resistance.TryGetValue(type, out var rv) ? rv : 0;
@@ -80,14 +81,22 @@ public sealed class DamageBlock
     internal static int ApplyResistance(int raw, int resistance)
     {
         if (raw == 0) return 0;
-        int percent = resistance switch
-        {
-            >= 0 and <= 20 => s_resistMultiplierPercent[resistance],
-            > 20 => 0,                 // heavily resisted → negligible
-            _ => 100 + (-resistance) * 10 // negative = vulnerability: +10% per point
-        };
-        return raw * percent / 100;
+        return raw * ResistancePercent(resistance) / 100;
     }
+
+    /// <summary>Capture 通道的 Fixed 变体:同一张 0.9^r 整数查表,确定性整点数学。</summary>
+    internal static Maths.Fixed ApplyResistanceFixed(Maths.Fixed raw, int resistance)
+    {
+        if (raw <= Maths.Fixed.Zero) return Maths.Fixed.Zero;
+        return raw * ResistancePercent(resistance) / 100;
+    }
+
+    private static int ResistancePercent(int resistance) => resistance switch
+    {
+        >= 0 and <= 20 => s_resistMultiplierPercent[resistance],
+        > 20 => 0,                 // heavily resisted → negligible
+        _ => 100 + (-resistance) * 10 // negative = vulnerability: +10% per point
+    };
 
     // --- Serialization (for OOS hashing) ---
     // Write types in enum order (Hack,Pierce,Crush) for deterministic hashing.
@@ -96,7 +105,7 @@ public sealed class DamageBlock
         s.NumberI32(prefix + "_hack", Get(DamageType.Hack));
         s.NumberI32(prefix + "_pierce", Get(DamageType.Pierce));
         s.NumberI32(prefix + "_crush", Get(DamageType.Crush));
-        s.NumberI32(prefix + "_capture", Capture);
+        s.NumberFixed(prefix + "_capture", Capture);
     }
 
     public static DamageBlock Deserialize(IDeserializer d, string prefix)
@@ -107,7 +116,7 @@ public sealed class DamageBlock
         block.Amounts[DamageType.Hack] = d.NumberI32(prefix + "_hack");
         block.Amounts[DamageType.Pierce] = d.NumberI32(prefix + "_pierce");
         block.Amounts[DamageType.Crush] = d.NumberI32(prefix + "_crush");
-        block.Capture = d.NumberI32(prefix + "_capture");
+        block.Capture = d.NumberFixed(prefix + "_capture");
         return block;
     }
 }

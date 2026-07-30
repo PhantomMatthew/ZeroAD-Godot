@@ -149,12 +149,36 @@ namespace ZeroAD.Sim.Content
                         stats.AttackPierce = dmg.GetChild("Pierce").IsOk ? dmg.GetChild("Pierce").ToInt() : 0;
                         stats.AttackCrush = dmg.GetChild("Crush").IsOk ? dmg.GetChild("Crush").ToInt() : 0;
                     }
-                    var capture = melee.GetChild("Capture");
-                    if (capture.IsOk)
-                        stats.AttackCapture = capture.GetChild("Value").IsOk ? capture.GetChild("Value").ToInt() : 0;
                     stats.AttackRange = 3.0f;
                     stats.AttackRate = melee.GetChild("RepeatTime").IsOk
                         ? 1000f / melee.GetChild("RepeatTime").ToInt() : 1.0f;
+                }
+
+                // 物理型 PreferredClasses(GetBestAttackAgainst 偏好 +2;Melee 优先,
+                // 无 Melee 取 Ranged——原版逐型各有一份,我们物理合一取存在的那型)。
+                // RestrictedClasses 同理(原版逐型 CanAttack 门,如冲车 "Field Organic")。
+                var physType = melee.IsOk ? melee : attack.GetChild("Ranged");
+                if (physType.IsOk)
+                {
+                    var pref = physType.GetChild("PreferredClasses");
+                    if (pref.IsOk) stats.AttackPreferredClasses = pref.ToString();
+                    var restr = physType.GetChild("RestrictedClasses");
+                    if (restr.IsOk) stats.AttackPhysicalRestrictedClasses = restr.ToString();
+                }
+
+                // Capture 攻击类型(原版 Attack/Capture 顶层元素,步兵 2.5/骑兵 1.75):
+                // 与物理型并列独立,一次命中只用一型(GetBestAttackAgainst 按 allowCapture 选)。
+                var captureType = attack.GetChild("Capture");
+                if (captureType.IsOk)
+                {
+                    var capVal = captureType.GetChild("Capture");
+                    if (capVal.IsOk) stats.AttackCaptureStrength = capVal.ToFixed();
+                    var capRange = captureType.GetChild("MaxRange");
+                    if (capRange.IsOk) stats.AttackCaptureRange = capRange.ToFixed().ToFloat();
+                    var capRepeat = captureType.GetChild("RepeatTime");
+                    if (capRepeat.IsOk) stats.AttackCaptureRate = 1000f / capRepeat.ToInt();
+                    var capRestr = captureType.GetChild("RestrictedClasses");
+                    if (capRestr.IsOk) stats.AttackCaptureRestrictedClasses = capRestr.ToString();
                 }
             }
 
@@ -577,9 +601,18 @@ namespace ZeroAD.Sim.Content
         public int AttackHack;
         public int AttackPierce;
         public int AttackCrush;
-        public int AttackCapture;
         /// <summary>模板含 Attack/Ranged 节点 = 远程单位(修正值路径前缀用)。</summary>
         public bool AttackIsRanged;
+
+        // Capture 攻击类型(原版 Attack/Capture 顶层元素;Strength=0 = 无此类型)。
+        public Maths.Fixed AttackCaptureStrength = Maths.Fixed.Zero;
+        public float AttackCaptureRange = 4f;
+        public float AttackCaptureRate = 1f;
+        public string AttackCaptureRestrictedClasses = "";
+        /// <summary>物理型(Melee|Ranged)PreferredClasses token 串。</summary>
+        public string AttackPreferredClasses = "";
+        /// <summary>物理型(Melee|Ranged)RestrictedClasses token 串。</summary>
+        public string AttackPhysicalRestrictedClasses = "";
 
         /// <summary>Total physical attack damage (Hack+Pierce+Crush). Derived; 0 means civilian.
         /// Kept as a field so existing `stats.AttackDamage > 0` checks keep working.</summary>

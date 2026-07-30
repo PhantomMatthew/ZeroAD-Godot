@@ -67,6 +67,8 @@ public sealed class UnitAITests
         // 玩家实体/外交 → IsEnemy 兜底=敌(原版开局默认外交)。
         var target = MakeUnit(cm, player: 2);
         cm.AddComponent(attacker, new AttackComponent());
+        // 物理型须确有伤害(原版该型不存在即跳过;零伤害=型不存在)。
+        cm.QueryInterface<AttackComponent>(attacker)!.Damage.Amounts[DamageType.Hack] = 5;
         cm.AddComponent(target, new HealthComponent());
 
         var ai = cm.QueryInterface<UnitAIComponent>(attacker)!;

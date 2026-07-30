@@ -34,6 +34,9 @@ public sealed record UnitOrder
     // FormationWalk 负载(原版 order.data.x/z):相对编队控制器的未旋转偏移。
     public float OffsetX;
     public float OffsetZ;
+    /// <summary>Attack 单负载(原版 order.data.allowCapture):允许用 Capture 攻击类型
+    /// (GUI 的 Ctrl+攻击)。默认 false(原版 DEFAULT_CAPTURE)。</summary>
+    public bool AllowCapture;
 }
 
 [Component("UnitAI", "UnitAI")]
@@ -150,10 +153,11 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         PushOrder(new UnitOrder { Type = "Gather", Target = target, Queued = queued });
     }
 
-    /// <summary>Attack a target. Mirrors UnitAI.Attack(target,queued).</summary>
-    public void Attack(EntityId target, bool queued = false)
+    /// <summary>Attack a target. Mirrors UnitAI.Attack(target, allowCapture, queued);
+    /// allowCapture 默认 false(原版 DEFAULT_CAPTURE,GUI Ctrl+攻击才传 true)。</summary>
+    public void Attack(EntityId target, bool allowCapture = false, bool queued = false)
     {
-        PushOrder(new UnitOrder { Type = "Attack", Target = target, Queued = queued });
+        PushOrder(new UnitOrder { Type = "Attack", Target = target, Queued = queued, AllowCapture = allowCapture });
     }
 
     /// <summary>Repair / build a foundation. Mirrors UnitAI.Repair(target,queued).</summary>
@@ -323,17 +327,14 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             // 同 Tick 的 Timer 在无 handler 的 IDLE 态抛出。
             var attack = m.Cm!.QueryInterface<AttackComponent>(u.Entity);
             if (attack == null || m.Order!.Target == null) { u.FinishOrder(); return; }
-            // 敌对校验(对齐原版 CanAttack):self/盟友/中立目标拒收;无外交数据默认=敌,
-            // 无 OwnershipComponent 的目标(gaia 资源等)不拦。
-            var own = m.Cm.QueryInterface<OwnershipComponent>(u.Entity);
-            var targetOwn = m.Cm.QueryInterface<OwnershipComponent>(m.Order.Target.Value);
-            if (own != null && targetOwn != null
-                && !m.Cm.Players.IsEnemy(own.PlayerId, targetOwn.PlayerId))
+            // 类型选择(对齐原版 Order.Attack 的 GetBestAttackAgainst):物理型走
+            // 敌对+活目标门,捕获型走 CanCapture+RestrictedClasses 门;两门皆关
+            // (!type)→ FinishOrder 拒收。
+            if (!attack.AttackTarget(m.Cm!, m.Order.Target.Value, m.Order.AllowCapture))
             {
                 u.FinishOrder();
                 return;
             }
-            attack.AttackTarget(m.Order.Target.Value);
             u.FsmNextState = "COMBAT.APPROACHING";
         });
 
@@ -1126,6 +1127,8 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             // FormationWalk 负载(本 v2 周期内追加,读序须与写序逐位一致)。
             s.NumberFixed("ox", Fixed.FromFloat(o.OffsetX));
             s.NumberFixed("oz", Fixed.FromFloat(o.OffsetZ));
+            // Attack 单负载(本存档周期追加,读序须与写序逐位一致)。
+            s.Bool("allowcap", o.AllowCapture);
         }
         s.Bool("garrisoned", IsGarrisoned);
         s.Bool("turret", IsTurret);
@@ -1151,6 +1154,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             o.Queued = d.Bool("queued");
             o.OffsetX = d.NumberFixed("ox").ToFloat();
             o.OffsetZ = d.NumberFixed("oz").ToFloat();
+            o.AllowCapture = d.Bool("allowcap");
             _orderQueue.AddLast(o);
         }
         IsGarrisoned = d.Bool("garrisoned");
