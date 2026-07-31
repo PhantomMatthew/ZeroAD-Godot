@@ -173,4 +173,33 @@ public class RangeManagerLosTests
         Assert.NotNull(vis);
         Assert.Equal(Fixed.FromInt(24), vis!.Range);
     }
+
+    [Fact]
+    public void LosVersion_BumpsOnRecompute_NotOnEarlyOut()
+    {
+        // LosVersion is the render-side change signal FogWorldRenderer gates its per-frame
+        // texture rebuild on (mirrors TerritoryManager.Version). It must bump exactly when
+        // UpdateVisibilityData does real work (something moved/placed or the LOS grid changed)
+        // and stay flat on the idle early-out, so the fog rebuilds only on turns that changed
+        // visibility — not every render frame.
+        var (cm, rm) = NewWorld();
+        var e = SpawnSeer(cm, rm, 100, 100, owner: 1, range: 16);
+        int v0 = rm.LosVersion;
+
+        // Spawn dirtied moved/placed + the LOS grid (SetBounds set the dirty mask) → recompute → bump.
+        rm.UpdateVisibilityData();
+        int v1 = rm.LosVersion;
+        Assert.True(v1 > v0, "version must bump when visibility is recomputed");
+
+        // Idle pass: nothing moved/placed/requested, dirty mask clear → early-out → no bump.
+        rm.UpdateVisibilityData();
+        Assert.Equal(v1, rm.LosVersion);
+
+        // A fresh move re-dirties → the next pass bumps again.
+        cm.NotifyPositionChanged(e,
+            new FixedVector2D(Fixed.FromInt(100), Fixed.FromInt(100)),
+            new FixedVector2D(Fixed.FromInt(200), Fixed.FromInt(200)));
+        rm.UpdateVisibilityData();
+        Assert.True(rm.LosVersion > v1, "version must bump again after a move");
+    }
 }

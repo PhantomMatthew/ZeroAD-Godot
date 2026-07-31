@@ -7,7 +7,8 @@ namespace ZeroAD.Godot;
 /// Owns the world-space fog-of-war: uploads the local player's blurred LOS grid
 /// (see <see cref="FogTextureBuilder"/>) to an L8 texture and drives the terrain's
 /// fog shader. Attach() wraps the terrain mesh's material; Update() refreshes the
-/// texture — call per frame, it's a 37KB upload at tutorial scale.
+/// texture, gated on <see cref="RangeManager.LosVersion"/> so it only rebuilds on
+/// turns where the sim recomputed visibility — call it per frame, it self-skips.
 /// </summary>
 public sealed class FogWorldRenderer
 {
@@ -17,6 +18,7 @@ public sealed class FogWorldRenderer
     private Image? _image;
     private ImageTexture? _texture;
     private int _gridSize;
+    private int _lastVersion = -1;   // last RangeManager.LosVersion we uploaded; -1 forces a rebuild
 
     public FogWorldRenderer(SimBridge sim) => _sim = sim;
 
@@ -49,15 +51,19 @@ public sealed class FogWorldRenderer
         terrain.MaterialOverride = _mat;
     }
 
-    /// <summary>Re-upload the fog texture from the current LOS grid. Per frame is fine
-    /// (the builder reuses buffers; the upload is verticesPerSide² bytes). Recreates the
-    /// texture when RangeManager.SetBounds resized the grid after Attach (the PMP load
-    /// order does exactly that), so the fog can never freeze on a stale grid.</summary>
+    /// <summary>Re-upload the fog texture from the current LOS grid, gated on
+    /// <see cref="RangeManager.LosVersion"/>: the LOS grid only changes when the sim's
+    /// per-turn visibility pass recomputed it, so the BuildBlurred + texture upload runs
+    /// only on those turns, not every render frame. Recreates the texture when
+    /// RangeManager.SetBounds resized the grid after Attach (the PMP load order does
+    /// exactly that), so the fog can never freeze on a stale grid.</summary>
     public void Update()
     {
         if (_mat == null || _image == null || _texture == null) return;
         int n = _sim.Range.Los.VerticesPerSide;
         if (n != _gridSize) EnsureTexture(n);
+        if (_sim.Range.LosVersion == _lastVersion) return;
+        _lastVersion = _sim.Range.LosVersion;
         byte[] data = _builder.BuildBlurred(_sim.Range.Los, (int)_sim.LocalPlayerId);
         _image.SetData(n, n, false, Image.Format.L8, data);
         _texture.Update(_image);
@@ -66,6 +72,7 @@ public sealed class FogWorldRenderer
     private void EnsureTexture(int n)
     {
         _gridSize = n;
+        _lastVersion = -1;   // texture recreated → force next Update to repopulate it
         _image = Image.CreateEmpty(n, n, false, Image.Format.L8);
         _texture = ImageTexture.CreateFromImage(_image);
         _mat?.SetShaderParameter("fog_texture", _texture);

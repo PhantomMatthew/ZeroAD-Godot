@@ -129,6 +129,14 @@ namespace ZeroAD.Sim.Components
         // --- Visibility (fog-of-war) state ---
         // Players whose LOS grid changed this turn (bit p-1 set): all entities re-evaluated.
         private uint _playerLosDirtyMask;
+        // Render-side change signal (mirrors TerritoryManager.Version): bumped once per turn
+        // in which UpdateVisibilityData actually recomputed visibility. FogWorldRenderer gates
+        // its per-frame texture rebuild on this so the ~2ms rebuild+upload only happens when
+        // LOS may have changed, not every render frame. Not serialized — RangeManager has no
+        // Serialize (only its nested LosGrid does, via LosManagerComponent), and it is a pure
+        // deterministic render hint (bumps identically on all peers), so it never touches the
+        // OOS hash or save.
+        public int LosVersion { get; private set; }
         // Entities that moved or were placed this turn: re-evaluated for every player.
         private readonly HashSet<EntityId> _movedOrPlacedEntities = new();
         // Explicit re-evaluation requests (e.g. freshly spawned mirages).
@@ -504,6 +512,10 @@ namespace ZeroAD.Sim.Components
             if (_playerLosDirtyMask == 0 && _movedOrPlacedEntities.Count == 0
                 && _requestedVisibilityUpdates.Count == 0)
                 return;
+
+            // Past the early-out = visibility was recomputed this turn → signal renderers
+            // (fog texture) that their cached output may be stale. See LosVersion doc above.
+            LosVersion++;
 
             uint dirtyMask = _playerLosDirtyMask;
             _playerLosDirtyMask = 0;
