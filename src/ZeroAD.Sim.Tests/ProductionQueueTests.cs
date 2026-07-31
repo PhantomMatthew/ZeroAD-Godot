@@ -81,7 +81,11 @@ public class ProductionQueueTests
     [Fact]
     public void Tick_AppliesRallyPoint()
     {
-        // Spawned units should be sent toward the trainer's rally point.
+        // Spawned units are sent toward the trainer's rally point via a real UnitAI Walk
+        // order, NOT a raw UnitMotion MoveToPoint. Raw MoveToPoint sets the motion goal
+        // but leaves the FSM in IDLE, so the unit glides to the rally with no walk
+        // animation (ResolveAnimationState keys off the FSM state). The Walk order
+        // transitions the FSM to WALKING, which drives the walk clip.
         var cm = BuildWorldWithPlayer(out var trainer, out _);
         cm.AddComponent(trainer, new RallyPointComponent());
         var rally = cm.QueryInterface<RallyPointComponent>(trainer)!;
@@ -92,11 +96,17 @@ public class ProductionQueueTests
 
         queue.Tick(1.5f, cm);
 
-        // The spawned unit is the newest entity. It should have a UnitMotion with a move target.
+        // The spawned unit is the newest entity. Production.Tick queued a Walk order;
+        // dispatch it by ticking the unit's UnitAI (mirrors what a sim turn does).
         var spawned = cm.AllEntities.Last(e => e != trainer && e != cm.GetPlayerEntityId(1)!.Value);
+        var ai = cm.QueryInterface<UnitAIComponent>(spawned);
+        Assert.NotNull(ai);
+        ai!.Tick(0.1f, cm);
+
         var motion = cm.QueryInterface<UnitMotion>(spawned);
         Assert.NotNull(motion);
-        Assert.True(motion!.HasMoveTarget);
+        Assert.True(motion!.HasMoveTarget, "the Walk order must set a motion target toward the rally");
+        Assert.Contains("WALKING", ai.FsmStateName);
     }
 
     [Fact]

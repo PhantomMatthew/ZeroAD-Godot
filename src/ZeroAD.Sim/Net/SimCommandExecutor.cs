@@ -230,10 +230,23 @@ namespace ZeroAD.Sim.Net
             EntityId? target = null;
             if (cmd.IntParam1 != 0)
             {
+                // Entity rally (resource gather anchor): rally to the target entity position.
                 target = new EntityId((uint)cmd.IntParam1);
                 var pos = _cm.QueryInterface<PositionComponent>(target.Value);
                 if (pos != null)
                     rally.Set(new FixedVector2D(pos.Position.X, pos.Position.Z));
+            }
+            else if (cmd.FixedParam1 != 0 || cmd.FixedParam2 != 0)
+            {
+                // Ground rally (right-click empty ground): rally to world x/z.
+                var x = Fixed.Zero.WithInternalValue(cmd.FixedParam1);
+                var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
+                rally.Set(new FixedVector2D(x, z));
+            }
+            else
+            {
+                // Clear: reset to zero so Position.IsZero reads as "no rally point".
+                rally.Set(new FixedVector2D(Fixed.Zero, Fixed.Zero));
             }
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "set-rallypoint", Target = target });
         }

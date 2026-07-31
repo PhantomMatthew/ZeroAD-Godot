@@ -180,11 +180,16 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
             }
             var spawned = cm.SpawnEntity(current.TemplateName, sx, sz, ownerId);
 
-            // Rally point: move the fresh unit toward it.
+            // Rally point: issue a real Walk order through UnitAI. A raw UnitMotion
+            // MoveToPoint only sets the motion goal and leaves the FSM in IDLE, so the
+            // freshly-trained unit glides to the rally without a walk animation
+            // (ResolveAnimationState keys off the FSM state). Walk pushes Order.Walk,
+            // which StartMovingTo-s the destination AND transitions to WALKING —
+            // matching the original ProductionQueue issuing a Walk order on spawn.
             if (rally != null && !rally.Position.IsZero)
             {
-                var motion = cm.QueryInterface<UnitMotion>(spawned);
-                motion?.MoveToPoint(new Maths.FixedVector2D(rally.Position.X, rally.Position.Y));
+                var ai = cm.QueryInterface<UnitAIComponent>(spawned);
+                ai?.Walk(new Maths.FixedVector2D(rally.Position.X, rally.Position.Y));
             }
         }
 

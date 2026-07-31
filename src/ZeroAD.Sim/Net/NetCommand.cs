@@ -136,8 +136,17 @@ namespace ZeroAD.Sim.Net
         public static NetCommand Research(uint player, uint buildingId, string techName) =>
             new(player, NetCommandType.Research, buildingId, 0, 0, 0, 0, techName);
 
-        /// <summary>SetRallyPoint: IntParam1 = target entity id (0 = clear).</summary>
+        /// <summary>SetRallyPoint: IntParam1 = target entity id (resource gather anchor).
+        /// Use <see cref="SetRallyPointPosition"/> for a ground rally point; passing 0 with
+        /// no FixedParam clears the rally point.</summary>
         public static NetCommand SetRallyPoint(uint player, uint buildingId, uint targetEntityId) =>
             new(player, NetCommandType.SetRallyPoint, buildingId, (int)targetEntityId);
+
+        /// <summary>SetRallyPoint on empty ground: IntParam1 = 0 (signals ground rally),
+        /// FixedParam1/2 = world x/z as <see cref="Fixed.InternalValue"/>. Same type/enum as
+        /// the entity variant, so lockstep bundling and save serialization are unchanged;
+        /// execution distinguishes the two by IntParam1 (对齐原版"右键空地设集合点").</summary>
+        public static NetCommand SetRallyPointPosition(uint player, uint buildingId, Fixed x, Fixed z) =>
+            new(player, NetCommandType.SetRallyPoint, buildingId, 0, 0, x.InternalValue, z.InternalValue);
     }
 }

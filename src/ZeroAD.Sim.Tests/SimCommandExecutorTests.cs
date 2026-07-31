@@ -202,4 +202,22 @@ public sealed class SimCommandExecutorTests
         Assert.Equal(Fixed.FromFloat(11f), rally.Position.X);
         Assert.Equal(Fixed.FromFloat(22f), rally.Position.Y);
     }
+
+    [Fact]
+    public void SetRallyPointPosition_SetsGroundPosition()
+    {
+        var cm = new ComponentManager(1);
+        SimSystem.Init(cm);
+        var building = cm.CreateEntity();
+        cm.AddComponent(building, new RallyPointComponent());
+        var executor = new SimCommandExecutor(cm);
+
+        // Ground rally (right-click empty ground): FixedParam1/2 carry world x/z; IntParam1=0.
+        executor.Apply(NetCommand.SetRallyPointPosition(1, building.Value,
+            Fixed.FromFloat(33f), Fixed.FromFloat(44f)));
+
+        var rally = cm.QueryInterface<RallyPointComponent>(building)!;
+        Assert.Equal(Fixed.FromFloat(33f), rally.Position.X);
+        Assert.Equal(Fixed.FromFloat(44f), rally.Position.Y);
+    }
 }
