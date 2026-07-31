@@ -16,6 +16,27 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     private readonly List<(float x, float z)> _waypoints = new();
     private int _currentWaypoint;
 
+    // --- Path-request throttle (perf, not semantics) ---
+    // MoveToPoint runs the FULL hierarchical/A* pipeline (PathfinderComponent.ComputePath)
+    // synchronously. When a unit chases a moving target, its caller re-issues MoveToPoint
+    // nearly every tick: the short combat-range path is consumed in <1 tick → HasMoveTarget
+    // flips false → the approach Timer handler re-requests. Unthrottled this is N full A*
+    // solves per tick (one per approaching unit), which tanks FPS once combat starts.
+    //
+    // We recompute the full path at most once per RepathInterval; between, we keep walking
+    // the existing waypoints (or a cheap direct beeline if they're exhausted). If the goal
+    // jumped beyond RepathGoalThreshold since the last solve we recompute immediately (the
+    // target genuinely relocated, not just crept). All-throttle state is transient cache:
+    // it is NOT serialized (waypoints aren't either), so it never touches the OOS hash and
+    // re-converges to a full solve on the first MoveToPoint after a load.
+    private const float RepathInterval = 0.3f;     // seconds between full A* solves
+    private const float RepathGoalThreshold = 5f;  // metres; bigger shift → re-solve now
+    private static readonly long RepathGoalThresholdSqInternal =
+        (long)Fixed.FromFloat(RepathGoalThreshold).InternalValue * Fixed.FromFloat(RepathGoalThreshold).InternalValue;
+    private float _pathAge;                         // seconds since the last full ComputePath
+    private Fixed _lastGoalX, _lastGoalZ;
+    private bool _hasLastGoal;
+
     protected override void OnInit()
     {
         Speed = Fixed.FromFloat(8.0f);
@@ -28,6 +49,29 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     {
         TargetPos = target;
         HasMoveTarget = true;
+
+        // Throttle: if we already solved a path recently toward ~the same goal, keep walking
+        // it instead of re-running A*. See the field doc above for the failure mode this fixes.
+        long dxg = target.X.InternalValue - _lastGoalX.InternalValue;
+        long dzg = target.Y.InternalValue - _lastGoalZ.InternalValue;
+        long goalShiftSq = dxg * dxg + dzg * dzg;
+        bool goalNear = _hasLastGoal && goalShiftSq <= RepathGoalThresholdSqInternal;
+        if (_hasLastGoal && _pathAge < RepathInterval && goalNear)
+        {
+            // Fresh enough and goal hasn't relocated: don't recompute. If the previous path is
+            // already exhausted (unit arrived at the old goal but the caller still wants to
+            // close on a target that crept within threshold), extend with a direct beeline so
+            // the unit keeps moving instead of stalling until the interval elapses.
+            if (_currentWaypoint >= _waypoints.Count)
+                _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+            return;
+        }
+
+        // Full solve. Reset the throttle bookkeeping.
+        _hasLastGoal = true;
+        _lastGoalX = target.X;
+        _lastGoalZ = target.Y;
+        _pathAge = 0f;
 
         _waypoints.Clear();
         _currentWaypoint = 0;
@@ -83,10 +127,15 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         HasMoveTarget = false;
         CurrentSpeed = Fixed.Zero;
         _waypoints.Clear();
+        // Drop the cached goal so the next MoveToPoint always solves a fresh path (a Stop
+        // means the caller deliberately cancelled movement, not a chase tick).
+        _hasLastGoal = false;
+        _pathAge = 0f;
     }
 
     public void Tick(float dt)
     {
+        _pathAge += dt;
         if (!HasMoveTarget || _currentWaypoint >= _waypoints.Count)
         {
             HasMoveTarget = false;
