@@ -1116,6 +1116,7 @@ public sealed partial class Main : Node3D
 			break;
 		}
 
+		bool issuedMove = false;
 		foreach (var unit in _selectedEntities)
 		{
 			if (isEnemy && targetEntity.HasValue && _sim.Sim.QueryInterface<AttackComponent>(unit) != null)
@@ -1131,8 +1132,43 @@ public sealed partial class Main : Node3D
 			else
 			{
 				_sim.MoveEntity(unit, worldPos.Value.X, worldPos.Value.Z);
+				issuedMove = true;
 			}
 		}
+
+		// 移动指令的"目标标记"(原版 unit_actions.js 的 move 动作 → DrawTargetMarker →
+		// GuiInterface.AddTargetMarker("special/target_marker")):在点击处放红金动画标记,
+		// 仅表现层、本地生成、不进网络/存档(命令本身已承载指令)。攻击/采集目标是实体本身,
+		// 不画地面标记——与原版一致(只 move / map_flare 进 g_TargetMarker)。
+		if (issuedMove)
+			SpawnTargetMarker(worldPos.Value);
+	}
+
+	/// <summary>Spawn the 0 A.D. move-order target marker (<c>special/target_marker</c>) at the
+	/// clicked ground point — the red-and-gold animated standard that confirms "units ordered here".
+	/// Ports <c>GuiInterface.AddTargetMarker</c> + the template's <c>&lt;Decay&gt;</c> (DelayTime 0.5s
+	/// then a rapid sink). Visual-only local feedback: not networked, not serialized.</summary>
+	private void SpawnTargetMarker(Vector3 worldPos)
+	{
+		// Texture is red-and-gold (no player-colour channel), so teamColor is cosmetic here;
+		// pass the local player's colour anyway for consistency with other owned markers.
+		int lp = (int)_sim.LocalPlayerId;
+		Color color = lp == 1 ? new Color(0.08f, 0.22f, 0.58f) : new Color(0.72f, 0.06f, 0.06f);
+
+		int seed = (int)(worldPos.X * 100f) ^ (int)(worldPos.Z * 100f);
+		var marker = ActorLoader.Instance.Instantiate("special/target_marker.xml", seed, color);
+		if (marker == null) return;
+		marker.Position = new Vector3(worldPos.X, TerrainHeightService.Sample(worldPos.X, worldPos.Z), worldPos.Z);
+		_sim.UnitContainer.AddChild(marker);
+
+		// Decay: 0.5s delay, then sink out (SinkRate huge in the original). Free the node after.
+		GetTree().CreateTimer(0.5f).Timeout += () =>
+		{
+			if (!GodotObject.IsInstanceValid(marker)) return;
+			var sink = CreateTween();
+			sink.TweenProperty(marker, "position:y", marker.Position.Y - 1.5f, 0.2f);
+			sink.TweenCallback(Callable.From(() => marker.QueueFree()));
+		};
 	}
 
 	private Vector3? ScreenToWorld(Vector2 screenPos)
