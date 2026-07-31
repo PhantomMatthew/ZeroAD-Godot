@@ -32,6 +32,11 @@ public sealed partial class Main : Node3D
 	private TutorialPanel _tutorialPanel = null!;
 	private LoadingOverlay? _loadingOverlay;
 	private PauseMenu? _pauseMenu;
+	// 第二梯队菜单面板(Game Speed/Diplomacy/Trade/Match Settings):模态叠层,不暂停 sim。
+	private GameSpeedPanel? _gameSpeedPanel;
+	private DiplomacyPanel? _diplomacyPanel;
+	private TradePanel? _tradePanel;
+	private MatchSettingsPanel? _matchSettingsPanel;
 
 	public IReadOnlySet<EntityId> SelectedEntities => _selectedEntities;
 	public bool IsTutorial => _isTutorial;
@@ -209,6 +214,16 @@ public sealed partial class Main : Node3D
 				};
 				pm.OnLeave += () => GetTree().ChangeSceneToFile("res://Scenes/Main.tscn");
 				AddChild(pm);
+
+				// 第二梯队菜单面板(Game Speed/Diplomacy/Trade/Match Settings):模态叠层,挡鼠标不暂停。
+				_gameSpeedPanel = new GameSpeedPanel(_sim);
+				_diplomacyPanel = new DiplomacyPanel(_sim);
+				_tradePanel = new TradePanel(_sim);
+				_matchSettingsPanel = new MatchSettingsPanel(_sim);
+				AddChild(_gameSpeedPanel);
+				AddChild(_diplomacyPanel);
+				AddChild(_tradePanel);
+				AddChild(_matchSettingsPanel);
 			}
 
 			if (_isTutorial)
@@ -1273,6 +1288,18 @@ public sealed partial class Main : Node3D
 
 	/// <summary>顶栏 Menu 按钮回调:打开暂停菜单(冻结 sim)。HUD 持 _main 引用直接调。</summary>
 	public void OpenPauseMenu() => _pauseMenu?.Open();
+
+	/// <summary>顶栏 Game Speed 按钮回调:打开倍率面板(本地表现层节奏,不暂停 sim)。</summary>
+	public void OpenGameSpeedPanel() => _gameSpeedPanel?.Open();
+
+	/// <summary>顶栏 Diplomacy 按钮回调:打开外交面板(立场/进贡,不暂停 sim)。</summary>
+	public void OpenDiplomacyPanel() => _diplomacyPanel?.Open();
+
+	/// <summary>顶栏 Trade 按钮回调:打开贸易面板(易物/贸易品比例,不暂停 sim)。</summary>
+	public void OpenTradePanel() => _tradePanel?.Open();
+
+	/// <summary>顶栏 Settings 按钮回调:打开对局设置摘要面板(只读,不暂停 sim)。</summary>
+	public void OpenMatchSettingsPanel() => _matchSettingsPanel?.Open();
 
 	/// <summary>F5 快存 / 暂停菜单 Save。返回存档路径(null=失败),供暂停菜单回灌状态。</summary>
 	private string? QuickSave()

@@ -26,7 +26,9 @@ public static class SaveGameManager
     // 攻击类型六字段、UnitOrder 增 AllowCapture。旧档位置流错位,加载方按版本号拒收。
     // v4(2026-07-31):Capturable 增 BaseMaxCapturePoints(bmax)模板基值——Capturable/CapturePoints
     // 科技修正(×1.4 等)按比例缩放 CP 数组;旧 v3 档无 bmax,按版本号拒收。
-    private const uint Version = 4;
+    // v5(2026-08-01):PlayerComponent 增 Team 字段(队伍号,外交面板显示用)——PlayerComponent
+    // 序列化流多一个 int32;旧 v4 档位置流错位,按版本号拒收。
+    private const uint Version = 5;
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 

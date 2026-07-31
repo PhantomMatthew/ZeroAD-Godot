@@ -64,6 +64,11 @@ public sealed partial class SimBridge : Node
     /// 叠层可开但锁步屏障仍驱动 AdvanceTurn)。由 PauseMenu.Open/Close 翻转。</summary>
     public bool Paused;
 
+    /// <summary>游戏速度倍率(原版 Engine.SetSimRate,本地表现层字段)。1=正常。
+    /// 在 _Process 累加 delta 时相乘 → 每 tick 数学不变、仅节拍快慢。MP 下会失步
+    /// (各端渲染自定步速)——与 Paused 同性质,MP 速度协商列 backlog。</summary>
+    public double SpeedMultiplier = 1.0;
+
     /// <summary>Read-only query facade for HUD/Minimap/AI. Consolidates the scattered
     /// QueryInterface + entity-list iteration that previously lived inline in the GUI.</summary>
     public GuiInterface Gui { get; private set; } = null!;
@@ -537,7 +542,7 @@ public sealed partial class SimBridge : Node
         if (_sim == null) return;
         if (Paused) return;   // 状态冻结;早于累加 delta 以避免恢复时补帧爆发
 
-        _simAccumulator += delta;
+        _simAccumulator += delta * SpeedMultiplier;
         while (_simAccumulator >= SimTickRate)
         {
             // Turn barrier: in lockstep the sim advances only when the bundle for the
@@ -1401,6 +1406,35 @@ public sealed partial class SimBridge : Node
 
     public void CommandTrain(EntityId building) =>
         CommandTrain(building, "units/spart/support_civilian");
+
+    // ── 第二梯队菜单面板:外交/贸易命令包装(玩家级,无 entity) ────────────────
+
+    /// <summary>外交立场(原版 cmd type:"diplomacy")。stance 取 DiplomacyComponent 常量。</summary>
+    public void CommandSetStance(int targetPlayer, int stance) =>
+        SubmitCommand(NetCommand.SetStance(LocalPlayerId, targetPlayer, stance));
+
+    /// <summary>进贡(原版 cmd type:"tribute",单资源/次)。</summary>
+    public void CommandTribute(int destPlayer, ResourceType type, int amount) =>
+        SubmitCommand(NetCommand.Tribute(LocalPlayerId, destPlayer, type, amount));
+
+    /// <summary>贸易品比例(原版 cmd type:"set-trading-goods",4 资源百分比和=100)。</summary>
+    public void CommandSetTradingGoods(int wood, int food, int stone, int metal) =>
+        SubmitCommand(NetCommand.SetTradingGoods(LocalPlayerId, wood, food, stone, metal));
+
+    /// <summary>易物(原版 cmd type:"barter",amount∈{100,500})。</summary>
+    public void CommandBarter(ResourceType sell, ResourceType buy, int amount) =>
+        SubmitCommand(NetCommand.Barter(LocalPlayerId, sell, buy, amount));
+
+    /// <summary>本地玩家认输(原版 Menu "Resign"):置 Defeated + 触发 PlayerDefeated 事件
+    /// (GameOverOverlay 已订阅 → 显失败屏)。SP 本地直改;MP 需广播一致置败,列 backlog。</summary>
+    public void ResignLocalPlayer()
+    {
+        int lp = (int)LocalPlayerId;
+        var player = _sim?.Players.GetPlayerEntity(lp);
+        if (player == null) return;
+        if (player.SetDefeated())
+            _sim.Events.RaisePlayerDefeated(new PlayerDefeatedEvent { PlayerId = lp, Reason = "Resigned." });
+    }
 
     public void CommandTrainSoldier(EntityId building)
     {

@@ -19,6 +19,7 @@ public sealed partial class PauseMenu : CanvasLayer
 {
     private readonly SimBridge _sim;
     private Label _statusLabel = null!;
+    private ConfirmationDialog? _resignConfirm;
 
     public event Action? OnSave;
     public event Action? OnLoad;
@@ -104,8 +105,26 @@ public sealed partial class PauseMenu : CanvasLayer
         AddButton(vbox, "Resume", Close);
         AddButton(vbox, "Save", () => OnSave?.Invoke());
         AddButton(vbox, "Load", () => OnLoad?.Invoke());
+        AddButton(vbox, "Resign", ShowResignConfirm);
         AddButton(vbox, "Leave", () => OnLeave?.Invoke());
+
+        // Resign 确认框(对齐原版 Menu → ResignConfirmation):Confirmed → 本地玩家认输(走既有
+        // PlayerDefeated 路径 → GameOverOverlay 显失败屏),取消则关框不动。SP 够用;MP 广播延后。
+        _resignConfirm = new ConfirmationDialog
+        {
+            Title = "Resign",
+            DialogText = "Are you sure you want to resign?\nYou will be defeated.",
+            OkButtonText = "Resign",
+        };
+        _resignConfirm.Confirmed += () =>
+        {
+            _sim.ResignLocalPlayer();
+            Close();
+        };
+        AddChild(_resignConfirm);
     }
+
+    private void ShowResignConfirm() => _resignConfirm?.PopupCentered();
 
     private static void AddButton(Control parent, string label, Action onPressed)
     {

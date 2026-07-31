@@ -79,10 +79,10 @@ public sealed partial class HUD : CanvasLayer
         _topBar.AddChild(menuBox);
 
         AddMenuButton(menuBox, "menu", "Menu", () => _main.OpenPauseMenu());
-        AddMenuButton(menuBox, "time_small", "Game Speed", () => { });
-        AddMenuButton(menuBox, "diplomacy", "Diplomacy", () => { });
-        AddMenuButton(menuBox, "economics", "Trade", () => { });
-        AddMenuButton(menuBox, "match-settings", "Settings", () => { });
+        AddMenuButton(menuBox, "time_small", "Game Speed", () => _main.OpenGameSpeedPanel());
+        AddMenuButton(menuBox, "diplomacy", "Diplomacy", () => _main.OpenDiplomacyPanel());
+        AddMenuButton(menuBox, "economics", "Trade", () => _main.OpenTradePanel());
+        AddMenuButton(menuBox, "match-settings", "Settings", () => _main.OpenMatchSettingsPanel());
     }
 
     private void AddMenuButton(HBoxContainer parent, string icon, string tooltip, System.Action onPressed)

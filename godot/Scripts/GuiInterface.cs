@@ -169,5 +169,35 @@ public sealed class GuiInterface
         return result;
     }
 
+    /// <summary>玩家贸易单位计数(原版 GuiInterface.js GetTraderNumber)。
+    /// land/ship 按 IdentityComponent.HasClass("Ship") 分桶;"trading"=同时设了两个市场
+    /// (TraderComponent.HasBothMarkets)。garrisoned-trade(商船驻军)本轮不计(延后),恒 0。</summary>
+    public record TraderNumber(int LandTotal, int LandTrading, int LandGarrisoned, int ShipTotal, int ShipTrading);
+
+    public TraderNumber GetTraderNumber(int playerId)
+    {
+        int landTotal = 0, landTrading = 0, shipTotal = 0, shipTrading = 0;
+        foreach (var e in cm().AllEntities)
+        {
+            var own = cm().QueryInterface<OwnershipComponent>(e);
+            if (own == null || own.PlayerId != playerId) continue;
+            var trader = cm().QueryInterface<TraderComponent>(e);
+            if (trader == null) continue;
+            var id = cm().QueryInterface<IdentityComponent>(e);
+            bool ship = id != null && id.HasClass("Ship");
+            bool trading = trader.HasBothMarkets();
+            if (ship) { shipTotal++; if (trading) shipTrading++; }
+            else { landTotal++; if (trading) landTrading++; }
+        }
+        return new TraderNumber(landTotal, landTrading, 0, shipTotal, shipTrading);
+    }
+
+    /// <summary>玩家贸易品比例(4 资源百分比,和=100)。转发 PlayerComponent.GetTradingGoods。</summary>
+    public Dictionary<ResourceType, int> GetTradingGoods(int playerId)
+    {
+        var p = cm().GetPlayerEntity(playerId);
+        return p != null ? p.GetTradingGoods() : new Dictionary<ResourceType, int>();
+    }
+
     private ComponentManager cm() => _cm;
 }
