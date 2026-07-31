@@ -193,4 +193,52 @@ public class ParamNodeTests
         var node2 = ParamNode.LoadXml("<Entity><Flag>false</Flag></Entity>");
         Assert.False(node2.GetChild("Flag").ToBool());
     }
+
+    [Fact]
+    public void Merge_OpMul_AppliesArithmeticToInheritedBase()
+    {
+        var node = ParamNode.LoadXml("<Entity><Health><Max>50</Max></Health></Entity>");
+        node.MergeWithXml("<Entity><Health><Max op='mul'>1.4</Max></Health></Entity>");
+
+        // 50 × 1.4 = 70 (Fixed can't hold 1.4 exactly; nearest-representable rounds to 70).
+        // Regression: previously op was ignored, the base was dropped, and ToInt("1.4") read 0.
+        var max = node.GetChild("Health").GetChild("Max");
+        Assert.InRange(max.ToInt(), 69, 70);
+        Assert.False(max.HasChild("@op"), "op must be consumed, not stored as a child");
+    }
+
+    [Fact]
+    public void ResolveTemplate_OpMulAgainstParentBase()
+    {
+        var templates = new Dictionary<string, string>
+        {
+            ["template_unit"] = "<Entity><Health><Max>50</Max></Health></Entity>",
+            ["units/spart/support_civilian"] =
+                "<Entity parent='template_unit'><Health><Max op='mul'>1.4</Max></Health></Entity>",
+        };
+
+        var node = ParamNode.ResolveTemplate("units/spart/support_civilian",
+            name => System.Xml.Linq.XDocument.Parse(templates[name]));
+
+        Assert.InRange(node.GetChild("Health").GetChild("Max").ToInt(), 69, 70);
+    }
+
+    [Fact]
+    public void Merge_OpAddAndSub_AreArithmetic()
+    {
+        var node = ParamNode.LoadXml("<Entity><Health><Max>100</Max></Health></Entity>");
+        node.MergeWithXml("<Entity><Health><Max op='add'>5</Max></Health></Entity>");
+        Assert.Equal(105, node.GetChild("Health").GetChild("Max").ToInt());
+
+        node.MergeWithXml("<Entity><Health><Max op='sub'>10</Max></Health></Entity>");
+        Assert.Equal(95, node.GetChild("Health").GetChild("Max").ToInt());
+    }
+
+    [Fact]
+    public void ToInt_RoundsFractionalInsteadOfZero()
+    {
+        var node = ParamNode.LoadXml("<Entity><Max>1.4</Max></Entity>");
+        // Previously ToInt("1.4") returned 0 (int.TryParse failed); now rounds to nearest.
+        Assert.Equal(1, node.GetChild("Max").ToInt());
+    }
 }
