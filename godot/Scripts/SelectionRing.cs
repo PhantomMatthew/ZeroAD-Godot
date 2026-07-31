@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Godot;
 
 namespace ZeroAD.Godot;
@@ -104,6 +105,122 @@ public static class SelectionRing
         mat.NoDepthTest = true;
         mesh.SurfaceSetMaterial(0, mat);
         instance.Position = new Vector3(0, 4f, 0);
+        return instance;
+    }
+
+    /// <summary>Procedural rally-point flag fallback: a thin dark pole with a player-coloured
+    /// quad at the top. Used only when the real <c>{civ}_waypoint_flag</c> actor fails to
+    /// instantiate (e.g. art not converted). The returned Node3D's origin sits at ground
+    /// level — raise it by setting Position.Y to the sampled terrain height.</summary>
+    public static Node3D CreateRallyFlag(Color color)
+    {
+        const float poleHeight = 3f;
+        var root = new Node3D();
+
+        var pole = new MeshInstance3D
+        {
+            Mesh = new CylinderMesh { TopRadius = 0.06f, BottomRadius = 0.06f, Height = poleHeight },
+            Position = new Vector3(0, poleHeight * 0.5f, 0),
+        };
+        pole.MaterialOverride = FlagMat(new Color(0.05f, 0.05f, 0.05f));
+        root.AddChild(pole);
+
+        const float flagW = 1.2f;
+        const float flagH = 0.8f;
+        var flag = new MeshInstance3D
+        {
+            Mesh = new QuadMesh { Size = new Vector2(flagW, flagH) },
+            Position = new Vector3(flagW * 0.5f, poleHeight - flagH * 0.5f, 0),
+        };
+        flag.MaterialOverride = FlagMat(color);
+        root.AddChild(flag);
+
+        return root;
+    }
+
+    private static StandardMaterial3D FlagMat(Color color)
+    {
+        var mat = new StandardMaterial3D();
+        mat.AlbedoColor = color;
+        mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+        mat.NoDepthTest = true;
+        return mat;
+    }
+
+    private static StandardMaterial3D? _lineMat;
+
+    /// <summary>Rally line material: the original <c>rallypoint_line.png</c> tiled along the
+    /// path, transparent, unshaded, drawn over terrain (no depth test) — a flat ground decal
+    /// matching <c>CCmpRallyPointRenderer</c>. Repeat is enabled so UV &gt; 1 tiles the strip.</summary>
+    private static StandardMaterial3D LineMat()
+    {
+        if (_lineMat != null) return _lineMat;
+        var mat = new StandardMaterial3D();
+        mat.AlbedoTexture = ResourceLoader.Load<Texture2D>("res://assets/textures/misc/rallypoint_line.png");
+        mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+        mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
+        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+        mat.NoDepthTest = true;
+        mat.TextureRepeat = true;
+        _lineMat = mat;
+        return mat;
+    }
+
+    /// <summary>Rally-point path line: a flat textured ribbon laid on the ground along the
+    /// waypoints from the building to the rally (对齐原版 CCmpRallyPointRenderer's textured
+    /// strip). <paramref name="points"/> are world-space, terrain-height-sampled, in travel
+    /// order (building → rally). The texture tiles along the length; the strip width is fixed.
+    /// Returns a MeshInstance3D (empty mesh if fewer than 2 points).</summary>
+    public static MeshInstance3D CreateRallyLine(IReadOnlyList<Vector3> points)
+    {
+        var instance = new MeshInstance3D();
+        if (points == null || points.Count < 2) return instance;
+
+        const float halfWidth = 0.6f;
+        const float tileLength = 3f;     // world units per one texture tile along the path
+
+        // Left/right edge vertices, offset perpendicular to each segment's direction (XZ plane).
+        var left = new List<Vector3>(points.Count);
+        var right = new List<Vector3>(points.Count);
+        for (int i = 0; i < points.Count; i++)
+        {
+            Vector3 p = points[i];
+            Vector3 dir = i < points.Count - 1 ? points[i + 1] - p : p - points[i - 1];
+            Vector3 d = new(dir.X, 0, dir.Z);
+            float len = d.Length();
+            d = len < 0.0001f ? new Vector3(0, 0, 1) : d / len;
+            Vector3 perp = new Vector3(-d.Z, 0f, d.X) * halfWidth;
+            left.Add(p + perp);
+            right.Add(p - perp);
+        }
+
+        var st = new SurfaceTool();
+        st.Begin(Mesh.PrimitiveType.Triangles);
+
+        float v = 0f;
+        for (int i = 0; i < points.Count - 1; i++)
+        {
+            Vector3 seg = points[i + 1] - points[i];
+            float segLen = new Vector3(seg.X, 0, seg.Z).Length();
+            float v0 = v / tileLength;
+            float v1 = (v + segLen) / tileLength;
+            v += segLen;
+
+            Vector3 lb = left[i], lt = left[i + 1], rb = right[i], rt = right[i + 1];
+            // Two triangles per segment quad (UV.x across width 0..1, UV.y along length tiles).
+            st.SetUV(new Vector2(0, v0)); st.AddVertex(lb);
+            st.SetUV(new Vector2(1, v0)); st.AddVertex(rb);
+            st.SetUV(new Vector2(0, v1)); st.AddVertex(lt);
+
+            st.SetUV(new Vector2(1, v0)); st.AddVertex(rb);
+            st.SetUV(new Vector2(1, v1)); st.AddVertex(rt);
+            st.SetUV(new Vector2(0, v1)); st.AddVertex(lt);
+        }
+
+        var mesh = st.Commit();
+        mesh.SurfaceSetMaterial(0, LineMat());
+        instance.Mesh = mesh;
         return instance;
     }
 }

@@ -22,6 +22,9 @@ public sealed partial class HUD : CanvasLayer
     private CaptureBar _selCapture = null!;
     private Label _selExtra = null!;
     private Label _selGarrison = null!;
+    private const int QueueSlotCount = 8;     // 训练队列池大小(选中面板最多显示的槽数)
+    private HBoxContainer _queueRow = null!;
+    private readonly QueueSlot[] _queueSlots = new QueueSlot[QueueSlotCount];
     private HBoxContainer _commandBox = null!;
 
     private static readonly string[] _resNames = { "food", "wood", "stone", "metal" };
@@ -75,7 +78,7 @@ public sealed partial class HUD : CanvasLayer
         menuBox.AddThemeConstantOverride("separation", 4);
         _topBar.AddChild(menuBox);
 
-        AddMenuButton(menuBox, "menu", "Menu", () => { });
+        AddMenuButton(menuBox, "menu", "Menu", () => _main.OpenPauseMenu());
         AddMenuButton(menuBox, "time_small", "Game Speed", () => { });
         AddMenuButton(menuBox, "diplomacy", "Diplomacy", () => { });
         AddMenuButton(menuBox, "economics", "Trade", () => { });
@@ -357,6 +360,21 @@ public sealed partial class HUD : CanvasLayer
         _selName.AddThemeConstantOverride("outline_size", 3);
         header.AddChild(_selName);
 
+        // 训练队列行(原版 selection_details training queue):池化 8 槽,选中生产建筑时
+        // 显示在训单位头像 + 头项进度遮罩。UpdateSelectionPanel 每帧填字段 + QueueRedraw。
+        _queueRow = new HBoxContainer { Visible = false };
+        _queueRow.AddThemeConstantOverride("separation", 2);
+        for (int i = 0; i < _queueSlots.Length; i++)
+        {
+            _queueSlots[i] = new QueueSlot
+            {
+                CustomMinimumSize = new Vector2(36, 36),
+                Visible = false,
+            };
+            _queueRow.AddChild(_queueSlots[i]);
+        }
+        vbox.AddChild(_queueRow);
+
         var healthRow = new HBoxContainer();
         healthRow.AddThemeConstantOverride("separation", 8);
         vbox.AddChild(healthRow);
@@ -628,6 +646,8 @@ public sealed partial class HUD : CanvasLayer
             _selHealthText.Text = "";
             _selCapture.Visible = false;
             _selExtra.Text = "";
+            _queueRow.Visible = false;
+            _selGarrison.Text = "";
             _selIcon.Texture = null;
             return;
         }
@@ -683,14 +703,46 @@ public sealed partial class HUD : CanvasLayer
         else
             _selExtra.Text = "";
 
+        // 训练队列(仅生产建筑有非空 ProductionQueue 时显示):头项画进度遮罩,余者待训压暗。
+        var queue = _sim.Sim.QueryInterface<ProductionQueue>(first);
+        if (queue != null && queue.QueueCount > 0)
+        {
+            int n = System.Math.Min(queue.QueueCount, _queueSlots.Length);
+            for (int i = 0; i < _queueSlots.Length; i++)
+            {
+                var slot = _queueSlots[i];
+                if (i >= n) { slot.Visible = false; continue; }
+                var item = queue.Queue[i];
+                slot.Portrait = LoadPortraitForTemplate(item.TemplateName);
+                slot.Progress = i == 0 && item.BuildTime > 0f
+                    ? Mathf.Clamp(queue.Progress / item.BuildTime, 0f, 1f) : 0f;
+                slot.BatchCount = item.Count;
+                slot.Visible = true;
+                slot.RefreshCount();
+                slot.QueueRedraw();
+            }
+            _queueRow.Visible = true;
+        }
+        else
+        {
+            _queueRow.Visible = false;
+        }
+
+        // 驻军数(填既有空标签 _selGarrison)。
+        var holder = _sim.Sim.QueryInterface<GarrisonHolderComponent>(first);
+        _selGarrison.Text = holder != null && holder.Entities.Count > 0
+            ? $"Garrison: {holder.Entities.Count}/{holder.GetCapacity(_sim.Sim)}" : "";
+
         _selIcon.Texture = LoadPortraitForIdentity(identity);
     }
 
-    private static Texture2D? LoadPortraitForIdentity(IdentityComponent? identity)
-    {
-        if (identity == null) return null;
-        string tmpl = identity.TemplateName;
+    private static Texture2D? LoadPortraitForIdentity(IdentityComponent? identity) =>
+        identity == null ? null : LoadPortraitForTemplate(identity.TemplateName, identity.IsBuilding);
 
+    /// <summary>按模板名解析头像路径。队列槽持模板名(无 IdentityComponent)直接调;
+    /// isBuilding 仅兜底占位图。映射对齐原版 selection_details 头像选择。</summary>
+    private static Texture2D? LoadPortraitForTemplate(string tmpl, bool isBuilding = false)
+    {
         string portraitKey = tmpl switch
         {
             var t when t.Contains("civil_centre") || t.Contains("civic_centre") => "portraits/structures/civic_centre.png",
@@ -711,7 +763,7 @@ public sealed partial class HUD : CanvasLayer
             var t when t.Contains("cavalry") => "portraits/units/cavalry_javelinist.png",
             var t when t.Contains("siege_ram") => "portraits/units/siege_ram.png",
             var t when t.Contains("support_female") => "portraits/units/support_female_citizen.png",
-            _ => identity.IsBuilding ? "icon_stone.png" : "icon_population.png",
+            _ => isBuilding ? "icon_stone.png" : "icon_population.png",
         };
 
         return LoadTex(portraitKey);
@@ -759,6 +811,67 @@ public sealed partial class HUD : CanvasLayer
                 DrawRect(new Rect2(x, 0, w, rect.Size.Y), SimBridge.GetPlayerColor(p));
                 x += w;
             }
+            DrawRect(rect, new Color(0f, 0f, 0f, 0.8f), filled: false, width: 1f);
+        }
+    }
+
+    /// <summary>训练队列槽(镜像 CaptureBar 自绘范式):头像贴满 + 头项进度遮罩
+    ///(未训部分压暗,训完从底部消散,对齐原版 selection_details 训练槽观感)+
+    /// 批量数 ×N + 黑描边。Portrait/Progress/BatchCount 由 UpdateSelectionPanel 每帧填,
+    /// QueueRedraw 触发重绘。池化复用,Visible 切换不重建。</summary>
+    private sealed partial class QueueSlot : Control
+    {
+        public Texture2D? Portrait;
+        public float Progress;      // 0..1,仅头项有意义(其余槽恒 0 = 待训压暗)
+        public int BatchCount;      // item.Count>1 时右下角显示 ×N
+
+        private readonly Label _countLabel;
+
+        public QueueSlot()
+        {
+            // 批量数 ×N 用 Label 子节点(规避 DrawString 跨版本签名差异),右下角白字黑描边。
+            _countLabel = new Label
+            {
+                MouseFilter = MouseFilterEnum.Ignore,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Bottom,
+            };
+            _countLabel.AddThemeFontSizeOverride("font_size", 12);
+            _countLabel.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f));
+            _countLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _countLabel.AddThemeConstantOverride("outline_size", 3);
+            _countLabel.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            AddChild(_countLabel);
+        }
+
+        /// <summary>HUD 每帧填完字段后调,刷新批量数标签(_Draw 不画文字)。</summary>
+        public void RefreshCount()
+        {
+            bool show = BatchCount > 1;
+            _countLabel.Text = show ? $"×{BatchCount}" : "";
+            _countLabel.Visible = show;
+        }
+
+        public override void _Draw()
+        {
+            var rect = new Rect2(Vector2.Zero, Size);
+            if (Portrait != null)
+                DrawTextureRect(Portrait, rect, tile: false);
+            else
+                DrawRect(rect, new Color(0.3f, 0.3f, 0.3f));
+
+            // 进度遮罩:部分训完(0<Progress<1)→ 顶部未训段压暗;未开始(Progress<=0)→ 整槽压暗。
+            if (Progress > 0f && Progress < 1f)
+            {
+                float doneH = rect.Size.Y * Progress;
+                DrawRect(new Rect2(0, doneH, rect.Size.X, rect.Size.Y - doneH),
+                    new Color(0f, 0f, 0f, 0.55f));
+            }
+            else if (Progress <= 0f)
+            {
+                DrawRect(rect, new Color(0f, 0f, 0f, 0.45f));
+            }
+
             DrawRect(rect, new Color(0f, 0f, 0f, 0.8f), filled: false, width: 1f);
         }
     }

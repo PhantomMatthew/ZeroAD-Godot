@@ -59,6 +59,11 @@ public sealed partial class SimBridge : Node
     public NetTurnManager NetTurn => _netTurn;
     public uint LocalPlayerId { get; private set; } = 1;
 
+    /// <summary>暂停标志(表现层门控)。置 true 后 _Process 直接返回:既不累加 delta
+    /// 也跳过 SyncVisuals/插值——sim 状态冻结,且恢复时无补帧爆发(SP 向;MP 暂停不在内,
+    /// 叠层可开但锁步屏障仍驱动 AdvanceTurn)。由 PauseMenu.Open/Close 翻转。</summary>
+    public bool Paused;
+
     /// <summary>Read-only query facade for HUD/Minimap/AI. Consolidates the scattered
     /// QueryInterface + entity-list iteration that previously lived inline in the GUI.</summary>
     public GuiInterface Gui { get; private set; } = null!;
@@ -530,6 +535,7 @@ public sealed partial class SimBridge : Node
     public override void _Process(double delta)
     {
         if (_sim == null) return;
+        if (Paused) return;   // 状态冻结;早于累加 delta 以避免恢复时补帧爆发
 
         _simAccumulator += delta;
         while (_simAccumulator >= SimTickRate)
@@ -620,6 +626,10 @@ public sealed partial class SimBridge : Node
     {
         RemoveDeadEntities();
         TickUnitMotions(dt);
+        // Unit pushing (ports CCmpUnitMotionManager::Move/Push): after every unit has stepped,
+        // push overlapping pairs apart so rallied/converging units spread into a visible cluster
+        // instead of stacking on one point (which made only one render). Pure sim, lockstep-safe.
+        UnitSeparation.Separate(_sim, Fixed.FromFloat(dt));
         TickUnitAI(dt);
         TickGatherers(dt);
         TickAttackers(dt);
@@ -716,8 +726,7 @@ public sealed partial class SimBridge : Node
         {
             var health = _sim.QueryInterface<HealthComponent>(entity);
             if (health != null && health.IsDead)
-            {
-                var owner = _sim.QueryInterface<OwnershipComponent>(entity);
+            {                var owner = _sim.QueryInterface<OwnershipComponent>(entity);
                 int fromPlayer = owner?.PlayerId ?? -1;
                 Events.RaiseOwnershipChanged(new OwnershipChangedEvent
                 {
@@ -1376,6 +1385,13 @@ public sealed partial class SimBridge : Node
 
     public void CommandSetRallyPoint(EntityId building, EntityId? target) =>
         SubmitCommand(NetCommand.SetRallyPoint(LocalPlayerId, building.Value, target?.Value ?? 0));
+
+    /// <summary>Set a ground rally point (right-click empty ground on a production
+    /// building). x/z are world coords; mirrors <see cref="CommandBuild"/>'s float→Fixed
+    /// conversion (对齐原版集合点语义).</summary>
+    public void CommandSetRallyPointPosition(EntityId building, float x, float z) =>
+        SubmitCommand(NetCommand.SetRallyPointPosition(LocalPlayerId, building.Value,
+            Fixed.FromFloat(x), Fixed.FromFloat(z)));
 
     public void CommandResearch(EntityId building, string techName) =>
         SubmitCommand(NetCommand.Research(LocalPlayerId, building.Value, techName));

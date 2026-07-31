@@ -1,11 +1,14 @@
 using Godot;
 using System.Collections.Generic;
 using System.Linq;
+using ZeroAD.Godot.Actors;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Events;
+using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Net;
+using ZeroAD.Sim.Pathfinding;
 
 namespace ZeroAD.Godot;
 
@@ -28,6 +31,7 @@ public sealed partial class Main : Node3D
 	private bool _isTutorial;
 	private TutorialPanel _tutorialPanel = null!;
 	private LoadingOverlay? _loadingOverlay;
+	private PauseMenu? _pauseMenu;
 
 	public IReadOnlySet<EntityId> SelectedEntities => _selectedEntities;
 	public bool IsTutorial => _isTutorial;
@@ -192,6 +196,19 @@ public sealed partial class Main : Node3D
 				// Victory/Defeat panel when the match ends.
 				var gameOver = new GameOverOverlay(_sim, localPlayerId: (int)playerId);
 				AddChild(gameOver);
+
+				// Pause menu (Menu 按钮 → 暂停叠层):冻结 sim + 存档/读档/离开。事件解耦同 LobbyUI:
+				// 存档/读档复用 QuickSave/QuickLoad(含视觉重建),离开回主菜单。
+				_pauseMenu = new PauseMenu(_sim);
+				var pm = _pauseMenu;
+				pm.OnSave += () => pm.SetStatus(QuickSave() != null ? "Saved." : "Save failed.");
+				pm.OnLoad += () =>
+				{
+					var t = QuickLoad();
+					pm.SetStatus(t == null ? "No save / load failed." : $"Loaded turn {t}.");
+				};
+				pm.OnLeave += () => GetTree().ChangeSceneToFile("res://Scenes/Main.tscn");
+				AddChild(pm);
 			}
 
 			if (_isTutorial)
@@ -603,6 +620,12 @@ public sealed partial class Main : Node3D
 
 	private readonly List<Node3D> _selectionMarkers = new();
 
+	// Rally-point marker (flag + path line). Cached across frames: the actor instantiate +
+	// pathfind are too costly to rebuild every frame, so we only rebuild when the selected
+	// building, rally position, or civ changes. Separate from the per-frame _selectionMarkers.
+	private Node3D? _rallyMarker;
+	private (uint buildingId, int rallyXi, int rallyZi, string civ)? _rallyMarkerKey;
+
 	public override void _Process(double delta)
 	{
 		if (!_gameStarted) return;
@@ -846,6 +869,121 @@ public sealed partial class Main : Node3D
 				_selectionMarkers.Add(bar);
 			}
 		}
+
+		// Rally-point marker (flag + path line) is cached across frames — see ReconcileRallyMarker.
+		ReconcileRallyMarker();
+	}
+
+	/// <summary>Reconcile the cached rally marker (_rallyMarker) with the current selection:
+	/// find the first selected production building carrying a non-zero rally, and rebuild the
+	/// flag + path line only when the building/rally/civ changes (对齐原版 0 A.D.). Tearing
+	/// down when nothing qualifies keeps pathfinding off the hot path — ComputePath runs once
+	/// per rally change, not per frame.</summary>
+	private void ReconcileRallyMarker()
+	{
+		// v1: the first selected building with a set rally point drives the marker.
+		EntityId? rallyBuilding = null;
+		FixedVector2D rallyPos = default;
+		string civ = "athen";
+		foreach (var eid in _selectedEntities)
+		{
+			var rally = _sim.Sim.QueryInterface<RallyPointComponent>(eid);
+			if (rally == null || rally.Position.IsZero) continue;
+			rallyBuilding = eid;
+			rallyPos = rally.Position;
+			// Civ from the building template path: structures/{civ}/...
+			var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
+			if (id != null)
+			{
+				var parts = id.TemplateName.Split('/');
+				if (parts.Length >= 2 && parts[0] == "structures") civ = parts[1];
+			}
+			break;
+		}
+
+		if (rallyBuilding == null)
+		{
+			ClearRallyMarker();
+			return;
+		}
+
+		// Fixed.InternalValue is stable across frames → exact key without float drift.
+		var key = (rallyBuilding.Value.Value, rallyPos.X.InternalValue, rallyPos.Y.InternalValue, civ);
+		if (_rallyMarkerKey == key) return;
+		ClearRallyMarker();
+
+		float rallyX = rallyPos.X.ToFloat();
+		float rallyZ = rallyPos.Y.ToFloat();
+		float rallyGroundY = TerrainHeightService.Sample(rallyX, rallyZ);
+
+		// Owner colour mirrors the selection-ring friendly/enemy split.
+		var own = _sim.Sim.QueryInterface<OwnershipComponent>(rallyBuilding.Value);
+		int ownerPlayerId = own?.PlayerId ?? -1;
+		Color ownerColor = ownerPlayerId == 1
+			? new Color(0.08f, 0.22f, 0.58f) : new Color(0.72f, 0.06f, 0.06f);
+
+		var container = new Node3D();
+		_sim.UnitContainer.AddChild(container);
+		_rallyMarker = container;
+		_rallyMarkerKey = key;
+
+		// Flag: the real per-civ waypoint_flag actor; procedural fallback if it won't load.
+		int seed = (int)(rallyBuilding.Value.Value * 2654435761u);   // stable per-building hash
+		var flagActor = ActorLoader.Instance.Instantiate(
+			$"props/special/common/{civ}_waypoint_flag.xml", seed, ownerColor);
+		Node3D flag;
+		if (flagActor != null)
+		{
+			flag = flagActor;
+			flag.Position = new Vector3(rallyX, rallyGroundY, rallyZ);
+		}
+		else
+		{
+			flag = SelectionRing.CreateRallyFlag(ownerColor);
+			flag.Position = new Vector3(rallyX, rallyGroundY + 0.1f, rallyZ);
+		}
+		container.AddChild(flag);
+
+		// Path line: pathfind building → rally (read-only; mirrors CCmpRallyPointRenderer),
+		// then lay a textured ground ribbon along the waypoints.
+		var bpos = _sim.Sim.QueryInterface<PositionComponent>(rallyBuilding.Value);
+		if (bpos != null)
+		{
+			var start = new FixedVector2D(bpos.Position.X, bpos.Position.Z);
+			var path = _sim.Pathfinder.ComputePath(start, PathGoal.Point(rallyPos.X, rallyPos.Y));
+			if (!path.IsEmpty)
+			{
+				// Waypoints are stored start→goal (index 0 = start; UnitMotion consumes front→back likewise);
+				// iterate front→back for travel order, capped with the exact building/rally endpoints.
+				// Reversing this draws the path backward so the cap segments cross over → a straight
+				// diagonal + the curve (two visible lines instead of one)
+				var pts = new List<Vector3>
+				{
+					new(start.X.ToFloat(),
+						TerrainHeightService.Sample(start.X.ToFloat(), start.Y.ToFloat()) + 0.15f,
+						start.Y.ToFloat())
+				};
+				for (int i = 0; i < path.Waypoints.Count; i++)
+				{
+					var w = path.Waypoints[i];
+					pts.Add(new Vector3(w.X.ToFloat(),
+						TerrainHeightService.Sample(w.X.ToFloat(), w.Z.ToFloat()) + 0.15f,
+						w.Z.ToFloat()));
+				}
+				pts.Add(new Vector3(rallyX, rallyGroundY + 0.15f, rallyZ));
+				container.AddChild(SelectionRing.CreateRallyLine(pts));
+			}
+		}
+	}
+
+	private void ClearRallyMarker()
+	{
+		if (_rallyMarker != null)
+		{
+			_rallyMarker.QueueFree();
+			_rallyMarker = null;
+		}
+		_rallyMarkerKey = null;
 	}
 
 	// _UnhandledInput (not _Input) so that clicks absorbed by the HUD's Control nodes —
@@ -854,6 +992,8 @@ public sealed partial class Main : Node3D
 	public override void _UnhandledInput(InputEvent @event)
 	{
 		if (!_gameStarted) return;
+		// 暂停时屏蔽游戏输入(热键 B/T/S/右键/选区);叠层按钮走 GUI 事件不受影响。
+		if (_sim.Paused) return;
 
 		if (@event is InputEventKey key && key.Pressed)
 		{
@@ -947,6 +1087,13 @@ public sealed partial class Main : Node3D
 					_sim.CommandSetRallyPoint(only, targetEntity);
 					return;
 				}
+			}
+			else if (rally != null && !targetEntity.HasValue)
+			{
+				// Right-click empty ground on a production building: set a ground rally
+				// point there. Buildings can't move/attack, so this is the natural mapping.
+				_sim.CommandSetRallyPointPosition(only, worldPos.Value.X, worldPos.Value.Z);
+				return;
 			}
 		}
 
@@ -1088,19 +1235,25 @@ public sealed partial class Main : Node3D
 			}
 	}
 
-	private void QuickSave()
+	/// <summary>顶栏 Menu 按钮回调:打开暂停菜单(冻结 sim)。HUD 持 _main 引用直接调。</summary>
+	public void OpenPauseMenu() => _pauseMenu?.Open();
+
+	/// <summary>F5 快存 / 暂停菜单 Save。返回存档路径(null=失败),供暂停菜单回灌状态。</summary>
+	private string? QuickSave()
 	{
 		var path = SaveGameManager.Save(_sim);
 		if (path != null)
 			GD.Print($"[QuickSave] saved to {path}");
+		return path;
 	}
 
-	private void QuickLoad()
+	/// <summary>F9 快读 / 暂停菜单 Load。返回加载到的回合号(null=无存档或失败)。</summary>
+	private uint? QuickLoad()
 	{
 		if (!SaveGameManager.Exists())
 		{
 			GD.PrintErr("[QuickLoad] no save file found");
-			return;
+			return null;
 		}
 		var turn = SaveGameManager.Load(_sim, prepareComponent: comp =>
 		{
@@ -1112,13 +1265,14 @@ public sealed partial class Main : Node3D
 			if (comp is ZeroAD.Sim.Components.AIComponent ai)
 				ai.Configure(_sim.Sim, _sim.NetTurn);
 		});
-		if (turn == null) return;
+		if (turn == null) return null;
 
 		// Rebuild the entire visual layer: the old entity nodes are stale (they
 		// reference entities that were cleared + recreated by DeserializeSaveGame).
 		// Destroy every visual node, then recreate one for each loaded entity.
 		_sim.RebuildAllVisuals();
 		GD.Print($"[QuickLoad] loaded turn {turn}, visuals rebuilt");
+		return turn;
 	}
 
 	private void PlaceBuilding(Vector2 screenPos)
