@@ -240,7 +240,7 @@ public sealed class DefenseManager
         {
             var attack = _cm.QueryInterface<AttackComponent>(soldier);
             if (attack == null || attack.State == AttackComponent.AttackState.Attacking) continue;
-            _net.SubmitAiCommand(NetCommand.Attack(_playerId, soldier.Value, threat.Value.Value));
+            _net.SubmitAiCommand(NetCommand.Attack(_playerId, soldier.Value, threat.Value.Value, allowCapture: true));
         }
     }
 
@@ -319,7 +319,7 @@ public sealed class AttackManager
         if (tpos == null) return;
 
         foreach (var soldier in snap.Soldiers)
-            _net.SubmitAiCommand(NetCommand.Attack(_playerId, soldier.Value, target.Value.Value));
+            _net.SubmitAiCommand(NetCommand.Attack(_playerId, soldier.Value, target.Value.Value, allowCapture: true));
     }
 }
 

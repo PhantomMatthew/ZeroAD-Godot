@@ -40,6 +40,37 @@ public static class ValueModificationApplier
         }
     }
 
+    /// <summary>重算某玩家全部可占领实体的 Capturable.MaxCapturePoints(经 "Capturable/CapturePoints"
+    /// 修正值管线),并按比例缩放 CP 数组(对齐原版 Capturable.js UpdateCachedValuesAndNotify)。
+    /// 基值取 BaseMaxCapturePointsOrMax,保幂等(镜像 RescaleHealth)。按比例缩放保 argmax →
+    /// 主人不变,无需 RegisterCapturePointsChanged。</summary>
+    public static void RescaleMaxCapturePoints(ComponentManager cm, EntityId playerEntity)
+    {
+        var ownership = cm.QueryInterface<OwnershipComponent>(playerEntity);
+        if (ownership == null) return;
+        int playerId = ownership.PlayerId;
+
+        foreach (var ent in cm.AllEntities)
+        {
+            var own = cm.QueryInterface<OwnershipComponent>(ent);
+            if (own == null || own.PlayerId != playerId) continue;
+            var cap = cm.QueryInterface<CapturableComponent>(ent);
+            if (cap == null) continue;
+
+            Fixed newMax = Fixed.FromFloat(cm.Modifiers.Apply(
+                "Capturable/CapturePoints", cap.BaseMaxCapturePointsOrMax.ToFloat(), ent));
+            if (newMax == cap.MaxCapturePoints) continue;
+            Fixed oldMax = cap.MaxCapturePoints;
+            if (oldMax > Fixed.Zero)
+            {
+                Fixed scale = newMax / oldMax;
+                for (int i = 0; i < cap.CapturePoints.Length; i++)
+                    cap.CapturePoints[i] = cap.CapturePoints[i].Multiply(scale);
+            }
+            cap.MaxCapturePoints = newMax;
+        }
+    }
+
     /// <summary>有效视野 = 模板基值经 "Vision/Range" 修正值管线(原版 CCmpVision::GetRange 同款,
     /// 查询时计算)。</summary>
     public static Fixed EffectiveVisionRange(ComponentManager cm, EntityId ent, VisionComponent vis) =>

@@ -392,6 +392,7 @@ namespace ZeroAD.Sim
                 var capturable = new CapturableComponent
                 {
                     MaxCapturePoints = stats.CapturablePoints,
+                    BaseMaxCapturePoints = stats.CapturablePoints,
                     RegenRate = stats.CapturableRegenRate,
                     GarrisonRegenRate = stats.CapturableGarrisonRegenRate,
                 };

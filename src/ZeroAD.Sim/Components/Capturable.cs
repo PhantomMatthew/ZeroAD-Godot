@@ -9,12 +9,13 @@ namespace ZeroAD.Sim.Components;
 /// 主人那份归零 → 翻面给 CP 最多的玩家。已移植:Capture/CanCapture(单位捕获入口,
 /// 由 DelayedDamage 捕获通道调用)、Reduce 多敌均摊、TerritoryDecay 抽干、regen 恢复
 /// (含驻军捕获强度×GarrisonRegenRate 加成、负 regen 衰向 gaia)、SetCapturePoints(克隆)。
+/// <b>已移植</b>:<b>Capturable/* 科技修正</b>(RegenRate/GarrisonRegenRate use-site 惰性读;
+/// CapturePoints 经 ValueModificationApplier.RescaleMaxCapturePoints 按比例缩放 CP 数组,
+/// 镜像 Health:模板基值 BaseMaxCapturePoints 保幂等)。注:phase 科技是 GarrisonRegenRate
+/// <b>add</b> 0.5/1.0(ship_capture_resistance 才是 CapturePoints ×1.4)。
 /// <b>未移植</b>:StatisticsTracker 战报、Fogging.Activate 雾内隐藏、外部易主 CP 转移
 /// (原版 OnOwnershipChanged 的 wololo 分支——我们的翻面在 RegisterCapturePointsChanged
-/// 内闭环)、MT_CapturePointsChanged 消息(表现层自行轮询)、<b>Capturable/* 科技修正</b>
-/// (原版 OnValueModification→UpdateCachedValues 含 maxCP 变化时 CP 数组按比例缩放;
-/// phase 科技 ×1.4 未生效,MaxCapturePoints/RegenRate 冻结在模板值——修正值管道次要路径,
-/// 与 Resistance/RepeatTime 同批待接线)。
+/// 内闭环)、MT_CapturePointsChanged 消息(表现层自行轮询)。
 /// 原版 1s 定时器;本移植由 SimBridge 每回合(0.1s)调 <see cref="TimerTick"/>,速率×dt 等价。
 /// </summary>
 [Component("Capturable", "Capturable")]
@@ -23,6 +24,13 @@ public sealed class CapturableComponent : ComponentBase, IComponentMessageHandle
     public const int MaxPlayers = LosGrid.MaxPlayers;
 
     public Fixed MaxCapturePoints;
+    /// <summary>模板基值(修正值管线的输入,镜像 <see cref="HealthComponent.BaseMax"/>)。
+    /// 0 = 未显式设置,回退用 <see cref="MaxCapturePoints"/>。Capturable/CapturePoints 科技
+    /// 改变 max 时由 <see cref="ValueModificationApplier.RescaleMaxCapturePoints"/> 按比例缩放 CP 数组。</summary>
+    public Fixed BaseMaxCapturePoints;
+    /// <summary>修正值查询用的基值:BaseMaxCapturePoints &gt; 0 优先,否则 MaxCapturePoints
+    /// (镜像 <see cref="HealthComponent.BaseMaxOrMax"/>)。</summary>
+    public Fixed BaseMaxCapturePointsOrMax => BaseMaxCapturePoints > Fixed.Zero ? BaseMaxCapturePoints : MaxCapturePoints;
     public Fixed RegenRate;
     public Fixed GarrisonRegenRate;
     /// <summary>每玩家占领点(下标 0=gaia)。</summary>
@@ -62,20 +70,29 @@ public sealed class CapturableComponent : ComponentBase, IComponentMessageHandle
         return false;
     }
 
+    /// <summary>Capturable/RegenRate use-site 惰性读(同 Combat 的 Attack/Capture/Capture):
+    /// 序列化的 RegenRate 为模板基值,科技加成恒新 + 幂等。</summary>
+    private Fixed ApplyRegenRate(ComponentManager cm) =>
+        Fixed.FromFloat(cm.Modifiers.Apply("Capturable/RegenRate", RegenRate.ToFloat(), Entity));
+
     /// <summary>对齐原版 GetRegenRate:base + Σ(驻军单位的 Capture 攻击强度 ×
-    /// GarrisonRegenRate)。强度过修正值管线(原版读 GetAttackEffectsData("Capture"),
-    /// 含科技加成)。无 GarrisonHolder → 仅 base。</summary>
+    /// GarrisonRegenRate)。base 与 GarrisonRegenRate 均过修正值管线(use-site 惰性读,
+    /// phase 科技 GarrisonRegenRate +0.5/+1.0 在此生效);强度亦过 Attack/Capture/Capture。
+    /// 无 GarrisonHolder → 仅 base。</summary>
     public Fixed GetRegenRate(ComponentManager cm)
     {
+        var regen = ApplyRegenRate(cm);
         var holder = cm.QueryInterface<GarrisonHolderComponent>(Entity);
-        if (holder == null) return RegenRate;
-        var total = RegenRate;
+        if (holder == null) return regen;
+        var total = regen;
+        Fixed garrisonMult = Fixed.FromFloat(
+            cm.Modifiers.Apply("Capturable/GarrisonRegenRate", GarrisonRegenRate.ToFloat(), Entity));
         foreach (var e in holder.Entities)
         {
             var atk = cm.QueryInterface<AttackComponent>(e);
             if (atk == null || atk.CaptureStrength <= Fixed.Zero) continue;
             float strength = cm.Modifiers.Apply("Attack/Capture/Capture", atk.CaptureStrength.ToFloat(), e);
-            total += Fixed.FromFloat(strength).Multiply(GarrisonRegenRate);
+            total += Fixed.FromFloat(strength).Multiply(garrisonMult);
         }
         return total;
     }
@@ -195,6 +212,7 @@ public sealed class CapturableComponent : ComponentBase, IComponentMessageHandle
     public override void Serialize(ISerializer s)
     {
         s.NumberFixed("max", MaxCapturePoints);
+        s.NumberFixed("bmax", BaseMaxCapturePoints);
         s.NumberFixed("regen", RegenRate);
         s.NumberFixed("gregen", GarrisonRegenRate);
         for (int i = 0; i < CapturePoints.Length; i++)
@@ -204,6 +222,7 @@ public sealed class CapturableComponent : ComponentBase, IComponentMessageHandle
     public override void Deserialize(IDeserializer d)
     {
         MaxCapturePoints = d.NumberFixed("max");
+        BaseMaxCapturePoints = d.NumberFixed("bmax");
         RegenRate = d.NumberFixed("regen");
         GarrisonRegenRate = d.NumberFixed("gregen");
         for (int i = 0; i < CapturePoints.Length; i++)

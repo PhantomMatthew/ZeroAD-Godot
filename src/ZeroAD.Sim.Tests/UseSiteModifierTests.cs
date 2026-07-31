@@ -31,6 +31,10 @@ public sealed class UseSiteModifierTests
             {
                 new("Health/Max", null, 1.25f, null, new List<string> { "Tower" })
             }),
+            ["capture_points"] = Def("capture_points", mods: new List<Modification>
+            {
+                new("Capturable/CapturePoints", null, 1.4f, null, new List<string>())
+            }),
         };
         return new TechCatalog(techs, new Dictionary<string, IReadOnlyList<string>>());
     }
@@ -179,6 +183,89 @@ public sealed class UseSiteModifierTests
         Assert.Equal(321, restored.BaseMax);
         Assert.Equal(150, restored.Current);
         Assert.Equal(400, restored.Max);
+    }
+
+    // ---------- Capturable/CapturePoints 缩放(镜像 RescaleHealth) ----------
+
+    [Fact]
+    public void Research_CapturePoints_MaxUp_CpArrayScalesProportionally()
+    {
+        var (cm, playerEnt, tm) = World();
+        var bldg = MakeEntity(cm, 1, "Structure");
+        var cap = new CapturableComponent();
+        cm.AddComponent(bldg, cap);
+        cap.MaxCapturePoints = Fixed.FromFloat(1000);
+        cap.BaseMaxCapturePoints = Fixed.FromFloat(1000);
+        cap.InitForOwner(1);   // CP[1] = 1000
+
+        tm.ApplyResearch("capture_points", cm);
+        ValueModificationApplier.RescaleMaxCapturePoints(cm, playerEnt);
+
+        // Fixed 不能精确表示 1.4(1000×1.4=1399.9939),用容差断言(对齐 CapturableTests 既有 InRange 范式)。
+        Assert.Equal(1400.0, cap.MaxCapturePoints.ToFloat(), 1);   // 1000 × 1.4
+        Assert.Equal(1400.0, cap.CapturePoints[1].ToFloat(), 1);   // 按比例
+        Fixed sum = Fixed.Zero;                                     // ΣCP == newMax(不变式保)
+        for (int i = 0; i < cap.CapturePoints.Length; i++) sum += cap.CapturePoints[i];
+        Assert.Equal(cap.MaxCapturePoints.ToFloat(), sum.ToFloat(), 1);
+    }
+
+    [Fact]
+    public void RescaleMaxCapturePoints_IsIdempotent_NoCompounding()
+    {
+        // 核心正确性:重算始终 Apply(模板基值),不复合。朴素"对当前 Max apply"会逐次 ×1.4。
+        var (cm, playerEnt, tm) = World();
+        var bldg = MakeEntity(cm, 1, "Structure");
+        var cap = new CapturableComponent();
+        cm.AddComponent(bldg, cap);
+        cap.MaxCapturePoints = Fixed.FromFloat(1000);
+        cap.BaseMaxCapturePoints = Fixed.FromFloat(1000);
+        cap.InitForOwner(1);
+
+        tm.ApplyResearch("capture_points", cm);
+        ValueModificationApplier.RescaleMaxCapturePoints(cm, playerEnt);   // → 1000×1.4
+        Fixed maxAfter1 = cap.MaxCapturePoints;
+        Fixed cp1After1 = cap.CapturePoints[1];
+        ValueModificationApplier.RescaleMaxCapturePoints(cm, playerEnt);   // 幂等:重算 Apply(模板基值)命中 early-out
+
+        Assert.Equal(maxAfter1, cap.MaxCapturePoints);   // 两次结果逐位相同(幂等核心)
+        Assert.Equal(cp1After1, cap.CapturePoints[1]);
+    }
+
+    [Fact]
+    public void RescaleMaxCapturePoints_PreservesOwnershipAndProportions()
+    {
+        var (cm, playerEnt, tm) = World();
+        var bldg = MakeEntity(cm, 1, "Structure");
+        var cap = new CapturableComponent();
+        cm.AddComponent(bldg, cap);
+        cap.MaxCapturePoints = Fixed.FromFloat(1000);
+        cap.BaseMaxCapturePoints = Fixed.FromFloat(1000);
+        cap.CapturePoints[1] = Fixed.FromFloat(600);   // 主人(最多)
+        cap.CapturePoints[2] = Fixed.FromFloat(400);   // 总和 1000 = max
+
+        tm.ApplyResearch("capture_points", cm);
+        ValueModificationApplier.RescaleMaxCapturePoints(cm, playerEnt);
+
+        Assert.Equal(1, cm.QueryInterface<OwnershipComponent>(bldg)!.PlayerId); // argmax 不变
+        Assert.Equal(840.0, cap.CapturePoints[1].ToFloat(), 1);   // 600 × 1.4
+        Assert.Equal(560.0, cap.CapturePoints[2].ToFloat(), 1);   // 400 × 1.4
+    }
+
+    [Fact]
+    public void RescaleMaxCapturePoints_IgnoresOtherPlayers()
+    {
+        var (cm, playerEnt, tm) = World();
+        var enemy = MakeEntity(cm, 2, "Structure");   // P2 的;tm 是 P1 的
+        var cap = new CapturableComponent();
+        cm.AddComponent(enemy, cap);
+        cap.MaxCapturePoints = Fixed.FromFloat(1000);
+        cap.BaseMaxCapturePoints = Fixed.FromFloat(1000);
+        cap.InitForOwner(2);
+
+        tm.ApplyResearch("capture_points", cm);   // P1 的科技
+        ValueModificationApplier.RescaleMaxCapturePoints(cm, playerEnt);
+
+        Assert.Equal(Fixed.FromFloat(1000), cap.MaxCapturePoints);   // P2 不受影响
     }
 
     // ---------- Task 5: 采集/移速/建造/训练/人口 ----------

@@ -1,7 +1,12 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim;
+using ZeroAD.Sim.AI;
 using ZeroAD.Sim.Components;
+using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Maths;
+using ZeroAD.Sim.Net;
 using ZeroAD.Sim.Serialization;
 using Xunit;
 
@@ -541,5 +546,132 @@ public sealed class CapturableTests
         Assert.Equal(1f, stats.AttackCaptureRate);
         Assert.Equal("Field Palisade Wall", stats.AttackCaptureRestrictedClasses);
         Assert.Equal("Unit+!Ship", stats.AttackPreferredClasses);
+    }
+
+    // ---------- Capturable/* 科技修正(use-site 惰性读) ----------
+
+    private static TechnologyDefinition Def(string name, IReadOnlyList<Modification> mods) =>
+        new(name, name, 0, 0, 0, 0, 10f,
+            Array.Empty<TechRequirement>(), mods, false, null, Array.Empty<string>());
+
+    /// <summary>单科技目录(名为 cap_tech),便于 regen 类科技修正测试。</summary>
+    private static TechnologyManager TechMgrWith(params Modification[] mods)
+    {
+        var catalog = new TechCatalog(
+            new Dictionary<string, TechnologyDefinition> { ["cap_tech"] = Def("cap_tech", mods.ToList()) },
+            new Dictionary<string, IReadOnlyList<string>>());
+        var tm = new TechnologyManager();
+        tm.Configure(catalog, "athen");
+        return tm;
+    }
+
+    private static EntityId AddPlayerWithTech(ComponentManager cm, int playerId, TechnologyManager tm)
+    {
+        var e = cm.CreateEntity();
+        var pc = new PlayerComponent();
+        cm.AddComponent(e, pc);
+        cm.AddComponent(e, new OwnershipComponent { PlayerId = playerId });
+        cm.AddComponent(e, tm);
+        cm.Players.AddPlayer(playerId, e);
+        return e;
+    }
+
+    [Fact]
+    public void GetRegenRate_AppliesRegenRateModifier()
+    {
+        var cm = new ComponentManager(1);
+        var tm = TechMgrWith(new Modification("Capturable/RegenRate", 3f, null, null, new List<string>()));
+        AddPlayerWithTech(cm, 1, tm);
+        var building = AddCapturableBuilding(cm, owner: 1, maxCp: 500, regen: 5);
+        var cap = cm.QueryInterface<CapturableComponent>(building)!;
+
+        Assert.Equal(F(5), cap.GetRegenRate(cm));     // 研究前
+        tm.ApplyResearch("cap_tech", cm);
+        Assert.Equal(F(8), cap.GetRegenRate(cm));     // 5 + 3(Capturable/RegenRate add)
+    }
+
+    [Fact]
+    public void GetRegenRate_AppliesGarrisonRegenRateModifier()
+    {
+        var cm = new ComponentManager(1);
+        var tm = TechMgrWith(new Modification("Capturable/GarrisonRegenRate", null, 2f, null, new List<string>()));
+        AddPlayerWithTech(cm, 1, tm);
+        var building = AddCapturableBuilding(cm, owner: 1, maxCp: 500, regen: 5, garrisonRegen: 2);
+        cm.AddComponent(building, new GarrisonHolderComponent());
+        var holder = cm.QueryInterface<GarrisonHolderComponent>(building)!;
+        holder.AllowedClasses.Add("Infantry");
+        var soldier = AddSoldier(cm, owner: 1, captureStrength: 2.5f);
+        cm.QueryInterface<IdentityComponent>(soldier)!.Classes.Add("Infantry");
+        cm.AddComponent(soldier, new GarrisonableComponent());
+        Assert.True(holder.Garrison(cm, soldier));
+
+        // 研究前:base 5 + 2.5 × 2 = 10
+        Assert.Equal(F(10), cm.QueryInterface<CapturableComponent>(building)!.GetRegenRate(cm));
+        tm.ApplyResearch("cap_tech", cm);
+        // 研究后 GarrisonRegenRate ×2 → 2×2=4:base 5 + 2.5 × 4 = 15
+        Assert.Equal(F(15), cm.QueryInterface<CapturableComponent>(building)!.GetRegenRate(cm));
+    }
+
+    [Fact]
+    public void Capturable_Serialize_RoundTrips_BaseMaxAndCp()
+    {
+        var cap = new CapturableComponent();
+        cap.MaxCapturePoints = F(500);
+        cap.BaseMaxCapturePoints = F(500);
+        cap.RegenRate = F(5);
+        cap.GarrisonRegenRate = F(2);
+        cap.CapturePoints[1] = F(300);
+        cap.CapturePoints[2] = F(200);
+
+        var s1 = new CapturingSerializer();
+        cap.Serialize(s1);
+        var restored = new CapturableComponent();
+        restored.Deserialize(new ReplayingDeserializer(s1));
+
+        Assert.Equal(F(500), restored.BaseMaxCapturePoints);
+        Assert.Equal(F(500), restored.MaxCapturePoints);
+        Assert.Equal(F(5), restored.RegenRate);
+        Assert.Equal(F(2), restored.GarrisonRegenRate);
+        Assert.Equal(F(300), restored.CapturePoints[1]);
+        Assert.Equal(F(200), restored.CapturePoints[2]);
+    }
+
+    // ---------- AI allowCapture(PetraManagers → NetCommand → SimCommandExecutor) ----------
+
+    [Fact]
+    public void AttackManager_LaunchAttack_PassesAllowCapture_OnCapturableBuilding()
+    {
+        var cm = new ComponentManager(1);
+        SimSystem.Init(cm);
+        SeedEnemies(cm, 1, 2);
+        var building = AddCapturableBuilding(cm, owner: 1, maxCp: 500);
+        cm.QueryInterface<IdentityComponent>(building)!.Classes.Add("Structure");
+
+        // 5 个士兵(AttackComponent 含捕获强度;无 UnitAI → ApplyAttack 直走 AttackTarget,
+        // 设 CurrentAttackIsCapture,无需 Tick)。AttackWaveSize=5。
+        var soldiers = new List<EntityId>();
+        for (int i = 0; i < 5; i++)
+            soldiers.Add(AddSoldier(cm, owner: 2, captureStrength: 2.5f, hackDamage: 10));
+
+        var net = new NetTurnManager(cm, commandDelay: 1, localPlayerId: 2,
+            NetRole.Standalone, new HashSet<uint> { 1, 2 });
+        var playerEnt = cm.Players.GetPlayerEntityId(2)!.Value;
+        var snap = new AISnapshot
+        {
+            Player = cm.QueryInterface<PlayerComponent>(playerEnt)!,
+            Soldiers = soldiers,
+            EnemyBuildings = new List<EntityId> { building },
+        };
+        var attack = new AttackManager(cm, net);
+        // AttackIntervalThinks=40:前 39 次 Update 早退,第 40 次触发 LaunchAttack。
+        for (int i = 0; i < 40; i++) attack.Update(snap, 2);
+
+        // NetTurnManager 把 commandDelay 钳到 ≥1(MAth.Max(1,delay)),命令入 _aiBundles[1]。
+        // 第 1 次 AdvanceTurn 排空 [0](空),第 2 次排空 [1] → 执行 Attack(allowCapture:true)。
+        net.AdvanceTurn();
+        net.AdvanceTurn();
+
+        // LaunchAttack 对每个士兵提交 Attack(allowCapture:true)→ AttackTarget 选 Capture 型。
+        Assert.True(cm.QueryInterface<AttackComponent>(soldiers[0])!.CurrentAttackIsCapture);
     }
 }

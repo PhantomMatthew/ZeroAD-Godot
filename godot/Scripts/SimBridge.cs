@@ -1051,7 +1051,11 @@ public sealed partial class SimBridge : Node
                 techMgr.UpdateAutoResearch(_sim);
                 // 血量类科技改变 Health/Max → 该玩家全部实体按比例缩放(原版 Health.js 同款)
                 if (_playerEntity.HasValue)
+                {
                     ValueModificationApplier.RescaleHealth(_sim, _playerEntity.Value);
+                    // Capturable/CapturePoints 科技(如 ship_capture_resistance ×1.4)→ CP 数组按比例缩放
+                    ValueModificationApplier.RescaleMaxCapturePoints(_sim, _playerEntity.Value);
+                }
                 Events.RaiseResearchFinished(new ResearchFinishedEvent
                 {
                     ResearcherEntity = entity,

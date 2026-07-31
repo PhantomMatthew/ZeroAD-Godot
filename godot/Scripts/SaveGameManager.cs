@@ -24,7 +24,9 @@ public static class SaveGameManager
     // v2(2026-07-29):HealthComponent 增 Unhealable 字段 + HealComponent 增计时器字段(MS5)。
     // v3(2026-07-30):单位捕获——DamageBlock.Capture int→Fixed、AttackComponent 增 Capture
     // 攻击类型六字段、UnitOrder 增 AllowCapture。旧档位置流错位,加载方按版本号拒收。
-    private const uint Version = 3;
+    // v4(2026-07-31):Capturable 增 BaseMaxCapturePoints(bmax)模板基值——Capturable/CapturePoints
+    // 科技修正(×1.4 等)按比例缩放 CP 数组;旧 v3 档无 bmax,按版本号拒收。
+    private const uint Version = 4;
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 
