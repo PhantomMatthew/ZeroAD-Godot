@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.Net
@@ -15,6 +16,11 @@ namespace ZeroAD.Sim.Net
         Train = 5,
         Research = 6,
         SetRallyPoint = 7,
+        // 第二梯队菜单面板:外交/贸易。载荷复用现有固定字段(见各工厂文档)。
+        SetStance = 8,
+        Tribute = 9,
+        SetTradingGoods = 10,
+        Barter = 11,
     }
 
     /// <summary>
@@ -148,5 +154,30 @@ namespace ZeroAD.Sim.Net
         /// execution distinguishes the two by IntParam1 (对齐原版"右键空地设集合点").</summary>
         public static NetCommand SetRallyPointPosition(uint player, uint buildingId, Fixed x, Fixed z) =>
             new(player, NetCommandType.SetRallyPoint, buildingId, 0, 0, x.InternalValue, z.InternalValue);
+
+        /// <summary>SetStance(外交立场):IntParam1 = 目标玩家,IntParam2 = stance
+        /// (DiplomacyComponent.Ally=1 / Neutral=0 / Enemy=-1)。原版 cmd
+        /// {type:"diplomacy", player, to:"ally"|"neutral"|"enemy"}。执行时套单向恶化规则
+        /// (我降立场则对方同步降),并对齐 ceasefire/teamLock 门(本轮恒放行)。</summary>
+        public static NetCommand SetStance(uint player, int targetPlayer, int stance) =>
+            new(player, NetCommandType.SetStance, 0, targetPlayer, stance);
+
+        /// <summary>Tribute(进贡):IntParam1 = 收方玩家,IntParam2 = 数额,
+        /// FixedParam1 = (int)ResourceType。原版 cmd {type:"tribute", player, amounts:{res:amt}}
+        /// (单资源/次;Shift=500,默认 100)。</summary>
+        public static NetCommand Tribute(uint player, int destPlayer, ResourceType type, int amount) =>
+            new(player, NetCommandType.Tribute, 0, destPlayer, amount, (int)type);
+
+        /// <summary>SetTradingGoods(贸易品比例):IntParam1=wood%, IntParam2=food%,
+        /// FixedParam1=stone%, FixedParam2=metal%。4 值须 ≥0 且和=100(执行端校验)。
+        /// 原版 cmd {type:"set-trading-goods", tradingGoods:{res:pct,...}}。</summary>
+        public static NetCommand SetTradingGoods(uint player, int wood, int food, int stone, int metal) =>
+            new(player, NetCommandType.SetTradingGoods, 0, wood, food, stone, metal);
+
+        /// <summary>Barter(易物):IntParam1=(int)sellRes, IntParam2=(int)buyRes,
+        /// FixedParam1=amount(100 或 500)。原版 cmd {type:"barter", sell, buy, amount}。
+        /// 系统级易物(本轮去价漂移,价格静态 truePrice±CONSTANT_DIFFERENCE)。</summary>
+        public static NetCommand Barter(uint player, ResourceType sell, ResourceType buy, int amount) =>
+            new(player, NetCommandType.Barter, 0, (int)sell, (int)buy, amount);
     }
 }

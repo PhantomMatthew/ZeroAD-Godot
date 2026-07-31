@@ -274,6 +274,11 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
     /// 默认 athen(与 SimBridge 当前硬编码一致);gamesetup GUI 落地后由开局参数注入。</summary>
     public string Civ = "athen";
 
+    /// <summary>运行时队伍号(-1 = FFA / 无队伍)。原版 Player.js team。由 SimBridge 建图处从
+    /// PlayerSlotSetup.Team 写入(SeedDiplomacyFromTeams 调用点)。外交面板"Team"列显示用。
+    /// 序列化进存档(随 PlayerComponent 流;SaveGameManager 版本 +1)。</summary>
+    public int Team = -1;
+
     /// <summary>Win/loss state. Mono-directional from Active (only Active can transition).
     /// Ported from Player.js STATE_ACTIVE/DEFEATED/WON. Defaults live on the field initializer
     /// (not OnInit) so callers using `new PlayerComponent { ... }` keep their values.</summary>
@@ -365,6 +370,40 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         }
     }
 
+    /// <summary>单资源余额判定(进贡/易物校验用)。</summary>
+    public bool CanAfford(ResourceType type, int amount) => type switch
+    {
+        ResourceType.Wood => Wood >= amount,
+        ResourceType.Food => Food >= amount,
+        ResourceType.Stone => Stone >= amount,
+        ResourceType.Metal => Metal >= amount,
+        _ => false,
+    };
+
+    /// <summary>单资源扣减;余额不足则不改并返回 false(进贡/易物用)。</summary>
+    public bool TrySpend(ResourceType type, int amount)
+    {
+        if (!CanAfford(type, amount)) return false;
+        switch (type)
+        {
+            case ResourceType.Wood: Wood -= amount; break;
+            case ResourceType.Food: Food -= amount; break;
+            case ResourceType.Stone: Stone -= amount; break;
+            case ResourceType.Metal: Metal -= amount; break;
+        }
+        return true;
+    }
+
+    /// <summary>进贡(原版 Player.js TributeResource):双方须 active、amount&gt;0、源余额足;
+    /// 源 TrySpend + 目的 AddResource。任一不满足返回 false(执行器静默丢弃,对齐原版 notify)。</summary>
+    public bool TributeResource(PlayerComponent dest, ResourceType type, int amount)
+    {
+        if (!IsActive() || !dest.IsActive() || amount <= 0) return false;
+        if (!TrySpend(type, amount)) return false;
+        dest.AddResource(type, amount);
+        return true;
+    }
+
     /// <summary>贸易品概率表(原版 Player.js tradingGoods:可贸易资源按步进 5 等概率,
     /// GUI 可调)。默认值活在字段初始化器;Deserialize 先清后填。</summary>
     public readonly List<KeyValuePair<ResourceType, int>> TradingGoods = new()
@@ -393,6 +432,48 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         return TradingGoods[last].Key;
     }
 
+    /// <summary>当前贸易品比例(4 资源百分比,GUI 贸易面板读)。缺省资源补 0。</summary>
+    public Dictionary<ResourceType, int> GetTradingGoods()
+    {
+        var d = new Dictionary<ResourceType, int>();
+        foreach (var (res, proba) in TradingGoods)
+            d[res] = proba;
+        foreach (ResourceType r in (ResourceType[])Enum.GetValues(typeof(ResourceType)))
+            d.TryAdd(r, 0);
+        return d;
+    }
+
+    /// <summary>设置贸易品比例(原版 Player.js SetTradingGoods):每值 ≥0 且和=100,否则拒(不变)。
+    /// 按规范序 Food/Wood/Stone/Metal 重建列表(与默认初始化器一致,确定性;GetNextTradingGoods 依赖序)。</summary>
+    public void SetTradingGoods(IReadOnlyDictionary<ResourceType, int> goods)
+    {
+        int sum = 0;
+        foreach (var (_, pct) in goods)
+        {
+            if (pct < 0) return;
+            sum += pct;
+        }
+        if (sum != 100) return;
+        TradingGoods.Clear();
+        TradingGoods.Add(new KeyValuePair<ResourceType, int>(ResourceType.Food,   goods.TryGetValue(ResourceType.Food, out var f) ? f : 0));
+        TradingGoods.Add(new KeyValuePair<ResourceType, int>(ResourceType.Wood,   goods.TryGetValue(ResourceType.Wood, out var w) ? w : 0));
+        TradingGoods.Add(new KeyValuePair<ResourceType, int>(ResourceType.Stone,  goods.TryGetValue(ResourceType.Stone, out var st) ? st : 0));
+        TradingGoods.Add(new KeyValuePair<ResourceType, int>(ResourceType.Metal,  goods.TryGetValue(ResourceType.Metal, out var m) ? m : 0));
+    }
+
+    /// <summary>玩家是否可易物(原版 cmpPlayer.CanBarter):拥有至少一个 MarketComponent 建筑。
+    /// <paramref name="playerId"/> = 玩家号(OwnershipComponent.PlayerId)。</summary>
+    public bool CanBarter(ComponentManager cm, int playerId)
+    {
+        foreach (var eid in cm.AllEntities)
+        {
+            if (cm.QueryInterface<MarketComponent>(eid) == null) continue;
+            var own = cm.QueryInterface<OwnershipComponent>(eid);
+            if (own != null && own.PlayerId == playerId) return true;
+        }
+        return false;
+    }
+
     public override void Serialize(ISerializer s)
     {
         s.NumberI32("wood", Wood);
@@ -404,6 +485,7 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         s.NumberI32("popCap", MaxPopCap);
         s.NumberI32("state", (int)State);
         s.StringASCII("civ", Civ);
+        s.NumberI32("team", Team);
         s.NumberI32("tradeGoods_n", TradingGoods.Count);
         foreach (var (goods, proba) in TradingGoods)
         {
@@ -423,6 +505,7 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         MaxPopCap = d.NumberI32("popCap");
         State = (PlayerState)d.NumberI32("state");
         Civ = d.StringASCII("civ");
+        Team = d.NumberI32("team");
         TradingGoods.Clear();
         int tn = d.NumberI32("tradeGoods_n");
         for (int i = 0; i < tn; i++)

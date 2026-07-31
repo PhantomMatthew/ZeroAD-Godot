@@ -111,6 +111,9 @@ public sealed class PlayerManager
             var dipA = _cm.QueryInterface<DiplomacyComponent>(aEntity);
             if (dipA == null) continue;
             int ta = teamByPlayer.TryGetValue(a, out var va) ? va : -1;
+            // 同步写运行时 Team 字段(外交面板"Team"列显示用;原版 Player.js team)。
+            var pa = _cm.QueryInterface<PlayerComponent>(aEntity);
+            if (pa != null) pa.Team = ta;
             foreach (var b in ids)
             {
                 if (b == a) continue;

@@ -35,16 +35,21 @@ namespace ZeroAD.Sim.Net
 
         public void Apply(NetCommand cmd)
         {
-            var entity = new EntityId(cmd.EntityId);
             switch (cmd.Type)
             {
-                case NetCommandType.Move: ApplyMove(entity, cmd); break;
-                case NetCommandType.Gather: ApplyGather(entity, cmd); break;
-                case NetCommandType.Attack: ApplyAttack(entity, cmd); break;
-                case NetCommandType.Train: ApplyTrain(entity, cmd); break;
-                case NetCommandType.Build: ApplyBuild(entity, cmd); break;
-                case NetCommandType.Research: ApplyResearch(entity, cmd); break;
-                case NetCommandType.SetRallyPoint: ApplySetRallyPoint(entity, cmd); break;
+                // Entity-bearing commands: EntityId is the acted-on entity (validated ≠ 0).
+                case NetCommandType.Move: ApplyMove(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Gather: ApplyGather(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Attack: ApplyAttack(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Train: ApplyTrain(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Build: ApplyBuild(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Research: ApplyResearch(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.SetRallyPoint: ApplySetRallyPoint(new EntityId(cmd.EntityId), cmd); break;
+                // Player-level commands (外交/贸易):无 entity,EntityId=0,不构造 EntityId(0 非法)。
+                case NetCommandType.SetStance: ApplySetStance(cmd); break;
+                case NetCommandType.Tribute: ApplyTribute(cmd); break;
+                case NetCommandType.SetTradingGoods: ApplySetTradingGoods(cmd); break;
+                case NetCommandType.Barter: ApplyBarter(cmd); break;
             }
         }
 
@@ -249,6 +254,60 @@ namespace ZeroAD.Sim.Net
                 rally.Set(new FixedVector2D(Fixed.Zero, Fixed.Zero));
             }
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "set-rallypoint", Target = target });
+        }
+
+        // ── 第二梯队菜单面板:外交/贸易命令(均玩家级,不用 entity) ────────────────
+
+        private void ApplySetStance(NetCommand cmd)
+        {
+            int localId = (int)cmd.Player;
+            int targetId = cmd.IntParam1;
+            int stance = cmd.IntParam2;
+            var localEid = _cm.GetPlayerEntityId(localId);
+            var targetEid = _cm.GetPlayerEntityId(targetId);
+            if (!localEid.HasValue || !targetEid.HasValue) return;
+            var localDip = _cm.QueryInterface<DiplomacyComponent>(localEid.Value);
+            var targetDip = _cm.QueryInterface<DiplomacyComponent>(targetEid.Value);
+            if (localDip == null || targetDip == null) return;
+            // ceasefire/teamLock 门(本轮 IsTeamLocked 恒 false,停火延后;保留门以对齐原版 Commands.js)。
+            if (localDip.IsTeamLocked()) return;
+            localDip.SetStanceToward(localId, targetDip, targetId, stance);
+        }
+
+        private void ApplyTribute(NetCommand cmd)
+        {
+            int destId = cmd.IntParam1;
+            int amount = cmd.IntParam2;
+            var type = (ResourceType)cmd.FixedParam1;
+            var source = _cm.GetPlayerEntity((int)cmd.Player);
+            var dest = _cm.GetPlayerEntity(destId);
+            if (source == null || dest == null) return;
+            source.TributeResource(dest, type, amount);
+        }
+
+        private void ApplySetTradingGoods(NetCommand cmd)
+        {
+            var player = _cm.GetPlayerEntity((int)cmd.Player);
+            if (player == null) return;
+            // 4 资源百分比(和=100 由 SetTradingGoods 校验)。编码见 NetCommand.SetTradingGoods。
+            var goods = new Dictionary<ResourceType, int>
+            {
+                [ResourceType.Wood] = cmd.IntParam1,
+                [ResourceType.Food] = cmd.IntParam2,
+                [ResourceType.Stone] = cmd.FixedParam1,
+                [ResourceType.Metal] = cmd.FixedParam2,
+            };
+            player.SetTradingGoods(goods);
+        }
+
+        private void ApplyBarter(NetCommand cmd)
+        {
+            var player = _cm.GetPlayerEntity((int)cmd.Player);
+            if (player == null) return;
+            var sell = (ResourceType)cmd.IntParam1;
+            var buy = (ResourceType)cmd.IntParam2;
+            int amount = cmd.FixedParam1;
+            BarterSystem.ExchangeResources(_cm, player, (int)cmd.Player, sell, buy, amount);
         }
     }
 }

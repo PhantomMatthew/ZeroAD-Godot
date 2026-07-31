@@ -40,6 +40,21 @@ public sealed class DiplomacyComponent : ComponentBase, IComponentMessageHandler
         if (ValidPlayer(otherPlayer)) _stance[otherPlayer] = stance;
     }
 
+    /// <summary>teamLock / ceasefire 门(原版 Diplomacy.js IsTeamLocked + CeasefireManager)。
+    /// 本轮停火系统未移植,恒 false——保留门以便 GUI/执行器对齐原版 Commands.js 的拒令语义。</summary>
+    public bool IsTeamLocked() => false;
+
+    /// <summary>设我方对 <paramref name="otherId"/> 的立场,并套原版 Diplomacy.js OnDiplomacyChanged
+    /// 的**单向恶化规则**:若新 stance 低于对方对我方 stance,把对方对我方降到同值(只恶化、不改善)。
+    /// <paramref name="selfId"/> = 我方玩家号,<paramref name="other"/> = 对方 DiplomacyComponent,
+    /// <paramref name="otherId"/> = 对方玩家号。改善方向(升级 stance)不影响对方。</summary>
+    public void SetStanceToward(int selfId, DiplomacyComponent other, int otherId, int stance)
+    {
+        Set(otherId, stance);
+        if (stance < other.GetStance(selfId))
+            other.Set(selfId, stance);
+    }
+
     public override void Serialize(ISerializer s)
     {
         // Fixed-length 16 stances (player 1..MaxPlayers), deterministic with no sort needed.
