@@ -298,6 +298,29 @@ namespace ZeroAD.Sim.Components
             RefreshFromComponents(entity);
         }
 
+        /// <summary>Cold-load rebuild: <c>DeserializeSaveGame</c> recreates components without
+        /// firing <c>EntityCreated</c>, so the index stays empty. Feed every entity through the
+        /// same path as a fresh spawn — seed <c>_data</c>, then <see cref="RefreshFromComponents"/>
+        /// reads owner/size/vision/position and indexes it (subdivision + LOS counts). Call after
+        /// <see cref="SetBounds"/> sized the subdivision to the real map, and BEFORE
+        /// RebuildAllVisuals (whose RegisterForLos notifications need <c>_data</c> populated).
+        /// Idempotent: entities already in <c>_data</c> are only refreshed, never double-added.</summary>
+        public void Repopulate(IEnumerable<EntityId> entities)
+        {
+            // Deterministic order (sorted by id) so the spatial index + LOS counts build
+            // identically regardless of caller enumeration order.
+            var list = new List<EntityId>(entities);
+            list.Sort((a, b) => a.Value.CompareTo(b.Value));
+            foreach (var eid in list)
+            {
+                if (!_data.ContainsKey(eid))
+                    _data[eid] = new RangeEntityData { Owner = -1, InWorld = false };
+                // Always re-read components: covers entities InitWorld pre-seeded (player/terrain)
+                // whose component instances were replaced by the load.
+                RefreshFromComponents(eid);
+            }
+        }
+
         private void OnEntityDestroyed(EntityId entity)
         {
             if (!_data.TryGetValue(entity, out var d)) return;
@@ -399,6 +422,12 @@ namespace ZeroAD.Sim.Components
                 d.Flags &= unchecked((byte)~RangeEntityData.FlagRetainInFog);
             if (_cm.QueryInterface<MirageComponent>(entity) != null)
                 d.Flags |= RangeEntityData.FlagIsMirage;
+            // Commit owner/size/vision/flags BEFORE SetInWorld: SetInWorld does its own
+            // read-modify-write of _data and would otherwise clobber these not-yet-written
+            // updates back to their stale values. Cold-load hits this every time — a
+            // deserialized in-world entity (pos.InWorld=true, fresh _data InWorld=false)
+            // takes the SetInWorld branch, which used to reset its owner to -1.
+            _data[entity] = d;
             // In-world state follows PositionComponent.InWorld (garrison moves units out of
             // world). First placement goes through SetInWorld too (created entities start
             // out-of-world in _data): it indexes the position and queues a visibility pass.

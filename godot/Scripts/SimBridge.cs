@@ -47,6 +47,14 @@ public sealed partial class SimBridge : Node
     public TutorialEngine? Tutorial { get; private set; }
     public bool IsTutorialMode { get; private set; }
 
+    /// <summary>对局骨架(冷加载重建契约,存档头 v6 内嵌):本局地图 rel 路径——SetupTerrain
+    /// 选定后写入;null = 生成地形,无法冷加载。</summary>
+    public string? MapPath { get; set; }
+
+    /// <summary>对局骨架(冷加载重建契约):本局冻结槽位表——InitWorld slot-table overload 写入。
+    /// 存档头 v6 内嵌,冷加载 InitWorld 用它重建同构世界。</summary>
+    public IReadOnlyList<PlayerSlotSetup> Slots { get; private set; } = System.Array.Empty<PlayerSlotSetup>();
+
     public IReadOnlyDictionary<EntityId, Node3D> EntityNodes => _entityNodes;
     public Node3D UnitContainer { get; set; } = null!;
     public TemplateLoader? Templates { get; private set; }
@@ -146,6 +154,7 @@ public sealed partial class SimBridge : Node
         SimSystem.Init(_sim);
         Templates = templates;
         LocalPlayerId = localPlayerId;
+        Slots = slots;   // 存档头 v6 契约:冷加载用同一份槽位表重建世界
 
         // Subscribe so the sim can ask us (the presentation layer) to build visuals whenever it
         // spawns an entity. This is the only Godot→sim coupling direction for spawn.
@@ -709,6 +718,22 @@ public sealed partial class SimBridge : Node
         }
 
         GD.Print($"[RebuildAllVisuals] recreated {_entityNodes.Count} visual nodes");
+    }
+
+    /// <summary>Cold-load rebuild of the two system spatial indexes that
+    /// <c>DeserializeSaveGame</c> does NOT refill (it bypasses EntityCreated): the
+    /// ObstructionManager shapes and the RangeManager entity index + LOS counts. The player
+    /// registry round-trips in the save payload itself (ComponentManager v6), so it needs no
+    /// rebuild here. Call AFTER SetBounds sized the indexes to the real map and BEFORE
+    /// RebuildAllVisuals (whose RegisterForLos notifications need RangeManager._data populated).
+    /// Idempotent — safe to call alongside a fresh spawn's own registrations.</summary>
+    public void RebuildSpatialIndexesAfterLoad()
+    {
+        foreach (var e in GetAllEntitiesSnapshot())
+            _sim.QueryInterface<ObstructionComponent>(e)?.EnsureRegistered();
+        _range.Repopulate(GetAllEntitiesSnapshot());
+        _range.UpdateVisibilityData();
+        GD.Print($"[RebuildSpatialIndexesAfterLoad] re-registered obstructions + repopulated range index");
     }
 
     private void OnSimEntityDestroyed(EntityId entity)
