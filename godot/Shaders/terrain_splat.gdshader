@@ -22,6 +22,11 @@ uniform float tiles_per_side = 192.0;
 uniform float tex_world_scale = 0.25;
 
 void fragment() {
+	// 世界视觉挂在 Scale.z=−1 的镜像根下:绕序翻转使地形片元以背面光栅化,
+	// 内建 NORMAL 随之取反(指 −Y)→ 太阳 N·L=0,地形只剩环境光(画面发暗发平的根因)。
+	// 标准材质会自动按朝向修正,自定义 shader 必须自己翻回(最小场景法线可视化实证)。
+	if (!FRONT_FACING) NORMAL = -NORMAL;
+
 	vec2 world_xz = UV / 0.125;
 	vec2 tile_f = world_xz * 0.25; // / TileSize(4m)
 	ivec2 tile = ivec2(floor(tile_f));
@@ -55,7 +60,9 @@ void fragment() {
 				int(texelFetch(territory_texture, clamp(tc + ivec2(0, 1), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner ||
 				int(texelFetch(territory_texture, clamp(tc - ivec2(0, 1), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner;
 			float blink = terr.g > 0.5 ? 0.55 + 0.45 * sin(TIME * 4.0) : 1.0;
-			float strength = border ? 0.55 : 0.12;
+			// 对齐 C++ TerritoryTexture:边界线 alpha 0.75 短衰减,内部无平铺染色
+			// (原来的 0.12 内部染色让整片领地蒙上玩家色灰蓝罩,画面发暗)。
+			float strength = border ? 0.55 : 0.0;
 			ALBEDO = mix(ALBEDO, player_colors[towner].rgb, strength * blink);
 		}
 	}

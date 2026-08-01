@@ -70,10 +70,15 @@ public sealed record MapEnvironment(
         // DirectionalLight3D 沿自身 −Z 照射;LookAtFromPosition 把 −Z 对准方向。
         light.LookAtFromPosition(Vector3.Zero, dirVis, Vector3.Up);
         light.LightColor = SunColor;
+        // 能量 1.0:C++ 在 sRGB 空间做 texel×(sun·N·L+ambient),Godot 在线性空间;
+        // 平地总因子 0.749×0.63+0.502≈0.97,经线性→sRGB 往返后与 C++ 逐位对齐(采样验证)。
+        // (曾用 1.5 补偿地形法线翻转导致的零太阳——绕序修正后补偿反而过曝,故撤掉。)
+        light.LightEnergy = 1.0f;
 
         // AmbientColor 对齐(C++ 是平光环境色);雾色取地图值,密度模型不同保持现有。
         env.AmbientLightSource = global::Godot.Environment.AmbientSource.Color;
         env.AmbientLightColor = AmbientColor;
+        env.AmbientLightEnergy = 1.0f;
         env.FogLightColor = FogColor;
     }
 }

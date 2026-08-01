@@ -14,6 +14,9 @@ uniform float territory_cells = 64.0;
 uniform float world_size = 256.0;
 
 void fragment() {
+	// 镜像根下背面光栅化导致 NORMAL 取反(见 terrain_splat.gdshader 同注释),翻回。
+	if (!FRONT_FACING) NORMAL = -NORMAL;
+
 	vec3 base = texture(albedo_texture, UV).rgb * albedo_color.rgb;
 	vec2 world_xz = UV / 0.125;
 	float fog = texture(fog_texture, world_xz / world_size).r;

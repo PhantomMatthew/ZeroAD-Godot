@@ -30,13 +30,17 @@ public static class TerrainRenderer
             for (int x = 0; x < verts - 1; x++)
             {
                 int i = z * verts + x;
+                // 绕序修正:原顺序正面朝 −Y(GenerateNormals 随之烘出向下法线),镜像根下
+                // 片元变正面 → FRONT_FACING 翻转不触发 → 地形法线恒 −Y 零太阳(发暗根因)。
+                // 换成 Godot 惯例正面 +Y;镜像下背面光栅化,terrain_splat.gdshader 的
+                // FRONT_FACING 翻转把 NORMAL 翻回 +Y。
                 st.AddIndex(i);
-                st.AddIndex(i + verts);
                 st.AddIndex(i + 1);
+                st.AddIndex(i + verts);
 
                 st.AddIndex(i + 1);
-                st.AddIndex(i + verts);
                 st.AddIndex(i + verts + 1);
+                st.AddIndex(i + verts);
             }
         }
 
@@ -93,13 +97,17 @@ public static class TerrainRenderer
             for (int x = 0; x < verts - 1; x++)
             {
                 int i = z * verts + x;
+                // 绕序修正:原顺序正面朝 −Y(GenerateNormals 随之烘出向下法线),镜像根下
+                // 片元变正面 → FRONT_FACING 翻转不触发 → 地形法线恒 −Y 零太阳(发暗根因)。
+                // 换成 Godot 惯例正面 +Y;镜像下背面光栅化,terrain_splat.gdshader 的
+                // FRONT_FACING 翻转把 NORMAL 翻回 +Y。
                 st.AddIndex(i);
-                st.AddIndex(i + verts);
                 st.AddIndex(i + 1);
+                st.AddIndex(i + verts);
 
                 st.AddIndex(i + 1);
-                st.AddIndex(i + verts);
                 st.AddIndex(i + verts + 1);
+                st.AddIndex(i + verts);
             }
         }
 
