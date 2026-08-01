@@ -96,6 +96,7 @@ public sealed partial class MainMenu : Control
         AddButton(vbox, "Tutorial", OnTutorial);
         AddButton(vbox, "Load Game", () => { }, disabled: true, tip: "(Phase 2)");
         AddButton(vbox, "Options", () => { }, disabled: true, tip: "(Phase 3)");
+        AddButton(vbox, "Manual", OnManual);
         AddButton(vbox, "Multiplayer", OnMultiplayer);
         AddButton(vbox, "Quit", () => GetTree().Quit());
     }
@@ -113,6 +114,13 @@ public sealed partial class MainMenu : Control
     }
 
     private void GotoSession() => GetTree().ChangeSceneToFile("res://Scenes/Main.tscn");
+
+    private void OnManual()
+    {
+        var manual = new ManualPanel();
+        AddChild(manual);
+        manual.Open();
+    }
 
     private static void AddButton(Control parent, string label, Action onPressed,
         bool disabled = false, string tip = "")

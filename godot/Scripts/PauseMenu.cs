@@ -105,6 +105,7 @@ public sealed partial class PauseMenu : CanvasLayer
         AddButton(vbox, "Resume", Close);
         AddButton(vbox, "Save", () => OnSave?.Invoke());
         AddButton(vbox, "Load", () => OnLoad?.Invoke());
+        AddButton(vbox, "Manual", OpenManual);
         AddButton(vbox, "Resign", ShowResignConfirm);
         AddButton(vbox, "Leave", () => OnLeave?.Invoke());
 
@@ -125,6 +126,15 @@ public sealed partial class PauseMenu : CanvasLayer
     }
 
     private void ShowResignConfirm() => _resignConfirm?.PopupCentered();
+
+    // 子项:打开手册页(Layer 65 浮在本菜单 60 之上,关闭后落回暂停菜单)。不关 PauseMenu,
+    // 故 sim 仍暂停——手册只是暂停菜单的一个只读子视图。
+    private void OpenManual()
+    {
+        var manual = new ManualPanel(layer: 65);
+        AddChild(manual);
+        manual.Open();
+    }
 
     private static void AddButton(Control parent, string label, Action onPressed)
     {
