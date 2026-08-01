@@ -18,6 +18,9 @@ public sealed partial class Main : Node3D
 	private RTSCamera _camera = null!;
 	private SimBridge _sim = null!;
 	private Node3D _units = null!;
+	private Node3D _worldRoot = null!;
+	private DirectionalLight3D _light = null!;
+	private global::Godot.Environment _env = null!;
 	private HUD _hud = null!;
 	private LobbyUI _lobby = null!;
 	private MultiplayerController _mp = null!;
@@ -58,6 +61,7 @@ public sealed partial class Main : Node3D
 		light.Rotation = new Vector3(-0.7f, 0.5f, 0);
 		light.LightEnergy = 1.2f;
 		AddChild(light);
+		_light = light;
 
 		var sky = new WorldEnvironment();
 		var env = new global::Godot.Environment();
@@ -67,11 +71,22 @@ public sealed partial class Main : Node3D
 		env.FogDensity = 0.001f;
 		sky.Environment = env;
 		AddChild(sky);
+		_env = env;
 		// Options 图形项(light/env)的作用目标注册给映射层;ChangeScene 时 _ExitTree 注销。
 		OptionsApplier.RegisterSceneNodes(light, sky);
 
+		// 视觉镜像根:C++ pyrogenesis 的世界是左手系惯例(+z=北、+x=东),相机基向量
+		// 带 −s 翻转(CCamera::LookAlong)把画面掰回"上北下南左西右东";Godot 标准相机
+		// 做不到同画面(屏幕映射左手性),故把所有世界视觉挂到 Scale.z=−1 的根下整体镜像
+		// (Position.z=WorldSize 使视觉 z = WorldSize − sim z 保持 0..WorldSize 正区间)。
+		// 子节点局部坐标=sim 坐标不变(单位位置同步/朝向/标记全不用改),Godot 自动处理
+		// 负 scale 实例的正反面剔除。两个边界点:相机对焦(RTSCamera 内部换算)与
+		// 屏幕拾取(ScreenToWorld 返回 sim 坐标)。
+		_worldRoot = new Node3D { Name = "WorldMirror", Scale = new Vector3(1f, 1f, -1f) };
+		AddChild(_worldRoot);
+
 		_units = new Node3D { Name = "Units" };
-		AddChild(_units);
+		_worldRoot.AddChild(_units);
 
 		_sim = new SimBridge { UnitContainer = _units };
 		AddChild(_sim);
@@ -570,21 +585,25 @@ public sealed partial class Main : Node3D
 			{
 				var pmp = PmpMap.Load(pmpPath);
 				var terrainNode = TerrainRenderer.CreateFromHeightmap(pmp);
-				AddChild(terrainNode);
+				_worldRoot.AddChild(terrainNode);
+				_worldRoot.Position = new Vector3(0f, 0f, pmp.MapSizeMeters);
 				_sim.FogWorld.Attach(terrainNode, pmp.MapSizeMeters);
 				_sim.TerritoryWorld.Attach(terrainNode, pmp.MapSizeMeters);
-				TerrainHeightService.Set(pmp.GetHeightWorld);
+				TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
 				float h = pmp.GetHeightWorld(130, 122);
 				_camera.SetFocus(new Vector3(130, h, 122));
 				GD.Print($"Loaded PMP terrain: {pmpPath} ({pmp.PatchesPerSide} patches, {pmp.MapSizeMeters}m, height at spawn: {h:F1}m)");
 
 				string? xmlPath = pmpPath.Replace(".pmp", ".xml");
+				// 地图 Environment 光照(太阳方向/色 + 环境光 + 雾色,公式对齐 CLightEnv);
+				// 镜像世界后太阳必须随之镜像,否则面向相机的坡面整体背光发暗。
+				(MapEnvironment.LoadFromXml(xmlPath) ?? MapEnvironment.Default).Apply(_light, _env);
 				var water = WaterRenderer.LoadWaterFromXml(xmlPath);
 				float waterHeight = water?.height ?? -999f;
 				if (water != null)
 				{
 					var waterMesh = WaterRenderer.CreateWaterPlane(water.Value.height, water.Value.color, pmp.MapSizeMeters);
-					AddChild(waterMesh);
+					_worldRoot.AddChild(waterMesh);
 					GD.Print($"Water: height={water.Value.height:F1}m color={water.Value.color}");
 				}
 
@@ -611,13 +630,16 @@ public sealed partial class Main : Node3D
 		var map = MapGenerator.GenerateContinents(8, 42);
 		// No fog attach here: the generated mesh emits no UVs and uses vertex-color albedo,
 		// which the fog shader can't sample — fog stays a PMP-terrain feature for now.
-		AddChild(MapGenerator.CreateMeshFromGenerated(map));
+		_worldRoot.AddChild(MapGenerator.CreateMeshFromGenerated(map));
+		float genWorldSize = (map.VerticesPerSide - 1) * map.TileSize;
+		_worldRoot.Position = new Vector3(0f, 0f, genWorldSize);
 		TerrainHeightService.Set((x, z) =>
 		{
 			int gx = (int)(x / map.TileSize);
 			int gz = (int)(z / map.TileSize);
 			return map.GetHeight(gx, gz);
-		});
+		}, genWorldSize);
+		MapEnvironment.Default.Apply(_light, _env);
 		_camera.SetFocus(new Vector3(130, 0, 122));
 		// Generated terrain has no water by default; mark everything land so placement still works.
 		FillPassabilityAllLand();
@@ -1455,6 +1477,9 @@ public sealed partial class Main : Node3D
 		};
 	}
 
+	/// <summary>屏幕点 → sim 世界坐标。相机/射线活在视觉空间(世界经 _worldRoot 镜像),
+	/// 步进时按 sim 坐标采样高度(visZ → simZ = WorldSize − visZ),返回点同样换回 sim,
+	/// 让所有调用方(下令/放建筑/标记)只面对 sim 坐标。</summary>
 	private Vector3? ScreenToWorld(Vector2 screenPos)
 	{
 		var from = _camera.ProjectRayOrigin(screenPos);
@@ -1469,17 +1494,18 @@ public sealed partial class Main : Node3D
 		while (t < maxDist)
 		{
 			var p = from + dir * t;
-			if (p.Y <= TerrainHeightService.Sample(p.X, p.Z))
+			if (p.Y <= TerrainHeightService.Sample(p.X, TerrainHeightService.MirrorZ(p.Z)))
 			{
 				float lo = prevT, hi = t;
 				for (int i = 0; i < 8; i++)
 				{
 					float mid = (lo + hi) * 0.5f;
 					var m = from + dir * mid;
-					if (m.Y <= TerrainHeightService.Sample(m.X, m.Z)) hi = mid;
+					if (m.Y <= TerrainHeightService.Sample(m.X, TerrainHeightService.MirrorZ(m.Z))) hi = mid;
 					else lo = mid;
 				}
-				return from + dir * hi;
+				var hit = from + dir * hi;
+				return new Vector3(hit.X, hit.Y, TerrainHeightService.MirrorZ(hit.Z));
 			}
 			prevT = t;
 			t += step;

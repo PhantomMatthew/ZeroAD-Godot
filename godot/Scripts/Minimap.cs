@@ -17,6 +17,11 @@ public sealed partial class Minimap : Control
 
     private const int MapSize = 200;
 
+    // C++ 小地图约定(CMiniMap::WorldSpaceToMiniMapSpace):x→右,z→上(z 大=北=屏顶)。
+    // 本类所有"世界坐标→像素"都走这两个助手,勿内联展开。
+    private static int Px(float wx, float worldSize) => (int)(wx / worldSize * MapSize);
+    private static int Pz(float wz, float worldSize) => MapSize - 1 - (int)(wz / worldSize * MapSize);
+
     public Minimap(SimBridge sim, Main main)
     {
         _sim = sim;
@@ -39,7 +44,8 @@ public sealed partial class Minimap : Control
             Vector2 local = mb.Position;
             float worldSize = _sim.Terrain.MapSize * _sim.Terrain.TileSize;
             float wx = local.X / MapSize * worldSize;
-            float wz = local.Y / MapSize * worldSize;
+            // 对齐 C++ 小地图:z 大=北=屏顶(CMiniMap::GetMouseWorldCoordinates 自底向上量 py)。
+            float wz = (MapSize - local.Y) / MapSize * worldSize;
             float h = TerrainHeightService.Sample(wx, wz);
             _main.SetCameraFocus(new Vector3(wx, h, wz));
         }
@@ -63,8 +69,8 @@ public sealed partial class Minimap : Control
             if (vis == LosVisibility.Hidden) continue;
 
             var node = kvp.Value;
-            int px = (int)(node.Position.X / worldSize * MapSize);
-            int pz = (int)(node.Position.Z / worldSize * MapSize);
+            int px = Px(node.Position.X, worldSize);
+            int pz = Pz(node.Position.Z, worldSize);
 
             if (px < 0 || px >= MapSize || pz < 0 || pz >= MapSize) continue;
 
@@ -118,7 +124,7 @@ public sealed partial class Minimap : Control
         byte[] rgba = _image.GetData();
         for (int pz = 0; pz < MapSize; pz++)
         {
-            int fj = Mathf.Min(pz * fn / MapSize, fn - 1);
+            int fj = Mathf.Min((MapSize - 1 - pz) * fn / MapSize, fn - 1);
             for (int px = 0; px < MapSize; px++)
             {
                 int bright = fog[fj * fn + Mathf.Min(px * fn / MapSize, fn - 1)];
@@ -143,7 +149,7 @@ public sealed partial class Minimap : Control
         byte[] rgba = _image.GetData();
         for (int pz = 0; pz < MapSize; pz++)
         {
-            float wz = (pz + 0.5f) / MapSize * worldSize;
+            float wz = ((MapSize - 1 - pz) + 0.5f) / MapSize * worldSize;
             var fz = Fixed.FromFloat(wz);
             for (int px = 0; px < MapSize; px++)
             {
@@ -180,8 +186,8 @@ public sealed partial class Minimap : Control
             foreach (var kvp in GetAllEntityNodes())
             {
                 if (kvp.Key != eid) continue;
-                int px = (int)(kvp.Value.Position.X / worldSize * MapSize);
-                int pz = (int)(kvp.Value.Position.Z / worldSize * MapSize);
+                int px = Px(kvp.Value.Position.X, worldSize);
+                int pz = Pz(kvp.Value.Position.Z, worldSize);
                 DrawCircle(new Vector2(px, pz), 4, new Color(0.2f, 1f, 0.2f));
             }
         }
@@ -196,16 +202,18 @@ public sealed partial class Minimap : Control
     {
         var cam = _main.GetCameraFocus();
         if (cam == null) return;
-        int cx = (int)(cam.Value.X / worldSize * MapSize);
-        int cz = (int)(cam.Value.Z / worldSize * MapSize);
+        int cx = Px(cam.Value.X, worldSize);
+        int cz = Pz(cam.Value.Z, worldSize);
         float yaw = _main.GetCameraYaw();
 
         Vector2 center = new(cx, cz);
         float coneLen = 40f;
         float halfAngle = 0.5f;
 
-        Vector2 left = center + new Vector2(Mathf.Sin(yaw - halfAngle), Mathf.Cos(yaw - halfAngle)) * coneLen;
-        Vector2 right = center + new Vector2(Mathf.Sin(yaw + halfAngle), Mathf.Cos(yaw + halfAngle)) * coneLen;
+        // sim 视线方向 = (−sin yaw, +cos yaw)(见 RTSCamera 镜像注释);像素 y 向下=z 减小,
+        // 故像素向量 = (−sin, −cos)。
+        Vector2 left = center + new Vector2(-Mathf.Sin(yaw - halfAngle), -Mathf.Cos(yaw - halfAngle)) * coneLen;
+        Vector2 right = center + new Vector2(-Mathf.Sin(yaw + halfAngle), -Mathf.Cos(yaw + halfAngle)) * coneLen;
 
         DrawLine(center, left, new Color(1f, 0.2f, 0.2f, 0.6f), 2f);
         DrawLine(center, right, new Color(1f, 0.2f, 0.2f, 0.6f), 2f);
@@ -222,8 +230,8 @@ public sealed partial class Minimap : Control
                 continue;
             if (!identity.TemplateName.Contains("civil_centre") && !identity.TemplateName.Contains("civic_centre"))
                 continue;
-            int px = (int)(kvp.Value.Position.X / worldSize * MapSize);
-            int pz = (int)(kvp.Value.Position.Z / worldSize * MapSize);
+            int px = Px(kvp.Value.Position.X, worldSize);
+            int pz = Pz(kvp.Value.Position.Z, worldSize);
             DrawRect(new Rect2(px - 4, pz - 4, 8, 8), new Color(0.08f, 0.22f, 0.58f, 0.8f), false, 1.5f);
             break;
         }

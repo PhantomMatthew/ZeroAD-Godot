@@ -42,8 +42,10 @@ public sealed partial class RTSCamera : Camera3D
         bool moved = false;
 
         Vector3 camDir = new(Mathf.Sin(_yaw), 0f, Mathf.Cos(_yaw));
-        Vector3 forward = -camDir;
-        Vector3 right = new(-forward.Z, 0f, forward.X);
+        // 平移在 sim 空间进行(_focus 是 sim 坐标):世界经 _worldRoot 镜像(visZ=S−simZ),
+        // 视线方向 visDir=−camDir 换回 sim 得 forward=(−sin,0,+cos),屏幕右=东(+x)。
+        Vector3 forward = new(-camDir.X, 0f, camDir.Z);
+        Vector3 right = new(camDir.Z, 0f, camDir.X);
 
         if (Input.IsActionPressed("cam_up"))    { _focus += forward * PanSpeed * dt; moved = true; }
         if (Input.IsActionPressed("cam_down"))  { _focus -= forward * PanSpeed * dt; moved = true; }
@@ -124,12 +126,13 @@ public sealed partial class RTSCamera : Camera3D
     /// the camera position and the current focus (look-at). This is how 0 A.D. starts a
     /// scenario: the Atlas editor's last camera pose is baked into the XML, and the game
     /// restores it on launch. Subsequent user pan/rotate then update the orbit params
-    /// normally.</summary>
+    /// normally. 输入是 sim 坐标;世界视觉经 _worldRoot 镜像,先把 eye 换到视觉空间再推姿态。</summary>
     public void PlaceFromScenarioCamera(Vector3 camWorldPos)
     {
-        Vector3 delta = camWorldPos - _focus;
+        Vector3 camVis = new(camWorldPos.X, camWorldPos.Y, TerrainHeightService.MirrorZ(camWorldPos.Z));
+        Vector3 delta = camVis - FocusVisual();
         float horizDist = Mathf.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
-        // offset = (hd*sin(yaw), vd, hd*cos(yaw)) → yaw = atan2(delta.X, delta.Z).
+        // offset = (hd*sin(yaw), vd, hd*cos(yaw)) → yaw = atan2(delta.X, delta.Z)。
         // Sign matches because both offset.X and delta.X are world-space camera offsets
         // from focus along the same axes.
         _yaw = Mathf.Atan2(delta.X, delta.Z);
@@ -141,12 +144,17 @@ public sealed partial class RTSCamera : Camera3D
         UpdateTransform();
     }
 
+    /// <summary>_focus(sim)的视觉空间坐标:visZ = WorldSize − simZ(对齐 _worldRoot 镜像)。</summary>
+    private Vector3 FocusVisual() =>
+        new(_focus.X, _focus.Y, TerrainHeightService.MirrorZ(_focus.Z));
+
     private void UpdateTransform()
     {
         float hd = _distance * Mathf.Cos(_pitch);
         float vd = _distance * Mathf.Sin(-_pitch);
         Vector3 offset = new(hd * Mathf.Sin(_yaw), vd, hd * Mathf.Cos(_yaw));
-        GlobalPosition = _focus + offset;
-        LookAt(_focus, Vector3.Up);
+        Vector3 focusVis = FocusVisual();
+        GlobalPosition = focusVis + offset;
+        LookAt(focusVis, Vector3.Up);
     }
 }
