@@ -68,21 +68,46 @@ public sealed partial class HUD : CanvasLayer
         _resourceCounters.Add(popCounter);
         hbox.AddChild(popCounter.Root);
 
-        // Right-aligned menu buttons (match C++ MenuButtons + IconButtons):
-        // Menu, Game Speed, Diplomacy, Trade, Match Settings. These open placeholder
-        // panels — wired to tooltips so the UI structure matches the original.
+        // 对齐 C++ TopPanel 右侧(top_panel/MenuButton.xml + IconButtons/*):
+        // 从左到右 GameSpeed(100%−284) / Diplomacy / Trade / MatchSettings(28×28 图标,
+        // 间距 2) / **Menu 在最右**(100%−164..100%−8,156×28 文字按钮,StoneButtonFancy)。
         var menuBox = new HBoxContainer();
         menuBox.SetAnchorsPreset(Control.LayoutPreset.TopRight);
-        menuBox.OffsetLeft = -200; menuBox.OffsetTop = 2;
-        menuBox.OffsetRight = -4; menuBox.OffsetBottom = 34;
-        menuBox.AddThemeConstantOverride("separation", 4);
+        menuBox.OffsetLeft = -284; menuBox.OffsetTop = 4;
+        menuBox.OffsetRight = -8; menuBox.OffsetBottom = 32;
+        menuBox.AddThemeConstantOverride("separation", 2);
         _topBar.AddChild(menuBox);
 
-        AddMenuButton(menuBox, "menu", "Menu", () => _main.OpenPauseMenu());
         AddMenuButton(menuBox, "time_small", "Game Speed", () => _main.OpenGameSpeedPanel());
         AddMenuButton(menuBox, "diplomacy", "Diplomacy", () => _main.OpenDiplomacyPanel());
         AddMenuButton(menuBox, "economics", "Trade", () => _main.OpenTradePanel());
         AddMenuButton(menuBox, "match-settings", "Settings", () => _main.OpenMatchSettingsPanel());
+
+        var menuBtn = new Button
+        {
+            Text = "Menu",
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(156, 28),
+            TooltipText = "Menu",
+        };
+        StoneButtonStyle.Apply(menuBtn, FindBinariesDir());
+        menuBtn.Pressed += () => _main.OpenPauseMenu();
+        menuBox.AddChild(menuBtn);
+    }
+
+    /// <summary>binaries/ 目录定位(与 MainMenu.FindBinariesDir 同款 ../、../../ 回退)。</summary>
+    private static string? FindBinariesDir()
+    {
+        string projRoot = ProjectSettings.GlobalizePath("res://");
+        foreach (var candidate in new[]
+        {
+            System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "binaries")),
+            System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "..", "binaries")),
+        })
+        {
+            if (System.IO.Directory.Exists(candidate)) return candidate;
+        }
+        return null;
     }
 
     private void AddMenuButton(HBoxContainer parent, string icon, string tooltip, System.Action onPressed)
