@@ -16,9 +16,12 @@ public sealed partial class TutorialPanel : Panel
     public override void _Ready()
     {
         Visible = false;
-        SetAnchorsPreset(LayoutPreset.CenterTop);
-        Position = new Vector2(-380, 38);
-        Size = new Vector2(760, 254);
+        // 对齐原版 session/tutorial_panel.xml:size 50%-380 38 50%+380 292(顶部居中 760×254)。
+        // 必须直写 anchors+offsets——CenterTop+Position 写法会被 Position setter
+        // 换算成相对锚点的偏移,导致面板随窗口宽度跑偏(贴左缘)。
+        AnchorLeft = 0.5f; AnchorRight = 0.5f; AnchorTop = 0f; AnchorBottom = 0f;
+        OffsetLeft = -380; OffsetRight = 380; OffsetTop = 38; OffsetBottom = 292;
+        GrowHorizontal = GrowDirection.Both;
         MouseFilter = MouseFilterEnum.Stop;
 
         var bg = new StyleBoxFlat

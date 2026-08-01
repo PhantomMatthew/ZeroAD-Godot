@@ -70,10 +70,11 @@ public sealed partial class LobbyUI : CanvasLayer
             Texture = UITheme.TryLoad("res://assets/ui/logo.png"),
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-            CustomMinimumSize = new Vector2(500, 200),
+            // 顶部居中 500×200:直写 anchors+offsets(CenterTop+Position 写法会跑偏)。
+            AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0f, AnchorBottom = 0f,
+            OffsetLeft = -250, OffsetRight = 250, OffsetTop = 30, OffsetBottom = 230,
+            GrowHorizontal = Control.GrowDirection.Both,
         };
-        logo.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
-        logo.Position = new Vector2(-250, 30);
         AddChild(logo);
     }
 
@@ -272,6 +273,15 @@ public sealed partial class LobbyUI : CanvasLayer
     {
     }
 
+    /// <summary>从 MainMenu 以明确 MP 意图进入(Host New Game / Connect by IP):
+    /// 跳过本场景遗留的旧菜单面板,直显连接/主持表单(对齐原版 gamesetup_mp 入口)。</summary>
+    public void EnterMpDirect(bool isHost)
+    {
+        _mainPanel.Visible = false;
+        _submenuPanel.Visible = false;
+        ShowLobbyPanel(isHost);
+    }
+
     private void ShowLobbyPanel(bool isHost)
     {
         if (_lobbyPanel != null)
@@ -281,9 +291,11 @@ public sealed partial class LobbyUI : CanvasLayer
         }
 
         var panel = new Panel { Theme = UITheme.GetTheme() };
-        panel.SetAnchorsPreset(Control.LayoutPreset.Center);
-        panel.Position = new Vector2(-200, -150);
-        panel.Size = new Vector2(400, 300);
+        // 居中 400×300:直写 anchors+offsets(Center+Position 写法会跑偏)。
+        panel.AnchorLeft = 0.5f; panel.AnchorRight = 0.5f; panel.AnchorTop = 0.5f; panel.AnchorBottom = 0.5f;
+        panel.OffsetLeft = -200; panel.OffsetRight = 200; panel.OffsetTop = -150; panel.OffsetBottom = 150;
+        panel.GrowHorizontal = Control.GrowDirection.Both;
+        panel.GrowVertical = Control.GrowDirection.Both;
         AddChild(panel);
         _lobbyPanel = panel;
 
@@ -366,9 +378,11 @@ public sealed partial class LobbyUI : CanvasLayer
         }
 
         var panel = new Panel { Theme = UITheme.GetTheme() };
-        panel.SetAnchorsPreset(Control.LayoutPreset.Center);
-        panel.Position = new Vector2(-260, -220);
-        panel.Size = new Vector2(520, 440);
+        // 居中 520×440:直写 anchors+offsets(Center+Position 写法会跑偏)。
+        panel.AnchorLeft = 0.5f; panel.AnchorRight = 0.5f; panel.AnchorTop = 0.5f; panel.AnchorBottom = 0.5f;
+        panel.OffsetLeft = -260; panel.OffsetRight = 260; panel.OffsetTop = -220; panel.OffsetBottom = 220;
+        panel.GrowHorizontal = Control.GrowDirection.Both;
+        panel.GrowVertical = Control.GrowDirection.Both;
         AddChild(panel);
         _lobbyPanel = panel;
 
