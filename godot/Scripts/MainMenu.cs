@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Godot;
 using ZeroAD.Godot.Options;
 
@@ -53,14 +54,24 @@ public sealed partial class MainMenu : Control
 
     private void BuildUi()
     {
-        AddChild(new TextureRect
+        // 原版 page_pregame 背景:启动随机一套多层视差图(gui/pregame/backgrounds 端口,
+        // 见 PregameBackground);binaries 缺失时回退渐变底。
+        string? binDir = FindBinariesDir();
+        var parallax = new PregameBackground();
+        if (parallax.Init(binDir))
         {
-            // 暂用渐变底(原版背景图轮播留 backlog)。FullRect 铺满。
-            Texture = MakeBackgroundGradient(),
-            AnchorsPreset = (int)LayoutPreset.FullRect,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-        });
+            AddChild(parallax);
+        }
+        else
+        {
+            AddChild(new TextureRect
+            {
+                Texture = MakeBackgroundGradient(),
+                AnchorsPreset = (int)LayoutPreset.FullRect,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            });
+        }
 
         // 对齐原版 pregame/menupanel.xml:主菜单是**左侧竖条面板**(size 60 -2 300 100%+2,
         // 宽 240 通高、上下各溢出 2px),非居中对话框。锚点布局,gui.scale 任意值位置不变。
@@ -80,17 +91,36 @@ public sealed partial class MainMenu : Control
         panel.AddThemeStyleboxOverride("panel", bg);
         AddChild(panel);
 
-        // 原版 productLogo 区(面板内 50%±110, y 10..110)——无贴图资源,用大号标题文字占位。
-        var title = new Label
+        // 原版 productLogo(ProjectInformation.xml:面板内 50%±110, y 10..110,
+        // sprite 0ADLogo = pregame/shell/logo/0ad_logo.png)。缺失时回退文字标题。
+        string logoPath = binDir == null ? "" : Path.Combine(binDir,
+            "data", "mods", "public", "art", "textures", "ui", "pregame", "shell", "logo", "0ad_logo.png");
+        var logoImg = binDir == null ? null : Image.LoadFromFile(logoPath);
+        if (logoImg != null)
         {
-            Text = "0 A.D.",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Theme = UITheme.GetTheme(),
-            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 0f,
-            OffsetTop = 40, OffsetBottom = 110,
-        };
-        title.AddThemeFontSizeOverride("font_size", 34);
-        panel.AddChild(title);
+            panel.AddChild(new TextureRect
+            {
+                Texture = ImageTexture.CreateFromImage(logoImg),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0f, AnchorBottom = 0f,
+                OffsetLeft = -110, OffsetRight = 110, OffsetTop = 10, OffsetBottom = 110,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            });
+        }
+        else
+        {
+            var title = new Label
+            {
+                Text = "0 A.D.",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Theme = UITheme.GetTheme(),
+                AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 0f,
+                OffsetTop = 40, OffsetBottom = 110,
+            };
+            title.AddThemeFontSizeOverride("font_size", 34);
+            panel.AddChild(title);
+        }
 
         // 原版 mainMenuButtons(面板内 8 146 100%-8 346):按钮列起始于 y=146,左右留 8px。
         var vbox = new VBoxContainer
@@ -108,6 +138,48 @@ public sealed partial class MainMenu : Control
         AddButton(vbox, "Manual", OnManual);
         AddButton(vbox, "Multiplayer", OnMultiplayer);
         AddButton(vbox, "Quit", () => GetTree().Quit());
+
+        // 原版 ProjectInformation 底部信息框(面板内 8 100%-368 100%-8 100%-94,
+        // TranslucentPanelThinBorder + 白色 sans-14 描述)。community 按钮留 backlog。
+        var infoBox = new PanelContainer
+        {
+            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 1f, AnchorBottom = 1f,
+            OffsetLeft = 8, OffsetRight = -8, OffsetTop = -368, OffsetBottom = -94,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        var infoBg = new StyleBoxFlat
+        {
+            BgColor = new Color(0f, 0f, 0f, 0.45f),
+            BorderColor = new Color(1f, 1f, 1f, 0.25f),
+            BorderWidthBottom = 1, BorderWidthTop = 1, BorderWidthLeft = 1, BorderWidthRight = 1,
+        };
+        infoBg.SetContentMarginAll(8);
+        infoBox.AddThemeStyleboxOverride("panel", infoBg);
+        panel.AddChild(infoBox);
+
+        var infoLbl = new Label
+        {
+            Text = "0 A.D. Godot Rewrite\n\nNotice: This game is under development and many features have not been added yet.",
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+        };
+        infoLbl.AddThemeFontSizeOverride("font_size", 14);
+        infoLbl.AddThemeColorOverride("font_color", Colors.White);
+        infoBox.AddChild(infoLbl);
+    }
+
+    /// <summary>binaries/ 目录定位(与 LoadingOverlay.FindBinariesDir 同款 ../、../../ 回退)。</summary>
+    private static string? FindBinariesDir()
+    {
+        string projRoot = ProjectSettings.GlobalizePath("res://");
+        foreach (var candidate in new[]
+        {
+            Path.GetFullPath(Path.Combine(projRoot, "..", "binaries")),
+            Path.GetFullPath(Path.Combine(projRoot, "..", "..", "binaries")),
+        })
+        {
+            if (Directory.Exists(candidate)) return candidate;
+        }
+        return null;
     }
 
     private void OnSinglePlayer() => Start(GameLaunchConfig.LaunchMode.SinglePlayer);
