@@ -399,6 +399,9 @@ namespace ZeroAD.Sim
         {
             s.StringASCII("rng", _rng.Serialize());
             s.NumberU32("nextEntityId", _entityManager.NextEntityId);
+            // v6: player registry (pid→entity) round-trips so a cold load re-points every
+            // player at its live entity instead of the pre-load (destroyed) one.
+            Players.Serialize(s);
 
             var nonLocal = _componentsByEntity
                 .Where(k => !k.Key.IsLocal)
@@ -437,6 +440,9 @@ namespace ZeroAD.Sim
 
             _rng.Deserialize(d.StringASCII("rng"));
             _entityManager.RestoreNextEntityId(d.NumberU32("nextEntityId"));
+            // v6: restore the player registry (its Deserialize clears the stale pre-load
+            // mappings first, then re-points each player at its live entity).
+            Players.Deserialize(d);
 
             uint entityCount = d.NumberU32("entityCount");
             for (uint i = 0; i < entityCount; i++)

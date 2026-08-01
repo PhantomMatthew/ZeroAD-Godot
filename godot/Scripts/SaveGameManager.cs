@@ -1,10 +1,27 @@
+using System.Collections.Generic;
 using System.IO;
 using Godot;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
+using ZeroAD.Sim.Net;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Godot;
+
+/// <summary>Save header metadata — everything needed to rebuild the match skeleton on a
+/// cold (cross-scene) load, plus display info for the LoadGame browser. Written between the
+/// turn field and the payload in the v6 header.</summary>
+public sealed record SaveMeta(
+    string Slot,
+    long TimeUnix,
+    string Description,
+    string? MapPath,
+    string MapType,
+    uint Turn,
+    bool Tutorial,
+    uint LocalPlayerId,
+    NetRole Role,
+    IReadOnlyList<PlayerSlotSetup> Slots);
 
 /// <summary>
 /// Save/load system: serializes the full simulation state to a binary file and
@@ -12,11 +29,13 @@ namespace ZeroAD.Godot;
 ///
 /// Save format (little-endian binary):
 ///   magic   "0ADSAVE" (7 bytes)
-///   version uint32    (format version, currently 1)
+///   version uint32    (format version, currently 6)
 ///   turn    uint32    (sim turn at save time)
+///   match-skeleton block (v6): mapPath/mapType/tutorial/localPlayerId/role/slots/timeUnix/description
 ///   payload            (ComponentManager.SerializeSaveGame output)
 ///
-/// On load the caller (Main) must rebuild visual nodes for every restored entity.
+/// On load the caller (Main) must rebuild visual nodes + spatial indexes + the player
+/// registry for every restored entity (cold load) — see Main.AutoLoad.
 /// </summary>
 public static class SaveGameManager
 {
@@ -28,7 +47,11 @@ public static class SaveGameManager
     // 科技修正(×1.4 等)按比例缩放 CP 数组;旧 v3 档无 bmax,按版本号拒收。
     // v5(2026-08-01):PlayerComponent 增 Team 字段(队伍号,外交面板显示用)——PlayerComponent
     // 序列化流多一个 int32;旧 v4 档位置流错位,按版本号拒收。
-    private const uint Version = 5;
+    // v6(2026-08-01):会话外 LoadGame 冷启动——turn 后 payload 前嵌对局骨架(mapPath/mapType/
+    // tutorial/localPlayerId/role/slots/timeUnix/description),跨场景冷加载用同一份槽位表+地图
+    // 重建世界;payload 同步增 PlayerManager 注册表(pid→entity)序列化,冷加载后玩家映射指向
+    // 存活实体而非已销毁者。旧 v5 档无此块(读骨架时位置流错位),按版本号拒收。
+    private const uint Version = 6;
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 
@@ -37,7 +60,7 @@ public static class SaveGameManager
 
     /// <summary>Serializes the current simulation state to a save file. Returns the
     /// file path on success, null on failure.</summary>
-    public static string? Save(SimBridge sim, string slot = "quicksave")
+    public static string? Save(SimBridge sim, string slot = "quicksave", string? description = null)
     {
         try
         {
@@ -50,6 +73,22 @@ public static class SaveGameManager
                 bw.Write((byte)c);
             bw.Write(Version);
             bw.Write(sim.NetTurn.CurrentTurn);
+            // v6 match-skeleton block (cold-load contract + browser display info)
+            bw.Write(sim.MapPath ?? string.Empty);
+            bw.Write(MapTypeOf(sim));
+            bw.Write((byte)(sim.IsTutorialMode ? 1 : 0));
+            bw.Write(sim.LocalPlayerId);
+            bw.Write((byte)sim.NetTurn.Role);
+            var slots = sim.Slots;
+            bw.Write((byte)slots.Count);
+            foreach (var s in slots)
+            {
+                bw.Write((byte)s.Kind);
+                bw.Write(s.Civ ?? string.Empty);
+                bw.Write(s.Team);
+            }
+            bw.Write(System.DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            bw.Write(description ?? $"Turn {sim.NetTurn.CurrentTurn}");
             // Payload: ComponentManager.SerializeSaveGame
             var ser = new BinarySerializer(bw);
             sim.Sim.SerializeSaveGame(ser);
@@ -79,27 +118,17 @@ public static class SaveGameManager
         {
             using var fs = new FileStream(path, FileMode.Open);
             using var br = new BinaryReader(fs);
-            // Header
-            for (int i = 0; i < Magic.Length; i++)
+            var meta = ReadHeaderFromStream(br, slot);
+            if (meta == null)
             {
-                if (br.ReadByte() != (byte)Magic[i])
-                {
-                    GD.PrintErr("[SaveGame] bad magic — not a save file");
-                    return null;
-                }
-            }
-            uint version = br.ReadUInt32();
-            if (version != Version)
-            {
-                GD.PrintErr($"[SaveGame] version mismatch: file={version} expected={Version}");
+                GD.PrintErr($"[SaveGame] bad magic or version mismatch: {path}");
                 return null;
             }
-            uint turn = br.ReadUInt32();
             // Payload
             var deser = new BinaryDeserializer(br);
             sim.Sim.DeserializeSaveGame(deser, prepareComponent);
-            GD.Print($"[SaveGame] loaded from {path} (turn {turn})");
-            return turn;
+            GD.Print($"[SaveGame] loaded from {path} (turn {meta.Turn})");
+            return meta.Turn;
         }
         catch (System.Exception ex)
         {
@@ -108,7 +137,102 @@ public static class SaveGameManager
         }
     }
 
+    /// <summary>Read only the header of a save (magic + version + turn + match-skeleton
+    /// block), stopping before the payload. Used by the cold-load entry point and the
+    /// LoadGame browser. Returns null for a missing/bad/incompatible (≠v6) file.</summary>
+    public static SaveMeta? ReadHeader(string slot)
+    {
+        string path = SavePath(slot);
+        if (!File.Exists(path))
+            return null;
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open);
+            using var br = new BinaryReader(fs);
+            return ReadHeaderFromStream(br, slot);
+        }
+        catch (System.Exception)
+        {
+            return null; // 坏档/旧版本档跳过,不抛
+        }
+    }
+
+    /// <summary>List every save in the saves dir, newest first. Skips unreadable or
+    /// incompatible-version files. Header-only — payloads are never parsed.</summary>
+    public static List<SaveMeta> ListSaves()
+    {
+        var result = new List<SaveMeta>();
+        if (!Directory.Exists(SavesDir))
+            return result;
+        foreach (var path in Directory.GetFiles(SavesDir, "*.zsave"))
+        {
+            var meta = ReadHeader(Path.GetFileNameWithoutExtension(path));
+            if (meta != null)
+                result.Add(meta);
+        }
+        result.Sort((a, b) => b.TimeUnix.CompareTo(a.TimeUnix)); // newest first
+        return result;
+    }
+
+    /// <summary>Delete the save file for a slot. Returns true if a file was removed.</summary>
+    public static bool Delete(string slot)
+    {
+        string path = SavePath(slot);
+        if (!File.Exists(path))
+            return false;
+        try
+        {
+            File.Delete(path);
+            GD.Print($"[SaveGame] deleted {path}");
+            return true;
+        }
+        catch (System.Exception ex)
+        {
+            GD.PrintErr($"[SaveGame] delete failed: {ex.Message}");
+            return false;
+        }
+    }
+
     /// <summary>True if a save file exists for the given slot.</summary>
     public static bool Exists(string slot = "quicksave") =>
         File.Exists(SavePath(slot));
+
+    /// <summary>Read magic + v6 header from an open stream positioned at the start.
+    /// Returns the meta and leaves the reader positioned at the payload, or returns null
+    /// when the magic/version is wrong.</summary>
+    private static SaveMeta? ReadHeaderFromStream(BinaryReader br, string slot)
+    {
+        for (int i = 0; i < Magic.Length; i++)
+            if (br.ReadByte() != (byte)Magic[i])
+                return null;
+        uint version = br.ReadUInt32();
+        if (version != Version)
+            return null;
+        uint turn = br.ReadUInt32();
+        // v6 match-skeleton block
+        string mapPathStr = br.ReadString();
+        string mapType = br.ReadString();
+        bool tutorial = br.ReadByte() != 0;
+        uint localPlayerId = br.ReadUInt32();
+        var role = (NetRole)br.ReadByte();
+        int slotCount = br.ReadByte();
+        var slots = new List<PlayerSlotSetup>(slotCount);
+        for (int i = 0; i < slotCount; i++)
+        {
+            var kind = (PlayerSlotKind)br.ReadByte();
+            string civ = br.ReadString();
+            int team = br.ReadInt32();
+            slots.Add(new PlayerSlotSetup { PlayerId = i + 1, Kind = kind, Civ = civ, Team = team });
+        }
+        long timeUnix = br.ReadInt64();
+        string description = br.ReadString();
+        return new SaveMeta(slot, timeUnix, description,
+            mapPathStr.Length == 0 ? null : mapPathStr, mapType, turn, tutorial,
+            localPlayerId, role, slots);
+    }
+
+    private static string MapTypeOf(SimBridge sim) =>
+        sim.IsTutorialMode ? "tutorial"
+        : sim.NetTurn.Role != NetRole.Standalone ? "multiplayer"
+        : "singleplayer";
 }
