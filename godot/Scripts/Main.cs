@@ -91,7 +91,7 @@ public sealed partial class Main : Node3D
 
 		// 启动模式由 MainMenu 写入 GameLaunchConfig(进程级 env 仅 dev fallback,已由 MainMenu
 		// 首次读取后清空——修 ChangeScene 回主菜单重触发自动开局的 bug)。SP/Tutorial 直接开局;
-		// Multiplayer/Lobby 显大厅 LobbyUI(不自动开局,等用户 Host/Join)。Load(Phase 2)暂走大厅。
+		// Load 冷加载存档;Multiplayer/Lobby 显大厅 LobbyUI(不自动开局,等用户 Host/Join)。
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		switch (cfg.Mode)
 		{
@@ -100,6 +100,9 @@ public sealed partial class Main : Node3D
 				break;
 			case GameLaunchConfig.LaunchMode.Tutorial:
 				CallDeferred(nameof(AutoTutorial));
+				break;
+			case GameLaunchConfig.LaunchMode.Load:
+				CallDeferred(nameof(AutoLoad));
 				break;
 		}
 	}
@@ -202,55 +205,12 @@ public sealed partial class Main : Node3D
 				GD.Print("[MP] AttachTurnManager done");
 			}
 
-			if (_hud == null)
-			{
-				_hud = new HUD(_sim, this);
-				AddChild(_hud);
-				// Game-over overlay: subscribes to the sim's win/loss events and shows the
-				// Victory/Defeat panel when the match ends.
-				var gameOver = new GameOverOverlay(_sim, localPlayerId: (int)playerId);
-				AddChild(gameOver);
-
-				// Pause menu (Menu 按钮 → 暂停叠层):冻结 sim + 存档/读档/离开。事件解耦同 LobbyUI:
-				// 存档/读档复用 QuickSave/QuickLoad(含视觉重建),离开回主菜单。
-				_pauseMenu = new PauseMenu(_sim);
-				var pm = _pauseMenu;
-				pm.OnSave += () => pm.SetStatus(QuickSave() != null ? "Saved." : "Save failed.");
-				pm.OnLoad += () =>
-				{
-					var t = QuickLoad();
-					pm.SetStatus(t == null ? "No save / load failed." : $"Loaded turn {t}.");
-				};
-				pm.OnLeave += () => GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
-				AddChild(pm);
-
-				// 第二梯队菜单面板(Game Speed/Diplomacy/Trade/Match Settings):模态叠层,挡鼠标不暂停。
-				_gameSpeedPanel = new GameSpeedPanel(_sim);
-				_diplomacyPanel = new DiplomacyPanel(_sim);
-				_tradePanel = new TradePanel(_sim);
-				_matchSettingsPanel = new MatchSettingsPanel(_sim);
-				AddChild(_gameSpeedPanel);
-				AddChild(_diplomacyPanel);
-				AddChild(_tradePanel);
-				AddChild(_matchSettingsPanel);
-			}
+			BuildSessionUi(playerId);
 
 			if (_isTutorial)
-			{
-				_tutorialPanel = new TutorialPanel();
-				AddChild(_tutorialPanel);
-				_tutorialPanel.OnReadyPressed += () => _sim.Tutorial?.OnReadyPressed();
-				_tutorialPanel.OnQuitPressed += QuitTutorial;
-				_sim.Events.TutorialMessage += OnTutorialMessage;
-			}
+				WireTutorialPanel();
 
-			// Fog-of-war: a selected mirage swaps back to the real entity when it returns
-			// to sight (MT_EntityRenamed semantics), so orders/GUI keep targeting the real one.
-			_sim.Events.MirageSwapBack += e =>
-			{
-				if (e.Player == (int)_sim.LocalPlayerId && _selectedEntities.Remove(e.Mirage))
-					_selectedEntities.Add(e.Parent);
-			};
+			WireMirageSwapBack();
 
 			if (_isTutorial)
 			{
@@ -280,6 +240,165 @@ public sealed partial class Main : Node3D
 			GD.PrintErr($"[Tutorial] EXCEPTION in BeginGameplay: {e}");
 			GD.PrintErr($"[Tutorial] Stack: {e.StackTrace}");
 			throw;
+		}
+	}
+
+	/// <summary>Build the in-session UI chrome (HUD, game-over overlay, pause menu, tier-2
+	/// panels) exactly once. Shared by BeginGameplay (fresh game) and ColdLoad (LoadGame):
+	/// both run after InitWorld so the sim exists, and both need identical wiring.</summary>
+	private void BuildSessionUi(uint playerId)
+	{
+		if (_hud != null) return;
+		_hud = new HUD(_sim, this);
+		AddChild(_hud);
+		// Game-over overlay: subscribes to the sim's win/loss events and shows the
+		// Victory/Defeat panel when the match ends.
+		var gameOver = new GameOverOverlay(_sim, localPlayerId: (int)playerId);
+		AddChild(gameOver);
+
+		// Pause menu (Menu 按钮 → 暂停叠层):冻结 sim + 存档/读档/离开。事件解耦同 LobbyUI:
+		// 存档/读档复用 QuickSave/QuickLoad(含视觉重建),离开回主菜单。
+		_pauseMenu = new PauseMenu(_sim);
+		var pm = _pauseMenu;
+		pm.OnSave += () => pm.SetStatus(QuickSave() != null ? "Saved." : "Save failed.");
+		pm.OnLoad += () =>
+		{
+			var t = QuickLoad();
+			pm.SetStatus(t == null ? "No save / load failed." : $"Loaded turn {t}.");
+		};
+		pm.OnLeave += () => GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+		AddChild(pm);
+
+		// 第二梯队菜单面板(Game Speed/Diplomacy/Trade/Match Settings):模态叠层,挡鼠标不暂停。
+		_gameSpeedPanel = new GameSpeedPanel(_sim);
+		_diplomacyPanel = new DiplomacyPanel(_sim);
+		_tradePanel = new TradePanel(_sim);
+		_matchSettingsPanel = new MatchSettingsPanel(_sim);
+		AddChild(_gameSpeedPanel);
+		AddChild(_diplomacyPanel);
+		AddChild(_tradePanel);
+		AddChild(_matchSettingsPanel);
+	}
+
+	/// <summary>Tutorial panel wiring, shared by BeginGameplay and ColdLoad.</summary>
+	private void WireTutorialPanel()
+	{
+		_tutorialPanel = new TutorialPanel();
+		AddChild(_tutorialPanel);
+		_tutorialPanel.OnReadyPressed += () => _sim.Tutorial?.OnReadyPressed();
+		_tutorialPanel.OnQuitPressed += QuitTutorial;
+		_sim.Events.TutorialMessage += OnTutorialMessage;
+	}
+
+	/// <summary>Fog-of-war: a selected mirage swaps back to the real entity when it returns
+	/// to sight (MT_EntityRenamed semantics), so orders/GUI keep targeting the real one.
+	/// Shared by BeginGameplay and ColdLoad.</summary>
+	private void WireMirageSwapBack()
+	{
+		_sim.Events.MirageSwapBack += e =>
+		{
+			if (e.Player == (int)_sim.LocalPlayerId && _selectedEntities.Remove(e.Mirage))
+				_selectedEntities.Add(e.Parent);
+		};
+	}
+
+	/// <summary>LoadGame entry: GameLaunchConfig.Mode=Load + LoadSlot set by the LoadGame
+	/// browser. Reads the save header, then cold-loads behind a loading overlay (the world
+	/// rebuild + deserialize is heavy synchronous work — same overlay pattern as StartTutorial).</summary>
+	private void AutoLoad()
+	{
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		var meta = SaveGameManager.ReadHeader(cfg.LoadSlot);
+		if (meta == null || meta.MapPath == null)
+		{
+			// No such save / incompatible version / generated-terrain save (no map to rebuild).
+			GD.PrintErr($"[LoadGame] cannot cold-load slot '{cfg.LoadSlot}': " +
+				(meta == null ? "missing or incompatible save" : "generated terrain has no map path"));
+			cfg.Reset();
+			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+			return;
+		}
+
+		_loadingOverlay = new LoadingOverlay($"Loading {meta.Description}...");
+		AddChild(_loadingOverlay);
+		var timer = new Timer { WaitTime = 0.15, OneShot = true, Autostart = true };
+		AddChild(timer);
+		timer.Timeout += () =>
+		{
+			try
+			{
+				ColdLoad(meta);
+			}
+			catch (System.Exception e)
+			{
+				GD.PrintErr($"[LoadGame] cold-load failed: {e}");
+				cfg.Reset();
+				GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+			}
+			_loadingOverlay?.QueueFree();
+			_loadingOverlay = null;
+			timer.QueueFree();
+		};
+	}
+
+	/// <summary>Cold (cross-scene) load: rebuild the match skeleton from the save header, then
+	/// overlay the saved component state and rebuild the derived indexes DeserializeSaveGame
+	/// doesn't refill. Mirrors BeginGameplay's world/UI construction but SKIPS the fresh-game
+	/// spawn (SpawnStartingBase/tree clusters/AI attach/neutral soldiers/reveal-all) — all of
+	/// that is already in the save. Always resumes standalone (MP rejoin is backlog).</summary>
+	private void ColdLoad(SaveMeta meta)
+	{
+		_gameStarted = true;
+		_isTutorial = meta.Tutorial;
+		_lobby.Hide();
+
+		// Rebuild the world from the saved slot table (seed 0 — the RNG state is restored from
+		// the save payload, so the construction seed is irrelevant here).
+		string? templatesPath = FindTemplatesPath();
+		_sim.InitWorld(templatesPath, seed: 0, meta.LocalPlayerId, NetRole.Standalone, meta.Slots);
+
+		BuildSessionUi(meta.LocalPlayerId);
+		if (_isTutorial)
+			WireTutorialPanel();
+		WireMirageSwapBack();
+
+		// Terrain + spatial-index bounds + passability + pathfinder grid, sized to the real map.
+		SetupTerrain(meta.MapPath);
+
+		// Overlay the saved component state, re-injecting the runtime managers each component
+		// needs before deserialization (same prepareComponent as QuickLoad). The player registry
+		// round-trips inside the payload itself.
+		var turn = SaveGameManager.Load(_sim, meta.Slot, prepareComponent: comp =>
+		{
+			if (comp is ZeroAD.Sim.Components.LosManagerComponent los)
+				los.Attach(_sim.Range);
+			if (comp is ZeroAD.Sim.Components.AIComponent ai)
+				ai.Configure(_sim.Sim, _sim.NetTurn);
+		});
+		if (turn == null)
+			throw new System.InvalidOperationException($"save payload failed to load: {meta.Slot}");
+
+		// Rebuild the two spatial indexes DeserializeSaveGame bypasses (obstructions + range/LOS),
+		// THEN rebuild visuals (whose RegisterForLos needs the range index populated).
+		_sim.RebuildSpatialIndexesAfterLoad();
+		_sim.RebuildAllVisuals();
+
+		// No saved camera in v1: frame the local player's first owned entity (its base).
+		FocusCameraOnLocalPlayer();
+		GD.Print($"[LoadGame] cold-loaded '{meta.Slot}' (turn {turn}, map {meta.MapPath})");
+	}
+
+	/// <summary>Cold-load camera: focus the local player's first owned in-world entity
+	/// (its town centre / starting units) instead of the map centre.</summary>
+	private void FocusCameraOnLocalPlayer()
+	{
+		foreach (var e in _sim.Range.GetEntitiesByPlayer((int)_sim.LocalPlayerId))
+		{
+			var pos = _sim.Sim.QueryInterface<PositionComponent>(e);
+			if (pos == null) continue;
+			SetCameraFocus(new Vector3(
+				pos.Position.X.ToFloat(), pos.Position.Y.ToFloat(), pos.Position.Z.ToFloat()));
+			return;
 		}
 	}
 
@@ -321,9 +440,15 @@ public sealed partial class Main : Node3D
 
 	private void SetupTerrain(string? pmpRelPath = null)
 	{
+		// Track the rel path actually used so a save can rebuild this terrain on cold-load
+		// (embedded in the v6 save header; generated-terrain saves leave MapPath=null).
+		string? mapRel = pmpRelPath;
 		string? pmpPath = pmpRelPath != null ? FindDataPath(pmpRelPath) : null;
-		pmpPath ??= FindDataPath("maps/scenarios/arcadia.pmp")
-			?? FindDataPath("maps/scenarios/laconia_01.pmp");
+		if (pmpPath == null)
+		{
+			if ((pmpPath = FindDataPath("maps/scenarios/arcadia.pmp")) != null) mapRel = "maps/scenarios/arcadia.pmp";
+			else if ((pmpPath = FindDataPath("maps/scenarios/laconia_01.pmp")) != null) mapRel = "maps/scenarios/laconia_01.pmp";
+		}
 
 		if (pmpPath != null)
 		{
@@ -359,6 +484,7 @@ public sealed partial class Main : Node3D
 				// height is at/below the water level is Water, everything else is Land. This drives
 				// BuildRestrictions (can't build on water) and Footprint spawn placement.
 				FillPassabilityFromPmp(pmp, waterHeight);
+				_sim.MapPath = mapRel; // 冷加载重建本地形的契约字段(存档头 v6)
 
 				return;
 			}

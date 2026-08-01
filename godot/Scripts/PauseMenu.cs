@@ -104,7 +104,8 @@ public sealed partial class PauseMenu : CanvasLayer
 
         AddButton(vbox, "Resume", Close);
         AddButton(vbox, "Save", () => OnSave?.Invoke());
-        AddButton(vbox, "Load", () => OnLoad?.Invoke());
+        AddButton(vbox, "Quick Load", () => OnLoad?.Invoke());
+        AddButton(vbox, "Load Game", OpenLoadGame);
         AddButton(vbox, "Manual", OpenManual);
         AddButton(vbox, "Resign", ShowResignConfirm);
         AddButton(vbox, "Leave", () => OnLeave?.Invoke());
@@ -134,6 +135,15 @@ public sealed partial class PauseMenu : CanvasLayer
         var manual = new ManualPanel(layer: 65);
         AddChild(manual);
         manual.Open();
+    }
+
+    // 子项:打开存档浏览器(Layer 65 浮在本菜单 60 之上)。Load → ChangeScene 冷加载,
+    // 区别于 Quick Load(同场景快读)。
+    private void OpenLoadGame()
+    {
+        var panel = new LoadGamePanel(layer: 65);
+        AddChild(panel);
+        panel.Open();
     }
 
     private static void AddButton(Control parent, string label, Action onPressed)

@@ -94,7 +94,7 @@ public sealed partial class MainMenu : Control
 
         AddButton(vbox, "Single Player", OnSinglePlayer);
         AddButton(vbox, "Tutorial", OnTutorial);
-        AddButton(vbox, "Load Game", () => { }, disabled: true, tip: "(Phase 2)");
+        AddButton(vbox, "Load Game", OnLoadGame);
         AddButton(vbox, "Options", () => { }, disabled: true, tip: "(Phase 3)");
         AddButton(vbox, "Manual", OnManual);
         AddButton(vbox, "Multiplayer", OnMultiplayer);
@@ -120,6 +120,13 @@ public sealed partial class MainMenu : Control
         var manual = new ManualPanel();
         AddChild(manual);
         manual.Open();
+    }
+
+    private void OnLoadGame()
+    {
+        var panel = new LoadGamePanel();
+        AddChild(panel);
+        panel.Open();
     }
 
     private static void AddButton(Control parent, string label, Action onPressed,
