@@ -15,7 +15,7 @@ namespace ZeroAD.Godot;
 // 底部名言条(QuoteDisplay)留 backlog。
 public sealed partial class LoadingOverlay : CanvasLayer
 {
-    private readonly ProgressBar _bar;
+    private readonly LoadingProgressBar _bar;
 
     public LoadingOverlay(string title)
     {
@@ -27,16 +27,15 @@ public sealed partial class LoadingOverlay : CanvasLayer
         bg.MouseFilter = Control.MouseFilterEnum.Stop;
         AddChild(bg);
 
-        // 顶部居中进度条(50%±256, y 4..36)。
-        _bar = new ProgressBar
+        string? binDir = FindBinariesDir();
+
+        // 顶部居中进度条(50%±256, y 4..36;贴图合成见 LoadingProgressBar)。
+        _bar = new LoadingProgressBar
         {
-            MinValue = 0,
-            MaxValue = 100,
-            Value = 0,
-            ShowPercentage = true,
             AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0f, AnchorBottom = 0f,
             OffsetLeft = -256, OffsetRight = 256, OffsetTop = 4, OffsetBottom = 36,
         };
+        _bar.Init(binDir);
         AddChild(_bar);
 
         // 地图标题(y ~44,LargeTitleText 金色大号)。
@@ -110,7 +109,7 @@ public sealed partial class LoadingOverlay : CanvasLayer
     }
 
     /// <summary>进度 0..1(对齐原版 ProgressBar 百分比)。</summary>
-    public void SetProgress(float fraction) => _bar.Value = Mathf.Clamp(fraction, 0f, 1f) * 100;
+    public void SetProgress(float fraction) => _bar.SetProgress(fraction);
 
     // ── 提示目录(reference/tips 端口) ──
 
