@@ -26,17 +26,21 @@ public abstract partial class ModalPanelBase : CanvasLayer
         };
         AddChild(dim);
 
-        var center = new CenterContainer
+        // 锚点居中(非 CenterContainer):四锚 0.5 + 双向 Grow——面板始终以视口中心对称展开,
+        // 超屏时对称溢出(对齐原版 50%±w/2 的居中语义)。CenterContainer 在子项大于容器时会把
+        // 子项钳到 0,0(gui.scale>1 使逻辑画布缩小时,面板被甩到左上角)——锚点方案无此问题。
+        var panel = new PanelContainer
         {
-            AnchorsPreset = (int)Control.LayoutPreset.FullRect,
+            CustomMinimumSize = new Vector2(minWidth, 0),
+            AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0.5f, AnchorBottom = 0.5f,
+            GrowHorizontal = Control.GrowDirection.Both,
+            GrowVertical = Control.GrowDirection.Both,
             MouseFilter = Control.MouseFilterEnum.Stop,
         };
-        AddChild(center);
-
-        var panel = new PanelContainer { CustomMinimumSize = new Vector2(minWidth, 0) };
         var bg = new StyleBoxFlat
         {
-            BgColor = new Color(0.06f, 0.05f, 0.04f, 0.94f),
+            // 不透明(对齐原版 ModernDialog 实心底)——半透明会让下层主菜单亮色按钮透上来成残影。
+            BgColor = new Color(0.06f, 0.05f, 0.04f, 1.0f),
             BorderColor = new Color(0.55f, 0.45f, 0.30f),
             BorderWidthBottom = 3, BorderWidthTop = 3, BorderWidthLeft = 3, BorderWidthRight = 3,
             CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6,
@@ -44,7 +48,7 @@ public abstract partial class ModalPanelBase : CanvasLayer
         };
         bg.SetContentMarginAll(20);
         panel.AddThemeStyleboxOverride("panel", bg);
-        center.AddChild(panel);
+        AddChild(panel);
 
         var vbox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         vbox.AddThemeConstantOverride("separation", 10);
