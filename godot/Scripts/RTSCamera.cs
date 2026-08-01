@@ -33,6 +33,9 @@ public sealed partial class RTSCamera : Camera3D
         Fov = DefaultFov;
         Near = 2f;
         Far = 4096f;
+        // 阴影代理挂第 2 层(见 ShadowProxyManager):相机剔除使其不可见,
+        // 方向光投影掩码默认全含 → 不可见但照常写阴影贴图。
+        CullMask &= ~ShadowProxyManager.ProxyLayer;
         UpdateTransform();
     }
 

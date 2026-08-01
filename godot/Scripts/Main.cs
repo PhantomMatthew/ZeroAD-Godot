@@ -19,6 +19,7 @@ public sealed partial class Main : Node3D
 	private SimBridge _sim = null!;
 	private Node3D _units = null!;
 	private Node3D _worldRoot = null!;
+	private Node3D _shadowRoot = null!;
 	private DirectionalLight3D _light = null!;
 	private global::Godot.Environment _env = null!;
 	private HUD _hud = null!;
@@ -88,7 +89,12 @@ public sealed partial class Main : Node3D
 		_units = new Node3D { Name = "Units" };
 		_worldRoot.AddChild(_units);
 
-		_sim = new SimBridge { UnitContainer = _units };
+		// 阴影代理容器(正规空间,与 _worldRoot 平级):负 scale 根的深度 pass 不投影,
+		// ShadowsOnly 代理在镜像世界外重建投影(见 ShadowProxyManager 注释的 S 相消数学)。
+		_shadowRoot = new Node3D { Name = "ShadowProxies" };
+		AddChild(_shadowRoot);
+
+		_sim = new SimBridge { UnitContainer = _units, ShadowRoot = _shadowRoot };
 		AddChild(_sim);
 
 		_mp = new MultiplayerController { Name = "Multiplayer" };
@@ -115,6 +121,7 @@ public sealed partial class Main : Node3D
 		// Load 冷加载存档;Multiplayer/Lobby 显大厅 LobbyUI(不自动开局,等用户 Host/Join)。
 		// 先全量重放已存设置:音量/显示即时生效项 + 本会话场景图形项(light/env 已注册)。
 		OptionsApplier.ApplyAll(GetNode<UserConfig>("/root/UserConfig"), GetTree(), inGame: true);
+
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		switch (cfg.Mode)
 		{
@@ -587,6 +594,10 @@ public sealed partial class Main : Node3D
 				var terrainNode = TerrainRenderer.CreateFromHeightmap(pmp);
 				_worldRoot.AddChild(terrainNode);
 				_worldRoot.Position = new Vector3(0f, 0f, pmp.MapSizeMeters);
+				// 地形阴影代理(静态,一次同步):丘陵起伏经代理向阴影贴图写深度。
+				var terrainProxy = ShadowProxyManager.CreateProxyRoot(terrainNode);
+				_shadowRoot.AddChild(terrainProxy);
+				ShadowProxyManager.SyncFrom(terrainProxy, terrainNode);
 				_sim.FogWorld.Attach(terrainNode, pmp.MapSizeMeters);
 				_sim.TerritoryWorld.Attach(terrainNode, pmp.MapSizeMeters);
 				TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
@@ -630,7 +641,11 @@ public sealed partial class Main : Node3D
 		var map = MapGenerator.GenerateContinents(8, 42);
 		// No fog attach here: the generated mesh emits no UVs and uses vertex-color albedo,
 		// which the fog shader can't sample — fog stays a PMP-terrain feature for now.
-		_worldRoot.AddChild(MapGenerator.CreateMeshFromGenerated(map));
+		var genMesh = MapGenerator.CreateMeshFromGenerated(map);
+		_worldRoot.AddChild(genMesh);
+		var genProxy = ShadowProxyManager.CreateProxyRoot(genMesh);
+		_shadowRoot.AddChild(genProxy);
+		ShadowProxyManager.SyncFrom(genProxy, genMesh);
 		float genWorldSize = (map.VerticesPerSide - 1) * map.TileSize;
 		_worldRoot.Position = new Vector3(0f, 0f, genWorldSize);
 		TerrainHeightService.Set((x, z) =>

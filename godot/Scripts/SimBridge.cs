@@ -57,6 +57,11 @@ public sealed partial class SimBridge : Node
 
     public IReadOnlyDictionary<EntityId, Node3D> EntityNodes => _entityNodes;
     public Node3D UnitContainer { get; set; } = null!;
+
+    /// <summary>阴影代理容器(正规空间,Main 创建,勿挂 _worldRoot)。见 ShadowProxyManager:
+    /// 负 scale 镜像根下的视觉不投影,每个单位视觉在此有一份 ShadowsOnly 代理。</summary>
+    public Node3D? ShadowRoot { get; set; }
+    private readonly Dictionary<Node3D, Node3D> _shadowProxies = new();
     public TemplateLoader? Templates { get; private set; }
 
     public ComponentManager Sim => _sim;
@@ -551,6 +556,33 @@ public sealed partial class SimBridge : Node
     /// 空世界里判所有玩家 0 实体→进场即 Defeat。此闸门保证回合推进与世界完整同生。</summary>
     public bool SimulationRunning { get; set; }
 
+    public override void _Ready()
+    {
+        // 阴影代理生命周期跟随单位视觉进/出树(EnsureVisual/装饰物/RebuildAllVisuals 全路径
+        // 都经 UnitContainer.AddChild,信号一处拦截覆盖全部生成点)。
+        if (UnitContainer != null)
+        {
+            UnitContainer.ChildEnteredTree += OnUnitVisualEntered;
+            UnitContainer.ChildExitingTree += OnUnitVisualExiting;
+        }
+    }
+
+    private void OnUnitVisualEntered(Node node)
+    {
+        if (ShadowRoot == null || node is not Node3D n3) return;
+        var proxy = ShadowProxyManager.CreateProxyRoot(n3);
+        ShadowRoot.AddChild(proxy);
+        _shadowProxies[n3] = proxy;
+        ShadowProxyManager.SyncFrom(proxy, n3);
+    }
+
+    private void OnUnitVisualExiting(Node node)
+    {
+        if (node is not Node3D n3) return;
+        if (_shadowProxies.Remove(n3, out var proxy) && GodotObject.IsInstanceValid(proxy))
+            proxy.QueueFree();
+    }
+
     public override void _Process(double delta)
     {
         if (_sim == null) return;
@@ -586,6 +618,10 @@ public sealed partial class SimBridge : Node
         // 渲染插值:用 tick 余数作 alpha,在两次 tick 之间平滑单位位置(消除 10Hz 瞬移)。
         _interpolator.SetAlpha((float)(_simAccumulator / SimTickRate));
         _interpolator.ApplyRenderPositions();
+        // 阴影代理跟拍(插值之后,影子与平滑后的视觉同帧;迷雾隐藏单位经 SyncFrom 关 Visible 不漏影)。
+        foreach (var kvp in _shadowProxies)
+            if (kvp.Key.IsInsideTree())
+                ShadowProxyManager.SyncFrom(kvp.Value, kvp.Key);
     }
 
     /// <summary>推进所有 AI 大脑(Phase 2 内核驻留)。遍历 AllEntities,对挂 AIComponent 的玩家
