@@ -49,16 +49,15 @@ public sealed partial class PauseMenu : CanvasLayer
         };
         AddChild(dim);
 
-        var center = new CenterContainer
-        {
-            AnchorsPreset = (int)Control.LayoutPreset.FullRect,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-        };
-        AddChild(center);
-
+        // 锚点居中(非 CenterContainer,理由见 ModalPanelBase):四锚 0.5 + 双向 Grow,
+        // gui.scale>1 缩小逻辑画布时仍对称居中,不被钳到左上角。
         var panel = new PanelContainer
         {
             CustomMinimumSize = new Vector2(360, 0),
+            AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0.5f, AnchorBottom = 0.5f,
+            GrowHorizontal = Control.GrowDirection.Both,
+            GrowVertical = Control.GrowDirection.Both,
+            MouseFilter = Control.MouseFilterEnum.Stop,
         };
         var bg = new StyleBoxFlat
         {
@@ -75,7 +74,7 @@ public sealed partial class PauseMenu : CanvasLayer
         };
         bg.SetContentMarginAll(24);
         panel.AddThemeStyleboxOverride("panel", bg);
-        center.AddChild(panel);
+        AddChild(panel);
 
         var vbox = new VBoxContainer
         {
@@ -107,6 +106,7 @@ public sealed partial class PauseMenu : CanvasLayer
         AddButton(vbox, "Quick Load", () => OnLoad?.Invoke());
         AddButton(vbox, "Load Game", OpenLoadGame);
         AddButton(vbox, "Manual", OpenManual);
+        AddButton(vbox, "Options", OpenOptions);
         AddButton(vbox, "Resign", ShowResignConfirm);
         AddButton(vbox, "Leave", () => OnLeave?.Invoke());
 
@@ -142,6 +142,15 @@ public sealed partial class PauseMenu : CanvasLayer
     private void OpenLoadGame()
     {
         var panel = new LoadGamePanel(layer: 65);
+        AddChild(panel);
+        panel.Open();
+    }
+
+    // 子项:打开 Options(Layer 65 浮在本菜单 60 之上;inGame:true → adaptivefps 取 session 值,
+    // 图形项可作用于本会话场景的 light/env)。
+    private void OpenOptions()
+    {
+        var panel = new OptionsPanel(layer: 65, inGame: true);
         AddChild(panel);
         panel.Open();
     }

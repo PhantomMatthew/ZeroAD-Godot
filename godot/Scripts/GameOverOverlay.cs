@@ -36,16 +36,14 @@ public sealed partial class GameOverOverlay : CanvasLayer
         Layer = 50;   // above the HUD
         Visible = false;
 
-        var center = new CenterContainer
-        {
-            AnchorsPreset = (int)Control.LayoutPreset.FullRect,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-        };
-        AddChild(center);
-
+        // 锚点居中(非 CenterContainer,理由见 ModalPanelBase):四锚 0.5 + 双向 Grow。
         _panel = new PanelContainer
         {
             CustomMinimumSize = new Vector2(480, 220),
+            AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0.5f, AnchorBottom = 0.5f,
+            GrowHorizontal = Control.GrowDirection.Both,
+            GrowVertical = Control.GrowDirection.Both,
+            MouseFilter = Control.MouseFilterEnum.Stop,
         };
         var bg = new StyleBoxFlat
         {
@@ -62,7 +60,7 @@ public sealed partial class GameOverOverlay : CanvasLayer
         };
         bg.SetContentMarginAll(24);
         _panel.AddThemeStyleboxOverride("panel", bg);
-        center.AddChild(_panel);
+        AddChild(_panel);
 
         var vbox = new VBoxContainer
         {

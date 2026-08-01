@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using ZeroAD.Godot.Options;
 
 namespace ZeroAD.Godot;
 
@@ -22,6 +23,9 @@ public sealed partial class MainMenu : Control
             return; // 已 CallDeferred 切场景,本帧不必构建菜单。
 
         _cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+        // 已存设置全量重放(音量/全屏/垂直同步/GUI 缩放等即时生效项;场景相关项此处无 light/env
+        // → no-op,进 session 后由 Main 再重放)。菜单上下文 inGame:false(adaptivefps 取 menu 值)。
+        OptionsApplier.ApplyAll(GetNode<UserConfig>("/root/UserConfig"), GetTree(), inGame: false);
         BuildUi();
     }
 
@@ -51,51 +55,56 @@ public sealed partial class MainMenu : Control
     {
         AddChild(new TextureRect
         {
-            // 暂用渐变底(原版背景图留 backlog)。FullRect 铺满。
+            // 暂用渐变底(原版背景图轮播留 backlog)。FullRect 铺满。
             Texture = MakeBackgroundGradient(),
             AnchorsPreset = (int)LayoutPreset.FullRect,
             MouseFilter = Control.MouseFilterEnum.Stop,
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
         });
 
-        var center = new CenterContainer
+        // 对齐原版 pregame/menupanel.xml:主菜单是**左侧竖条面板**(size 60 -2 300 100%+2,
+        // 宽 240 通高、上下各溢出 2px),非居中对话框。锚点布局,gui.scale 任意值位置不变。
+        var panel = new Panel
         {
-            AnchorsPreset = (int)LayoutPreset.FullRect,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
+            AnchorLeft = 0f, AnchorRight = 0f, AnchorTop = 0f, AnchorBottom = 1f,
+            OffsetLeft = 60, OffsetRight = 300, OffsetTop = -2, OffsetBottom = 2,
+            MouseFilter = Control.MouseFilterEnum.Stop,
         };
-        AddChild(center);
-
-        var panel = new PanelContainer { CustomMinimumSize = new Vector2(320, 0) };
         var bg = new StyleBoxFlat
         {
-            BgColor = new Color(0.06f, 0.05f, 0.04f, 0.92f),
-            BorderColor = new Color(0.55f, 0.45f, 0.30f),
-            BorderWidthBottom = 3, BorderWidthTop = 3, BorderWidthLeft = 3, BorderWidthRight = 3,
-            CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6,
-            CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6,
+            BgColor = new Color(0.10f, 0.09f, 0.07f, 1.0f),
+            // 原版 MainMenuPanelRightBorder:右缘 2px 金色描边(230 190 80)。
+            BorderColor = new Color(0.90f, 0.75f, 0.31f),
+            BorderWidthRight = 2,
         };
-        bg.SetContentMarginAll(24);
         panel.AddThemeStyleboxOverride("panel", bg);
-        center.AddChild(panel);
+        AddChild(panel);
 
-        var vbox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        vbox.AddThemeConstantOverride("separation", 10);
-        panel.AddChild(vbox);
-
+        // 原版 productLogo 区(面板内 50%±110, y 10..110)——无贴图资源,用大号标题文字占位。
         var title = new Label
         {
             Text = "0 A.D.",
             HorizontalAlignment = HorizontalAlignment.Center,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             Theme = UITheme.GetTheme(),
+            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 0f,
+            OffsetTop = 40, OffsetBottom = 110,
         };
         title.AddThemeFontSizeOverride("font_size", 34);
-        vbox.AddChild(title);
+        panel.AddChild(title);
+
+        // 原版 mainMenuButtons(面板内 8 146 100%-8 346):按钮列起始于 y=146,左右留 8px。
+        var vbox = new VBoxContainer
+        {
+            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 0f,
+            OffsetLeft = 8, OffsetRight = -8, OffsetTop = 146,
+        };
+        vbox.AddThemeConstantOverride("separation", 8);
+        panel.AddChild(vbox);
 
         AddButton(vbox, "Single Player", OnSinglePlayer);
         AddButton(vbox, "Tutorial", OnTutorial);
         AddButton(vbox, "Load Game", OnLoadGame);
-        AddButton(vbox, "Options", () => { }, disabled: true, tip: "(Phase 3)");
+        AddButton(vbox, "Options", OnOptions);
         AddButton(vbox, "Manual", OnManual);
         AddButton(vbox, "Multiplayer", OnMultiplayer);
         AddButton(vbox, "Quit", () => GetTree().Quit());
@@ -129,6 +138,13 @@ public sealed partial class MainMenu : Control
         panel.Open();
     }
 
+    private void OnOptions()
+    {
+        var panel = new OptionsPanel();
+        AddChild(panel);
+        panel.Open();
+    }
+
     private static void AddButton(Control parent, string label, Action onPressed,
         bool disabled = false, string tip = "")
     {
@@ -136,8 +152,8 @@ public sealed partial class MainMenu : Control
         {
             Text = label,
             Theme = UITheme.GetTheme(),
-            CustomMinimumSize = new Vector2(220, 34),
-            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(0, 32),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             Disabled = disabled,
             TooltipText = tip,
         };

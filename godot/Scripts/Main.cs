@@ -2,6 +2,7 @@ using Godot;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Godot.Actors;
+using ZeroAD.Godot.Options;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
@@ -32,6 +33,9 @@ public sealed partial class Main : Node3D
 	private TutorialPanel _tutorialPanel = null!;
 	private LoadingOverlay? _loadingOverlay;
 	private PauseMenu? _pauseMenu;
+	// FPS 叠层(overlay.fps 配置项驱动,原版 Display 类):右上角实时帧率。
+	private CanvasLayer? _fpsOverlay;
+	private Label? _fpsLabel;
 	// 第二梯队菜单面板(Game Speed/Diplomacy/Trade/Match Settings):模态叠层,不暂停 sim。
 	private GameSpeedPanel? _gameSpeedPanel;
 	private DiplomacyPanel? _diplomacyPanel;
@@ -63,6 +67,8 @@ public sealed partial class Main : Node3D
 		env.FogDensity = 0.001f;
 		sky.Environment = env;
 		AddChild(sky);
+		// Options 图形项(light/env)的作用目标注册给映射层;ChangeScene 时 _ExitTree 注销。
+		OptionsApplier.RegisterSceneNodes(light, sky);
 
 		_units = new Node3D { Name = "Units" };
 		AddChild(_units);
@@ -92,6 +98,8 @@ public sealed partial class Main : Node3D
 		// 启动模式由 MainMenu 写入 GameLaunchConfig(进程级 env 仅 dev fallback,已由 MainMenu
 		// 首次读取后清空——修 ChangeScene 回主菜单重触发自动开局的 bug)。SP/Tutorial 直接开局;
 		// Load 冷加载存档;Multiplayer/Lobby 显大厅 LobbyUI(不自动开局,等用户 Host/Join)。
+		// 先全量重放已存设置:音量/显示即时生效项 + 本会话场景图形项(light/env 已注册)。
+		OptionsApplier.ApplyAll(GetNode<UserConfig>("/root/UserConfig"), GetTree(), inGame: true);
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		switch (cfg.Mode)
 		{
@@ -112,24 +120,45 @@ public sealed partial class Main : Node3D
 
 	private void StartTutorial()
 	{
-		// Show a loading overlay BEFORE the heavy synchronous work (template parse +
-		// terrain load + scenario spawn all happen in BeginGameplay). Godot's frame
-		// loop runs _Process BEFORE rendering, so checking a flag in _Process and
-		// immediately blocking would never let the overlay draw. Instead we use a
-		// one-shot Timer (0.15s = ~9 frames at 60fps) to guarantee the overlay has
-		// rendered several times before the blocking scenario setup starts.
-		_loadingOverlay = new LoadingOverlay("Loading Introductory Tutorial...");
+		// 加载等待页(对齐原版 page_loading:顶部进度条 + 中央提示卡)。分阶段驱动:
+		// BeginGameplay 拆成 Init/Session/Scenario 三段,段间 await 一帧让进度条重绘
+		// (原 0.15s Timer 只保证首帧绘制,无法反映真实阶段进度)。
+		_loadingOverlay = new LoadingOverlay("Introductory Tutorial");
 		AddChild(_loadingOverlay);
+		RunTutorialLoadStages();
+	}
 
-		var timer = new Timer { WaitTime = 0.15, OneShot = true, Autostart = true };
-		AddChild(timer);
-		timer.Timeout += () =>
+	private async void RunTutorialLoadStages()
+	{
+		try
 		{
-			BeginGameplay(42, 1, tutorial: true);
+			_loadingOverlay!.SetProgress(0.05f);
+			// 两帧:确保等待页(含提示图)完整呈交后再开始阻塞式加载。
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+			var slots = BeginGameplayInit(42, 1, null, tutorial: true, isMultiplayer: false, isHost: false);
+			_loadingOverlay.SetProgress(0.5f);
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+			BeginGameplaySession(1);
+			_loadingOverlay.SetProgress(0.65f);
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+			BeginGameplayScenario(1, slots);
+			_loadingOverlay.SetProgress(1f);
+		}
+		catch (System.Exception e)
+		{
+			GD.PrintErr($"[Tutorial] EXCEPTION in load: {e}");
+			GD.PrintErr($"[Tutorial] Stack: {e.StackTrace}");
+			throw;
+		}
+		finally
+		{
 			_loadingOverlay?.QueueFree();
 			_loadingOverlay = null;
-			timer.QueueFree();
-		};
+		}
 	}
 
 	private void StartSinglePlayer(uint seed)
@@ -162,78 +191,11 @@ public sealed partial class Main : Node3D
 	private void BeginGameplay(uint seed, uint playerId, IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? slots = null,
 		bool tutorial = false, bool isMultiplayer = false, bool isHost = false)
 	{
-		if (_gameStarted) return;
-		_gameStarted = true;
-		_isTutorial = tutorial;
-		_lobby.Hide();
-		GD.Print($"[Tutorial] BeginGameplay start: tutorial={tutorial}");
-
 		try
 		{
-			string? templatesPath = FindTemplatesPath();
-			GD.Print($"[Tutorial] templatesPath={templatesPath ?? "null"}");
-
-			// One InitWorld path for SP/MP/tutorial: seed + player slots + role all flow in
-			// here. In MP the host assigned the seed + the frozen slot table over GameStart, so
-			// every peer constructs the same world and the same NetTurnManager.
-			var role = isMultiplayer
-				? (isHost ? ZeroAD.Sim.Net.NetRole.Host : ZeroAD.Sim.Net.NetRole.Client)
-				: ZeroAD.Sim.Net.NetRole.Standalone;
-			// Effective slot table: MP passes the host's frozen table verbatim. SP/sandbox
-			// default to a 1v1 Human-vs-AI table (slot 1 = this player, slot 2 = AI opponent);
-			// tutorial is single-player (one Human slot, no AI). Slot count is data-driven now.
-			IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> effectiveSlots = slots
-				?? (tutorial
-					? new List<ZeroAD.Sim.Net.PlayerSlotSetup>
-					{
-						new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "athen" },
-					}
-					: new List<ZeroAD.Sim.Net.PlayerSlotSetup>
-					{
-						new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "athen", Team = -1 },
-						new() { PlayerId = 2, Kind = ZeroAD.Sim.Net.PlayerSlotKind.AI,    Civ = "gaul",  Team = -1 },
-					});
-			_sim.InitWorld(templatesPath, seed, playerId, role, effectiveSlots);
-			GD.Print("[Tutorial] InitWorld done");
-
-			if (isMultiplayer)
-			{
-				// Wire the transport to the freshly built NetTurnManager. The host bootstraps
-				// its empty leading turns so play can start immediately.
-				_mp.AttachTurnManager(_sim.NetTurn);
-				_mp.OnOOS += OnOOSDetected;
-				GD.Print("[MP] AttachTurnManager done");
-			}
-
-			BuildSessionUi(playerId);
-
-			if (_isTutorial)
-				WireTutorialPanel();
-
-			WireMirageSwapBack();
-
-			if (_isTutorial)
-			{
-				GD.Print("[Tutorial] calling SetupTutorialWorld...");
-				try
-				{
-					SetupTutorialWorld();
-				}
-				catch (System.Exception ex)
-				{
-					GD.PrintErr($"[Tutorial] SetupTutorialWorld FAILED: {ex}");
-					GD.PrintErr($"[Tutorial] Stack: {ex.StackTrace}");
-					// Don't rethrow — let the game continue without the tutorial scenario rather
-					// than crash. The player can still see terrain and the panel.
-				}
-				GD.Print("[Tutorial] SetupTutorialWorld done");
-			}
-			else
-				SetupGameWorld(playerId, effectiveSlots, isMultiplayer);
-
-			GD.Print(_isTutorial
-				? "[Tutorial] Introductory Tutorial started"
-				: $"[Tutorial] MS6 Game started: player={playerId}, seed={seed}");
+			var effectiveSlots = BeginGameplayInit(seed, playerId, slots, tutorial, isMultiplayer, isHost);
+			BeginGameplaySession(playerId);
+			BeginGameplayScenario(playerId, effectiveSlots, isMultiplayer);
 		}
 		catch (System.Exception e)
 		{
@@ -241,6 +203,91 @@ public sealed partial class Main : Node3D
 			GD.PrintErr($"[Tutorial] Stack: {e.StackTrace}");
 			throw;
 		}
+	}
+
+	/// <summary>阶段 1(重:模板解析+世界构建)。guard + InitWorld + MP 接线;返回生效槽位表。
+	/// 拆段是为加载等待页:阶段间 await 一帧让进度条重绘(见 StartTutorial)。</summary>
+	private IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> BeginGameplayInit(uint seed, uint playerId,
+		IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? slots, bool tutorial, bool isMultiplayer, bool isHost)
+	{
+		if (_gameStarted) throw new System.InvalidOperationException("BeginGameplayInit called twice");
+		_gameStarted = true;
+		_isTutorial = tutorial;
+		_lobby.Hide();
+		GD.Print($"[Tutorial] BeginGameplay start: tutorial={tutorial}");
+
+		string? templatesPath = FindTemplatesPath();
+		GD.Print($"[Tutorial] templatesPath={templatesPath ?? "null"}");
+
+		// One InitWorld path for SP/MP/tutorial: seed + player slots + role all flow in
+		// here. In MP the host assigned the seed + the frozen slot table over GameStart, so
+		// every peer constructs the same world and the same NetTurnManager.
+		var role = isMultiplayer
+			? (isHost ? ZeroAD.Sim.Net.NetRole.Host : ZeroAD.Sim.Net.NetRole.Client)
+			: ZeroAD.Sim.Net.NetRole.Standalone;
+		// Effective slot table: MP passes the host's frozen table verbatim. SP/sandbox
+		// default to a 1v1 Human-vs-AI table (slot 1 = this player, slot 2 = AI opponent);
+		// tutorial is single-player (one Human slot, no AI). Slot count is data-driven now.
+		IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> effectiveSlots = slots
+			?? (tutorial
+				? new List<ZeroAD.Sim.Net.PlayerSlotSetup>
+				{
+					new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "athen" },
+				}
+				: new List<ZeroAD.Sim.Net.PlayerSlotSetup>
+				{
+					new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "athen", Team = -1 },
+					new() { PlayerId = 2, Kind = ZeroAD.Sim.Net.PlayerSlotKind.AI,    Civ = "gaul",  Team = -1 },
+				});
+		_sim.InitWorld(templatesPath, seed, playerId, role, effectiveSlots);
+		GD.Print("[Tutorial] InitWorld done");
+
+		if (isMultiplayer)
+		{
+			// Wire the transport to the freshly built NetTurnManager. The host bootstraps
+			// its empty leading turns so play can start immediately.
+			_mp.AttachTurnManager(_sim.NetTurn);
+			_mp.OnOOS += OnOOSDetected;
+			GD.Print("[MP] AttachTurnManager done");
+		}
+		return effectiveSlots;
+	}
+
+	/// <summary>阶段 2(轻:会话 UI 装配)。</summary>
+	private void BeginGameplaySession(uint playerId)
+	{
+		BuildSessionUi(playerId);
+		if (_isTutorial)
+			WireTutorialPanel();
+		WireMirageSwapBack();
+	}
+
+	/// <summary>阶段 3(重:地形+实体生成)。</summary>
+	private void BeginGameplayScenario(uint playerId, IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> effectiveSlots,
+		bool isMultiplayer = false)
+	{
+		if (_isTutorial)
+		{
+			GD.Print("[Tutorial] calling SetupTutorialWorld...");
+			try
+			{
+				SetupTutorialWorld();
+			}
+			catch (System.Exception ex)
+			{
+				GD.PrintErr($"[Tutorial] SetupTutorialWorld FAILED: {ex}");
+				GD.PrintErr($"[Tutorial] Stack: {ex.StackTrace}");
+				// Don't rethrow — let the game continue without the tutorial scenario rather
+				// than crash. The player can still see terrain and the panel.
+			}
+			GD.Print("[Tutorial] SetupTutorialWorld done");
+		}
+		else
+			SetupGameWorld(playerId, effectiveSlots, isMultiplayer);
+
+		GD.Print(_isTutorial
+			? "[Tutorial] Introductory Tutorial started"
+			: $"[Tutorial] MS6 Game started: player={playerId}");
 	}
 
 	/// <summary>Build the in-session UI chrome (HUD, game-over overlay, pause menu, tier-2
@@ -278,6 +325,34 @@ public sealed partial class Main : Node3D
 		AddChild(_diplomacyPanel);
 		AddChild(_tradePanel);
 		AddChild(_matchSettingsPanel);
+
+		// FPS 叠层:overlay.fps 改动经 UserConfig.ConfigChanged 即时显隐(Options 页改动不落盘也生效)。
+		_fpsOverlay = new CanvasLayer { Layer = 45, Visible = false };
+		_fpsLabel = new Label
+		{
+			AnchorsPreset = (int)Control.LayoutPreset.TopRight,
+			OffsetLeft = -110,
+			OffsetTop = 8,
+			Theme = UITheme.GetTheme(),
+		};
+		_fpsLabel.AddThemeFontSizeOverride("font_size", 14);
+		_fpsOverlay.AddChild(_fpsLabel);
+		AddChild(_fpsOverlay);
+		UpdateFpsOverlayVisibility();
+		GetNode<UserConfig>("/root/UserConfig").ConfigChanged += OnUserConfigChanged;
+	}
+
+	private void OnUserConfigChanged(IReadOnlyList<string> keys)
+	{
+		if (keys.Contains("overlay.fps"))
+			UpdateFpsOverlayVisibility();
+	}
+
+	private void UpdateFpsOverlayVisibility()
+	{
+		if (_fpsOverlay != null)
+			_fpsOverlay.Visible =
+				GetNode<UserConfig>("/root/UserConfig").GetEffective("overlay.fps") == "true";
 	}
 
 	/// <summary>Tutorial panel wiring, shared by BeginGameplay and ColdLoad.</summary>
@@ -319,26 +394,34 @@ public sealed partial class Main : Node3D
 			return;
 		}
 
-		_loadingOverlay = new LoadingOverlay($"Loading {meta.Description}...");
+		_loadingOverlay = new LoadingOverlay(meta.Description);
 		AddChild(_loadingOverlay);
-		var timer = new Timer { WaitTime = 0.15, OneShot = true, Autostart = true };
-		AddChild(timer);
-		timer.Timeout += () =>
+		_loadingOverlay.SetProgress(0.05f);
+		RunColdLoadStages(meta, cfg);
+	}
+
+	/// <summary>冷加载分阶段驱动(同 RunTutorialLoadStages:段间 await 一帧让进度条重绘)。</summary>
+	private async void RunColdLoadStages(SaveMeta meta, GameLaunchConfig cfg)
+	{
+		try
 		{
-			try
-			{
-				ColdLoad(meta);
-			}
-			catch (System.Exception e)
-			{
-				GD.PrintErr($"[LoadGame] cold-load failed: {e}");
-				cfg.Reset();
-				GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
-			}
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+			_loadingOverlay!.SetProgress(0.3f);
+			ColdLoad(meta);
+			_loadingOverlay.SetProgress(1f);
+		}
+		catch (System.Exception e)
+		{
+			GD.PrintErr($"[LoadGame] cold-load failed: {e}");
+			cfg.Reset();
+			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+		}
+		finally
+		{
 			_loadingOverlay?.QueueFree();
 			_loadingOverlay = null;
-			timer.QueueFree();
-		};
+		}
 	}
 
 	/// <summary>Cold (cross-scene) load: rebuild the match skeleton from the save header, then
@@ -778,11 +861,35 @@ public sealed partial class Main : Node3D
 
 		UpdateSelectionMarkers();
 
+		// FPS 叠层(可见时才读帧率,Engine.GetFramesPerSecond 是上一帧实测值)。
+		if (_fpsOverlay?.Visible == true && _fpsLabel != null)
+			_fpsLabel.Text = $"{Engine.GetFramesPerSecond():0} FPS";
+
 		// Turn advancement is driven by SimBridge._Process, which honours the lockstep
 		// barrier (it only advances when the next turn's bundle has arrived). Nothing to
 		// force here.
 
 		TryDebugCapture();
+	}
+
+	// pauseonfocusloss 配置项(原版 PauseOnFocusLoss,仅 SP):窗口失焦自动暂停并显示暂停菜单。
+	public override void _Notification(int what)
+	{
+		if (what != NotificationWMWindowFocusOut) return;
+		if (!_gameStarted
+			|| _sim.NetTurn.Role != NetRole.Standalone
+			|| GetNode<UserConfig>("/root/UserConfig").GetEffective("pauseonfocusloss") != "true"
+			|| _pauseMenu is not { Visible: false })
+			return;
+		OpenPauseMenu();
+	}
+
+	public override void _ExitTree()
+	{
+		// 静态注册的场景节点随场景销毁——注销防悬垂(下个 Main._Ready 重新注册)。
+		OptionsApplier.RegisterSceneNodes(null, null);
+		// ConfigChanged 订阅挂的是本节点方法,UserConfig 是 autoload 长存——退订防死引用。
+		GetNode<UserConfig>("/root/UserConfig").ConfigChanged -= OnUserConfigChanged;
 	}
 
 	// --- Debug capture (ZEROAD_CAPTURE=1|gather): screenshot + per-entity diagnostics ---
