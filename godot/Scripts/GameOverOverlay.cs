@@ -136,7 +136,7 @@ public sealed partial class GameOverOverlay : CanvasLayer
     {
         // Return to the main menu by reloading the startup scene. GetTree().ChangeScene
         // is the standard Godot way; the project entry scene is the main menu.
-        GetTree().ChangeSceneToFile("res://Scenes/Main.tscn");
+        GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
     }
 
     public override void _ExitTree()

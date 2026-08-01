@@ -12,8 +12,14 @@ config_version=5
 
 config/name="0 A.D. Godot Rewrite"
 config/description="C# rewrite of 0 A.D. using Godot 4.x"
-run/main_scene="res://Scenes/Main.tscn"
+run/main_scene="res://Scenes/MainMenu.tscn"
 config/features=PackedStringArray("4.7", "C#", "Forward Plus")
+
+[autoload]
+
+GameLaunchConfig="*res://Scripts/Autoload/GameLaunchConfig.cs"
+MatchSummaryStore="*res://Scripts/Autoload/MatchSummaryStore.cs"
+UserConfig="*res://Scripts/Autoload/UserConfig.cs"
 
 [dotnet]
 

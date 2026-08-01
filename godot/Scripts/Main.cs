@@ -89,13 +89,22 @@ public sealed partial class Main : Node3D
 
 		_camera.SetFocus(new Vector3(128, 0, 128));
 
-		if (OS.GetEnvironment("ZEROAD_AUTOSTART") == "1")
-			CallDeferred(nameof(AutoStart));
-		if (OS.GetEnvironment("ZEROAD_TUTORIAL") == "1")
-			CallDeferred(nameof(AutoTutorial));
+		// 启动模式由 MainMenu 写入 GameLaunchConfig(进程级 env 仅 dev fallback,已由 MainMenu
+		// 首次读取后清空——修 ChangeScene 回主菜单重触发自动开局的 bug)。SP/Tutorial 直接开局;
+		// Multiplayer/Lobby 显大厅 LobbyUI(不自动开局,等用户 Host/Join)。Load(Phase 2)暂走大厅。
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		switch (cfg.Mode)
+		{
+			case GameLaunchConfig.LaunchMode.SinglePlayer:
+				CallDeferred(nameof(AutoStart));
+				break;
+			case GameLaunchConfig.LaunchMode.Tutorial:
+				CallDeferred(nameof(AutoTutorial));
+				break;
+		}
 	}
 
-	private void AutoStart() => StartSinglePlayer(42);
+	private void AutoStart() => StartSinglePlayer(GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Seed);
 	private void AutoTutorial() => StartTutorial();
 
 	private void StartTutorial()
@@ -212,7 +221,7 @@ public sealed partial class Main : Node3D
 					var t = QuickLoad();
 					pm.SetStatus(t == null ? "No save / load failed." : $"Loaded turn {t}.");
 				};
-				pm.OnLeave += () => GetTree().ChangeSceneToFile("res://Scenes/Main.tscn");
+				pm.OnLeave += () => GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 				AddChild(pm);
 
 				// 第二梯队菜单面板(Game Speed/Diplomacy/Trade/Match Settings):模态叠层,挡鼠标不暂停。
@@ -285,13 +294,9 @@ public sealed partial class Main : Node3D
 
 	private void QuitTutorial()
 	{
-		_gameStarted = false;
-		_isTutorial = false;
-		_lobby.Show();
-		_tutorialPanel?.QueueFree();
-		_hud?.QueueFree();
-		_hud = null!;
-		GetTree().ReloadCurrentScene();
+		// 退教程回主菜单。不再 ReloadCurrentScene:那会重读 GameLaunchConfig.Mode=Tutorial 又开局。
+		GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Reset();
+		GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 	}
 
 	private string? FindTemplatesPath()
