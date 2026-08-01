@@ -12,6 +12,7 @@ public partial class GameLaunchConfig : Node
     public LaunchMode Mode = LaunchMode.Lobby;
     public uint Seed = 42;
     public string LoadSlot = "";
+    public bool MpHost;
     public System.Collections.Generic.IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? Slots;
 
     /// <summary>开始新一局前重置为大厅默认(避免上一局残留 Mode 触发错误启动)。</summary>
@@ -20,6 +21,7 @@ public partial class GameLaunchConfig : Node
         Mode = LaunchMode.Lobby;
         Seed = 42;
         LoadSlot = "";
+        MpHost = false;
         Slots = null;
     }
 }

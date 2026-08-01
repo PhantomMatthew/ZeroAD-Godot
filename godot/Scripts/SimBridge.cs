@@ -546,9 +546,15 @@ public sealed partial class SimBridge : Node
 
     private bool _stallLogged;
 
+    /// <summary>世界构建完成后才为 true(BeginGameplayScenario/ColdLoad 末尾置位)。
+    /// 分阶段加载在 InitWorld 与实体生成之间让帧,若此间推进回合,TickVictory 会在
+    /// 空世界里判所有玩家 0 实体→进场即 Defeat。此闸门保证回合推进与世界完整同生。</summary>
+    public bool SimulationRunning { get; set; }
+
     public override void _Process(double delta)
     {
         if (_sim == null) return;
+        if (!SimulationRunning) return;  // 加载中:世界未完整,冻结回合推进(渲染照常)
         if (Paused) return;   // 状态冻结;早于累加 delta 以避免恢复时补帧爆发
 
         _simAccumulator += delta * SpeedMultiplier;

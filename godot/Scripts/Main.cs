@@ -112,11 +112,22 @@ public sealed partial class Main : Node3D
 			case GameLaunchConfig.LaunchMode.Load:
 				CallDeferred(nameof(AutoLoad));
 				break;
+			case GameLaunchConfig.LaunchMode.Multiplayer:
+				CallDeferred(nameof(AutoMp));
+				break;
 		}
 	}
 
 	private void AutoStart() => StartSinglePlayer(GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Seed);
 	private void AutoTutorial() => StartTutorial();
+
+	/// <summary>MP 入口(MainMenu 子菜单 Host New Game / Connect by IP):直显连接表单,
+	/// 不再显 LobbyUI 遗留旧菜单(那是 MainMenu.tscn 存在前的假主菜单)。</summary>
+	private void AutoMp()
+	{
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		_lobby.EnterMpDirect(cfg.MpHost);
+	}
 
 	private void StartTutorial()
 	{
@@ -125,10 +136,13 @@ public sealed partial class Main : Node3D
 		// (原 0.15s Timer 只保证首帧绘制,无法反映真实阶段进度)。
 		_loadingOverlay = new LoadingOverlay("Introductory Tutorial");
 		AddChild(_loadingOverlay);
-		RunTutorialLoadStages();
+		RunStagedGameplayLoad(42, 1, null, tutorial: true, isMultiplayer: false, isHost: false);
 	}
 
-	private async void RunTutorialLoadStages()
+	/// <summary>分阶段加载并驱动等待页进度条(0.05→0.5→0.65→1.0)。SP/Tutorial/MP 开局共用。</summary>
+	private async void RunStagedGameplayLoad(uint seed, uint playerId,
+		IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? slots,
+		bool tutorial, bool isMultiplayer, bool isHost)
 	{
 		try
 		{
@@ -137,21 +151,21 @@ public sealed partial class Main : Node3D
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
-			var slots = BeginGameplayInit(42, 1, null, tutorial: true, isMultiplayer: false, isHost: false);
+			var effectiveSlots = BeginGameplayInit(seed, playerId, slots, tutorial, isMultiplayer, isHost);
 			_loadingOverlay.SetProgress(0.5f);
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
-			BeginGameplaySession(1);
+			BeginGameplaySession(playerId);
 			_loadingOverlay.SetProgress(0.65f);
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
-			BeginGameplayScenario(1, slots);
+			BeginGameplayScenario(playerId, effectiveSlots, isMultiplayer);
 			_loadingOverlay.SetProgress(1f);
 		}
 		catch (System.Exception e)
 		{
-			GD.PrintErr($"[Tutorial] EXCEPTION in load: {e}");
-			GD.PrintErr($"[Tutorial] Stack: {e.StackTrace}");
+			GD.PrintErr($"[Gameplay] EXCEPTION in load: {e}");
+			GD.PrintErr($"[Gameplay] Stack: {e.StackTrace}");
 			throw;
 		}
 		finally
@@ -163,7 +177,10 @@ public sealed partial class Main : Node3D
 
 	private void StartSinglePlayer(uint seed)
 	{
-		BeginGameplay(seed, 1);
+		// SP 同样走加载等待页(page_loading:进度条 + 提示卡),标题取所选地图名。
+		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(PickSkirmishMapRel()));
+		AddChild(_loadingOverlay);
+		RunStagedGameplayLoad(seed, 1, null, tutorial: false, isMultiplayer: false, isHost: false);
 	}
 
 	/// <summary>Host enters the lobby (transport up, slot table editable). The game does NOT start
@@ -172,7 +189,7 @@ public sealed partial class Main : Node3D
 	private void StartMpHost(int port, uint seed)
 	{
 		_mp.StartHost(port, seed);
-		_mp.OnGameStart += (s, pid, slots) => BeginGameplay(s, pid, slots, isMultiplayer: true, isHost: true);
+		_mp.OnGameStart += (s, pid, slots) => StartMpGameplay(s, pid, slots, isHost: true);
 		_lobby.ShowSlotLobby(isHost: true, _mp.Slots);
 		_lobby.SetStatus($"Hosting on port {port} — configure slots, then Start.");
 	}
@@ -183,26 +200,34 @@ public sealed partial class Main : Node3D
 	private void StartMpClient(string addr, int port)
 	{
 		_mp.StartClient(addr, port);
-		_mp.OnGameStart += (s, pid, slots) => BeginGameplay(s, pid, slots, isMultiplayer: true, isHost: false);
+		_mp.OnGameStart += (s, pid, slots) => StartMpGameplay(s, pid, slots, isHost: false);
 		_lobby.ShowSlotLobby(isHost: false, null);
 		_lobby.SetStatus($"Connecting to {addr}:{port} — waiting for host…");
 	}
 
-	private void BeginGameplay(uint seed, uint playerId, IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? slots = null,
-		bool tutorial = false, bool isMultiplayer = false, bool isHost = false)
+	/// <summary>MP 正式开局(host 点 Start 后双端同走):加载等待页 + 分阶段构建。</summary>
+	private void StartMpGameplay(uint seed, uint playerId,
+		IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> slots, bool isHost)
 	{
-		try
-		{
-			var effectiveSlots = BeginGameplayInit(seed, playerId, slots, tutorial, isMultiplayer, isHost);
-			BeginGameplaySession(playerId);
-			BeginGameplayScenario(playerId, effectiveSlots, isMultiplayer);
-		}
-		catch (System.Exception e)
-		{
-			GD.PrintErr($"[Tutorial] EXCEPTION in BeginGameplay: {e}");
-			GD.PrintErr($"[Tutorial] Stack: {e.StackTrace}");
-			throw;
-		}
+		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(PickSkirmishMapRel()));
+		AddChild(_loadingOverlay);
+		RunStagedGameplayLoad(seed, playerId, slots, tutorial: false, isMultiplayer: true, isHost: isHost);
+	}
+
+	/// <summary>SP/MP 默认地图(镜像 SetupTerrain 的 pmp 回退链),供加载页标题推导。</summary>
+	private string? PickSkirmishMapRel()
+	{
+		if (FindDataPath("maps/scenarios/arcadia.pmp") != null) return "maps/scenarios/arcadia.pmp";
+		if (FindDataPath("maps/scenarios/laconia_01.pmp") != null) return "maps/scenarios/laconia_01.pmp";
+		return null;
+	}
+
+	/// <summary>地图文件名 → 加载页标题(原版取地图 display name;文件名推导为近似)。</summary>
+	private static string MapTitleFromPath(string? rel)
+	{
+		if (rel == null) return "Single Player";
+		string name = System.IO.Path.GetFileNameWithoutExtension(rel).Replace('_', ' ').Trim();
+		return name.Length == 0 ? "Single Player" : char.ToUpperInvariant(name[0]) + name[1..];
 	}
 
 	/// <summary>阶段 1(重:模板解析+世界构建)。guard + InitWorld + MP 接线;返回生效槽位表。
@@ -284,6 +309,10 @@ public sealed partial class Main : Node3D
 		}
 		else
 			SetupGameWorld(playerId, effectiveSlots, isMultiplayer);
+
+		// 世界已完整:放行回合推进(SimBridge._Process 闸门)。分阶段加载在 Init 与本阶段
+		// 之间让帧,此间回合必须冻结,否则 TickVictory 在空世界判全员 0 实体→进场即 Defeat。
+		_sim.SimulationRunning = true;
 
 		GD.Print(_isTutorial
 			? "[Tutorial] Introductory Tutorial started"
@@ -468,6 +497,8 @@ public sealed partial class Main : Node3D
 
 		// No saved camera in v1: frame the local player's first owned entity (its base).
 		FocusCameraOnLocalPlayer();
+		// 世界已完整(组件+索引+视觉全部重建):放行回合推进(同 BeginGameplayScenario 闸门)。
+		_sim.SimulationRunning = true;
 		GD.Print($"[LoadGame] cold-loaded '{meta.Slot}' (turn {turn}, map {meta.MapPath})");
 	}
 
