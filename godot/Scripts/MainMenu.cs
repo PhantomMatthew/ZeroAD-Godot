@@ -57,6 +57,7 @@ public sealed partial class MainMenu : Control
         // 原版 page_pregame 背景:启动随机一套多层视差图(gui/pregame/backgrounds 端口,
         // 见 PregameBackground);binaries 缺失时回退渐变底。
         string? binDir = FindBinariesDir();
+        _binDir = binDir;
         var parallax = new PregameBackground();
         if (parallax.Init(binDir))
         {
@@ -73,6 +74,32 @@ public sealed partial class MainMenu : Control
             });
         }
 
+        // 原版 submenu(menupanel.xml:60 0 300 0%,hidden):与主面板同位同宽,初始藏在
+        // 主面板**下方**(先 AddChild → 被主面板盖住);点击顶层组后向右滑出至 300..540
+        // (MainMenuItemHandler.onTick:left/right += offset,MenuSpeed 1.2px/ms ≈ 0.2s)。
+        _submenuPanel = new Panel
+        {
+            Visible = false,
+            AnchorLeft = 0f, AnchorRight = 0f, AnchorTop = 0f, AnchorBottom = 0f,
+            OffsetLeft = 60, OffsetRight = 300,
+        };
+        var subBg = new StyleBoxFlat
+        {
+            BgColor = new Color(0.10f, 0.09f, 0.07f, 1.0f),
+            BorderColor = new Color(0.90f, 0.75f, 0.31f),
+            BorderWidthRight = 2,
+        };
+        _submenuPanel.AddThemeStyleboxOverride("panel", subBg);
+        // 原版 submenuButtons(0 4 100%-4 100%-4)。
+        _subVbox = new VBoxContainer
+        {
+            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 1f,
+            OffsetLeft = 0, OffsetRight = -4, OffsetTop = 4, OffsetBottom = -4,
+        };
+        _subVbox.AddThemeConstantOverride("separation", ButtonSep);
+        _submenuPanel.AddChild(_subVbox);
+        AddChild(_submenuPanel);
+
         // 对齐原版 pregame/menupanel.xml:主菜单是**左侧竖条面板**(size 60 -2 300 100%+2,
         // 宽 240 通高、上下各溢出 2px),非居中对话框。锚点布局,gui.scale 任意值位置不变。
         var panel = new Panel
@@ -84,9 +111,8 @@ public sealed partial class MainMenu : Control
         var bg = new StyleBoxFlat
         {
             BgColor = new Color(0.10f, 0.09f, 0.07f, 1.0f),
-            // 原版 MainMenuPanelRightBorder:右缘 2px 金色描边(230 190 80)。
-            BorderColor = new Color(0.90f, 0.75f, 0.31f),
-            BorderWidthRight = 2,
+            // 右缘金边不由 StyleBox 画——见下方 MainMenuPanelRightBorderTop/Bottom 两段,
+            // 子菜单展开时需在展开区间断开。
         };
         panel.AddThemeStyleboxOverride("panel", bg);
         AddChild(panel);
@@ -166,28 +192,6 @@ public sealed partial class MainMenu : Control
             AddButton(vbox, entry.Caption, () => OnEntryPressed(entry, index));
         }
 
-        // 子菜单面板(原版 submenu:60 0 300 0%,与主面板同宽同底色+右金边),
-        // 初始隐藏;展开时盖住下方顶层按钮(最后 AddChild,绘制在最上)。
-        _submenuPanel = new Panel
-        {
-            Visible = false,
-            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 0f,
-        };
-        var subBg = new StyleBoxFlat
-        {
-            BgColor = new Color(0.10f, 0.09f, 0.07f, 1.0f),
-            BorderColor = new Color(0.90f, 0.75f, 0.31f),
-            BorderWidthRight = 2,
-        };
-        _submenuPanel.AddThemeStyleboxOverride("panel", subBg);
-        _subVbox = new VBoxContainer
-        {
-            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 1f,
-            OffsetLeft = 8, OffsetRight = -8, OffsetTop = 6, OffsetBottom = -6,
-        };
-        _subVbox.AddThemeConstantOverride("separation", ButtonSep);
-        _submenuPanel.AddChild(_subVbox);
-
         // 原版 ProjectInformation 底部信息框(面板内 8 100%-368 100%-8 100%-94,
         // TranslucentPanelThinBorder + 白色 sans-14 描述)。community 按钮留 backlog。
         var infoBox = new PanelContainer
@@ -215,21 +219,42 @@ public sealed partial class MainMenu : Control
         infoLbl.AddThemeColorOverride("font_color", Colors.White);
         infoBox.AddChild(infoLbl);
 
-        // 子菜单面板最后挂:展开时盖住下方顶层按钮与信息框下缘(原版 submenu 同理)。
-        panel.AddChild(_submenuPanel);
+        // 原版 MainMenuPanelRightBorderTop/Bottom:右缘 2px 金边(230 190 80)分两段,
+        // 子菜单展开时在展开区间断开(Top 止于子菜单顶+Margin,Bottom 起于子菜单底)。
+        _borderTop = MakeBorderStrip();
+        panel.AddChild(_borderTop);
+        _borderBottom = MakeBorderStrip();
+        _borderBottom.Visible = false;
+        panel.AddChild(_borderBottom);
     }
 
-    private const int ButtonTop0 = 146, ButtonH = 32, ButtonSep = 8;
+    private static readonly Color GoldBorder = new(0.90f, 0.75f, 0.31f);
+
+    private static ColorRect MakeBorderStrip() => new()
+    {
+        Color = GoldBorder,
+        AnchorLeft = 1f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 1f,
+        OffsetLeft = -2, OffsetRight = 0,
+        MouseFilter = Control.MouseFilterEnum.Ignore,
+    };
+
+    // 原版 MainMenuItemHandler:ButtonHeight=28,Margin=4;mainMenuButtons 起于 y=146。
+    private const int ButtonTop0 = 146, ButtonH = 28, ButtonSep = 4;
 
     private sealed record MenuEntry(string Caption, Action? OnPress, MenuEntry[]? Submenu = null);
 
     private Panel _submenuPanel = null!;
     private VBoxContainer _subVbox = null!;
     private VBoxContainer _mainVbox = null!;
+    private ColorRect _borderTop = null!;
+    private ColorRect _borderBottom = null!;
+    private Tween? _slideTween;
     private MenuEntry? _openEntry;
     private MenuEntry[] _entries = System.Array.Empty<MenuEntry>();
+    private string? _binDir;
 
-    /// <summary>顶层按钮:无子项直接执行;有子项展开/切换/再点收起(对齐 pressButton)。</summary>
+    /// <summary>顶层按钮:无子项直接执行;有子项则子面板从主面板下方向右滑出(60..300 →
+    /// 300..540,0.2s 线性,对齐 onTick 的 MenuSpeed 1.2px/ms),再点同一组收起(对齐 pressButton)。</summary>
     private void OnEntryPressed(MenuEntry entry, int index)
     {
         if (entry.Submenu == null || entry.Submenu.Length == 0)
@@ -254,20 +279,37 @@ public sealed partial class MainMenu : Control
                 sub.OnPress?.Invoke();
             });
 
-        // 子面板贴在被点按钮下缘(对齐原版 submenu 展开终态):位置/高度全按
-        // 实测布局算(按钮实际高 42≠CustomMinimumSize 32,主题字体撑大)。
-        var mainBtn = _mainVbox.GetChild<Control>(index);
-        float btnH = mainBtn.Size.Y;
-        float top = _mainVbox.Position.Y + mainBtn.Position.Y + btnH + 2;
+        // 竖向:顶 = 被点按钮顶 - Margin(4),高 = (28+4)×count(对齐 openSubmenu)。
+        // 主面板顶缘全局 y=-2,vbox 起于面板内 146 → 被点按钮顶全局 = -2+146+index×32。
+        float top = -2 + ButtonTop0 + index * (ButtonH + ButtonSep) - 4;
         _submenuPanel.OffsetTop = top;
-        _submenuPanel.OffsetBottom = top + entry.Submenu.Length * (btnH + ButtonSep) - ButtonSep + 12;
+        _submenuPanel.OffsetBottom = top + (ButtonH + ButtonSep) * entry.Submenu.Length;
+        _submenuPanel.OffsetLeft = 60;
+        _submenuPanel.OffsetRight = 300;
         _submenuPanel.Visible = true;
+
+        _slideTween?.Kill();
+        _slideTween = CreateTween().SetTrans(Tween.TransitionType.Linear);
+        _slideTween.TweenProperty(_submenuPanel, "offset_left", 300f, 0.2);
+        _slideTween.Parallel().TweenProperty(_submenuPanel, "offset_right", 540f, 0.2);
+
+        // 右金边断开(面板局部坐标 = 全局 + 2):Top 止于子菜单顶+Margin,Bottom 起于子菜单底。
+        _borderTop.AnchorBottom = 0f;
+        _borderTop.OffsetBottom = top + 2 + 4;
+        _borderBottom.AnchorTop = 0f;
+        _borderBottom.OffsetTop = _submenuPanel.OffsetBottom + 2;
+        _borderBottom.Visible = true;
     }
 
     private void CloseSubmenu()
     {
         _openEntry = null;
+        _slideTween?.Kill();
         _submenuPanel.Visible = false;
+        // 金边恢复通高(对齐 closeSubmenu 的 border 复位)。
+        _borderTop.AnchorBottom = 1f;
+        _borderTop.OffsetBottom = 0;
+        _borderBottom.Visible = false;
     }
 
     /// <summary>binaries/ 目录定位(与 LoadingOverlay.FindBinariesDir 同款 ../、../../ 回退)。</summary>
@@ -331,18 +373,20 @@ public sealed partial class MainMenu : Control
         panel.Open();
     }
 
-    private static void AddButton(Control parent, string label, Action onPressed,
+    private void AddButton(Control parent, string label, Action onPressed,
         bool disabled = false, string tip = "")
     {
         var btn = new Button
         {
             Text = label,
             Theme = UITheme.GetTheme(),
-            CustomMinimumSize = new Vector2(0, 32),
+            CustomMinimumSize = new Vector2(0, ButtonH),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             Disabled = disabled,
             TooltipText = tip,
         };
+        // StoneButtonFancy 贴图样式(按钮高 28、白字描边 14,对齐 common/styles.xml)。
+        StoneButtonStyle.Apply(btn, _binDir);
         btn.Pressed += onPressed;
         parent.AddChild(btn);
     }
