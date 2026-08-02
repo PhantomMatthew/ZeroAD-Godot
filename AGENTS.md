@@ -10,11 +10,18 @@ A **Godot 4.7 (.NET) + C# rewrite of 0 A.D.** (the open-source RTS). It is a hyb
 |---|---|---|
 | `src/ZeroAD.Sim/` + `godot/` | **Active rewrite (C#)** | The new Godot game. Edit here. |
 | `binaries/` | **Original 0 A.D. data assets, tracked** | Entity templates XML, art assets, maps, audio — read verbatim by the rewrite. Do NOT modify. |
-| `/Users/matthew/SourceCode/gitea/0ad` | **Original 0 A.D. full source (C++20/JS), external reference** | The complete original engine source tree (`source/`, `binaries/`, `build/`, `libraries/`, etc.). This is the **authoritative reference** for porting behavior. The `source/` directory is **no longer tracked in this repo** (moved to .gitignore to reduce repo size); always look up C++/JS reference code at the external path instead. |
+| `<0ad upstream>` (external) | **Original 0 A.D. full source (C++20/JS), external reference** | The complete original engine source tree (`source/`, `binaries/`, `build/`, `libraries/`, etc.). This is the **authoritative reference** for porting behavior. The `source/` directory is **no longer tracked in this repo** (moved to .gitignore to reduce repo size); always look up C++/JS reference code at the external path instead. **The path is machine-specific** — see below. |
 
 The rewrite reads the original's data verbatim (entity templates XML, art assets) and ports its behavior to C#. Treat the original tree as a reference corpus, not a build target — unless explicitly asked to work on the C++ engine.
 
-> **Where to find the original C++/JS source**: `/Users/matthew/SourceCode/gitea/0ad/`. This path holds the complete 0 A.D. codebase. When porting a subsystem, read the reference implementation there (e.g. `/Users/matthew/SourceCode/gitea/0ad/source/simulation2/...`). The `source/` directory previously in this repo has been gitignored and may not exist on disk — use the external path.
+> **Where to find the original C++/JS source**: the upstream 0 A.D. tree is checked out **somewhere outside this repo**, and **its path differs per OS / machine** — it is NOT fixed. Known checkout locations:
+>
+> | OS | Path |
+> |---|---|
+> | **Windows** | `C:\SourceCode\0ad` |
+> | **macOS** | `/Users/matthew/SourceCode/gitea/0ad` |
+>
+> Substitute your machine's path wherever this doc writes `<0ad upstream>`. When porting a subsystem, read the reference implementation there (e.g. `<0ad upstream>/source/simulation2/...`). The `source/` directory previously in this repo has been gitignored and may not exist on disk — use the external path.
 
 **Master plan**: `godot-rewrite-plan.md` (modules M0–M10, milestones MS1–MS7, risk matrix). Read it before any non-trivial rewrite work.
 **System deep-dive notes**: `claude-analyze/*.md` (15 docs analyzing the original engine: ECS, network lockstep, pathfinding, rendering, audio, UnitAI, etc.). The fastest way to understand a subsystem you're porting.
@@ -80,7 +87,7 @@ Requires **Blender 4.2 LTS** at `/Applications/Blender 4.2 LTS.app` (hardcoded p
 
 ## Where to find reference implementations
 
-When porting a subsystem, start from the original code. **The original C++/JS source lives at `/Users/matthew/SourceCode/gitea/0ad/`** (external to this repo; `source/` in-repo is gitignored). Paths below are relative to that root:
+When porting a subsystem, start from the original code. **The original C++/JS source lives at `<0ad upstream>`** (external to this repo; `source/` in-repo is gitignored). Paths below are relative to that root:
 
 | You're working on | Look at |
 |---|---|
@@ -94,7 +101,7 @@ When porting a subsystem, start from the original code. **The original C++/JS so
 | PMP map file format | `source/graphics/MapIO.h` (`FILE_VERSION`), `source/graphics/MapWriter.cpp` (header layout), `source/graphics/MapReader.cpp` |
 | Reference integrity checker | `source/tools/entity/checkrefs.py` |
 
-**Example**: to look up the PMP header format, read `/Users/matthew/SourceCode/gitea/0ad/source/graphics/MapIO.h` and `MapWriter.cpp`.
+**Example**: to look up the PMP header format, read `<0ad upstream>/source/graphics/MapIO.h` and `MapWriter.cpp`.
 
 Entity templates (data, consumed as-is by the rewrite): `binaries/data/mods/public/simulation/templates/*.xml` (this path is tracked in-repo).
 
