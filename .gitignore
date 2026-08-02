@@ -16,6 +16,12 @@ godot/.godot/global_script_class_cache.cfg
 godot/.godot/scene_groups_cache.cfg
 godot/.godot/uid_cache.bin
 
+# Godot converted art assets — build product of the asset pipeline
+# (godot/tools/run_full_pipeline.sh converts from binaries/data/mods/public/art
+# via Blender). Regenerable on demand; do NOT track the ~19000 files / ~3GB.
+# Run the pipeline after clone to repopulate godot/assets/.
+godot/assets/
+
 # Original 0 A.D. upstream trees — removed from this repo to slim it down.
 # The C# rewrite reads data/assets verbatim from these via local directory
 # junctions pointing at the upstream checkout (see tools/setup-upstream-junctions.ps1
