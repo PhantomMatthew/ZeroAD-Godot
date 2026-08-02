@@ -242,10 +242,12 @@ public sealed class ParamNode
     private static string MergeTokens(string existing, string overlay)
     {
         var tokens = new LinkedHashSet<string>();
-        foreach (string t in existing.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        // 原版按 is_space(任意空白)切分;XML 内多行 token 列表的换行符必须当分隔符,
+        // 只切空格会把 "\n" 混成 token(训练列表合并全链失效的根因)。
+        foreach (string t in existing.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
             tokens.Add(t);
 
-        foreach (string tok in overlay.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        foreach (string tok in overlay.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
         {
             if (tok.StartsWith('-') && tok.Length > 1)
                 tokens.Remove(tok[1..]);

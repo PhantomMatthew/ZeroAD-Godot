@@ -55,6 +55,44 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
     /// 原版训练失败有红字反馈,不能静默。只读诊断,不影响判定。</summary>
     public string? LastRejectionReason { get; private set; }
 
+    /// <summary>Trainer/Entities 合并原文(空格分隔 tokens,含 {civ}/{native} 占位;
+    /// 由 SimBridge 装配自模板 stats.TrainableEntities)。空 = 旧装配路径(SpawnBuilding
+    /// 兜底/测试直挂),此时训练不受列表门限制,保持旧行为。</summary>
+    public string TrainableTokens = "";
+
+    /// <summary>模板原生文明({native} 替换值;装配自模板 Identity/Civ)。</summary>
+    public string NativeCiv = "";
+
+    /// <summary>解析可训练列表(原版 Trainer.CalculateEntitiesMap):{civ}→当前属主文明
+    /// (PlayerComponent.Civ——占领易主后自动跟随,无需重装配),{native}→NativeCiv;
+    /// 过滤不存在模板(通用列表含本文明没有的兵种,如 athen 无 clubman)与未解析占位
+    /// (无属主/无文明)。每次调用实时解析;GUI 训练面板与训练门共用此单一事实源。</summary>
+    public List<string> GetTrainableEntities(ComponentManager cm)
+    {
+        var result = new List<string>();
+        if (TrainableTokens.Length == 0) return result;
+        string ownerCiv = "";
+        var owner = cm.QueryInterface<OwnershipComponent>(Entity);
+        if (owner != null)
+        {
+            var player = cm.GetPlayerEntity(owner.PlayerId);
+            if (player != null) ownerCiv = player.Civ;
+        }
+        // 原版 Trainer.js split(/\s+/):单层(无继承合并)的 token 值保留 XML 换行,
+        // 必须按任意空白切分(只切空格会把 "\n" 混进模板名,全被 TemplateExists 滤光)。
+        foreach (var raw in TrainableTokens.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string token = raw;
+            if (NativeCiv.Length > 0) token = token.Replace("{native}", NativeCiv);
+            if (ownerCiv.Length > 0) token = token.Replace("{civ}", ownerCiv);
+            // 占位未解析(无属主或文明缺失)→ 该项不可训练(原版 TemplateExists 同效过滤)。
+            if (token.Contains('{')) continue;
+            if (cm.Templates == null || !cm.Templates.TemplateExists(token)) continue;
+            if (!result.Contains(token)) result.Add(token);
+        }
+        return result;
+    }
+
     public bool EnqueueTraining(string templateName, int count, ComponentManager cm)
     {
         LastRejectionReason = null;
@@ -76,6 +114,12 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         if (player == null) return Reject("no-player");
         // A defeated player can't train units.
         if (player.IsDefeated()) return Reject("defeated");
+
+        // 可训练列表门(原版 Trainer.AddToBatch 拒非列表项):GUI 只展示列表项,这里是
+        // 执行端兜底,挡 AI/热键/存档回放发出的列表外模板。TrainableTokens 空 = 旧装配
+        // 路径(SpawnBuilding 兜底),不门,保持旧行为。
+        if (TrainableTokens.Length > 0 && !GetTrainableEntities(cm).Contains(templateName))
+            return Reject("not-trainable");
 
         if (!player.CanAfford(totalWood, totalFood, totalStone, totalMetal)) return Reject("cannot-afford");
 
@@ -238,6 +282,8 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
     {
         s.NumberI32("count", _queue.Count);
         s.NumberFixed("progress", ZeroAD.Sim.Maths.Fixed.FromFloat(_progress));
+        s.StringASCII("trainToks", TrainableTokens);
+        s.StringASCII("nativeCiv", NativeCiv);
         foreach (var item in _queue)
         {
             s.StringASCII("tmpl", item.TemplateName);
@@ -256,6 +302,8 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
     {
         int count = d.NumberI32("count");
         _progress = d.NumberFixed("progress").ToFloat();
+        TrainableTokens = d.StringASCII("trainToks");
+        NativeCiv = d.StringASCII("nativeCiv");
         _queue.Clear();
         for (int i = 0; i < count; i++)
         {

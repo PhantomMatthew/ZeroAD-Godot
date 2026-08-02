@@ -63,6 +63,24 @@ namespace ZeroAD.Sim.Content
             return XDocument.Parse("<Entity/>");
         }
 
+        /// <summary>模板文件存在性(原版 TemplateManager.TemplateExists;可训练列表过滤用——
+        /// 通用兵营列表含本文明没有的兵种,如 athen 无 clubman/maceman,须在解析端剔除)。
+        /// 与 LoadXmlDocument 走同一组搜索目录。</summary>
+        public bool TemplateExists(string templateName)
+        {
+            string relPath = templateName.Replace('/', Path.DirectorySeparatorChar) + ".xml";
+            string[] searchDirs = { "special" + Path.DirectorySeparatorChar + "filter", "mixins", "" };
+            foreach (string dir in searchDirs)
+            {
+                string fullPath = string.IsNullOrEmpty(dir)
+                    ? Path.Combine(_templatesRoot, relPath)
+                    : Path.Combine(_templatesRoot, dir, relPath);
+                if (File.Exists(fullPath))
+                    return true;
+            }
+            return false;
+        }
+
         public TemplateStats ExtractStats(string templateName)
         {
             var node = LoadTemplate(templateName);
@@ -101,6 +119,16 @@ namespace ZeroAD.Sim.Content
                 var category = identity.GetChild("Category");
                 if (category.IsOk)
                     stats.Category = category.ToString();
+                // Identity/Civ:模板原生文明({native} 占位替换值;PlayerComponent.Civ 是
+                // 属主文明,二者在被占领建筑上不同——原版 Trainer.js 正是如此区分)。
+                var civ = identity.GetChild("Civ");
+                if (civ.IsOk)
+                    stats.Civ = civ.ToString().Trim();
+                // Identity/Icon:原版头像路径(units/athen/infantry_spearman.png,
+                // 相对 art/textures/ui/session/portraits/),GUI 训练按钮数据驱动头像。
+                var icon = identity.GetChild("Icon");
+                if (icon.IsOk)
+                    stats.Icon = icon.ToString().Trim();
             }
 
             var health = node.GetChild("Health");
@@ -144,6 +172,19 @@ namespace ZeroAD.Sim.Content
                 var category = trainingRestrictions.GetChild("Category");
                 if (category.IsOk)
                     stats.TrainingCategory = category.ToString();
+            }
+
+            // Trainer/Entities(A26+ 数据:可训练列表在 Trainer 组件;<ProductionQueue/>
+            // 只是空壳能力标记)。ParamNode 已按原版语义跨继承链合并 datatype="tokens"
+            // (父列表保留、子追加、"-token" 删除)——athen CC = 父 units/{native}/support_civilian
+            // + 子 3 个 {civ} 兵。占位符保持原文,由 ProductionQueue 装配后按属主实时解析
+            // ({civ}=属主文明、{native}=模板原生文明),不存在的模板在解析端过滤。
+            var trainer = node.GetChild("Trainer");
+            if (trainer.IsOk)
+            {
+                var entities = trainer.GetChild("Entities");
+                if (entities.IsOk)
+                    stats.TrainableEntities = entities.ToString().Trim();
             }
 
             var attack = node.GetChild("Attack");
@@ -690,6 +731,17 @@ namespace ZeroAD.Sim.Content
         public float FormationCenterGap;
         /// <summary>TrainingRestrictions/Category (Civilian/Hero/WarDog/...). Empty if absent.</summary>
         public string TrainingCategory = "";
+
+        /// <summary>Identity/Civ:模板原生文明代码(athen/spart/...),Trainer {native} 占位
+        /// 替换值。与 PlayerComponent.Civ(属主文明)在被占领建筑上不同。空 = 模板未声明。</summary>
+        public string Civ = "";
+        /// <summary>Identity/Icon:原版头像相对路径(units/athen/infantry_spearman.png,
+        /// 相对 art/textures/ui/session/portraits/),GUI 数据驱动头像用。空 = 未声明。</summary>
+        public string Icon = "";
+        /// <summary>Trainer/Entities 跨继承链合并原文(空格分隔 tokens,含 {civ}/{native}
+        /// 占位;合并语义=父列表保留+子追加+"-token"删除,对齐 CParamNode)。空 = 不可训练。
+        /// 装配进 ProductionQueue.TrainableTokens,按属主文明实时解析。</summary>
+        public string TrainableEntities = "";
 
         // Footprint: physical extent for spawn-point search + click hit-testing.
         // Shape: "" (none), "square" (Size0=width, Size1=depth), "circle" (Size0=radius).

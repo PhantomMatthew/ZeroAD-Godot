@@ -51,7 +51,12 @@ public sealed class EconomyManager
             if (!identity.Name.Contains("Center") && !identity.Name.Contains("civil_centre")) continue;
             if (queue.QueueCount > 0) continue;
 
-            _net.SubmitAiCommand(NetCommand.Train(_playerId, building.Value, "units/spart/support_civilian"));
+            // 数据驱动:从建筑可训练列表选首个村民(support_civilian),文明正确
+            // (此前硬编码 units/spart/*,高卢 AI 出斯巴达兵)。
+            string pick = "units/spart/support_civilian";
+            foreach (var t in queue.GetTrainableEntities(_cm))
+                if (t.Contains("support_civilian")) { pick = t; break; }
+            _net.SubmitAiCommand(NetCommand.Train(_playerId, building.Value, pick));
             return;
         }
     }
@@ -304,7 +309,11 @@ public sealed class AttackManager
             if (!identity.Name.Contains("Barracks") && !identity.Name.Contains("Center")) continue;
             if (queue.QueueCount > 0) continue;
 
-            _net.SubmitAiCommand(NetCommand.Train(_playerId, building.Value, "units/spart/infantry_spearman_b"));
+            // 数据驱动:从建筑可训练列表选首个战斗单位(非 support 项)。
+            string pick = "units/spart/infantry_spearman_b";
+            foreach (var t in queue.GetTrainableEntities(_cm))
+                if (!t.Contains("support_")) { pick = t; break; }
+            _net.SubmitAiCommand(NetCommand.Train(_playerId, building.Value, pick));
             return;
         }
     }
