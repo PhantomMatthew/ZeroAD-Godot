@@ -505,7 +505,10 @@ public sealed partial class SimBridge : Node
             Classes = stats?.GetClassList() ?? new List<string>()
         };
         _sim.AddComponent(entity, identity);
-        _sim.AddComponent(entity, new HealthComponent { Current = 9999, Max = 9999 });
+        // 原版数据:树木/岩石无 Health(不可攻击),fauna 有(可猎)。9999 硬编码让树
+        // 也有了血条 → 悬停树出剑/可攻击树,与原版相悖。只给模板真声明 <Health> 的装。
+        if (stats != null && stats.HasHealth)
+            _sim.AddComponent(entity, new HealthComponent { Current = stats.MaxHealth, Max = stats.MaxHealth });
 
         var pos = _sim.QueryInterface<PositionComponent>(entity);
         if (pos != null)
@@ -1242,8 +1245,14 @@ public sealed partial class SimBridge : Node
         }
 
         string name = stats?.Name ?? (isSoldier ? "Soldier" : isVillager ? "Villager" : "Unit");
-        int maxHp = stats?.MaxHealth ?? (isSoldier ? 80 : 50);
-        _sim.AddComponent(entity, new HealthComponent { Current = maxHp, Max = maxHp });
+        // 血条只在模板真声明 <Health> 时装配(原版:树木/岩石无 Health=不可攻击,
+        // gaia 动物有 Health=可猎)。MaxHealth 默认 100 不代表模板有血条,须看 HasHealth;
+        // stats 缺失的旧路径(无模板调试生成)保持原样加血。
+        if (stats == null || stats.HasHealth)
+        {
+            int maxHp = stats?.MaxHealth ?? (isSoldier ? 80 : 50);
+            _sim.AddComponent(entity, new HealthComponent { Current = maxHp, Max = maxHp });
+        }
         var identity = new IdentityComponent
         {
             Name = name,
@@ -1278,9 +1287,19 @@ public sealed partial class SimBridge : Node
         if (isStructure && stats != null)
         {
             if (stats.CanTrain)
+            {
                 _sim.AddComponent(entity, new ProductionQueue());
+                // 集结点(原版每个生产建筑都有 RallyPointRenderer):此前只有地基完工路径
+                // (SpawnScenarioBuilding)装了,起始 CC 永远设不了集结点。
+                _sim.AddComponent(entity, new RallyPointComponent());
+            }
             if (stats.IsDropsite)
                 _sim.AddComponent(entity, new ResourceDropsite());
+            // 人口加成数据驱动(顶层 <Population><Bonus>:CC +20/房子 +5)。起始 CC 走
+            // 本路径——缺它则 RecomputePlayerPopBonus(覆写语义)在首个房子完工时把
+            // CC 的 20 抹掉,人口帽反降。镜像 SpawnScenarioBuilding 的装配。
+            if (stats.PopulationBonus > 0)
+                _sim.AddComponent(entity, new PopulationComponent { Bonus = stats.PopulationBonus });
         }
 
         if (isVillager || stats?.CanGather == true)
@@ -1288,6 +1307,11 @@ public sealed partial class SimBridge : Node
             _sim.AddComponent(entity, new ResourceGatherer());
             _sim.AddComponent(entity, new BuilderComponent());
         }
+
+        // Garrisonable(镜像 EntityAssembler:可驻防单位;缺它 Order.Garrison 一律拒收,
+        // 开局单位曾因此无法驻防、驻军光标门也失效)。
+        if (stats != null && stats.GarrisonableSize > 0)
+            _sim.AddComponent(entity, new GarrisonableComponent { Size = stats.GarrisonableSize });
 
         if (isSoldier || (stats != null && (stats.AttackDamage > 0
             || stats.AttackCaptureStrength > Fixed.Zero)))
@@ -1342,11 +1366,11 @@ public sealed partial class SimBridge : Node
         Color color = _lastPlayerColor;
         float visualSize = isStructure ? 8f : isResource ? 2.5f : 1.5f;
         // Resolve the visual from the authoritative template name (SpawnFromTemplate passes the
-        // real one). Don't use stats.TemplateName — ExtractStats leaves it empty, which made
-        // every entity fall through to the factory cube. Don't fall back to the shared
-        // _lastSpawnedTemplate either — SpawnBuilding contaminates it with civil_centre, which
-        // made stats-less units render as Town Centres. Direct callers with no template (AI
-        // villagers, sandbox soldiers) get a role-appropriate default instead.
+        // real one; stats.TemplateName 自 ExtractStats 回填后亦为真名,视觉解析仍以此显式
+        // 参数为准)。Don't fall back to the shared _lastSpawnedTemplate — SpawnBuilding
+        // contaminates it with civil_centre, which made stats-less units render as Town
+        // Centres. Direct callers with no template (AI villagers, sandbox soldiers) get a
+        // role-appropriate default instead.
         string visualTemplate = templateName ?? string.Empty;
         if (visualTemplate.Length == 0 && !isStructure && !isResource)
         {
@@ -1467,6 +1491,30 @@ public sealed partial class SimBridge : Node
 
     public void CommandResearch(EntityId building, string techName) =>
         SubmitCommand(NetCommand.Research(LocalPlayerId, building.Value, techName));
+
+    /// <summary>停止单位全部订单回 IDLE(原版 "stop")。</summary>
+    public void CommandStop(EntityId unit) =>
+        SubmitCommand(NetCommand.Stop(LocalPlayerId, unit.Value));
+
+    /// <summary>删除己方选中实体(执行端校验归属;原版 delete-entities)。</summary>
+    public void CommandDelete(EntityId entity) =>
+        SubmitCommand(NetCommand.Delete(LocalPlayerId, entity.Value));
+
+    /// <summary>取消训练队列第 index 项并全额退资源(原版 stop-production)。</summary>
+    public void CommandCancelProduction(EntityId building, int queueIndex) =>
+        SubmitCommand(NetCommand.CancelProduction(LocalPlayerId, building.Value, queueIndex));
+
+    /// <summary>改站姿(原版 stance 命令;violent/aggressive/defensive/passive/standground)。</summary>
+    public void CommandSetUnitStance(EntityId unit, string stance) =>
+        SubmitCommand(NetCommand.SetUnitStance(LocalPlayerId, unit.Value, stance));
+
+    /// <summary>载入驻军(原版 garrison 命令:单位走近宿主建筑后入住)。</summary>
+    public void CommandGarrison(EntityId unit, EntityId holder) =>
+        SubmitCommand(NetCommand.Garrison(LocalPlayerId, unit.Value, holder.Value));
+
+    /// <summary>卸载驻军(unitId=-1 = 全部,原版 unload-all-by-owner)。</summary>
+    public void CommandUngarrison(EntityId holder, int unitId = -1) =>
+        SubmitCommand(NetCommand.Ungarrison(LocalPlayerId, holder.Value, unitId));
 
     public void CommandTrain(EntityId building, string template, int count = 1, bool batch = false) =>
         SubmitCommand(NetCommand.Train(LocalPlayerId, building.Value, template, batch ? 5 : count));

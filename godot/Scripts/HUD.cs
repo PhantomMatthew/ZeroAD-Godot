@@ -22,6 +22,11 @@ public sealed partial class HUD : CanvasLayer
     private CaptureBar _selCapture = null!;
     private Label _selExtra = null!;
     private Label _selGarrison = null!;
+    private HBoxContainer _garrisonRow = null!;
+    private string _garrisonSignature = "";
+    private Label _stanceLabel = null!;
+    private HBoxContainer _stanceRow = null!;
+    private readonly System.Collections.Generic.Dictionary<string, Button> _stanceButtons = new();
     private const int QueueSlotCount = 8;     // 训练队列池大小(选中面板最多显示的槽数)
     private HBoxContainer _queueRow = null!;
     private readonly QueueSlot[] _queueSlots = new QueueSlot[QueueSlotCount];
@@ -36,6 +41,38 @@ public sealed partial class HUD : CanvasLayer
     {
         SetupTopBar();
         SetupBottomPanel();
+        SetupToast();
+    }
+
+    private Label _toast = null!;
+    private int _toastSeq;
+
+    /// <summary>居中置顶的一行提示(原版红字错误提示的移植:建造拒绝等原因回显)。
+    /// 3s 自动隐;连发时序号失效旧计时器,只保留最后一次。</summary>
+    private void SetupToast()
+    {
+        _toast = new Label { Text = "", Visible = false };
+        _toast.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+        _toast.OffsetTop = 60;
+        _toast.OffsetLeft = -300;
+        _toast.OffsetRight = 300;
+        _toast.HorizontalAlignment = HorizontalAlignment.Center;
+        _toast.AddThemeFontSizeOverride("font_size", 16);
+        _toast.AddThemeColorOverride("font_color", new Color(1f, 0.45f, 0.35f));
+        _toast.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _toast.AddThemeConstantOverride("outline_size", 4);
+        AddChild(_toast);
+    }
+
+    public void ShowToast(string text)
+    {
+        _toast.Text = text;
+        _toast.Visible = true;
+        int seq = ++_toastSeq;
+        GetTree().CreateTimer(3.0).Timeout += () =>
+        {
+            if (seq == _toastSeq) _toast.Visible = false;
+        };
     }
 
     private void SetupTopBar()
@@ -288,18 +325,18 @@ public sealed partial class HUD : CanvasLayer
         panel.AddChild(vbox);
 
         // Stance row: 5 stance icons (violent/aggressive/defensive/passive/standground).
-        // Placeholder — clicking changes selection highlight only (no sim wiring yet).
-        var stanceLabel = new Label { Text = "Stance" };
-        stanceLabel.AddThemeFontSizeOverride("font_size", 11);
-        stanceLabel.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
-        stanceLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
-        stanceLabel.AddThemeConstantOverride("outline_size", 2);
-        vbox.AddChild(stanceLabel);
+        // 接 sim:点击经 NetCommand.SetUnitStance 改全部选中己方单位;当前站姿高亮。
+        _stanceLabel = new Label { Text = "Stance" };
+        _stanceLabel.AddThemeFontSizeOverride("font_size", 11);
+        _stanceLabel.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
+        _stanceLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _stanceLabel.AddThemeConstantOverride("outline_size", 2);
+        vbox.AddChild(_stanceLabel);
 
-        var stanceRow = new HBoxContainer();
-        stanceRow.AddThemeConstantOverride("separation", 2);
-        vbox.AddChild(stanceRow);
-        foreach (var stance in new[] { "violent", "aggressive", "defensive", "passive", "standground" })
+        _stanceRow = new HBoxContainer();
+        _stanceRow.AddThemeConstantOverride("separation", 2);
+        vbox.AddChild(_stanceRow);
+        foreach (var stance in UnitAIComponent.SelectableStances)
         {
             var btn = new Button
             {
@@ -312,16 +349,29 @@ public sealed partial class HUD : CanvasLayer
             };
             var tex = LoadIcon($"stances/{stance}");
             if (tex != null) btn.Icon = tex;
-            stanceRow.AddChild(btn);
+            string captured = stance;
+            btn.Pressed += () =>
+            {
+                _main.SetSelectedUnitStance(captured);
+                RefreshStanceHighlight();
+            };
+            _stanceButtons[stance] = btn;
+            _stanceRow.AddChild(btn);
         }
 
-        // Garrison indicator (placeholder count).
+        // Garrison indicator (count label) + occupant portrait row (click = unload one,
+        // trailing button = unload all). Mirrors the original garrison selection panel.
         _selGarrison = new Label { Text = "" };
         _selGarrison.AddThemeFontSizeOverride("font_size", 12);
         _selGarrison.AddThemeColorOverride("font_color", new Color(0.85f, 0.80f, 0.65f));
         _selGarrison.AddThemeColorOverride("font_outline_color", Colors.Black);
         _selGarrison.AddThemeConstantOverride("outline_size", 2);
         vbox.AddChild(_selGarrison);
+
+        _garrisonRow = new HBoxContainer();
+        _garrisonRow.AddThemeConstantOverride("separation", 2);
+        _garrisonRow.Visible = false;
+        vbox.AddChild(_garrisonRow);
 
         parent.AddChild(panel);
     }
@@ -395,7 +445,10 @@ public sealed partial class HUD : CanvasLayer
             {
                 CustomMinimumSize = new Vector2(36, 36),
                 Visible = false,
+                SlotIndex = i,
+                TooltipText = "Click to cancel (full refund)",
             };
+            _queueSlots[i].Clicked += idx => _main.CancelProductionAt(idx);
             _queueRow.AddChild(_queueSlots[i]);
         }
         vbox.AddChild(_queueRow);
@@ -481,18 +534,29 @@ public sealed partial class HUD : CanvasLayer
             child.QueueFree();
 
         bool hasBuilder = false, hasProducer = false;
-        bool hasArsenal = false;
+        bool hasArsenal = false, hasOwnUnit = false, hasOwnEntity = false;
         var researcherTemplates = new HashSet<string>();
         foreach (var eid in _main.SelectedEntities)
         {
             if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) hasBuilder = true;
             if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null) hasProducer = true;
+            if (_main.IsOwn(eid))
+            {
+                hasOwnEntity = true;
+                if (_sim.Sim.QueryInterface<UnitAIComponent>(eid) != null) hasOwnUnit = true;
+            }
             var identity = _sim.Sim.QueryInterface<IdentityComponent>(eid);
             if (identity is null) continue;
             if (_sim.Sim.QueryInterface<ResearcherComponent>(eid) != null)
                 researcherTemplates.Add(identity.TemplateName);
             if (identity.TemplateName.Contains("arsenal")) hasArsenal = true;
         }
+
+        // Stop/Delete(原版 unit_commands 命令区):Stop 仅己方单位,Delete 任意己方实体。
+        if (hasOwnUnit)
+            AddCmdButton("stop", "Stop", () => _main.StopSelectedUnits());
+        if (hasOwnEntity)
+            AddCmdButton("delete", "Delete", () => _main.DeleteSelectedEntities());
 
         if (hasProducer)
         {
@@ -552,6 +616,8 @@ public sealed partial class HUD : CanvasLayer
         ["infantry_spearman"] = "portraits/units/infantry_spearman.png",
         ["infantry_javelinist"] = "portraits/units/infantry_javelinist.png",
         ["siege_ram"] = "portraits/units/siege_ram.png",
+        ["stop"] = "session/icons/cancel.png",
+        ["delete"] = "session/icons/die.png",
         ["house"] = "portraits/structures/house.png",
         ["storehouse"] = "portraits/structures/storehouse.png",
         ["farmstead"] = "portraits/structures/farmstead.png",
@@ -608,7 +674,9 @@ public sealed partial class HUD : CanvasLayer
         vbox.SizeFlagsVertical = Control.SizeFlags.Fill;
         vbox.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         btn.AddChild(vbox);
-        vbox.AddChild(new Control { CustomMinimumSize = new Vector2(0, 24) });
+        // 顶部间隔(把标签压到按钮下半)——必须 Ignore:默认 Stop 会盖住按钮上半
+        // (图标区)吞掉点击,表现为"点图标没反应,点文字有效"。
+        vbox.AddChild(new Control { CustomMinimumSize = new Vector2(0, 24), MouseFilter = Control.MouseFilterEnum.Ignore });
         vbox.AddChild(label);
 
         _commandBox.AddChild(btn);
@@ -673,7 +741,10 @@ public sealed partial class HUD : CanvasLayer
             _selExtra.Text = "";
             _queueRow.Visible = false;
             _selGarrison.Text = "";
+            _garrisonRow.Visible = false;
+            _garrisonSignature = "";
             _selIcon.Texture = null;
+            RefreshStanceHighlight();
             return;
         }
 
@@ -753,12 +824,78 @@ public sealed partial class HUD : CanvasLayer
             _queueRow.Visible = false;
         }
 
-        // 驻军数(填既有空标签 _selGarrison)。
+        // 驻军数 + 驻军头像行(原版 garrison 选择面板:头像点击=卸载该单位,
+        // 末位按钮=全部卸载;仅己方建筑可卸载——Main.Unload* 有归属门)。
         var holder = _sim.Sim.QueryInterface<GarrisonHolderComponent>(first);
+        bool ownHolder = holder != null && _main.IsOwn(first);
         _selGarrison.Text = holder != null && holder.Entities.Count > 0
             ? $"Garrison: {holder.Entities.Count}/{holder.GetCapacity(_sim.Sim)}" : "";
+        if (ownHolder && holder!.Entities.Count > 0)
+        {
+            // 签名 = 宿主 + 驻军名单;变才重建(每帧重建按钮会闪烁且打断 hover)。
+            var sig = new System.Text.StringBuilder(first.Value.ToString());
+            foreach (var ge in holder.Entities) sig.Append(':').Append(ge.Value);
+            if (sig.ToString() != _garrisonSignature)
+            {
+                _garrisonSignature = sig.ToString();
+                foreach (var child in _garrisonRow.GetChildren()) child.QueueFree();
+                foreach (var ge in holder.Entities)
+                {
+                    var identity2 = _sim.Sim.QueryInterface<IdentityComponent>(ge);
+                    var btn = new Button
+                    {
+                        Theme = UITheme.GetTheme(),
+                        CustomMinimumSize = new Vector2(28, 28),
+                        TooltipText = $"Unload {identity2?.Name ?? ge.Value.ToString()}",
+                        ExpandIcon = true,
+                        IconAlignment = HorizontalAlignment.Center,
+                        VerticalIconAlignment = VerticalAlignment.Center,
+                    };
+                    var tex = LoadPortraitForIdentity(identity2);
+                    if (tex != null) btn.Icon = tex;
+                    EntityId captured = ge;
+                    btn.Pressed += () => _main.UnloadGarrison(first, captured);
+                    _garrisonRow.AddChild(btn);
+                }
+                var allBtn = new Button
+                {
+                    Theme = UITheme.GetTheme(),
+                    CustomMinimumSize = new Vector2(28, 28),
+                    TooltipText = "Unload all",
+                    ExpandIcon = true,
+                    IconAlignment = HorizontalAlignment.Center,
+                    VerticalIconAlignment = VerticalAlignment.Center,
+                };
+                var outTex = LoadIcon("garrison-out");
+                if (outTex != null) allBtn.Icon = outTex;
+                allBtn.Pressed += () => _main.UnloadAllGarrison(first);
+                _garrisonRow.AddChild(allBtn);
+            }
+            _garrisonRow.Visible = true;
+        }
+        else
+        {
+            _garrisonRow.Visible = false;
+            _garrisonSignature = "";
+        }
 
         _selIcon.Texture = LoadPortraitForIdentity(identity);
+        RefreshStanceHighlight();
+    }
+
+    /// <summary>站姿行:仅当选中含"有站姿的己方单位"时可见(对齐原版 stance 按钮条
+    /// 只在单位选择时出现);当前站姿按钮黄色高亮,其余原色。每帧随选择面板刷新,
+    /// 锁步命令落地(数回合后)也最多晚一帧反映。</summary>
+    private void RefreshStanceHighlight()
+    {
+        string? current = _main.GetFirstSelectedStance();
+        bool show = current != null;
+        _stanceRow.Visible = show;
+        _stanceLabel.Visible = show;
+        foreach (var (name, btn) in _stanceButtons)
+            btn.Modulate = name == current
+                ? new Color(1f, 0.85f, 0.35f)
+                : Colors.White;
     }
 
     private static Texture2D? LoadPortraitForIdentity(IdentityComponent? identity) =>
@@ -849,6 +986,19 @@ public sealed partial class HUD : CanvasLayer
         public Texture2D? Portrait;
         public float Progress;      // 0..1,仅头项有意义(其余槽恒 0 = 待训压暗)
         public int BatchCount;      // item.Count>1 时右下角显示 ×N
+        public int SlotIndex;       // 队列下标(点击取消用)
+
+        /// <summary>左键点击 = 取消本槽生产项(原版点队列项取消,退全额资源)。</summary>
+        public event System.Action<int>? Clicked;
+
+        public override void _GuiInput(global::Godot.InputEvent @event)
+        {
+            if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
+            {
+                Clicked?.Invoke(SlotIndex);
+                AcceptEvent();
+            }
+        }
 
         private readonly Label _countLabel;
 

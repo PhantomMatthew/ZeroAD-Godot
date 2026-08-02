@@ -352,6 +352,23 @@ public sealed partial class Main : Node3D
 		if (_hud != null) return;
 		_hud = new HUD(_sim, this);
 		AddChild(_hud);
+
+		// 软件光标(macOS 上 Input.SetCustomMouseCursor 在用户环境静默无效,改自绘:
+		// 顶层 CanvasLayer 贴图逐帧跟随鼠标。仅动作态(attack/gather/...)启用精灵+
+		// 隐藏 OS 光标;默认态 = OS 箭头(原版如此,默认/move 无纹理)。_ExitTree 恢复可见。
+		_cursorLayer = new CanvasLayer { Layer = 127 };
+		_cursorSprite = new TextureRect
+		{
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+			StretchMode = TextureRect.StretchModeEnum.Keep,
+			Visible = false,
+		};
+		_cursorLayer.AddChild(_cursorSprite);
+		AddChild(_cursorLayer);
+
+		// 建造拒绝 toast(原版红字提示):执行端拒绝是锁步两回合后异步发生,
+		// 只能走事件回传;过滤只显本地玩家的拒绝。_ExitTree 退订。
+		_sim.Sim.Events.PlayerCommand += OnPlayerCommandEvent;
 		// Game-over overlay: subscribes to the sim's win/loss events and shows the
 		// Victory/Defeat panel when the match ends.
 		var gameOver = new GameOverOverlay(_sim, localPlayerId: (int)playerId);
@@ -941,6 +958,8 @@ public sealed partial class Main : Node3D
 		if (!_gameStarted) return;
 
 		UpdateSelectionMarkers();
+		UpdateActionCursor();
+		UpdateCursorSpritePosition();
 
 		// FPS 叠层(可见时才读帧率,Engine.GetFramesPerSecond 是上一帧实测值)。
 		if (_fpsOverlay?.Visible == true && _fpsLabel != null)
@@ -971,6 +990,39 @@ public sealed partial class Main : Node3D
 		OptionsApplier.RegisterSceneNodes(null, null);
 		// ConfigChanged 订阅挂的是本节点方法,UserConfig 是 autoload 长存——退订防死引用。
 		GetNode<UserConfig>("/root/UserConfig").ConfigChanged -= OnUserConfigChanged;
+		// 软件光标:恢复 OS 光标可见(主菜单/桌面需要)。
+		Input.MouseMode = Input.MouseModeEnum.Visible;
+		// 建造拒绝事件订阅(BuildSessionUi 挂)——退订防死引用。
+		if (_sim != null)
+			_sim.Sim.Events.PlayerCommand -= OnPlayerCommandEvent;
+	}
+
+	/// <summary>建造拒绝 toast(执行端 PlayerCommandEvent "build-rejected" → 顶部红字;
+	/// 只显本地玩家的拒绝)。</summary>
+	private void OnPlayerCommandEvent(PlayerCommandEvent e)
+	{
+		if (e.Type != "build-rejected" && e.Type != "train-rejected") return;
+		if (e.Data.TryGetValue("player", out var p) && p is int pid && pid != (int)_sim.LocalPlayerId)
+			return;
+		string reason = e.Data.TryGetValue("reason", out var r) ? r?.ToString() ?? "" : "";
+		if (e.Type == "train-rejected")
+		{
+			_hud?.ShowToast(reason switch
+			{
+				"cannot-afford" => "Not enough resources.",
+				"pop-limit" => "Population limit reached — build more houses.",
+				"entity-limit" => "Training limit reached for this unit.",
+				_ => "Cannot train that unit.",
+			});
+			return;
+		}
+		_hud?.ShowToast(reason switch
+		{
+			"cannot-afford" => "Not enough resources.",
+			"invalid-placement" => "Cannot place building here.",
+			"territory" => "Must be built in connected territory.",
+			_ => "Cannot build there.",
+		});
 	}
 
 	// --- Debug capture (ZEROAD_CAPTURE=1|gather): screenshot + per-entity diagnostics ---
@@ -1400,6 +1452,107 @@ public sealed partial class Main : Node3D
 		}
 	}
 
+	// ── 动作光标(原版 input.js updateCursorAndTooltip 的 v1 子集)─────────────────
+	// 选中己方单位时按 hover 目标切 attack/gather/garrison/capture 光标;move 无专属
+	// 光标(原版如此:地面 = 默认箭头)。纹理 = 原版 art/textures/cursors,热点全 1,1。
+	private string _cursorState = "";
+	private readonly Dictionary<string, Texture2D> _cursorCache = new();
+	private CanvasLayer? _cursorLayer;
+	private TextureRect? _cursorSprite;
+
+	private void UpdateActionCursor()
+	{
+		if (GetTree().Paused)
+		{
+			SetActionCursor("");
+			return;
+		}
+		SetActionCursor(DetermineHoverCursor(GetViewport().GetMousePosition()));
+	}
+
+	private void SetActionCursor(string name)
+	{
+		if (name == _cursorState) return;
+		_cursorState = name;
+		if (_cursorSprite == null) return;
+		if (name.Length == 0)
+		{
+			// 原版默认态 = OS 箭头(art/textures/cursors 无默认/move 纹理,input.js
+			// 仅在动作态 SetCursor)。软件精灵藏起,OS 光标还回。
+			_cursorSprite.Visible = false;
+			Input.MouseMode = Input.MouseModeEnum.Visible;
+			return;
+		}
+		if (!_cursorCache.TryGetValue(name, out var tex) || tex == null)
+		{
+			tex = GD.Load<Texture2D>($"res://assets/ui/cursors/{name}.png");
+			_cursorCache[name] = tex;
+		}
+		if (tex == null) return; // 贴图缺失时保持上一光标,不闪没
+		_cursorSprite.Texture = tex;
+		_cursorSprite.Visible = true;
+		Input.MouseMode = Input.MouseModeEnum.Hidden;
+	}
+
+	/// <summary>软件光标逐帧跟随(热点对齐原版 .txt:全 1,1)。</summary>
+	private void UpdateCursorSpritePosition()
+	{
+		if (_cursorSprite != null)
+			_cursorSprite.Position = GetViewport().GetMousePosition() - new Vector2(1, 1);
+	}
+
+	private string DetermineHoverCursor(Vector2 mousePos)
+	{
+		if (_selectedEntities.Count == 0) return "";
+		// 选中集中各能力只要有一个具备即显示对应光标(原版 actionCheck 同理)。
+		bool canAttack = false, canGather = false, canGarrison = false;
+		foreach (var eid in _selectedEntities)
+		{
+			if (!IsOwn(eid)) continue;
+			if (_sim.Sim.QueryInterface<AttackComponent>(eid) != null) canAttack = true;
+			if (_sim.Sim.QueryInterface<ResourceGatherer>(eid) != null) canGather = true;
+			if (_sim.Sim.QueryInterface<GarrisonableComponent>(eid) != null
+				&& _sim.Sim.QueryInterface<UnitAIComponent>(eid) != null) canGarrison = true;
+		}
+		if (!canAttack && !canGather && !canGarrison) return "";
+
+		var worldPos = ScreenToWorld(mousePos);
+		if (worldPos == null) return "";
+		var targets = _sim.GetEntitiesAtPosition(worldPos.Value, 3f);
+		if (targets.Count == 0) return "";
+		var e = targets[0];
+		int lp = (int)_sim.LocalPlayerId;
+		var owner = _sim.Sim.QueryInterface<OwnershipComponent>(e);
+		// gaia 实体(鹿/狼等)无 OwnershipComponent,按玩家 0 处理——IsEnemy(lp,0) 恒 true,
+		// 有 Health 的 gaia 动物对士兵显示剑(原版可猎);树木无 Health(原版数据)不显示。
+
+		// 采集者在资源目标上优先采集光标(鹿对村民=猎取;对齐 HandleRightClick 分流)。
+		if (canGather && _sim.Sim.QueryInterface<ResourceSupply>(e) is { } supply)
+		{
+			// 按资源大类映射光标(原版按 specificType 细分 fish/fruit/meat 等;
+			// 我们的 Supply 只有大类,food 统一走 grain)。
+			return supply.Type switch
+			{
+				ResourceType.Wood => "action-gather-tree",
+				ResourceType.Stone => "action-gather-rock",
+				ResourceType.Metal => "action-gather-ore",
+				_ => "action-gather-grain",
+			};
+		}
+		if (canAttack
+			&& _sim.Sim.Players.IsEnemy(lp, owner?.PlayerId ?? 0)
+			&& (_sim.Sim.QueryInterface<HealthComponent>(e) != null
+				|| _sim.Sim.QueryInterface<CapturableComponent>(e) != null))
+		{
+			// Ctrl = 捕获修饰(与右键 HandleRightClick 的 allowCapture 一致)。
+			return Input.IsKeyPressed(Key.Ctrl) ? "action-capture" : "action-attack";
+		}
+		if (canGarrison && owner != null && owner.PlayerId == lp
+			&& _sim.Sim.QueryInterface<GarrisonHolderComponent>(e) != null)
+			return "action-garrison";
+		return "";
+	}
+
 	private void HandleRightClick(Vector2 screenPos, bool allowCapture)
 	{
 		var worldPos = ScreenToWorld(screenPos);
@@ -1413,55 +1566,63 @@ public sealed partial class Main : Node3D
 		{
 			var only = _selectedEntities.First();
 			var rally = _sim.Sim.QueryInterface<RallyPointComponent>(only);
-			if (rally != null && targetEntity.HasValue)
+			if (rally != null)
 			{
-				var supply = _sim.Sim.QueryInterface<ResourceSupply>(targetEntity.Value);
-				if (supply != null)
-				{
+				// 命中资源实体 → 集结到该资源(采集集结);其余一律地面集结。
+				// 关键:点在建筑自身 15m 拾取半径内时 targetEntity=建筑自己(无 supply),
+				// 旧逻辑落空不设集结——门口点集结点永远失败。
+				if (targetEntity.HasValue
+					&& _sim.Sim.QueryInterface<ResourceSupply>(targetEntity.Value) != null)
 					_sim.CommandSetRallyPoint(only, targetEntity);
-					return;
-				}
-			}
-			else if (rally != null && !targetEntity.HasValue)
-			{
-				// Right-click empty ground on a production building: set a ground rally
-				// point there. Buildings can't move/attack, so this is the natural mapping.
-				_sim.CommandSetRallyPointPosition(only, worldPos.Value.X, worldPos.Value.Z);
+				else
+					_sim.CommandSetRallyPointPosition(only, worldPos.Value.X, worldPos.Value.Z);
 				return;
 			}
 		}
 
 		if (_selectedEntities.Count == 0) return;
 
-		bool isResource = false, isEnemy = false;
+		bool isResource = false, isEnemy = false, isGarrisonTarget = false;
 		foreach (var eid in targets)
 		{
 			targetEntity = eid;
 			isResource = _sim.Sim.QueryInterface<ResourceSupply>(eid) != null;
 			var owner = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
 			// 敌对判定走内核外交(对齐原版):敌军建筑/单位/gaia 野兽一视同仁——
-			// 旧判定 AttackComponent+PlayerId>1 把敌军建筑(无攻击件)漏成 Move,
-			// 也把 gaia(0)排除在可猎杀外。须可攻击(Health 或 Capturable),
-			// 树木等资源实体不算敌。
-			isEnemy = owner != null
-				&& _sim.Sim.Players.IsEnemy((int)_sim.LocalPlayerId, owner.PlayerId)
+			// gaia 实体无 OwnershipComponent,按玩家 0 处理(IsEnemy 恒 true)。
+			// 须可攻击(Health 或 Capturable),树木等资源实体不算敌(原版树木无 Health)。
+			isEnemy = _sim.Sim.Players.IsEnemy((int)_sim.LocalPlayerId, owner?.PlayerId ?? 0)
 				&& (_sim.Sim.QueryInterface<HealthComponent>(eid) != null
 					|| _sim.Sim.QueryInterface<CapturableComponent>(eid) != null);
+			// 驻军目标(原版 garrison 动作):己方有驻军位的建筑;与敌对互斥。
+			isGarrisonTarget = !isEnemy && owner != null
+				&& owner.PlayerId == (int)_sim.LocalPlayerId
+				&& _sim.Sim.QueryInterface<GarrisonHolderComponent>(eid) != null;
 			break;
 		}
 
 		bool issuedMove = false;
 		foreach (var unit in _selectedEntities)
 		{
-			if (isEnemy && targetEntity.HasValue && _sim.Sim.QueryInterface<AttackComponent>(unit) != null)
+			if (isGarrisonTarget && targetEntity.HasValue
+				&& _sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
+			{
+				// 右键己方驻军建筑 → 载入(原版 unit_actions garrison;
+				// 宿主是否接受由 sim 侧 Garrisonable.CanGarrison 判)。
+				_sim.CommandGarrison(unit, targetEntity.Value);
+			}
+			else if (isResource && targetEntity.HasValue
+				&& _sim.Sim.QueryInterface<ResourceGatherer>(unit) != null)
+			{
+				// 采集者优先采集(鹿=enemy+resource 双身份:村民猎鹿=采集,
+				// 女兵有弱攻击也不能去杀食材)。
+				_sim.CommandGather(unit, targetEntity.Value);
+			}
+			else if (isEnemy && targetEntity.HasValue && _sim.Sim.QueryInterface<AttackComponent>(unit) != null)
 			{
 				// Ctrl+右键 = 捕获(原版 Ctrl+click → attack allowCapture=true);
 				// 无捕获能力的单位自动退化普通攻击(GetBestAttackAgainst 选型)。
 				_sim.CommandAttack(unit, targetEntity.Value, allowCapture);
-			}
-			else if (isResource && targetEntity.HasValue)
-			{
-				_sim.CommandGather(unit, targetEntity.Value);
 			}
 			else
 			{
@@ -1565,6 +1726,72 @@ public sealed partial class Main : Node3D
 			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
 				_sim.CommandTrain(eid, "units/spart/support_civilian", batch: batch);
+				break;
+			}
+	}
+
+	/// <summary>选中的实体是否归本地玩家(指令栏 Stop/Delete 等按钮的可见性判据;
+	/// 执行端另有归属校验兜底)。</summary>
+	public bool IsOwn(EntityId eid) =>
+		_sim.Sim.QueryInterface<OwnershipComponent>(eid)?.PlayerId == (int)_sim.LocalPlayerId;
+
+	/// <summary>改站姿:选中且有 UnitAI 的己方单位全部切到指定站姿(原版 stance 命令
+	/// 对全部选中单位生效;站姿行为语义见 UnitAIComponent.s_stances)。</summary>
+	public void SetSelectedUnitStance(string stance)
+	{
+		foreach (var eid in _selectedEntities)
+			if (IsOwn(eid) && _sim.Sim.QueryInterface<UnitAIComponent>(eid) != null)
+				_sim.CommandSetUnitStance(eid, stance);
+	}
+
+	/// <summary>首个选中有站姿单位的当前站姿(按钮高亮用;无则 null)。</summary>
+	public string? GetFirstSelectedStance()
+	{
+		foreach (var eid in _selectedEntities)
+			if (IsOwn(eid) && _sim.Sim.QueryInterface<UnitAIComponent>(eid) is { } ai)
+				return ai.Stance;
+		return null;
+	}
+
+	/// <summary>卸载单个驻军(原版 unload;仅己方建筑)。</summary>
+	public void UnloadGarrison(EntityId holder, EntityId unit)
+	{
+		if (IsOwn(holder))
+			_sim.CommandUngarrison(holder, (int)unit.Value);
+	}
+
+	/// <summary>卸载全部驻军(原版 unload-all-by-owner;仅己方建筑)。</summary>
+	public void UnloadAllGarrison(EntityId holder)
+	{
+		if (IsOwn(holder))
+			_sim.CommandUngarrison(holder, -1);
+	}
+
+	/// <summary>Stop:选中且有 UnitAI 的己方单位全部停止订单回 IDLE(原版 stop 命令,
+	/// 对所有选中单位生效,不只第一个)。</summary>
+	public void StopSelectedUnits()
+	{
+		foreach (var eid in _selectedEntities)
+			if (IsOwn(eid) && _sim.Sim.QueryInterface<UnitAIComponent>(eid) != null)
+				_sim.CommandStop(eid);
+	}
+
+	/// <summary>Delete:销毁选中的己方实体(原版 delete-entities;归属在执行端再校验)。</summary>
+	public void DeleteSelectedEntities()
+	{
+		foreach (var eid in _selectedEntities)
+			if (IsOwn(eid))
+				_sim.CommandDelete(eid);
+	}
+
+	/// <summary>取消生产:选中建筑里第一个有 ProductionQueue 的,取消其队列第 index 项
+	/// (HUD 训练队列槽点击的入口)。</summary>
+	public void CancelProductionAt(int index)
+	{
+		foreach (var eid in _selectedEntities)
+			if (IsOwn(eid) && _sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
+			{
+				_sim.CommandCancelProduction(eid, index);
 				break;
 			}
 	}
@@ -1694,6 +1921,7 @@ public sealed partial class Main : Node3D
 		if (pr != ZeroAD.Sim.Components.PlacementResult.Success)
 		{
 			GD.Print($"Cannot place {_buildTemplate} at ({worldPos.Value.X:F1},{worldPos.Value.Z:F1}): {pr}");
+			_hud?.ShowToast("Cannot place building here.");
 			// Stay in placement mode so the player can try another spot.
 			return;
 		}
