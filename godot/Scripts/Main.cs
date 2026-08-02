@@ -66,6 +66,9 @@ public sealed partial class Main : Node3D
 
 		var sky = new WorldEnvironment();
 		var env = new global::Godot.Environment();
+		// 背景模式显式设为 Color:默认 BG_SKY 无 sky 资源时行为依渲染器而异
+		// (Compatibility 渲白、Forward+ 渲深灰),设为 Color 后两个渲染器都出目标蓝。
+		env.BackgroundMode = global::Godot.Environment.BGMode.Color;
 		env.BackgroundColor = new Color(0.45f, 0.65f, 0.9f);
 		env.FogEnabled = true;
 		env.FogLightColor = new Color(0.5f, 0.7f, 0.95f);

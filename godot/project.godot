@@ -25,6 +25,14 @@ UserConfig="*res://Scripts/Autoload/UserConfig.cs"
 
 project/assembly_name="GodotProject"
 
+[rendering]
+
+; 固定 Compatibility(opengl3):Metal Forward+ 在本项目实测 RTS 视距方向光阴影丢失、
+; 全局亮度约 0.71×、天空发灰,且有 Metal 驱动 SIGBUS 崩溃史;全部视觉验证均在
+; Compatibility 完成(C++ 原版同为 OpenGL 渲染)。CLI --rendering-driver 仍可覆盖。
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+
 [input]
 
 cam_up={
