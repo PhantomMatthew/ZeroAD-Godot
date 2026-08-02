@@ -5,12 +5,27 @@
 # Usage: sh tools/run_full_pipeline.sh
 #
 # Requirements:
-#   - Blender 4.2 LTS at /Applications/Blender 4.2 LTS.app
-#   - 0 A.D. repo at a sibling directory (../binaries/data/mods/public/art)
+#   - Blender 4.2 LTS. Set BLender path via $BLENDER env var, or let the
+#     script auto-detect the default install location for your OS:
+#       macOS : /Applications/Blender 4.2 LTS.app/Contents/MacOS/Blender
+#       Windows: "C:/Program Files/Blender Foundation/Blender 4.2/blender.exe"
+#   - 0 A.D. upstream data at ../binaries/data/mods/public/art
+#     (provided by the binaries/ junction — see tools/setup-upstream-junctions.ps1)
 
 set -e
 
-BL="/Applications/Blender 4.2 LTS.app/Contents/MacOS/Blender"
+# Resolve Blender: $BLENDER env var > platform default locations.
+if [ -n "$BLENDER" ]; then
+    BL="$BLENDER"
+elif [ -x "/Applications/Blender 4.2 LTS.app/Contents/MacOS/Blender" ]; then
+    BL="/Applications/Blender 4.2 LTS.app/Contents/MacOS/Blender"
+elif [ -x "C:/Program Files/Blender Foundation/Blender 4.2/blender.exe" ]; then
+    BL="C:/Program Files/Blender Foundation/Blender 4.2/blender.exe"
+else
+    echo "ERROR: Blender 4.2 not found. Set BLENDER env var to its path." >&2
+    exit 1
+fi
+
 SCRIPT="$(dirname "$0")/convert_all_assets.py"
 SRC="../binaries/data/mods/public/art"
 OUT="assets"

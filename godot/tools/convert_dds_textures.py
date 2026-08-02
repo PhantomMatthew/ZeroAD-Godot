@@ -1,7 +1,15 @@
 import bpy, os
 
-SRC = "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/binaries/data/mods/public/art/textures"
-DST_ROOT = "/Users/matthew/SourceCode/github/PhantomMatthew/ZeroAD-Godot/godot/assets/textures"
+# Resolve paths relative to this script (godot/tools/), so it works on any
+# machine without hardcoded absolute paths. Requires the upstream 0 A.D.
+# checkout to be reachable via the binaries/ junction at the repo root
+# (see tools/setup-upstream-junctions.ps1 and AGENTS.md).
+_TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+_GODOT_DIR = os.path.dirname(_TOOLS_DIR)          # godot/
+_REPO_ROOT = os.path.dirname(_GODOT_DIR)          # repo root
+
+SRC = os.path.join(_REPO_ROOT, "binaries", "data", "mods", "public", "art", "textures")
+DST_ROOT = os.path.join(_GODOT_DIR, "assets", "textures")
 
 def target_dir(rel):
     if "skins/skeletal/" in rel: return DST_ROOT

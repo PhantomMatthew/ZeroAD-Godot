@@ -9,8 +9,8 @@ A **Godot 4.7 (.NET) + C# rewrite of 0 A.D.** (the open-source RTS). It is a hyb
 | Tree | Status | Purpose |
 |---|---|---|
 | `src/ZeroAD.Sim/` + `godot/` | **Active rewrite (C#)** | The new Godot game. Edit here. |
-| `binaries/` | **Original 0 A.D. data assets, tracked** | Entity templates XML, art assets, maps, audio — read verbatim by the rewrite. Do NOT modify. |
-| `<0ad upstream>` (external) | **Original 0 A.D. full source (C++20/JS), external reference** | The complete original engine source tree (`source/`, `binaries/`, `build/`, `libraries/`, etc.). This is the **authoritative reference** for porting behavior. The `source/` directory is **no longer tracked in this repo** (moved to .gitignore to reduce repo size); always look up C++/JS reference code at the external path instead. **The path is machine-specific** — see below. |
+| `binaries/` `build/` `libraries/` `source/` | **Local junctions → `<0ad upstream>` (NOT tracked)** | C++ engine trees removed from this repo to slim it down. Provided locally as directory junctions pointing at the upstream checkout, so the C# rewrite reads data/assets verbatim and you can browse C++/JS reference code. See "Upstream junctions" below. |
+| `<0ad upstream>` (external) | **Original 0 A.D. full source (C++20/JS), external reference** | The complete original engine source tree. This is the **authoritative reference** for porting behavior. **The path is machine-specific** — see below. |
 
 The rewrite reads the original's data verbatim (entity templates XML, art assets) and ports its behavior to C#. Treat the original tree as a reference corpus, not a build target — unless explicitly asked to work on the C++ engine.
 
@@ -21,7 +21,24 @@ The rewrite reads the original's data verbatim (entity templates XML, art assets
 > | **Windows** | `C:\SourceCode\0ad` |
 > | **macOS** | `/Users/matthew/SourceCode/gitea/0ad` |
 >
-> Substitute your machine's path wherever this doc writes `<0ad upstream>`. When porting a subsystem, read the reference implementation there (e.g. `<0ad upstream>/source/simulation2/...`). The `source/` directory previously in this repo has been gitignored and may not exist on disk — use the external path.
+> Substitute your machine's path wherever this doc writes `<0ad upstream>`. When porting a subsystem, read the reference implementation there (e.g. `<0ad upstream>/source/simulation2/...`).
+
+### Upstream junctions (set up once after cloning)
+
+The C++ engine trees (`binaries/`, `build/`, `libraries/`, `source/`) are **removed from this repo** and provided locally as directory junctions pointing at `<0ad upstream>`. This keeps the C# rewrite's relative-path resolvers (`../binaries`, walk-up-to-find-`binaries/`) working unchanged while reading upstream data/assets verbatim.
+
+**After a fresh clone**, create the junctions (one-time):
+
+```bash
+# Windows (PowerShell) — uses ZEROAD_UPSTREAM env var or defaults to C:\SourceCode\0ad
+powershell -ExecutionPolicy Bypass -File tools/setup-upstream-junctions.ps1
+
+# macOS / Linux — manual ln -s equivalents (run from repo root, adjust upstream path)
+UPSTREAM=/Users/matthew/SourceCode/gitea/0ad
+for d in binaries build libraries source; do ln -s "$UPSTREAM/$d" "$d"; done
+```
+
+The junctions are gitignored — they will never be tracked. If `<0ad upstream>` moves, just re-run the script.
 
 **Master plan**: `godot-rewrite-plan.md` (modules M0–M10, milestones MS1–MS7, risk matrix). Read it before any non-trivial rewrite work.
 **System deep-dive notes**: `claude-analyze/*.md` (15 docs analyzing the original engine: ECS, network lockstep, pathfinding, rendering, audio, UnitAI, etc.). The fastest way to understand a subsystem you're porting.
@@ -83,7 +100,7 @@ Run from inside `godot/`:
 ```bash
 sh tools/run_full_pipeline.sh
 ```
-Requires **Blender 4.2 LTS** at `/Applications/Blender 4.2 LTS.app` (hardcoded path) and the original 0 A.D. art at `../binaries/data/mods/public/art`. Converts DAE→GLB meshes and copies/converts textures (PNG, DDS→PNG via `sips`) into `godot/assets/`. Per-category/single-asset conversion: `godot/tools/convert_dae_to_gltf.py`, `convert_all_assets.py`, `build_animated_unit.py`. These are Python — `ruff` governs them.
+Requires **Blender 4.2 LTS** (set path via `$BLENDER` env var, or the script auto-detects default install locations for macOS/Windows) and the original 0 A.D. art at `../binaries/data/mods/public/art` (provided via the `binaries/` junction). Converts DAE→GLB meshes and copies/converts textures (PNG, DDS→PNG via Blender) into `godot/assets/`. Per-category/single-asset conversion: `godot/tools/convert_dae_to_gltf.py`, `convert_all_assets.py`, `build_animated_unit.py`. These are Python — `ruff` governs them.
 
 ## Where to find reference implementations
 
@@ -103,7 +120,7 @@ When porting a subsystem, start from the original code. **The original C++/JS so
 
 **Example**: to look up the PMP header format, read `<0ad upstream>/source/graphics/MapIO.h` and `MapWriter.cpp`.
 
-Entity templates (data, consumed as-is by the rewrite): `binaries/data/mods/public/simulation/templates/*.xml` (this path is tracked in-repo).
+Entity templates (data, consumed as-is by the rewrite): `binaries/data/mods/public/simulation/templates/*.xml` — **read via the `binaries/` junction**, not tracked in this repo. The C# rewrite resolves this path relatively (`../binaries/...` or walk-up from the test assembly), so the junction makes it transparent.
 
 ## Conventions that differ from defaults
 
