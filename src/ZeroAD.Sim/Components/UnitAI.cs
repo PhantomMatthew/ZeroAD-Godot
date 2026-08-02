@@ -50,8 +50,59 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     public string? FsmNextState { get; set; }
 
     /// <summary>Stance controls auto-acquire behaviour (aggressive/defensive/passive/...).
-    /// P0 uses aggressive defaults; full stance logic is P1.</summary>
+    /// 行为语义 = 原版 g_Stances 表(见 s_stances);GUI 五档经 NetCommand.SetUnitStance 改。</summary>
     public string Stance { get; private set; } = "aggressive";
+
+    /// <summary>原版 g_Stances 单行:九 flag 决定自动索敌/受击响应。selectable=false 的
+    /// (skittish/passive-defensive/none)仅 AI/脚本用,GUI 不出现。</summary>
+    public readonly record struct StanceFlags(
+        bool TargetVisibleEnemies, bool TargetAttackersAlways,
+        bool RespondFlee, bool RespondFleeOnSight,
+        bool RespondChase, bool RespondChaseBeyondVision,
+        bool RespondStandGround, bool RespondHoldGround, bool Selectable);
+
+    private static readonly IReadOnlyDictionary<string, StanceFlags> s_stances =
+        new Dictionary<string, StanceFlags>
+        {
+            ["violent"]     = new(true,  true,  false, false, true,  true,  false, false, true),
+            ["aggressive"]  = new(true,  false, false, false, true,  false, false, false, true),
+            ["defensive"]   = new(true,  false, false, false, false, false, false, true,  true),
+            ["passive"]     = new(false, false, true,  false, false, false, false, false, true),
+            ["standground"] = new(true,  false, false, false, false, false, true,  false, true),
+            ["skittish"]    = new(false, false, true,  true,  false, false, false, false, false),
+            ["passive-defensive"] = new(false, false, false, false, false, false, false, true, false),
+            ["none"]        = new(false, false, false, false, false, false, false, false, false),
+        };
+
+    /// <summary>当前站姿的 flag 行(未知名落 aggressive——与默认值一致,不抛)。</summary>
+    public StanceFlags CurrentStanceFlags =>
+        s_stances.TryGetValue(Stance, out var f) ? f : s_stances["aggressive"];
+
+    /// <summary>GUI 可选站姿(stance 按钮条的数据源,顺序 = 原版图标条)。</summary>
+    public static IReadOnlyList<string> SelectableStances { get; } =
+        new[] { "violent", "aggressive", "defensive", "passive", "standground" };
+
+    /// <summary>换站姿(原版 UnitAI.SetStance:非法名报错不改)。defensive 立即锚定
+    /// heldPosition 到脚下(原版 SwitchToStance 语义:驻防点随换岗刷新)。</summary>
+    public bool SetStance(string stance, ComponentManager cm)
+    {
+        if (!s_stances.ContainsKey(stance)) return false;
+        Stance = stance;
+        if (CurrentStanceFlags.RespondHoldGround)
+            CaptureHeldPosition(cm);
+        return true;
+    }
+
+    // defensive 驻防锚点(原版 heldPosition):换岗/显式 Walk 时刷新;驻守攻击后
+    // 自动走回。null = 未锚定(首次换 defensive 或地图载入前)。
+    private FixedVector2D? _heldPosition;
+
+    private void CaptureHeldPosition(ComponentManager cm)
+    {
+        var pos = cm.QueryInterface<PositionComponent>(Entity);
+        if (pos != null)
+            _heldPosition = new FixedVector2D(pos.Position.X, pos.Position.Z);
+    }
 
     /// <summary>True when the order queue is empty and the unit is in IDLE.</summary>
     public bool IsIdle => _orderQueue.Count == 0;
@@ -141,29 +192,30 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     // Each mirrors a UnitAI.js AddOrder variant: queue front (replace) or back (append).
     // =========================================================================
 
-    /// <summary>Move to a point. Mirrors UnitAI.Walk(x,z,queued).</summary>
+    /// <summary>Move to a point. Mirrors UnitAI.Walk(x,z,queued).
+    /// Force=true:玩家显式指令,受击响应不得打断(原版 GUI 命令 force:true)。</summary>
     public void Walk(FixedVector2D target, bool queued = false)
     {
-        PushOrder(new UnitOrder { Type = "Walk", Position = target, Queued = queued });
+        PushOrder(new UnitOrder { Type = "Walk", Position = target, Queued = queued, Force = true });
     }
 
     /// <summary>Gather from a resource supply. Mirrors UnitAI.Gather(target,queued).</summary>
     public void Gather(EntityId target, bool queued = false)
     {
-        PushOrder(new UnitOrder { Type = "Gather", Target = target, Queued = queued });
+        PushOrder(new UnitOrder { Type = "Gather", Target = target, Queued = queued, Force = true });
     }
 
     /// <summary>Attack a target. Mirrors UnitAI.Attack(target, allowCapture, queued);
     /// allowCapture 默认 false(原版 DEFAULT_CAPTURE,GUI Ctrl+攻击才传 true)。</summary>
     public void Attack(EntityId target, bool allowCapture = false, bool queued = false)
     {
-        PushOrder(new UnitOrder { Type = "Attack", Target = target, Queued = queued, AllowCapture = allowCapture });
+        PushOrder(new UnitOrder { Type = "Attack", Target = target, Queued = queued, AllowCapture = allowCapture, Force = true });
     }
 
     /// <summary>Repair / build a foundation. Mirrors UnitAI.Repair(target,queued).</summary>
     public void Repair(EntityId target, bool queued = false)
     {
-        PushOrder(new UnitOrder { Type = "Repair", Target = target, Queued = queued });
+        PushOrder(new UnitOrder { Type = "Repair", Target = target, Queued = queued, Force = true });
     }
 
     /// <summary>Cancel all orders and stop. Mirrors UnitAI.Stop(queued).</summary>
@@ -178,9 +230,9 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
     // --- P1 order entry points (wire through, delegate to stubs) ---
     public void Garrison(EntityId holder, bool queued = false) =>
-        PushOrder(new UnitOrder { Type = "Garrison", Target = holder, Queued = queued });
+        PushOrder(new UnitOrder { Type = "Garrison", Target = holder, Queued = queued, Force = true });
     public void Heal(EntityId target, bool queued = false) =>
-        PushOrder(new UnitOrder { Type = "Heal", Target = target, Queued = queued });
+        PushOrder(new UnitOrder { Type = "Heal", Target = target, Queued = queued, Force = true });
     public void Trade(EntityId? market, bool queued = false) =>
         PushOrder(new UnitOrder { Type = "Trade", Target = market, Queued = queued });
     public void Pack() => PushOrder(new UnitOrder { Type = "Pack" });
@@ -257,6 +309,16 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         if (_dispatchPending)
             DispatchFrontOrder(cm);
 
+        // 空闲 stance 行为(原版 IDLE.enter 的 FindNewTargets/FindSightedEnemies +
+        // LosAttackRangeUpdate;我们以 1s 节流轮询替代 LOS 事件订阅)。编队成员/控制器
+        // 不自行索敌(原版 FORMATIONMEMBER 无个体响应)。
+        if (IsIdle && !IsGarrisoned && !IsTurret && FormationController == null && !IsFormationController)
+            StanceIdleScan(dt, cm);
+        // 扫描可能入队自动攻击/回锚订单:立即派发,否则下方 Timer 会打进无 handler 的
+        // IDLE 态而抛异常(同"订单残留 IDLE"坑)。
+        if (_dispatchPending)
+            DispatchFrontOrder(cm);
+
         // Then let the FSM handle periodic checks via a Timer-style message. Per-state handlers
         // advance the active order (move-arrival polling, gather progress, attack cycles).
         // 编队控制器空闲时也要收 Timer(IDLE 定期重排,对齐原版控制器 IDLE 定时器)。
@@ -304,6 +366,10 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         ind.On("Order.Walk", (u, m) =>
         {
             StartMovingTo(u, m.Order!.Position, m.Cm!);
+            // 显式走位即重锚驻防点(原版 UpdateHeldPosition:defensive 的"当前位置"
+            // 跟随玩家指令,不留在旧锚点)。
+            if (u.CurrentStanceFlags.RespondHoldGround)
+                u._heldPosition = m.Order.Position;
             u.FsmNextState = "WALKING";
         });
 
@@ -707,6 +773,48 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             {
                 var attack = m.Cm!.QueryInterface<AttackComponent>(u.Entity);
                 if (attack?.Target == null) { u.FinishOrder(); return; }
+                // 自动(非玩家强制)攻击订单的追击边界(原版 COMBAT.CHASING/APPROACHING
+                // 的 stance 门):standground 永不追击;defensive 目标跑出驻防圈即弃;
+                // aggressive 目标脱出视野即弃(violent 的 respondChaseBeyondVision 豁免)。
+                if (u.CurrentOrder is { Type: "Attack", Force: false })
+                {
+                    var flags = u.CurrentStanceFlags;
+                    // standground 绝不追击——但原版 APPROACHING 仅"目标在射程外"才进入
+                    // (射程内直进 ATTACKING);我们的移植必经此态,故只在超射程时拦截。
+                    if (flags.RespondStandGround)
+                    {
+                        var tp = m.Cm.QueryInterface<PositionComponent>(attack.Target.Value);
+                        var mp = m.Cm.QueryInterface<PositionComponent>(u.Entity);
+                        if (tp != null && mp != null)
+                        {
+                            float sdx = tp.Position.X.ToFloat() - mp.Position.X.ToFloat();
+                            float sdz = tp.Position.Z.ToFloat() - mp.Position.Z.ToFloat();
+                            float sreach = attack.CurrentAttackIsCapture ? attack.CaptureRange : attack.Range;
+                            if (sdx * sdx + sdz * sdz > sreach * sreach) { u.FinishOrder(); return; }
+                        }
+                    }
+                    if (flags.RespondHoldGround && u._heldPosition is { } held)
+                    {
+                        var tp = m.Cm.QueryInterface<PositionComponent>(attack.Target.Value);
+                        if (tp != null)
+                        {
+                            float hdx = tp.Position.X.ToFloat() - held.X.ToFloat();
+                            float hdz = tp.Position.Z.ToFloat() - held.Y.ToFloat();
+                            float reach = attack.CurrentAttackIsCapture ? attack.CaptureRange : attack.Range;
+                            if (hdx * hdx + hdz * hdz > reach * reach) { u.FinishOrder(); return; }
+                        }
+                    }
+                    if (!flags.RespondChaseBeyondVision)
+                    {
+                        var own = m.Cm.QueryInterface<OwnershipComponent>(u.Entity);
+                        if (own != null && SimSystem.Range != null &&
+                            SimSystem.Range.GetLosVisibility(attack.Target.Value, own.PlayerId) != LosVisibility.Visible)
+                        {
+                            u.FinishOrder();
+                            return;
+                        }
+                    }
+                }
                 attack.Tick(m.Dt, m.Cm!);
                 if (attack.State == AttackComponent.AttackState.Attacking)
                     u.FsmNextState = "COMBAT.ATTACKING";
@@ -1112,6 +1220,146 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     // Serialization — the order queue + FSM state name. Deterministic across platforms.
     // =========================================================================
 
+    // =========================================================================
+    // Stance behaviour — 原版 IDLE.enter 的 FindNewTargets/FindSightedEnemies 与
+    // FSM "Attacked" 消息(DelayedDamage → OnAttacked)的移植。事件订阅以 1s 节流
+    // 轮询代替(确定性;相位由实体 id 铺开,避免同帧全员扫描)。
+    // =========================================================================
+
+    private const float StanceScanInterval = 1.0f;
+    private float _stanceScanElapsed;
+
+    private void StanceIdleScan(float dt, ComponentManager cm)
+    {
+        _stanceScanElapsed += dt;
+        if (_stanceScanElapsed < StanceScanInterval) return;
+        _stanceScanElapsed = 0;
+
+        var flags = CurrentStanceFlags;
+        // 顺序对齐原版 IDLE.enter:先 FindNewTargets(索敌响应),再回驻防锚点。
+        if (flags.TargetVisibleEnemies || flags.RespondFleeOnSight)
+        {
+            var enemies = FindVisibleEnemies(cm, flags);
+            if (enemies.Count > 0)
+            {
+                RespondToTargetedEntity(enemies[0], cm);
+                return;
+            }
+        }
+        // 回锚(原版 respondHoldGround && heldPosition && 距锚 >10m → WalkToHeldPosition)。
+        if (flags.RespondHoldGround && _heldPosition is { } held)
+        {
+            var pos = cm.QueryInterface<PositionComponent>(Entity);
+            if (pos != null)
+            {
+                float dx = pos.Position.X.ToFloat() - held.X.ToFloat();
+                float dz = pos.Position.Z.ToFloat() - held.Y.ToFloat();
+                if (dx * dx + dz * dz > 100f)
+                    PushOrder(new UnitOrder { Type = "Walk", Position = held, Force = false });
+            }
+        }
+    }
+
+    /// <summary>视野内可见、可攻击的敌对玩家实体(原版 FindNewTargets 的目标掩码)。
+    /// gaia(owner≤0)排除:不自动打猎/砍树;敌对野兽的反击经 OnAttacked 覆盖。</summary>
+    private List<EntityId> FindVisibleEnemies(ComponentManager cm, StanceFlags flags)
+    {
+        var empty = new List<EntityId>();
+        var own = cm.QueryInterface<OwnershipComponent>(Entity);
+        var range = SimSystem.Range;
+        if (own == null || range == null) return empty;
+        var vision = cm.QueryInterface<VisionComponent>(Entity);
+        if (vision == null || vision.Range <= Fixed.Zero) return empty;
+        bool canFight = cm.QueryInterface<AttackComponent>(Entity) != null;
+        if (!canFight && !flags.RespondFleeOnSight) return empty;
+        int me = own.PlayerId;
+        return range.ExecuteQuery(Entity, Fixed.Zero, vision.Range, e =>
+        {
+            var eo = cm.QueryInterface<OwnershipComponent>(e);
+            if (eo == null || eo.PlayerId <= 0 || !cm.Players.IsEnemy(me, eo.PlayerId)) return false;
+            if (range.GetLosVisibility(e, me) != LosVisibility.Visible) return false;
+            var h = cm.QueryInterface<HealthComponent>(e);
+            return h is { IsDead: false };
+        });
+    }
+
+    /// <summary>原版 RespondToTargetedEntities 单目标版:chase/standground→攻击;
+    /// holdGround→驻防圈内才攻击;flee→逃离。</summary>
+    private void RespondToTargetedEntity(EntityId target, ComponentManager cm)
+    {
+        var flags = CurrentStanceFlags;
+        if (flags.RespondChase || flags.RespondStandGround)
+        {
+            // standground 的"绝不移动"由 COMBAT.APPROACHING 的 stance 门执行
+            // (原版同构:AttackVisibleEntity 推单,APPROACHING.enter 拦截非强制追击)。
+            TryPushStanceAttack(target, cm);
+            return;
+        }
+        if (flags.RespondHoldGround)
+        {
+            // AttackEntityInZone:目标须处驻防锚点的攻击射程内。
+            if (_heldPosition is not { } held) return;
+            var tp = cm.QueryInterface<PositionComponent>(target);
+            var attack = cm.QueryInterface<AttackComponent>(Entity);
+            if (tp == null || attack == null) return;
+            float dx = tp.Position.X.ToFloat() - held.X.ToFloat();
+            float dz = tp.Position.Z.ToFloat() - held.Y.ToFloat();
+            if (dx * dx + dz * dz <= attack.Range * attack.Range)
+                TryPushStanceAttack(target, cm);
+            return;
+        }
+        if (flags.RespondFlee)
+            FleeFrom(target, cm);
+    }
+
+    private void TryPushStanceAttack(EntityId target, ComponentManager cm)
+    {
+        if (cm.QueryInterface<AttackComponent>(Entity) == null) return;
+        // Force=false:stance 自发攻击;Order.Attack handler 仍走 AttackTarget 合法性门。
+        PushOrder(new UnitOrder { Type = "Attack", Target = target, Force = false });
+    }
+
+    /// <summary>逃离威胁(原版 Flee 订单的 v1 简化:一次性背离 15m;原版持续逃离
+    /// 更新留 backlog)。方向取"我−威胁"归一;重叠时走确定性 +x。</summary>
+    private void FleeFrom(EntityId threat, ComponentManager cm)
+    {
+        var pos = cm.QueryInterface<PositionComponent>(Entity);
+        var tp = cm.QueryInterface<PositionComponent>(threat);
+        if (pos == null || tp == null) return;
+        float dx = pos.Position.X.ToFloat() - tp.Position.X.ToFloat();
+        float dz = pos.Position.Z.ToFloat() - tp.Position.Z.ToFloat();
+        float len = MathF.Sqrt(dx * dx + dz * dz);
+        if (len < 0.001f) { dx = 1f; dz = 0f; len = 1f; }
+        const float fleeDist = 15f;
+        var dest = new FixedVector2D(
+            Fixed.FromFloat(pos.Position.X.ToFloat() + dx / len * fleeDist),
+            Fixed.FromFloat(pos.Position.Z.ToFloat() + dz / len * fleeDist));
+        PushOrder(new UnitOrder { Type = "Walk", Position = dest, Force = false });
+    }
+
+    /// <summary>受击响应(原版 FSM "Attacked" 消息;唯一调用点 = DelayedDamage.ApplyDirect,
+    /// 物理伤害 >0 时)。按 stance 表反击/逃跑/无视;玩家强制订单(Force=true)不被
+    /// 打断、攻击者须可见——violent(targetAttackersAlways)豁免这两条。</summary>
+    public void OnAttacked(EntityId attacker, ComponentManager cm)
+    {
+        if (IsGarrisoned || IsTurret || IsFormationController) return;
+        var flags = CurrentStanceFlags;
+        var own = cm.QueryInterface<OwnershipComponent>(Entity);
+        var aOwn = cm.QueryInterface<OwnershipComponent>(attacker);
+        if (own == null || aOwn == null) return;
+        if (!cm.Players.IsEnemy(own.PlayerId, aOwn.PlayerId)) return;
+        var ah = cm.QueryInterface<HealthComponent>(attacker);
+        if (ah == null || ah.IsDead) return;
+        if (!flags.TargetAttackersAlways && CurrentOrder is { Force: true }) return;
+        if (!flags.TargetAttackersAlways)
+        {
+            var range = SimSystem.Range;
+            if (range == null || range.GetLosVisibility(attacker, own.PlayerId) != LosVisibility.Visible)
+                return;
+        }
+        RespondToTargetedEntity(attacker, cm);
+    }
+
     public override void Serialize(ISerializer s)
     {
         s.StringASCII("state", FsmStateName);
@@ -1135,6 +1383,12 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         s.NumberU32("formationController", FormationController?.Value ?? 0);
         s.Bool("isFormationController", IsFormationController);
         s.NumberFixed("formationTimer", Fixed.FromFloat(_formationTimerElapsed));
+        // Stance 负载(本存档周期追加,读序须与写序逐位一致)。
+        s.StringASCII("stance", Stance);
+        s.Bool("heldValid", _heldPosition.HasValue);
+        s.NumberFixed("heldX", _heldPosition?.X ?? Fixed.Zero);
+        s.NumberFixed("heldZ", _heldPosition?.Y ?? Fixed.Zero);
+        s.NumberFixed("stanceScan", Fixed.FromFloat(_stanceScanElapsed));
     }
 
     public override void Deserialize(IDeserializer d)
@@ -1163,6 +1417,12 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         FormationController = fctrl != 0 ? new EntityId(fctrl) : null;
         IsFormationController = d.Bool("isFormationController");
         _formationTimerElapsed = d.NumberFixed("formationTimer").ToFloat();
+        Stance = d.StringASCII("stance");
+        bool heldValid = d.Bool("heldValid");
+        var heldX = d.NumberFixed("heldX");
+        var heldZ = d.NumberFixed("heldZ");
+        _heldPosition = heldValid ? new FixedVector2D(heldX, heldZ) : null;
+        _stanceScanElapsed = d.NumberFixed("stanceScan").ToFloat();
     }
 
     public void HandleMessage(IMessage message) { }

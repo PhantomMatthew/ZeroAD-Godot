@@ -21,6 +21,16 @@ namespace ZeroAD.Sim.Net
         Tribute = 9,
         SetTradingGoods = 10,
         Barter = 11,
+        // 会话内指令栏:Stop(EntityId=单位)/ Delete(EntityId=己方实体)/ CancelProduction
+        // (EntityId=生产建筑,IntParam1=队列下标)。
+        Stop = 12,
+        Delete = 13,
+        CancelProduction = 14,
+        // 会话内:SetUnitStance(EntityId=单位,TemplateName=站姿名)/ Garrison(EntityId=单位,
+        // IntParam1=宿主)/ Ungarrison(EntityId=宿主,IntParam1=要卸载的实体,-1=全部)。
+        SetUnitStance = 15,
+        Garrison = 16,
+        Ungarrison = 17,
     }
 
     /// <summary>
@@ -179,5 +189,34 @@ namespace ZeroAD.Sim.Net
         /// 系统级易物(本轮去价漂移,价格静态 truePrice±CONSTANT_DIFFERENCE)。</summary>
         public static NetCommand Barter(uint player, ResourceType sell, ResourceType buy, int amount) =>
             new(player, NetCommandType.Barter, 0, (int)sell, (int)buy, amount);
+
+        /// <summary>Stop:EntityId = 单位。清空订单回 IDLE(原版 "stop" 命令)。</summary>
+        public static NetCommand Stop(uint player, uint unitId) =>
+            new(player, NetCommandType.Stop, unitId);
+
+        /// <summary>Delete:EntityId = 己方实体。执行端校验归属后销毁
+        /// (原版 "delete-entities",本移植仅己方)。</summary>
+        public static NetCommand Delete(uint player, uint entityId) =>
+            new(player, NetCommandType.Delete, entityId);
+
+        /// <summary>CancelProduction:EntityId = 生产建筑,IntParam1 = 队列下标。
+        /// 取消并全额退资源(原版 "stop-production" + RemoveItem)。</summary>
+        public static NetCommand CancelProduction(uint player, uint buildingId, int queueIndex) =>
+            new(player, NetCommandType.CancelProduction, buildingId, queueIndex);
+
+        /// <summary>SetUnitStance:EntityId = 单位,TemplateName = 站姿名
+        /// (violent/aggressive/defensive/passive/standground)。原版 cmd {type:"stance", name}。</summary>
+        public static NetCommand SetUnitStance(uint player, uint unitId, string stance) =>
+            new(player, NetCommandType.SetUnitStance, unitId, templateName: stance);
+
+        /// <summary>Garrison:EntityId = 单位,IntParam1 = 宿主实体(走 UnitAI Order.Garrison,
+        /// 原版 cmd {type:"garrison", target})。</summary>
+        public static NetCommand Garrison(uint player, uint unitId, uint holderId) =>
+            new(player, NetCommandType.Garrison, unitId, (int)holderId);
+
+        /// <summary>Ungarrison:EntityId = 宿主,IntParam1 = 要卸载的实体(-1 = 全部,
+        /// 原版 "unload"/"unload-all-by-owner")。</summary>
+        public static NetCommand Ungarrison(uint player, uint holderId, int unitId = -1) =>
+            new(player, NetCommandType.Ungarrison, holderId, unitId);
     }
 }

@@ -51,7 +51,10 @@ public static class SaveGameManager
     // tutorial/localPlayerId/role/slots/timeUnix/description),跨场景冷加载用同一份槽位表+地图
     // 重建世界;payload 同步增 PlayerManager 注册表(pid→entity)序列化,冷加载后玩家映射指向
     // 存活实体而非已销毁者。旧 v5 档无此块(读骨架时位置流错位),按版本号拒收。
-    private const uint Version = 6;
+    // v7(2026-08-02):UnitAI 增 stance 负载(stance/heldPosition/stanceScan)——站姿系统落地
+    // (g_Stances 九 flag + 受击响应 + 驻防锚点),序列化流尾部多 1 字符串+1 bool+3 Fixed;
+    // 旧 v6 档位置流错位,按版本号拒收。
+    private const uint Version = 7;
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 

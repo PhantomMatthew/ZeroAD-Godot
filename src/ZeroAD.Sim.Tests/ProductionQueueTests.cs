@@ -191,4 +191,67 @@ public class ProductionQueueTests
         Assert.NotNull(ev);
         Assert.Equal("units/athen/support_female_citizen", ev!.UnitTemplate);
     }
+
+    [Fact]
+    public void CancelAt_RefundsFullCostTimesCount()
+    {
+        var cm = BuildWorldWithPlayer(out var trainer, out var playerEntity);
+        // OnInit resets resources to the skirmish defaults — set them post-AddComponent.
+        var player = cm.QueryInterface<PlayerComponent>(playerEntity)!;
+        player.Wood = 1000;
+        player.Food = 1000;
+        var queue = cm.QueryInterface<ProductionQueue>(trainer)!;
+        queue.Enqueue("dummy", woodCost: 50, foodCost: 30, buildTime: 10f, count: 2);
+
+        Assert.True(queue.CancelAt(0, cm));
+
+        Assert.Equal(1000 + 100, player.Wood);   // 50 × 2
+        Assert.Equal(1000 + 60, player.Food);    // 30 × 2
+        Assert.Equal(0, queue.QueueCount);
+    }
+
+    [Fact]
+    public void CancelAt_HeadCancel_ResetsProgress()
+    {
+        var cm = BuildWorldWithPlayer(out var trainer, out _);
+        var queue = cm.QueryInterface<ProductionQueue>(trainer)!;
+        queue.Enqueue("a", 0, 0, buildTime: 10f, count: 1);
+        queue.Enqueue("b", 0, 0, buildTime: 10f, count: 1);
+        queue.Tick(3f, cm);   // accrue progress on the head item
+        Assert.True(queue.Progress > 0);
+
+        Assert.True(queue.CancelAt(0, cm));
+
+        Assert.Equal(0f, queue.Progress);
+        Assert.Equal(1, queue.QueueCount);
+        Assert.Equal("b", queue.Queue[0].TemplateName);
+    }
+
+    [Fact]
+    public void CancelAt_MiddleCancel_KeepsSiblingOrder()
+    {
+        var cm = BuildWorldWithPlayer(out var trainer, out _);
+        var queue = cm.QueryInterface<ProductionQueue>(trainer)!;
+        queue.Enqueue("a", 0, 0, 10f, 1);
+        queue.Enqueue("b", 0, 0, 10f, 1);
+        queue.Enqueue("c", 0, 0, 10f, 1);
+
+        Assert.True(queue.CancelAt(1, cm));
+
+        Assert.Equal(2, queue.QueueCount);
+        Assert.Equal("a", queue.Queue[0].TemplateName);
+        Assert.Equal("c", queue.Queue[1].TemplateName);
+    }
+
+    [Fact]
+    public void CancelAt_OutOfRange_ReturnsFalse()
+    {
+        var cm = BuildWorldWithPlayer(out var trainer, out _);
+        var queue = cm.QueryInterface<ProductionQueue>(trainer)!;
+        queue.Enqueue("a", 0, 0, 10f, 1);
+
+        Assert.False(queue.CancelAt(-1, cm));
+        Assert.False(queue.CancelAt(1, cm));
+        Assert.Equal(1, queue.QueueCount);
+    }
 }

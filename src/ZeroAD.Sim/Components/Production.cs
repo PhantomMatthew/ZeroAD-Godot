@@ -37,6 +37,12 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         });
     }
 
+    private bool Reject(string reason)
+    {
+        LastRejectionReason = reason;
+        return false;
+    }
+
     /// <summary>
     /// Deterministic training entry point. Resolves the trainer's owner, reads real template
     /// cost/build-time/pop-cost/category, validates affordability + entity limits + pop headroom,
@@ -44,13 +50,19 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
     /// failure. This is the single source of truth shared by SimBridge.CommandTrain and
     /// NetTurnManager.ExecuteCommand so single-player and lockstep multiplayer agree exactly.
     /// </summary>
+    /// <summary>最近一次 EnqueueTraining 拒绝原因(cannot-afford/pop-limit/entity-limit/
+    /// defeated/...;成功时清 null)。执行端据此发 train-rejected 事件给 GUI 弹提示——
+    /// 原版训练失败有红字反馈,不能静默。只读诊断,不影响判定。</summary>
+    public string? LastRejectionReason { get; private set; }
+
     public bool EnqueueTraining(string templateName, int count, ComponentManager cm)
     {
-        if (count <= 0) return false;
-        if (cm.Templates == null) return false;
+        LastRejectionReason = null;
+        if (count <= 0) return Reject("bad-count");
+        if (cm.Templates == null) return Reject("no-templates");
 
         var owner = cm.QueryInterface<OwnershipComponent>(Entity);
-        if (owner == null) return false;
+        if (owner == null) return Reject("no-owner");
 
         var stats = cm.Templates.ExtractStats(templateName);
         int totalWood = stats.WoodCost * count;
@@ -61,16 +73,16 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         // Find the owner's PlayerComponent. Player entities are registered via ComponentManager's
         // player map (set up by the presentation layer at world init); resolve through it.
         var player = cm.GetPlayerEntity(owner.PlayerId);
-        if (player == null) return false;
+        if (player == null) return Reject("no-player");
         // A defeated player can't train units.
-        if (player.IsDefeated()) return false;
+        if (player.IsDefeated()) return Reject("defeated");
 
-        if (!player.CanAfford(totalWood, totalFood, totalStone, totalMetal)) return false;
+        if (!player.CanAfford(totalWood, totalFood, totalStone, totalMetal)) return Reject("cannot-afford");
 
         // Pop headroom check (pop is charged immediately on spawn, but we pre-validate to avoid
         // charging resources for a unit that can never appear).
         int popCost = stats.PopulationCost * count;
-        if (popCost > player.PopHeadroom) return false;
+        if (popCost > player.PopHeadroom) return Reject("pop-limit");
 
         // Entity limits (category caps like "Hero: 1").
         EntityLimitsComponent? limits = null;
@@ -78,7 +90,7 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         if (playerEid is { } pe)
             limits = cm.QueryInterface<EntityLimitsComponent>(pe);
         if (limits != null && !limits.AllowedToTrain(stats.TrainingCategory, count))
-            return false;
+            return Reject("entity-limit");
 
         // 训练时间过修正值管线(科技如 "Cost/BuildTime" ×0.9;单位未出生,走模板查询)
         float buildTime = stats.BuildTime;
@@ -114,6 +126,28 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
     {
         _queue.Clear();
         _progress = 0;
+    }
+
+    /// <summary>
+    /// 取消队列第 index 项并全额退还已付资源(对齐原版 RemoveItem:进度作废,资源退还;
+    /// 我们的批次原子完成、不存在部分产出,故按 Count 全退)。取消头项时进度清零。
+    /// </summary>
+    public bool CancelAt(int index, ComponentManager cm)
+    {
+        if (index < 0 || index >= _queue.Count) return false;
+        var item = _queue[index];
+        var owner = cm.QueryInterface<OwnershipComponent>(Entity);
+        var player = owner != null ? cm.GetPlayerEntity(owner.PlayerId) : null;
+        if (player != null)
+        {
+            if (item.WoodCost > 0) player.AddResource(ResourceType.Wood, item.WoodCost * item.Count);
+            if (item.FoodCost > 0) player.AddResource(ResourceType.Food, item.FoodCost * item.Count);
+            if (item.StoneCost > 0) player.AddResource(ResourceType.Stone, item.StoneCost * item.Count);
+            if (item.MetalCost > 0) player.AddResource(ResourceType.Metal, item.MetalCost * item.Count);
+        }
+        _queue.RemoveAt(index);
+        if (index == 0) _progress = 0;
+        return true;
     }
 
     /// <summary>

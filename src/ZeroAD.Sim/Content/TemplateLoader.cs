@@ -66,7 +66,12 @@ namespace ZeroAD.Sim.Content
         public TemplateStats ExtractStats(string templateName)
         {
             var node = LoadTemplate(templateName);
-            return ExtractStatsFromNode(node);
+            var stats = ExtractStatsFromNode(node);
+            // 回填模板名:IdentityComponent.TemplateName(SpawnUnit)、头像解析、存档重建
+            // 都依赖它;此前恒空导致 SimBridge 生成的实体全部丢模板名(头像/Garrisonable
+            // 门/视觉回退连锁受影响)。视觉解析仍走 SpawnFromTemplate 的显式参数,勿改回。
+            stats.TemplateName = templateName;
+            return stats;
         }
 
         public static TemplateStats ExtractStatsFromNode(ParamNode node)
@@ -101,6 +106,7 @@ namespace ZeroAD.Sim.Content
             var health = node.GetChild("Health");
             if (health.IsOk)
             {
+                stats.HasHealth = true;
                 stats.MaxHealth = health.GetChild("Max").IsOk
                     ? health.GetChild("Max").ToInt() : 100;
             }
@@ -124,6 +130,13 @@ namespace ZeroAD.Sim.Content
                 stats.BuildTime = cost.GetChild("BuildTime").IsOk
                     ? cost.GetChild("BuildTime").ToFixed().ToFloat() : 5.0f;
             }
+
+            // 新版 0 A.D. 数据(A26+):人口加成在顶层 <Population><Bonus>N</Bonus></Population>
+            // (与 <Cost><Population> 占用费不同节点)——房子 +5、CC +20 都在这。顶层优先,
+            // 缺失时回落上面的旧版 <Cost><PopulationBonus> 读法。
+            var popNode = node.GetChild("Population");
+            if (popNode.IsOk && popNode.GetChild("Bonus").IsOk)
+                stats.PopulationBonus = popNode.GetChild("Bonus").ToInt();
 
             var trainingRestrictions = node.GetChild("TrainingRestrictions");
             if (trainingRestrictions.IsOk)
@@ -586,6 +599,11 @@ namespace ZeroAD.Sim.Content
         public string Auras = "";
         public string TemplateName = "";
         public int MaxHealth = 100;
+        /// <summary>True only when the template XML actually declares a &lt;Health&gt; node.
+        /// Gaia resources (trees/rocks) have none in 0 A.D. data — they are not attackable —
+        /// while fauna does. Spawn paths must key HealthComponent creation off this flag, not
+        /// off MaxHealth (which defaults to 100 even when undeclared).</summary>
+        public bool HasHealth;
         public int WoodCost;
         public int FoodCost;
         public int StoneCost;

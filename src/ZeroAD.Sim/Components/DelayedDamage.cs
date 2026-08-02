@@ -97,6 +97,11 @@ public sealed class DelayedDamage
 
         health?.TakeDamage(final);
 
+        // 受击响应钩子(原版 MT_Attacked → UnitAI):物理伤害 >0 才触发;捕获通道
+        // (Capture)不触发(对齐原版攻击效果接收序,捕获自身不引起反击)。
+        if (final.TotalPhysical > 0)
+            cm.QueryInterface<Components.UnitAIComponent>(target)?.OnAttacked(attacker, cm);
+
         // 捕获通道(对齐原版 g_AttackEffects 接收序:Damage 先结算,Capture 读扣血后 hp)。
         // GetTotalAttackEffects 的 hp 缩放:total /= 0.1 + 0.9×hp/maxHp(血越少越易占领);
         // 目标无 Health → 无缩放(原版 cmpHealth 缺失分支)。

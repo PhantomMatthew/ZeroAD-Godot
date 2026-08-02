@@ -45,6 +45,14 @@ namespace ZeroAD.Sim.Net
                 case NetCommandType.Build: ApplyBuild(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.Research: ApplyResearch(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.SetRallyPoint: ApplySetRallyPoint(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Stop: _cm.QueryInterface<UnitAIComponent>(new EntityId(cmd.EntityId))?.Stop(); break;
+                case NetCommandType.Delete: ApplyDelete(cmd); break;
+                case NetCommandType.CancelProduction:
+                    _cm.QueryInterface<ProductionQueue>(new EntityId(cmd.EntityId))?.CancelAt(cmd.IntParam1, _cm);
+                    break;
+                case NetCommandType.SetUnitStance: ApplySetUnitStance(cmd); break;
+                case NetCommandType.Garrison: ApplyGarrison(cmd); break;
+                case NetCommandType.Ungarrison: ApplyUngarrison(cmd); break;
                 // Player-level commands (外交/贸易):无 entity,EntityId=0,不构造 EntityId(0 非法)。
                 case NetCommandType.SetStance: ApplySetStance(cmd); break;
                 case NetCommandType.Tribute: ApplyTribute(cmd); break;
@@ -110,7 +118,15 @@ namespace ZeroAD.Sim.Net
             string template = string.IsNullOrEmpty(cmd.TemplateName)
                 ? "units/spart/support_civilian"
                 : cmd.TemplateName;
-            queue.EnqueueTraining(template, Math.Max(1, cmd.IntParam1), _cm);
+            if (!queue.EnqueueTraining(template, Math.Max(1, cmd.IntParam1), _cm))
+            {
+                // 训练拒绝(资源/人口/上限):与 build-rejected 同通道回传,GUI 弹红字。
+                // 双端同判,各端只看到自己指令的拒绝。
+                var e = new PlayerCommandEvent { Type = "train-rejected" };
+                e.Data["player"] = (int)cmd.Player;
+                e.Data["reason"] = queue.LastRejectionReason ?? "unknown";
+                _cm.Events.RaisePlayerCommand(e);
+            }
         }
 
         private void ApplyBuild(EntityId builder, NetCommand cmd)
@@ -128,7 +144,11 @@ namespace ZeroAD.Sim.Net
             int metal = stats?.MetalCost ?? 0;
             int food = stats?.FoodCost ?? 0;
             float buildTime = stats != null && stats.BuildTime > 0f ? stats.BuildTime : 8.0f;
-            if (!player.CanAfford(wood, food, stone, metal)) return;
+            if (!player.CanAfford(wood, food, stone, metal))
+            {
+                RaiseBuildRejected(cmd, "cannot-afford");
+                return;
+            }
 
             var x = Fixed.Zero.WithInternalValue(cmd.FixedParam1);
             var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
@@ -146,7 +166,11 @@ namespace ZeroAD.Sim.Net
                 }
                 var result = pathfinder.CheckBuildingPlacement(
                     x, z, Fixed.FromFloat(halfSize), Fixed.FromFloat(halfSize));
-                if (result != PlacementResult.Success) return;
+                if (result != PlacementResult.Success)
+                {
+                    RaiseBuildRejected(cmd, "invalid-placement");
+                    return;
+                }
             }
 
             // 领土限制(对齐 BuildRestrictions.js:186-240,双端同判定):own/ally/neutral/enemy
@@ -155,7 +179,11 @@ namespace ZeroAD.Sim.Net
             if (territory != null)
             {
                 string tokens = stats?.BuildRestrictionsTerritory ?? "";
-                if (!territory.CanBuildHere(tokens, (int)cmd.Player, x, z)) return;
+                if (!territory.CanBuildHere(tokens, (int)cmd.Player, x, z))
+                {
+                    RaiseBuildRejected(cmd, "territory");
+                    return;
+                }
             }
 
             player.Spend(wood, food, stone, metal);
@@ -167,6 +195,17 @@ namespace ZeroAD.Sim.Net
             else
                 _cm.QueryInterface<BuilderComponent>(builder)?.Build(foundation);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "repair", Target = foundation });
+        }
+
+        /// <summary>建造拒绝事件(原版 GUI 红字提示的移植:此前拒绝全静默,玩家点地面
+        /// 无地基且无任何反馈)。表现层过滤 player==本地玩家后弹 toast;事件不进存档,
+        /// 双端同判故各端只看到自己指令的拒绝。</summary>
+        private void RaiseBuildRejected(NetCommand cmd, string reason)
+        {
+            var e = new PlayerCommandEvent { Type = "build-rejected" };
+            e.Data["player"] = (int)cmd.Player;
+            e.Data["reason"] = reason;
+            _cm.Events.RaisePlayerCommand(e);
         }
 
         /// <summary>
@@ -254,6 +293,55 @@ namespace ZeroAD.Sim.Net
                 rally.Set(new FixedVector2D(Fixed.Zero, Fixed.Zero));
             }
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "set-rallypoint", Target = target });
+        }
+
+        /// <summary>
+        /// 删除己方实体(原版 delete-entities 的简化:仅允许删自己拥有的实体;原版另有
+        /// IsUndeletable/占领点数门槛,本移植暂不引入)。DestroyEntity 自带索引清理
+        /// (RangeManager/ObstructionManager 经 NotifyEntityDestroyed 摘除)。
+        /// </summary>
+        private void ApplyDelete(NetCommand cmd)
+        {
+            var entity = new EntityId(cmd.EntityId);
+            var owner = _cm.QueryInterface<OwnershipComponent>(entity);
+            if (owner == null || owner.PlayerId != (int)cmd.Player) return;
+            _cm.DestroyEntity(entity);
+        }
+
+        /// <summary>改单位站姿(原版 stance 命令;EntityId=单位,TemplateName=站姿名)。
+        /// 与 Delete 同样的归属校验——只能改自己单位的站姿。</summary>
+        private void ApplySetUnitStance(NetCommand cmd)
+        {
+            var entity = new EntityId(cmd.EntityId);
+            var owner = _cm.QueryInterface<OwnershipComponent>(entity);
+            if (owner == null || owner.PlayerId != (int)cmd.Player) return;
+            _cm.QueryInterface<UnitAIComponent>(entity)?.SetStance(cmd.TemplateName, _cm);
+        }
+
+        /// <summary>载入驻军(原版 garrison 命令;EntityId=单位,IntParam1=宿主)。
+        /// 单位归属校验同 Delete;宿主是否接受由 UnitAI 的 GARRISON 子树
+        /// (Garrisonable.CanGarrison → GarrisonHolder)在执行订单时判定。</summary>
+        private void ApplyGarrison(NetCommand cmd)
+        {
+            var unit = new EntityId(cmd.EntityId);
+            var owner = _cm.QueryInterface<OwnershipComponent>(unit);
+            if (owner == null || owner.PlayerId != (int)cmd.Player) return;
+            _cm.QueryInterface<UnitAIComponent>(unit)?.Garrison(new EntityId((uint)cmd.IntParam1));
+        }
+
+        /// <summary>卸载驻军(原版 unload/unload-all-by-owner;EntityId=宿主,
+        /// IntParam1=要卸载的实体,-1=全部)。宿主归属校验:只能卸载自己建筑里的驻军。</summary>
+        private void ApplyUngarrison(NetCommand cmd)
+        {
+            var holder = new EntityId(cmd.EntityId);
+            var owner = _cm.QueryInterface<OwnershipComponent>(holder);
+            if (owner == null || owner.PlayerId != (int)cmd.Player) return;
+            var garrison = _cm.QueryInterface<GarrisonHolderComponent>(holder);
+            if (garrison == null) return;
+            if (cmd.IntParam1 < 0)
+                garrison.UnloadAll(_cm);
+            else
+                garrison.Unload(_cm, new EntityId((uint)cmd.IntParam1));
         }
 
         // ── 第二梯队菜单面板:外交/贸易命令(均玩家级,不用 entity) ────────────────

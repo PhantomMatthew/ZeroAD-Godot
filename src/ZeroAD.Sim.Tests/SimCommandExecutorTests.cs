@@ -220,4 +220,180 @@ public sealed class SimCommandExecutorTests
         Assert.Equal(Fixed.FromFloat(33f), rally.Position.X);
         Assert.Equal(Fixed.FromFloat(44f), rally.Position.Y);
     }
+
+    [Fact]
+    public void Garrison_IssuesGarrisonOrder()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var unit = MakeUnitWithAI(cm, player: 1);
+        cm.AddComponent(unit, new GarrisonableComponent { Size = 1 });
+        var holder = MakeGarrisonHolder(cm, player: 1);
+
+        executor.Apply(NetCommand.Garrison(1, unit.Value, holder.Value));
+
+        Assert.Equal("Garrison", cm.QueryInterface<UnitAIComponent>(unit)!.CurrentOrder?.Type);
+    }
+
+    [Fact]
+    public void Garrison_RejectsForeignUnit()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var foreign = MakeUnitWithAI(cm, player: 2);
+        cm.AddComponent(foreign, new GarrisonableComponent { Size = 1 });
+        var holder = MakeGarrisonHolder(cm, player: 2);
+
+        executor.Apply(NetCommand.Garrison(1, foreign.Value, holder.Value));
+
+        Assert.True(cm.QueryInterface<UnitAIComponent>(foreign)!.IsIdle);
+    }
+
+    [Fact]
+    public void Ungarrison_All_EjectsOccupants()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var unit = MakeUnitWithAI(cm, player: 1);
+        cm.QueryInterface<IdentityComponent>(unit)!.Classes.Add("Infantry");
+        cm.AddComponent(unit, new GarrisonableComponent { Size = 1 });
+        var holder = MakeGarrisonHolder(cm, player: 1);
+        Assert.True(cm.QueryInterface<GarrisonableComponent>(unit)!.Garrison(cm, holder));
+        Assert.Single(cm.QueryInterface<GarrisonHolderComponent>(holder)!.Entities);
+
+        executor.Apply(NetCommand.Ungarrison(1, holder.Value, -1));
+
+        Assert.Empty(cm.QueryInterface<GarrisonHolderComponent>(holder)!.Entities);
+    }
+
+    [Fact]
+    public void Ungarrison_RejectsForeignHolder()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var unit = MakeUnitWithAI(cm, player: 2);
+        cm.QueryInterface<IdentityComponent>(unit)!.Classes.Add("Infantry");
+        cm.AddComponent(unit, new GarrisonableComponent { Size = 1 });
+        var holder = MakeGarrisonHolder(cm, player: 2);
+        Assert.True(cm.QueryInterface<GarrisonableComponent>(unit)!.Garrison(cm, holder));
+
+        executor.Apply(NetCommand.Ungarrison(1, holder.Value, -1));   // player 1 tries
+
+        Assert.Single(cm.QueryInterface<GarrisonHolderComponent>(holder)!.Entities);
+    }
+
+    private static EntityId MakeGarrisonHolder(ComponentManager cm, int player)
+    {
+        SimSystem.Init(cm);
+        var e = cm.CreateEntity();
+        cm.AddComponent(e, new PositionComponent());
+        var id = new IdentityComponent();
+        cm.AddComponent(e, id);
+        id.Classes.Add("Structure");
+        cm.AddComponent(e, new OwnershipComponent { PlayerId = player });
+        var gh = new GarrisonHolderComponent { Max = 10 };
+        cm.AddComponent(e, gh);
+        gh.AllowedClasses.Add("Infantry");
+        return e;
+    }
+
+    [Fact]
+    public void SetUnitStance_SetsOwnUnitStance()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var unit = MakeUnitWithAI(cm, player: 1);
+
+        executor.Apply(NetCommand.SetUnitStance(1, unit.Value, "defensive"));
+
+        Assert.Equal("defensive", cm.QueryInterface<UnitAIComponent>(unit)!.Stance);
+    }
+
+    [Fact]
+    public void SetUnitStance_RejectsForeignUnit()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var foreign = MakeUnitWithAI(cm, player: 2);
+
+        executor.Apply(NetCommand.SetUnitStance(1, foreign.Value, "passive"));
+
+        Assert.Equal("aggressive", cm.QueryInterface<UnitAIComponent>(foreign)!.Stance);
+    }
+
+    [Fact]
+    public void SetUnitStance_RejectsUnknownStanceName()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var unit = MakeUnitWithAI(cm, player: 1);
+
+        executor.Apply(NetCommand.SetUnitStance(1, unit.Value, "bogus"));
+
+        Assert.Equal("aggressive", cm.QueryInterface<UnitAIComponent>(unit)!.Stance);
+    }
+
+    [Fact]
+    public void Stop_ClearsUnitAIOrderQueue()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var unit = MakeUnitWithAI(cm);
+        var ai = cm.QueryInterface<UnitAIComponent>(unit)!;
+        ai.Walk(new FixedVector2D(Fixed.FromInt(50), Fixed.FromInt(50)));
+        Assert.False(ai.IsIdle);
+
+        executor.Apply(NetCommand.Stop(1, unit.Value));
+
+        Assert.True(ai.IsIdle);
+    }
+
+    [Fact]
+    public void Delete_DestroysOwnEntity()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var unit = MakeUnitWithAI(cm, player: 1);
+
+        executor.Apply(NetCommand.Delete(1, unit.Value));
+
+        Assert.DoesNotContain(unit, cm.AllEntities);
+    }
+
+    [Fact]
+    public void Delete_RejectsForeignEntity()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var foreign = MakeUnitWithAI(cm, player: 2);
+
+        executor.Apply(NetCommand.Delete(1, foreign.Value));
+
+        Assert.Contains(foreign, cm.AllEntities);
+    }
+
+    [Fact]
+    public void CancelProduction_RefundsAndDequeues()
+    {
+        var cm = new ComponentManager(1);
+        SimSystem.Init(cm);
+        var playerEntity = cm.CreateEntity();
+        cm.AddComponent(playerEntity, new PlayerComponent());
+        cm.RegisterPlayer(1, playerEntity);
+        // OnInit resets resources to the skirmish defaults — set post-AddComponent.
+        cm.QueryInterface<PlayerComponent>(playerEntity)!.Wood = 100;
+        var trainer = cm.CreateEntity();
+        cm.AddComponent(trainer, new PositionComponent());
+        cm.AddComponent(trainer, new ProductionQueue());
+        cm.AddComponent(trainer, new OwnershipComponent { PlayerId = 1 });
+        cm.QueryInterface<ProductionQueue>(trainer)!
+            .Enqueue("dummy", woodCost: 50, foodCost: 0, buildTime: 10f, count: 2);
+        var executor = new SimCommandExecutor(cm);
+
+        executor.Apply(NetCommand.CancelProduction(1, trainer.Value, 0));
+
+        var queue = cm.QueryInterface<ProductionQueue>(trainer)!;
+        Assert.Equal(0, queue.QueueCount);
+        Assert.Equal(200, cm.QueryInterface<PlayerComponent>(playerEntity)!.Wood);
+    }
 }

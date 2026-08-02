@@ -142,6 +142,19 @@ public sealed class PlayerManager
     /// </summary>
     public void ApplyOwnershipPopChange(EntityId entity, int oldOwner, int newOwner)
     {
+        var pop = _cm.QueryInterface<PopulationComponent>(entity);
+        var ownership = _cm.QueryInterface<OwnershipComponent>(entity);
+        // 通知语义=应用语义:归属变更先落到组件,下面的重算读当前归属才正确
+        // (调用方本就会改/已改归属时此处幂等)。实体已销毁(组件拆除)时
+        // AllEntities 已不含它,重算天然排除——此时无法判断它是否带人口加成,保守重算。
+        if (ownership != null && newOwner != oldOwner)
+            ownership.PlayerId = newOwner;
+        if (pop != null || ownership == null)
+        {
+            if (oldOwner > 0) RecomputePlayerPopBonus(oldOwner);
+            if (newOwner > 0 && newOwner != oldOwner) RecomputePlayerPopBonus(newOwner);
+        }
+
         var cost = _cm.QueryInterface<CostComponent>(entity);
         if (cost == null || cost.PopulationCost == 0) return;
 
