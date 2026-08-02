@@ -366,7 +366,11 @@ public sealed partial class SimBridge : Node
         var entity = _sim.CreateEntity();
         _sim.AddComponent(entity, new PositionComponent());
         _sim.AddComponent(entity, new ResourceDropsite());
-        _sim.AddComponent(entity, new ProductionQueue());
+        _sim.AddComponent(entity, new ProductionQueue
+        {
+            TrainableTokens = stats?.TrainableEntities ?? "",
+            NativeCiv = stats?.Civ ?? "",
+        });
         _sim.AddComponent(entity, new ResearcherComponent());
         _sim.AddComponent(entity, new RallyPointComponent());
 
@@ -1288,7 +1292,13 @@ public sealed partial class SimBridge : Node
         {
             if (stats.CanTrain)
             {
-                _sim.AddComponent(entity, new ProductionQueue());
+                // 训练列表数据驱动(原版 Trainer/Entities):tokens+原生文明随组件装配,
+                // {civ} 按属主实时解析——雅典 CC 出雅典兵,被占领后出占领者的兵。
+                _sim.AddComponent(entity, new ProductionQueue
+                {
+                    TrainableTokens = stats.TrainableEntities,
+                    NativeCiv = stats.Civ,
+                });
                 // 集结点(原版每个生产建筑都有 RallyPointRenderer):此前只有地基完工路径
                 // (SpawnScenarioBuilding)装了,起始 CC 永远设不了集结点。
                 _sim.AddComponent(entity, new RallyPointComponent());
@@ -1519,8 +1529,22 @@ public sealed partial class SimBridge : Node
     public void CommandTrain(EntityId building, string template, int count = 1, bool batch = false) =>
         SubmitCommand(NetCommand.Train(LocalPlayerId, building.Value, template, batch ? 5 : count));
 
+    /// <summary>从建筑可训练列表选首选项(support=true → 首个含 "support_" 的项,否则首个
+    /// 非 support 项;原版 GUI 列表首项语义)。列表为空返回 null。</summary>
+    private string? FirstTrainable(EntityId building, bool support)
+    {
+        var queue = _sim.QueryInterface<ProductionQueue>(building);
+        if (queue == null) return null;
+        foreach (var t in queue.GetTrainableEntities(_sim))
+        {
+            bool isSupport = t.Contains("support_");
+            if (isSupport == support) return t;
+        }
+        return null;
+    }
+
     public void CommandTrain(EntityId building) =>
-        CommandTrain(building, "units/spart/support_civilian");
+        CommandTrain(building, FirstTrainable(building, support: true) ?? "units/spart/support_civilian");
 
     // ── 第二梯队菜单面板:外交/贸易命令包装(玩家级,无 entity) ────────────────
 
@@ -1553,7 +1577,7 @@ public sealed partial class SimBridge : Node
 
     public void CommandTrainSoldier(EntityId building)
     {
-        CommandTrain(building, "units/spart/infantry_spearman_b");
+        CommandTrain(building, FirstTrainable(building, support: false) ?? "units/spart/infantry_spearman_b");
     }
 
     /// <summary>编队行走(原版 Commands.js 编队创建流:过滤可编队成员 → 生成

@@ -1720,12 +1720,23 @@ public sealed partial class Main : Node3D
 		_buildTemplate = template;
 	}
 
-	public void TrainVillager(bool batch = false)
+	public void TrainVillager(bool batch = false) => TrainFirstMatching(batch, support: true);
+
+	public void TrainSoldier(bool batch = false) => TrainFirstMatching(batch, support: false);
+
+	/// <summary>训练选中首个生产建筑可训练列表中首个 support/非-support 项(热键
+	/// T=村民/S=士兵;数据驱动,文明正确——原版热键亦按训练面板项语义)。</summary>
+	public void TrainFirstMatching(bool batch, bool support)
 	{
 		foreach (var eid in _selectedEntities)
-			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
+			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) is { } queue)
 			{
-				_sim.CommandTrain(eid, "units/spart/support_civilian", batch: batch);
+				foreach (var t in queue.GetTrainableEntities(_sim.Sim))
+				{
+					if (t.Contains("support_") != support) continue;
+					_sim.CommandTrain(eid, t, batch: batch);
+					return;
+				}
 				break;
 			}
 	}
@@ -1792,26 +1803,6 @@ public sealed partial class Main : Node3D
 			if (IsOwn(eid) && _sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
 			{
 				_sim.CommandCancelProduction(eid, index);
-				break;
-			}
-	}
-
-	public void TrainSoldier(bool batch = false)
-	{
-		foreach (var eid in _selectedEntities)
-			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
-			{
-				_sim.CommandTrain(eid, "units/spart/infantry_spearman_b", batch: batch);
-				break;
-			}
-	}
-
-	public void TrainSkirmisher(bool batch = false)
-	{
-		foreach (var eid in _selectedEntities)
-			if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null)
-			{
-				_sim.CommandTrain(eid, "units/spart/infantry_javelineer_b", batch: batch);
 				break;
 			}
 	}

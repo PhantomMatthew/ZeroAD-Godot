@@ -54,7 +54,10 @@ public static class SaveGameManager
     // v7(2026-08-02):UnitAI 增 stance 负载(stance/heldPosition/stanceScan)——站姿系统落地
     // (g_Stances 九 flag + 受击响应 + 驻防锚点),序列化流尾部多 1 字符串+1 bool+3 Fixed;
     // 旧 v6 档位置流错位,按版本号拒收。
-    private const uint Version = 7;
+    // v8(2026-08-02):ProductionQueue 增 TrainableTokens+NativeCiv(训练列表数据驱动,
+    // 原版 Trainer/Entities)——组件流 count/progress 后多 2 个 ASCII 字符串;旧 v7 档
+    // 位置流错位,按版本号拒收。
+    private const uint Version = 8;
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 

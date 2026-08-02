@@ -560,10 +560,18 @@ public sealed partial class HUD : CanvasLayer
 
         if (hasProducer)
         {
-            AddCmdButton("support_civilian", "Villager\n50F", () => _main.TrainVillager(Input.IsKeyPressed(Key.Shift)));
-            AddCmdButton("infantry_spearman", "Soldier\n80F 20M", () => _main.TrainSoldier(Input.IsKeyPressed(Key.Shift)));
-            if (_main.IsTutorial)
-                AddCmdButton("infantry_javelinist", "Skirmisher\n70F 30W", () => _main.TrainSkirmisher(true));
+            // 数据驱动训练列表(原版 selection_panels 训练面板):取首个选中生产建筑的
+            // ProductionQueue 解析列表(Trainer/Entities,{civ}=属主文明已实时解析,
+            // 不存在的模板已过滤)——雅典 CC 出雅典兵,斯巴达 CC 出斯巴达兵。
+            EntityId? producer = null;
+            foreach (var eid in _main.SelectedEntities)
+                if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null) { producer = eid; break; }
+            if (producer.HasValue)
+            {
+                var queue = _sim.Sim.QueryInterface<ProductionQueue>(producer.Value)!;
+                foreach (var tmpl in queue.GetTrainableEntities(_sim.Sim))
+                    AddTrainButton(tmpl);
+            }
         }
 
         if (hasBuilder)
@@ -598,9 +606,6 @@ public sealed partial class HUD : CanvasLayer
             }
         }
 
-        if (hasArsenal)
-            AddCmdButton("siege_ram", "Battering\nRam\n200W\n50M", () => _main.TrainUnit("units/spart/siege_ram", Input.IsKeyPressed(Key.Shift)));
-
         if (!hasBuilder && !hasProducer && researcherTemplates.Count == 0 && !hasArsenal)
         {
             var hint = new Label { Text = "Select a unit or building" };
@@ -608,6 +613,49 @@ public sealed partial class HUD : CanvasLayer
             hint.AddThemeFontSizeOverride("font_size", 13);
             _commandBox.AddChild(hint);
         }
+    }
+
+    /// <summary>训练按钮(数据驱动):头像优先模板 Identity/Icon 指向的原版立绘
+    /// (binaries/.../portraits/),回落内置肖像映射;标签=GenericName+资源费。
+    /// 点击走通用 TrainUnit(文明正确的完整模板名)。</summary>
+    private void AddTrainButton(string template)
+    {
+        var stats = _sim.Sim.Templates?.ExtractStats(template);
+        string label = stats != null && stats.GenericName.Length > 0
+            ? stats.GenericName
+            : template[(template.LastIndexOf('/') + 1)..];
+        var costs = new List<string>();
+        if (stats != null)
+        {
+            if (stats.FoodCost > 0) costs.Add($"{stats.FoodCost}F");
+            if (stats.WoodCost > 0) costs.Add($"{stats.WoodCost}W");
+            if (stats.StoneCost > 0) costs.Add($"{stats.StoneCost}S");
+            if (stats.MetalCost > 0) costs.Add($"{stats.MetalCost}M");
+        }
+        string text = costs.Count > 0 ? $"{label}\n{string.Join(' ', costs)}" : label;
+        var tex = (stats != null ? LoadPortraitFromIcon(stats.Icon) : null)
+                  ?? LoadPortraitForTemplate(template);
+        string t = template; // 闭包捕获迭代变量
+        AddCmdButton(tex, text, () => _main.TrainUnit(t, Input.IsKeyPressed(Key.Shift)));
+    }
+
+    /// <summary>从原版 art 树加载立绘(Identity/Icon 相对路径,如
+    /// units/athen/infantry_spearman.png;全文明免拷贝,repo 内 binaries/ 即数据源)。
+    /// 找不到返回 null(调用方回落内置映射)。</summary>
+    private static Texture2D? LoadPortraitFromIcon(string icon)
+    {
+        if (icon.Length == 0) return null;
+        string projRoot = ProjectSettings.GlobalizePath("res://");
+        foreach (var up in new[] { "..", "../.." })
+        {
+            string p = System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, up,
+                "binaries", "data", "mods", "public", "art", "textures", "ui", "session", "portraits",
+                icon.Replace('/', System.IO.Path.DirectorySeparatorChar)));
+            if (!System.IO.File.Exists(p)) continue;
+            var img = Image.LoadFromFile(p);
+            if (img != null) return ImageTexture.CreateFromImage(img);
+        }
+        return null;
     }
 
     private static readonly Dictionary<string, string> PortraitMap = new()
@@ -634,7 +682,10 @@ public sealed partial class HUD : CanvasLayer
         ["infantry_attack"] = "portraits/structures/blacksmith.png",
     };
 
-    private void AddCmdButton(string iconKey, string text, System.Action onPressed)
+    private void AddCmdButton(string iconKey, string text, System.Action onPressed) =>
+        AddCmdButton(PortraitMap.TryGetValue(iconKey, out var p) ? LoadTex(p) : null, text, onPressed);
+
+    private void AddCmdButton(Texture2D? tex, string text, System.Action onPressed)
     {
         var btn = new Button
         {
@@ -643,16 +694,12 @@ public sealed partial class HUD : CanvasLayer
             CustomMinimumSize = new Vector2(46, 46),
         };
 
-        if (PortraitMap.TryGetValue(iconKey, out var iconPath))
+        if (tex != null)
         {
-            var tex = LoadTex(iconPath);
-            if (tex != null)
-            {
-                btn.Icon = tex;
-                btn.ExpandIcon = true;
-                btn.IconAlignment = HorizontalAlignment.Center;
-                btn.VerticalIconAlignment = VerticalAlignment.Top;
-            }
+            btn.Icon = tex;
+            btn.ExpandIcon = true;
+            btn.IconAlignment = HorizontalAlignment.Center;
+            btn.VerticalIconAlignment = VerticalAlignment.Top;
         }
 
         btn.TooltipText = text.Replace("\n", " ");
