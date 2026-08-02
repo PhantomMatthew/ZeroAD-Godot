@@ -592,14 +592,26 @@ public sealed partial class Main : Node3D
 			{
 				var pmp = PmpMap.Load(pmpPath);
 				var terrainNode = TerrainRenderer.CreateFromHeightmap(pmp);
-				_worldRoot.AddChild(terrainNode);
+				// 地形顶点已预翻转为世界坐标(TerrainRenderer 注释):挂场景根(无负 scale),
+				// 两个渲染器都走原生光照/受影;阴影直接自投,无需镜像代理。
+				AddChild(terrainNode);
 				_worldRoot.Position = new Vector3(0f, 0f, pmp.MapSizeMeters);
-				// 地形阴影代理(静态,一次同步):丘陵起伏经代理向阴影贴图写深度。
-				var terrainProxy = ShadowProxyManager.CreateProxyRoot(terrainNode);
-				_shadowRoot.AddChild(terrainProxy);
-				ShadowProxyManager.SyncFrom(terrainProxy, terrainNode);
-				_sim.FogWorld.Attach(terrainNode, pmp.MapSizeMeters);
-				_sim.TerritoryWorld.Attach(terrainNode, pmp.MapSizeMeters);
+				// 雾/领土 overlay:同网格透明 MIX 层(+3cm 防 z-fighting)。地形本体已是
+				// 烘焙 StandardMaterial3D(受影);雾变暗=朝黑 alpha(=乘法),领土=玩家色边界。
+				var fogOverlay = new MeshInstance3D
+				{
+					Mesh = terrainNode.Mesh,
+					Position = new Vector3(0f, 0.03f, 0f),
+					CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+					Name = "TerrainFogOverlay",
+					MaterialOverride = new ShaderMaterial
+					{
+						Shader = GD.Load<Shader>("res://Shaders/fog_territory_overlay.gdshader"),
+					},
+				};
+				AddChild(fogOverlay);
+				_sim.FogWorld.Attach(fogOverlay, pmp.MapSizeMeters);
+				_sim.TerritoryWorld.Attach(fogOverlay, pmp.MapSizeMeters);
 				TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
 				float h = pmp.GetHeightWorld(130, 122);
 				_camera.SetFocus(new Vector3(130, h, 122));
@@ -641,11 +653,9 @@ public sealed partial class Main : Node3D
 		var map = MapGenerator.GenerateContinents(8, 42);
 		// No fog attach here: the generated mesh emits no UVs and uses vertex-color albedo,
 		// which the fog shader can't sample — fog stays a PMP-terrain feature for now.
+		// 顶点已预翻转世界坐标(MapGenerator 注释):挂场景根,无负 scale,阴影直接自投。
 		var genMesh = MapGenerator.CreateMeshFromGenerated(map);
-		_worldRoot.AddChild(genMesh);
-		var genProxy = ShadowProxyManager.CreateProxyRoot(genMesh);
-		_shadowRoot.AddChild(genProxy);
-		ShadowProxyManager.SyncFrom(genProxy, genMesh);
+		AddChild(genMesh);
 		float genWorldSize = (map.VerticesPerSide - 1) * map.TileSize;
 		_worldRoot.Position = new Vector3(0f, 0f, genWorldSize);
 		TerrainHeightService.Set((x, z) =>

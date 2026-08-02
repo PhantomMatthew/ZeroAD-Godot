@@ -8,10 +8,16 @@ public static class TerrainRenderer
     {
         int verts = map.VerticesPerSide;
         float tileSize = PmpMap.TileSize;
+        float mapSize = map.MapSizeMeters;
 
         var st = new SurfaceTool();
         st.Begin(Mesh.PrimitiveType.Triangles);
 
+        // 顶点直接建成世界坐标(z 预翻转):地形挂场景根而非镜像根(_worldRoot Scale.z=−1)。
+        // 最小场景已证负 scale 对 StandardMaterial3D 在两个渲染器都无害(镜像/非镜像
+        // 逐位一致),此举是架构简化而非修复:阴影直接自投(免镜像代理)、少一层负 scale
+        // 表面、与已验证状态逐位等价(草地像素级一致)。UV 保持 sim 坐标不变
+        // (fog/领土 overlay shader 与烘焙 albedo 的 Uv1Scale 均按 sim 世界采样)。
         for (int z = 0; z < verts; z++)
         {
             for (int x = 0; x < verts; x++)
@@ -21,7 +27,7 @@ public static class TerrainRenderer
                 float u = x * tileSize * 0.125f;
                 float v = z * tileSize * 0.125f;
                 st.SetUV(new Vector2(u, v));
-                st.AddVertex(new Vector3(x * tileSize, h, z * tileSize));
+                st.AddVertex(new Vector3(x * tileSize, h, mapSize - z * tileSize));
             }
         }
 
@@ -30,29 +36,37 @@ public static class TerrainRenderer
             for (int x = 0; x < verts - 1; x++)
             {
                 int i = z * verts + x;
-                // 绕序修正:原顺序正面朝 −Y(GenerateNormals 随之烘出向下法线),镜像根下
-                // 片元变正面 → FRONT_FACING 翻转不触发 → 地形法线恒 −Y 零太阳(发暗根因)。
-                // 换成 Godot 惯例正面 +Y;镜像下背面光栅化,terrain_splat.gdshader 的
-                // FRONT_FACING 翻转把 NORMAL 翻回 +Y。
+                // z 预翻转是镜像变换(反转三角形手性),故用原始绕序即在世界上得到
+                // 正面 +Y 法线(GenerateNormals 随之烘出向上法线)。
                 st.AddIndex(i);
-                st.AddIndex(i + 1);
                 st.AddIndex(i + verts);
+                st.AddIndex(i + 1);
 
                 st.AddIndex(i + 1);
-                st.AddIndex(i + verts + 1);
                 st.AddIndex(i + verts);
+                st.AddIndex(i + verts + 1);
             }
         }
 
         st.GenerateNormals();
         var mesh = st.Commit();
 
-        // Splat material from the PMP's per-tile texture pairs (matches the original's
-        // per-tile terrain texturing); single grass texture only as fallback.
-        var splatMat = TerrainSplatBuilder.BuildMaterial(map);
-        if (splatMat != null)
+        // 烘焙 splat albedo → StandardMaterial3D:自定义 spatial shader 在 Compatibility
+        // 完全收不到方向光阴影(渲染器限制),烘焙后走标准管线,受影/光照与 C++ 固定管线
+        // 等价;雾/领土移到 fog_territory_overlay.gdshader 透明层(Main.SetupTerrain 挂)。
+        var baked = SplatBaker.BakeAlbedo(map);
+        if (baked != null)
         {
-            mesh.SurfaceSetMaterial(0, splatMat);
+            float uvScale = 8f / map.MapSizeMeters; // 网格 UV=world×0.125 → 0..1 全图
+            var mat = new StandardMaterial3D
+            {
+                AlbedoTexture = ImageTexture.CreateFromImage(baked),
+                Uv1Scale = new Vector3(uvScale, uvScale, 1f),
+                Roughness = 1f,
+                SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            };
+            mesh.SurfaceSetMaterial(0, mat);
         }
         else
         {
@@ -97,10 +111,8 @@ public static class TerrainRenderer
             for (int x = 0; x < verts - 1; x++)
             {
                 int i = z * verts + x;
-                // 绕序修正:原顺序正面朝 −Y(GenerateNormals 随之烘出向下法线),镜像根下
-                // 片元变正面 → FRONT_FACING 翻转不触发 → 地形法线恒 −Y 零太阳(发暗根因)。
-                // 换成 Godot 惯例正面 +Y;镜像下背面光栅化,terrain_splat.gdshader 的
-                // FRONT_FACING 翻转把 NORMAL 翻回 +Y。
+                // 绕序修正:正面朝 +Y(同 CreateFromHeightmap 的注释);fog_terrain.gdshader
+                // 路径另有 FRONT_FACING 翻转兜底。
                 st.AddIndex(i);
                 st.AddIndex(i + 1);
                 st.AddIndex(i + verts);

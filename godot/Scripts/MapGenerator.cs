@@ -109,10 +109,13 @@ public static class MapGenerator
     {
         int verts = map.VerticesPerSide;
         float ts = map.TileSize;
+        float worldSize = (verts - 1) * ts;
 
         var st = new SurfaceTool();
         st.Begin(Mesh.PrimitiveType.Triangles);
 
+        // 顶点直接建成世界坐标(z 预翻转),挂场景根——与 PMP 地形同
+        // (架构简化,非渲染器修复,见 TerrainRenderer.CreateFromHeightmap 注释)。
         for (int z = 0; z < verts; z++)
         {
             for (int x = 0; x < verts; x++)
@@ -123,7 +126,7 @@ public static class MapGenerator
                     0.2f + 0.5f * t,
                     0.4f + 0.3f * (1f - t),
                     0.15f + 0.2f * t));
-                st.AddVertex(new Vector3(x * ts, h, z * ts));
+                st.AddVertex(new Vector3(x * ts, h, worldSize - z * ts));
             }
         }
 
@@ -132,6 +135,7 @@ public static class MapGenerator
             for (int x = 0; x < verts - 1; x++)
             {
                 int i = z * verts + x;
+                // z 预翻转反转手性,原始绕序即在世界上得正面 +Y(同 PMP 地形)。
                 st.AddIndex(i);
                 st.AddIndex(i + verts);
                 st.AddIndex(i + 1);
@@ -147,7 +151,8 @@ public static class MapGenerator
         var instance = new MeshInstance3D { Mesh = mesh };
         var mat = new StandardMaterial3D();
         mat.VertexColorUseAsAlbedo = true;
-        mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+        // 有光照(收太阳+环境光+阴影,与烘焙 PMP 地形同管线);原 Unshaded 是
+        // splat shader 不受影限制下的妥协,烘焙方案落地后无必要。
         mesh.SurfaceSetMaterial(0, mat);
         instance.CreateTrimeshCollision();
         return instance;

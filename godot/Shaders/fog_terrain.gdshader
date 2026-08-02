@@ -14,7 +14,8 @@ uniform float territory_cells = 64.0;
 uniform float world_size = 256.0;
 
 void fragment() {
-	// 镜像根下背面光栅化导致 NORMAL 取反(见 terrain_splat.gdshader 同注释),翻回。
+	// 镜像根下背面光栅化导致 NORMAL 取反(绕序修正后地形正面 +Y,镜像下片元为背面),
+	// 自定义 shader 不像标准材质自动按朝向修正,须自己翻回。
 	if (!FRONT_FACING) NORMAL = -NORMAL;
 
 	vec3 base = texture(albedo_texture, UV).rgb * albedo_color.rgb;
