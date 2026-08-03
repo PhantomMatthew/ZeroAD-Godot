@@ -180,6 +180,7 @@ public sealed partial class MainMenu : Control
             {
                 new("Host New Game", OnMpHost),
                 new("Connect by IP", OnMpJoin),
+                new("Lobby", OnLobby),
             }),
             new("Settings", null, new MenuEntry[]
             {
@@ -337,6 +338,12 @@ public sealed partial class MainMenu : Control
     // 原版 Multiplayer 子菜单:Host New Game / Connect by IP(gamesetup_mp 入口)。
     private void OnMpHost() => StartMp(host: true);
     private void OnMpJoin() => StartMp(host: false);
+
+    private void OnLobby()
+    {
+        var panel = new Lobby.XmppLobbyPanel();
+        AddChild(panel);
+    }
 
     private void StartMp(bool host)
     {
