@@ -168,6 +168,7 @@ public sealed partial class MainMenu : Control
                 new("Manual", OnManual),
                 new("Tutorial", OnTutorial),
                 new("Structure Tree", OnStructree),
+                new("Civilization Overview", OnCivInfo),
             }),
             new("Single-player", null, new MenuEntry[]
             {
@@ -365,6 +366,13 @@ public sealed partial class MainMenu : Control
     private void OnStructree()
     {
         var panel = new StructreePanel();
+        AddChild(panel);
+        panel.Open();
+    }
+
+    private void OnCivInfo()
+    {
+        var panel = new CivInfoPanel();
         AddChild(panel);
         panel.Open();
     }
