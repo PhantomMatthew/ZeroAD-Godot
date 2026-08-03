@@ -86,15 +86,40 @@ public sealed partial class GameOverOverlay : CanvasLayer
         _messageLabel.AddThemeFontSizeOverride("font_size", 15);
         vbox.AddChild(_messageLabel);
 
+        // 按钮行：查看统计 + 离开。
+        var buttonRow = new HBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,
+        };
+        buttonRow.AddThemeConstantOverride("separation", 12);
+        vbox.AddChild(buttonRow);
+
+        var statsButton = new Button
+        {
+            Text = "查看统计",
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(130, 36),
+        };
+        statsButton.Pressed += OnShowStats;
+        buttonRow.AddChild(statsButton);
+
         _leaveButton = new Button
         {
             Text = "Leave",
             Theme = UITheme.GetTheme(),
-            CustomMinimumSize = new Vector2(160, 36),
-            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(130, 36),
         };
         _leaveButton.Pressed += OnLeavePressed;
-        vbox.AddChild(_leaveButton);
+        buttonRow.AddChild(_leaveButton);
+    }
+
+    private void OnShowStats()
+    {
+        // 收集结算数据并打开 SummaryPanel（全屏统计页）。
+        var summary = MatchSummaryExporter.Collect(_sim);
+        var panel = new SummaryPanel(summary);
+        AddChild(panel);
+        panel.Open();
     }
 
     private void OnPlayerDefeated(PlayerDefeatedEvent e)

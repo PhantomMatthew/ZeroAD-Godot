@@ -116,7 +116,7 @@ public sealed class StatisticsTrackerComponent : ComponentBase
         var stats = _cm!.Templates?.ExtractStats(e.UnitTemplate);
         string cls = stats != null ? PrimaryUnitClass(stats.GetClassList()) : "total";
         Inc(UnitsTrained, cls);
-        Inc(UnitsTrained, "total");
+        if (cls != "total") Inc(UnitsTrained, "total");  // 避免类=="total"时重复加
     }
 
     private void OnStructureBuilt(StructureBuiltEvent e)
@@ -126,7 +126,7 @@ public sealed class StatisticsTrackerComponent : ComponentBase
         var id = _cm!.QueryInterface<IdentityComponent>(e.Building);
         string cls = id != null ? PrimaryBuildingClass(id) : "total";
         Inc(BuildingsConstructed, cls);
-        Inc(BuildingsConstructed, "total");
+        if (cls != "total") Inc(BuildingsConstructed, "total");
     }
 
     private void OnOwnershipChanged(OwnershipChangedEvent e)
@@ -219,6 +219,8 @@ public sealed class StatisticsTrackerComponent : ComponentBase
         BuildingsCapturedValue = BuildingsCapturedValue,
         ResourcesGathered = Clone(ResourcesGathered),
         ResourcesUsed = Clone(ResourcesUsed),
+        ResourcesSold = Clone(ResourcesSold),
+        ResourcesBought = Clone(ResourcesBought),
         TributesSent = TributesSent,
         TributesReceived = TributesReceived,
         TradeIncome = TradeIncome,
@@ -232,7 +234,7 @@ public sealed class StatisticsTrackerComponent : ComponentBase
     /// <summary>分数（对齐原版 counters.js 公式）。</summary>
     public (int total, int economy, int military, int exploration) GetScore()
     {
-        int gathered = Sum(ResourcesGathered);
+        int gathered = SumExceptTotal(ResourcesGathered);
         int economy = (gathered + TradeIncome) / 10;
         int military = (EnemyUnitsKilledValue + UnitsCapturedValue + EnemyBuildingsDestroyedValue + BuildingsCapturedValue) / 10;
         int exploration = (int)(PercentMapExplored * 10);
@@ -309,6 +311,10 @@ public sealed class StatisticsTrackerComponent : ComponentBase
 
     private static int Sum(Dictionary<string, int> dict) => dict.Values.Sum();
 
+    /// <summary>求和但排除 "total" 键（避免总分翻倍："total" 是各类小计的重复存档）。</summary>
+    private static int SumExceptTotal(Dictionary<string, int> dict)
+        => dict.Where(kvp => kvp.Key != "total").Sum(kvp => kvp.Value);
+
     private static Dictionary<string, int> Clone(Dictionary<string, int> src)
         => new(src, StringComparer.Ordinal);
 
@@ -369,6 +375,8 @@ public sealed class StatisticsSnapshot
     public int BuildingsLostValue, EnemyBuildingsDestroyedValue, BuildingsCapturedValue;
     public Dictionary<string, int> ResourcesGathered = new();
     public Dictionary<string, int> ResourcesUsed = new();
+    public Dictionary<string, int> ResourcesSold = new();
+    public Dictionary<string, int> ResourcesBought = new();
     public int TributesSent, TributesReceived, TradeIncome, TreasuresCollected, LootCollected;
     public float PercentMapExplored, PercentMapControlled, PeakPercentMapControlled;
 }
