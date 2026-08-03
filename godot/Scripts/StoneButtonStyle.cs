@@ -105,6 +105,21 @@ public static class StoneButtonStyle
 		return img;
 	}
 
+	/// <summary>Locate binaries/(MainMenu.FindBinariesDir 同款 ../、../../ 回退),便于面板不持有 binDir 时取贴图。</summary>
+	public static string? FindBinariesDir()
+	{
+		string projRoot = ProjectSettings.GlobalizePath("res://");
+		foreach (var candidate in new[]
+		{
+			Path.GetFullPath(Path.Combine(projRoot, "..", "binaries")),
+			Path.GetFullPath(Path.Combine(projRoot, "..", "..", "binaries")),
+		})
+		{
+			if (Directory.Exists(candidate)) return candidate;
+		}
+		return null;
+	}
+
 	private static Image Region32(Image img) =>
 		img.GetWidth() != 32 || img.GetHeight() != 28 ? img.GetRegion(new Rect2I(0, 0, 32, 28)) : img;
 }

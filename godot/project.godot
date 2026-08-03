@@ -25,13 +25,9 @@ UserConfig="*res://Scripts/Autoload/UserConfig.cs"
 
 project/assembly_name="GodotProject"
 
-[rendering]
+[editor_plugins]
 
-; 固定 Compatibility(opengl3):Metal Forward+ 在本项目实测 RTS 视距方向光阴影丢失、
-; 全局亮度约 0.71×、天空发灰,且有 Metal 驱动 SIGBUS 崩溃史;全部视觉验证均在
-; Compatibility 完成(C++ 原版同为 OpenGL 渲染)。CLI --rendering-driver 仍可覆盖。
-renderer/rendering_method="gl_compatibility"
-renderer/rendering_method.mobile="gl_compatibility"
+enabled=PackedStringArray("res://addons/zeroad_editor/plugin.cfg")
 
 [input]
 
@@ -69,3 +65,8 @@ cam_rotate_ccw={
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":69,"physical_keycode":0,"key_label":0,"unicode":101,"location":0,"echo":false,"script":null)
 ]
 }
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

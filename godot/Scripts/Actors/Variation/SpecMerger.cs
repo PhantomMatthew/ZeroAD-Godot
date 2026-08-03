@@ -7,14 +7,14 @@ namespace ZeroAD.Godot.Actors.Variation;
 using ZeroAD.Godot.Actors.Parsing;
 
 public sealed record ResolvedActorSpec(
-    string ActorPath,
-    string? MeshGlbPath,                            // remapped via AssetPathResolver (null on miss)
-    IReadOnlyDictionary<string, string> Textures,   // sampler -> resolved png path
-    IReadOnlyDictionary<string, PropSpec> Props,    // attachpoint -> prop (later groups win)
-    IReadOnlyList<AnimRef> Animations,
-    string? Material,
-    bool CastShadow,
-    IReadOnlyDictionary<string, StatePropDelta> StateProps); // animation-state name -> prop delta
+	string ActorPath,
+	string? MeshGlbPath,                            // remapped via AssetPathResolver (null on miss)
+	IReadOnlyDictionary<string, string> Textures,   // sampler -> resolved png path
+	IReadOnlyDictionary<string, PropSpec> Props,    // attachpoint -> prop (later groups win)
+	IReadOnlyList<AnimRef> Animations,
+	string? Material,
+	bool CastShadow,
+	IReadOnlyDictionary<string, StatePropDelta> StateProps); // animation-state name -> prop delta
 
 public sealed record PropSpec(string ActorPath, int SubSeed);
 
@@ -22,8 +22,8 @@ public sealed record PropSpec(string ActorPath, int SubSeed);
 /// <see cref="Adds"/> attach a prop actor for the duration of the state (axe while chopping),
 /// <see cref="Clears"/> hide base props at those attachpoints (weapons/shield).</summary>
 public sealed record StatePropDelta(
-    IReadOnlyDictionary<string, PropSpec> Adds,
-    IReadOnlySet<string> Clears);
+	IReadOnlyDictionary<string, PropSpec> Adds,
+	IReadOnlySet<string> Clears);
 
 /// <summary>
 /// Walks an <see cref="ActorDoc"/> in group order with chosen variant indices, accumulating
@@ -32,50 +32,50 @@ public sealed record StatePropDelta(
 /// </summary>
 public static class SpecMerger
 {
-    public static ResolvedActorSpec Merge(
-        ActorDoc doc,
-        IReadOnlyList<int> chosen,
-        AssetPathResolver paths,
-        int seed)
-    {
-        string? mesh = null;
-        string? material = doc.Material;
-        bool castShadow = doc.CastShadow;
-        var textures = new Dictionary<string, string>();
-        var props = new Dictionary<string, PropSpec>();
-        var anims = new List<AnimRef>();
+	public static ResolvedActorSpec Merge(
+		ActorDoc doc,
+		IReadOnlyList<int> chosen,
+		AssetPathResolver paths,
+		int seed)
+	{
+		string? mesh = null;
+		string? material = doc.Material;
+		bool castShadow = doc.CastShadow;
+		var textures = new Dictionary<string, string>();
+		var props = new Dictionary<string, PropSpec>();
+		var anims = new List<AnimRef>();
 
-        for (int gi = 0; gi < doc.Groups.Count; gi++)
-        {
-            if (gi >= chosen.Count) break;
-            int idx = chosen[gi];
-            if (idx < 0) continue;
-            var variants = doc.Groups[gi].Variants;
-            if (idx >= variants.Count) continue;
-            var v = variants[idx];
+		for (int gi = 0; gi < doc.Groups.Count; gi++)
+		{
+			if (gi >= chosen.Count) break;
+			int idx = chosen[gi];
+			if (idx < 0) continue;
+			var variants = doc.Groups[gi].Variants;
+			if (idx >= variants.Count) continue;
+			var v = variants[idx];
 
-            if (!string.IsNullOrEmpty(v.Mesh)) mesh = v.Mesh;
-            if (!string.IsNullOrEmpty(v.Material)) material = v.Material;
+			if (!string.IsNullOrEmpty(v.Mesh)) mesh = v.Mesh;
+			if (!string.IsNullOrEmpty(v.Material)) material = v.Material;
 
-            foreach (var kv in v.Textures)
-                textures[kv.Key] = kv.Value;
+			foreach (var kv in v.Textures)
+				textures[kv.Key] = kv.Value;
 
-            // C++ erase+insert: later group fully replaces the attachpoint entry;
-            // a clear entry (null ActorPath) erases it outright.
-            foreach (var kv in v.Props)
-            {
-                if (kv.Value.ActorPath == null)
-                    props.Remove(kv.Key);
-                else
-                    props[kv.Key] = new PropSpec(kv.Value.ActorPath!, HashCode.Combine(seed, kv.Key));
-            }
-        }
+			// C++ erase+insert: later group fully replaces the attachpoint entry;
+			// a clear entry (null ActorPath) erases it outright.
+			foreach (var kv in v.Props)
+			{
+				if (kv.Value.ActorPath == null)
+					props.Remove(kv.Key);
+				else
+					props[kv.Key] = new PropSpec(kv.Value.ActorPath!, HashCode.Combine(seed, kv.Key));
+			}
+		}
 
-        // Animations are merged across ALL variants of ALL groups, not just the
-        // chosen visual variant. The original re-runs variant selection per
-        // animation state (ObjectBase::CalculateVariation matches variants by
-        // state name — "gather_tree", "Build", ...), so every state-named
-        // variant's clips must be reachable from one spec. Mesh/props/textures
+		// Animations are merged across ALL variants of ALL groups, not just the
+		// chosen visual variant. The original re-runs variant selection per
+		// animation state (ObjectBase::CalculateVariation matches variants by
+		// state name — "gather_tree", "Build", ...), so every state-named
+		// variant's clips must be reachable from one spec. Mesh/props/textures
         // still come from the chosen variant only. Name clashes (idle/walk/run
         // exist in base, carry-* and combat-stance variants alike) keep ALL
         // candidates in actor order — the composer picks the first whose source

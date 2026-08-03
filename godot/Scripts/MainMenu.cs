@@ -28,6 +28,30 @@ public sealed partial class MainMenu : Control
         // → no-op,进 session 后由 Main 再重放)。菜单上下文 inGame:false(adaptivefps 取 menu 值)。
         OptionsApplier.ApplyAll(GetNode<UserConfig>("/root/UserConfig"), GetTree(), inGame: false);
         BuildUi();
+        MaybeRunScreenshotHook();
+    }
+
+    // dev 截图钩子:ZEROAD_SHOT=hotkeys/options 自动开对应面板,1.5s 后截屏存 user://shot_<名>.png 退出。
+    private void MaybeRunScreenshotHook()
+    {
+        string shot = OS.GetEnvironment("ZEROAD_SHOT");
+        if (string.IsNullOrEmpty(shot)) return;
+        switch (shot)
+        {
+            case "hotkeys": OnHotkeys(); break;
+            case "options": OnOptions(); break;
+            default: return;
+        }
+        ScreenshotAndQuit(shot);
+    }
+
+    private async void ScreenshotAndQuit(string name)
+    {
+        await ToSignal(GetTree().CreateTimer(1.5), SceneTreeTimer.SignalName.Timeout);
+        var img = GetViewport().GetTexture().GetImage();
+        img.SavePng($"user://shot_{name}.png");
+        GD.Print($"SHOT_SAVED user://shot_{name}.png");
+        GetTree().Quit();
     }
 
     private bool TryConsumeAutostartEnv()

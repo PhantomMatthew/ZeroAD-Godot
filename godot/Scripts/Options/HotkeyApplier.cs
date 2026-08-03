@@ -19,21 +19,20 @@ public static class HotkeyApplier
             ApplyAction(cfg, action.FullName, GetCurrentCombos(cfg, action));
     }
 
-    /// <summary>单个 action 重绑：写 UserConfig + 立即应用到 InputMap。</summary>
+    /// <summary>单个 action 重绑：写 UserConfig + 立即应用到 InputMap。
+    /// 不立即持久化——对齐原版:改动仅本会话生效,点面板 Save 才写盘(Close 放弃未存改动)。</summary>
     public static void Apply(UserConfig cfg, string fullActionName, string comboString)
     {
         cfg.SetUserValue(fullActionName, comboString);
-        cfg.Save();
         var combos = string.IsNullOrWhiteSpace(comboString)
             ? System.Array.Empty<string>() : new[] { comboString };
         ApplyAction(cfg, fullActionName, combos);
     }
 
-    /// <summary>重置为默认：清除 UserConfig 覆盖 + 恢复 default.cfg 默认组合。</summary>
+    /// <summary>重置为默认：清除 UserConfig 覆盖 + 恢复 default.cfg 默认组合(同样不立即持久化)。</summary>
     public static void Reset(UserConfig cfg, string fullActionName)
     {
         cfg.ResetUserValue(fullActionName);
-        cfg.Save();
         var action = FindAction(fullActionName);
         if (action != null)
             ApplyAction(cfg, fullActionName, action.DefaultCombos);

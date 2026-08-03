@@ -66,14 +66,27 @@ public static class HotkeyCatalog
             int eq = line.IndexOf('=');
             if (eq <= 0) continue;
             string name = line.Substring(0, eq).Trim();
-            string value = line.Substring(eq + 1).Trim();
-            // 完整多组合：逗号分隔，剥离引号。
+            string value = StripInlineComment(line.Substring(eq + 1)).Trim();
+            // 完整多组合：逗号分隔，剥离引号。未绑定（空值）的 action 也保留——原版列表同样
+            // 显示无映射的热键(空 mapping,可点击绑定)。
             var combos = ParseAllCombos(value);
-            if (combos.Count == 0) continue;
             string full = section + "." + name;
             result.Add(new HotkeyAction(full, Classify(full), MakeLabel(full, name), combos));
         }
         return (result, section);
+    }
+
+    /// <summary>剥行内注释:default.cfg 允许 `reset = "R" ; Reset camera`——; 在引号外即注释起点。
+    /// 不剥会把注释尾巴吃成组合串(显示成 "R" ; Reset camera,还绕过引号剥离)。</summary>
+    internal static string StripInlineComment(string raw)
+    {
+        bool inQuotes = false;
+        for (int i = 0; i < raw.Length; i++)
+        {
+            if (raw[i] == '"') inQuotes = !inQuotes;
+            else if (raw[i] == ';' && !inQuotes) return raw.Substring(0, i);
+        }
+        return raw;
     }
 
     /// <summary>解析值段的全部组合（逗号分隔，引号剥离）。与 DefaultConfig.ParseFirstValue 不同——这里保留全部。</summary>

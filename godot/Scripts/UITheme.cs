@@ -66,6 +66,58 @@ public static class UITheme
         return style;
     }
 
+    /// <summary>ModernInput/ModernDropDown 的底盒(mods/mod modern/sprites.xml):
+    /// ModernDarkBox 半透明黑(12 12 12 100)+ ModernDarkBoxGoldBorder 上下 1px 金线。
+    /// 输入框/下拉/映射框共用。</summary>
+    public static StyleBoxFlat MakeModernDarkBox()
+    {
+        var box = new StyleBoxFlat
+        {
+            BgColor = new Color(12f / 255f, 12f / 255f, 12f / 255f, 100f / 255f),
+            BorderColor = new Color(0.90f, 0.75f, 0.31f),
+            BorderWidthTop = 1,
+            BorderWidthBottom = 1,
+        };
+        box.SetContentMarginAll(4);
+        return box;
+    }
+
+    /// <summary>把控件装扮成 ModernInput(LineEdit)或 ModernDropDown(OptionButton)/映射框(Button)。</summary>
+    public static void ApplyModernInput(Control c)
+    {
+        switch (c)
+        {
+            case LineEdit le:
+                le.AddThemeStyleboxOverride("normal", MakeModernDarkBox());
+                le.AddThemeStyleboxOverride("focus", MakeModernDarkBox());
+                le.AddThemeStyleboxOverride("read_only", MakeModernDarkBox());
+                le.AddThemeColorOverride("font_color", Colors.White);
+                le.AddThemeColorOverride("font_placeholder_color", Colors.Gray);
+                le.AddThemeFontSizeOverride("font_size", 14);
+                break;
+            case OptionButton ob:
+                ob.AddThemeStyleboxOverride("normal", MakeModernDarkBox());
+                ob.AddThemeStyleboxOverride("hover", MakeModernDarkBox());
+                ob.AddThemeStyleboxOverride("pressed", MakeModernDarkBox());
+                ob.AddThemeStyleboxOverride("focus", MakeModernDarkBox());
+                ob.AddThemeColorOverride("font_color", Colors.White);
+                ob.AddThemeColorOverride("font_hover_color", Colors.White);
+                ob.AddThemeFontSizeOverride("font_size", 14);
+                ob.Alignment = HorizontalAlignment.Left;
+                break;
+            case Button b:
+                b.AddThemeStyleboxOverride("normal", MakeModernDarkBox());
+                b.AddThemeStyleboxOverride("hover", MakeModernDarkBox());
+                b.AddThemeStyleboxOverride("pressed", MakeModernDarkBox());
+                b.AddThemeStyleboxOverride("focus", MakeModernDarkBox());
+                b.AddThemeColorOverride("font_color", Colors.White);
+                b.AddThemeColorOverride("font_hover_color", Colors.White);
+                b.AddThemeFontSizeOverride("font_size", 14);
+                b.Alignment = HorizontalAlignment.Left;
+                break;
+        }
+    }
+
     public static Texture2D? TryLoad(string resPath)
     {
         string abs = ProjectSettings.GlobalizePath(resPath);

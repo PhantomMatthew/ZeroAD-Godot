@@ -81,6 +81,8 @@ public sealed partial class OptionsPanel : ModalPanelBase
                 ToggleMode = true,
                 Alignment = HorizontalAlignment.Left,
             };
+            // 原版 tab_buttons 为 StoneButtonFancy 贴图样式。
+            StoneButtonStyle.Apply(btn, StoneButtonStyle.FindBinariesDir());
             btn.Pressed += () => SelectCategory(idx);
             tabs.AddChild(btn);
             _tabButtons.Add(btn);
