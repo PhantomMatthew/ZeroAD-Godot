@@ -28,11 +28,17 @@ public sealed class AIComponent : ComponentBase
     private ComponentManager? _cm;
     private NetTurnManager? _net;
 
+    // 旧玩具版 manager（保留向后兼容 + 序列化字段来源）
     private EconomyManager? _economy;
     private BuildManager? _build;
     private ResearchManager? _research;
     private DefenseManager? _defense;
     private AttackManager? _attack;
+
+    // Petra 完整版（Phase 4 接入）
+    private AI.Petra.Headquarters? _hq;
+    private AI.Petra.PetraConfig? _petraConfig;
+    private AI.CommonApi.SharedState? _sharedState;
 
     // 回合驱动思考节律(替代旧帧计时)。5 回合 ≈ 0.5s @ 10Hz,对齐原 ThinkInterval。
     // CurrentTurn 门控 → 同 seed 同回合同思考 tick(跨对端/读档)。
@@ -63,6 +69,16 @@ public sealed class AIComponent : ComponentBase
         _defense = new DefenseManager(cm, net);
         _attack = new AttackManager(cm, net);
         Events.Attach(cm);
+        // 初始化 Petra 完整版（Phase 4 接入）
+        _petraConfig = new AI.Petra.PetraConfig(AI.Petra.DifficultyLevel.Medium);
+        _hq = new AI.Petra.Headquarters(_petraConfig);
+    }
+
+    /// <summary>设置 SharedState（由 SimBridge 在地图加载后调）。
+    /// 传入 TemplateLoader + TechCatalog 用于构造 GameState。</summary>
+    public void ConfigureSharedState(AI.CommonApi.SharedState sharedState)
+    {
+        _sharedState = sharedState;
     }
 
     /// <summary>每 sim 回合入口。SimBridge.TickAI 在 TickSimulation 后、AdvanceTurn 前调,
@@ -102,6 +118,25 @@ public sealed class AIComponent : ComponentBase
         _research.Update(snapshot, playerId);
         _defense.Update(snapshot, playerId);
         _attack.Update(snapshot, playerId);
+
+        // Petra 完整版 HQ 更新（如果有 SharedState = 地图已加载 + 模板就绪）
+        if (_hq != null && _sharedState != null && _petraConfig != null)
+        {
+            var gameState = _sharedState.CreateGameState(_cm, (int)playerId, Metadata, Events);
+            if (gameState != null)
+            {
+                // 第一回合：初始化 Petra
+                if (!_hq.FirstBaseConfig)
+                {
+                    AI.Petra.StartingStrategy.GameAnalysis(_hq, gameState);
+                    AI.Petra.StartingStrategy.BuildFirstBase(_hq, gameState);
+                    _petraConfig.SetConfig(gameState, _cm.RNG);
+                    AI.Petra.StartingStrategy.ConfigFirstBase(_hq, gameState);
+                }
+                _hq.Update(gameState, Events);
+            }
+        }
+
         Events.Drain();  // think 结束清空事件缓冲，下一回合重新积累
     }
 
