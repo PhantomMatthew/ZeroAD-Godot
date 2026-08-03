@@ -113,6 +113,18 @@ namespace ZeroAD.Sim.Events
         public bool IsRanged;
     }
 
+    /// <summary>聊天消息（本地展示 sink）。Kind=Message 来自玩家输入（SP 本地回显或 MP ReceiveChat 转发），
+    /// Kind=System 来自游戏事件（PlayerDefeated 等，无 sender）。MP 传输走 MultiplayerController RPC，
+    /// 不进锁步（匹配原版 NMT_CHAT：直接 multicast，不经模拟/turn manager）。</summary>
+    public sealed class ChatMessageEvent
+    {
+        public enum KindType { Message, System }
+        public KindType Kind;
+        public int SenderPlayerId;   // Message 时是发送者；System 时为 -1
+        public string Text = "";
+        public string Addressee = "";  // "all"/"allies"/"enemies"；空=all（简化版默认 all）
+    }
+
     /// <summary>Raised by RangeManager.UpdateVisibilityData when an entity's per-player
     /// visibility changes (HIDDEN/FOGGED/VISIBLE). Drives Fogging/Mirage bookkeeping in the
     /// kernel and entity show/hide on the presentation layer. Mirrors CMessageVisibilityChanged.</summary>
@@ -192,6 +204,7 @@ namespace ZeroAD.Sim.Events
         public event Action<EntityCreatedEvent>? EntityCreated;
         public event Action<AttackLandedEvent>? AttackLanded;
         public event Action<AttackLaunchedEvent>? AttackLaunched;
+        public event Action<ChatMessageEvent>? ChatMessage;
         public event Action<PlayerDefeatedEvent>? PlayerDefeated;
         public event Action<PlayerWonEvent>? PlayerWon;
         public event Action<GameEndedEvent>? GameEnded;
@@ -214,6 +227,7 @@ namespace ZeroAD.Sim.Events
         public void RaiseEntityCreated(EntityCreatedEvent e) => EntityCreated?.Invoke(e);
         public void RaiseAttackLanded(AttackLandedEvent e) => AttackLanded?.Invoke(e);
         public void RaiseAttackLaunched(AttackLaunchedEvent e) => AttackLaunched?.Invoke(e);
+        public void RaiseChatMessage(ChatMessageEvent e) => ChatMessage?.Invoke(e);
         public void RaisePlayerDefeated(PlayerDefeatedEvent e) => PlayerDefeated?.Invoke(e);
         public void RaisePlayerWon(PlayerWonEvent e) => PlayerWon?.Invoke(e);
         public void RaiseGameEnded(GameEndedEvent e) => GameEnded?.Invoke(e);

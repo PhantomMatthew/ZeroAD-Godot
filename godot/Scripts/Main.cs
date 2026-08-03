@@ -23,6 +23,7 @@ public sealed partial class Main : Node3D
 	private DirectionalLight3D _light = null!;
 	private global::Godot.Environment _env = null!;
 	private HUD _hud = null!;
+	private ChatPanel _chatPanel = null!;
 	private LobbyUI _lobby = null!;
 	private MultiplayerController _mp = null!;
 
@@ -379,6 +380,14 @@ public sealed partial class Main : Node3D
 		// Victory/Defeat panel when the match ends.
 		var gameOver = new GameOverOverlay(_sim, localPlayerId: (int)playerId);
 		AddChild(gameOver);
+
+		// 聊天面板（左上角消息日志 + Enter 打开输入框）。MP 时经 _mp 广播；SP 本地回显。
+		_chatPanel = new ChatPanel(_sim, _mp, playerId);
+		AddChild(_chatPanel);
+		// MP 收到聊天 → 转发到 SimEventBus（ChatPanel 统一订阅）。
+		_mp.OnChatReceived += OnMpChatReceived;
+		// 游戏事件 → 系统聊天消息（"Player N was defeated"）。
+		_sim.Sim.Events.PlayerDefeated += OnPlayerDefeatedChat;
 
 		// Pause menu (Menu 按钮 → 暂停叠层):冻结 sim + 存档/读档/离开。事件解耦同 LobbyUI:
 		// 存档/读档复用 QuickSave/QuickLoad(含视觉重建),离开回主菜单。
@@ -1092,8 +1101,23 @@ public sealed partial class Main : Node3D
 		Input.MouseMode = Input.MouseModeEnum.Visible;
 		// 建造拒绝事件订阅(BuildSessionUi 挂)——退订防死引用。
 		if (_sim != null)
+		{
 			_sim.Sim.Events.PlayerCommand -= OnPlayerCommandEvent;
+			_sim.Sim.Events.PlayerDefeated -= OnPlayerDefeatedChat;
+		}
+		if (_mp != null)
+			_mp.OnChatReceived -= OnMpChatReceived;
 	}
+
+	/// <summary>MP 收到聊天 → 转发到 SimEventBus（ChatPanel 统一订阅展示）。</summary>
+	private void OnMpChatReceived(int playerId, string text)
+		=> _sim.Events.RaiseChatMessage(new ZeroAD.Sim.Events.ChatMessageEvent
+		{ Kind = ZeroAD.Sim.Events.ChatMessageEvent.KindType.Message, SenderPlayerId = playerId, Text = text });
+
+	/// <summary>玩家被击败 → 系统聊天消息（"Player N was defeated"）。</summary>
+	private void OnPlayerDefeatedChat(PlayerDefeatedEvent e)
+		=> _sim.Events.RaiseChatMessage(new ZeroAD.Sim.Events.ChatMessageEvent
+		{ Kind = ZeroAD.Sim.Events.ChatMessageEvent.KindType.System, Text = $"Player {e.PlayerId} was defeated: {e.Reason}" });
 
 	/// <summary>建造拒绝 toast(执行端 PlayerCommandEvent "build-rejected" → 顶部红字;
 	/// 只显本地玩家的拒绝)。</summary>
@@ -1481,6 +1505,8 @@ public sealed partial class Main : Node3D
 
 		if (@event is InputEventKey key && key.Pressed)
 		{
+			// Enter 打开聊天输入框（输入框聚焦时 GUI 消费事件，不会到此分支）。
+			if (key.Keycode == Key.Enter) _chatPanel.OpenInput();
 			if (key.Keycode == Key.H && _isTutorial) _tutorialPanel.Toggle();
 			if (key.Keycode == Key.B) EnterBuildMode("House");
 			if (key.Keycode == Key.T) TrainVillager(Input.IsKeyPressed(Key.Shift));

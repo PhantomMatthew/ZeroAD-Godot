@@ -58,6 +58,8 @@ public sealed partial class MultiplayerController : Node
     /// <see cref="ReceiveLobbyState"/>. Main refreshes the lobby UI from it.</summary>
     public event System.Action<IReadOnlyList<PlayerSlotSetup>>? OnLobbyStateChanged;
     public event System.Action<string>? OnOOS;
+    /// <summary>收到聊天消息（playerId, text）。MP 时由 ReceiveChat RPC 触发；SP 不经此（直接 raise SimEventBus）。</summary>
+    public event System.Action<int, string>? OnChatReceived;
 
     public void StartHost(int port, uint seed)
     {
@@ -242,6 +244,38 @@ public sealed partial class MultiplayerController : Node
     {
         GD.PrintErr($"OOS at turn {turn}: {msg}");
         OnOOS?.Invoke(msg);
+    }
+
+    // ── 聊天（直接网络消息，不进锁步；匹配原版 NMT_CHAT）──
+
+    /// <summary>客户端 → host：提交聊天。host 解析发送者后广播给所有人。</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void SubmitChatToHost(int playerId, string text)
+    {
+        // host 用 _peerToPlayer 校验发送者身份（防伪造 playerId）。
+        int sender = Multiplayer.GetRemoteSenderId();
+        if (_peerToPlayer.TryGetValue(sender, out var resolved))
+            playerId = (int)resolved;
+        // 广播给所有人（含自己，CallLocal=true）。
+        Rpc(nameof(ReceiveChat), playerId, text);
+    }
+
+    /// <summary>host → 所有人：广播聊天。</summary>
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void ReceiveChat(int playerId, string text)
+    {
+        OnChatReceived?.Invoke(playerId, text);
+    }
+
+    /// <summary>公开发送方法：SP 直接回显；MP 经 host 广播。</summary>
+    public void SendChat(int playerId, string text)
+    {
+        if (_peer == null)
+            OnChatReceived?.Invoke(playerId, text);  // SP：本地回显
+        else if (_isHost)
+            Rpc(nameof(ReceiveChat), playerId, text);  // host 直接广播
+        else
+            RpcId(1, nameof(SubmitChatToHost), playerId, text);  // client → host
     }
 
     public void Shutdown()
