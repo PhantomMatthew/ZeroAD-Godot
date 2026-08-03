@@ -212,6 +212,9 @@ public sealed partial class SimBridge : Node
             _sim.AddComponent(playerEntity, techMgr);
             _sim.AddComponent(playerEntity, new OwnershipComponent { PlayerId = pid });
             _sim.AddComponent(playerEntity, new EntityLimitsComponent());
+            var stats = new StatisticsTrackerComponent();
+            _sim.AddComponent(playerEntity, stats);
+            stats.Attach(_sim);   // 订阅 SimEventBus（同 TechnologyManager.Configure 模式）
             _sim.RegisterPlayer(pid, playerEntity);
             if (techCatalog != null)
             {

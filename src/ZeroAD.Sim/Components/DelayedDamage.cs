@@ -97,6 +97,12 @@ public sealed class DelayedDamage
 
         health?.TakeDamage(final);
 
+        // 击杀归属：命中结算后若目标死亡，raise EntityKilledEvent。这是唯一同时知道
+        // attacker 和 target 且能检测死亡的位置（镜像 Health.js:221 的 KilledEntity/LostEntity）。
+        // StatisticsTracker 订阅此事件更新 enemyUnitsKilled / unitsLost / *Value 计数器。
+        if (health != null && health.IsDead)
+            cm.Events.RaiseEntityKilled(new EntityKilledEvent { Victim = target, Killer = attacker });
+
         // 受击响应钩子(原版 MT_Attacked → UnitAI):物理伤害 >0 才触发;捕获通道
         // (Capture)不触发(对齐原版攻击效果接收序,捕获自身不引起反击)。
         if (final.TotalPhysical > 0)

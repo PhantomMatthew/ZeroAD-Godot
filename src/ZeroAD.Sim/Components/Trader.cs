@@ -367,6 +367,12 @@ public sealed class TraderComponent : ComponentBase, IComponentMessageHandler
         if (own == null || own.PlayerId < 1)
             return;
         cm.GetPlayerEntity(own.PlayerId)?.AddResource(GoodsType, gain);
+        // 贸易收入事件（驱动 StatisticsTracker.tradeIncome）。镜像 Trader.js:197。
+        cm.Events.RaiseTradeIncome(new ZeroAD.Sim.Events.TradeIncomeEvent
+        {
+            PlayerId = own.PlayerId,
+            Amount = gain,
+        });
     }
 
     /// <summary>Port of CalculateGain:市场定价后,若模板带 GarrisonGainMultiplier 且自身有

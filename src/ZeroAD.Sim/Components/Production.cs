@@ -144,6 +144,12 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
 
         // All checks passed — commit.
         player.Spend(totalWood, totalFood, totalStone, totalMetal);
+        // 资源花费事件（驱动 StatisticsTracker.resourcesUsed）。镜像 Player.js:349。
+        int pid = owner.PlayerId;
+        if (totalWood > 0) cm.Events.RaiseResourceSpent(new ZeroAD.Sim.Events.ResourceSpentEvent { PlayerId = pid, Type = ResourceType.Wood, Amount = totalWood });
+        if (totalFood > 0) cm.Events.RaiseResourceSpent(new ZeroAD.Sim.Events.ResourceSpentEvent { PlayerId = pid, Type = ResourceType.Food, Amount = totalFood });
+        if (totalStone > 0) cm.Events.RaiseResourceSpent(new ZeroAD.Sim.Events.ResourceSpentEvent { PlayerId = pid, Type = ResourceType.Stone, Amount = totalStone });
+        if (totalMetal > 0) cm.Events.RaiseResourceSpent(new ZeroAD.Sim.Events.ResourceSpentEvent { PlayerId = pid, Type = ResourceType.Metal, Amount = totalMetal });
         _queue.Add(new ProductionItem
         {
             TemplateName = templateName,

@@ -543,6 +543,8 @@ public sealed partial class Main : Node3D
 				los.Attach(_sim.Range);
 			if (comp is ZeroAD.Sim.Components.AIComponent ai)
 				ai.Configure(_sim.Sim, _sim.NetTurn);
+			if (comp is ZeroAD.Sim.Components.StatisticsTrackerComponent st)
+				st.Attach(_sim.Sim);
 		});
 
 		_sim.RebuildSpatialIndexesAfterLoad();
@@ -620,6 +622,8 @@ public sealed partial class Main : Node3D
 				los.Attach(_sim.Range);
 			if (comp is ZeroAD.Sim.Components.AIComponent ai)
 				ai.Configure(_sim.Sim, _sim.NetTurn);
+			if (comp is ZeroAD.Sim.Components.StatisticsTrackerComponent st)
+				st.Attach(_sim.Sim);
 		});
 		if (turn == null)
 			throw new System.InvalidOperationException($"save payload failed to load: {meta.Slot}");
@@ -1960,6 +1964,8 @@ public sealed partial class Main : Node3D
 			// manager 由 Configure 构造,Deserialize 还原计数器)。漏此 → 首 Tick NullRef。
 			if (comp is ZeroAD.Sim.Components.AIComponent ai)
 				ai.Configure(_sim.Sim, _sim.NetTurn);
+			if (comp is ZeroAD.Sim.Components.StatisticsTrackerComponent st)
+				st.Attach(_sim.Sim);
 		});
 		if (turn == null) return null;
 

@@ -1201,6 +1201,13 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         {
             // AddResource takes (type, amount).
             player.AddResource(g.CarryType, g.CarryAmount);
+            // 采集入账事件（驱动 StatisticsTracker.resourcesGathered）。镜像 ResourceGatherer.js:286。
+            cm.Events.RaiseResourceGathered(new ZeroAD.Sim.Events.ResourceGatheredEvent
+            {
+                PlayerId = own.PlayerId,
+                Type = g.CarryType,
+                Amount = g.CarryAmount,
+            });
         }
         g.CarryAmount = 0;
     }

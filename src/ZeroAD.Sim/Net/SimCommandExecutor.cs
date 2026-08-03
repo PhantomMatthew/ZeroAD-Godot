@@ -370,7 +370,17 @@ namespace ZeroAD.Sim.Net
             var source = _cm.GetPlayerEntity((int)cmd.Player);
             var dest = _cm.GetPlayerEntity(destId);
             if (source == null || dest == null) return;
-            source.TributeResource(dest, type, amount);
+            if (source.TributeResource(dest, type, amount))
+            {
+                // 贡品事件（驱动 StatisticsTracker.tributesSent/Received）。镜像 Player.js:686,689。
+                _cm.Events.RaiseTribute(new Events.TributeEvent
+                {
+                    FromPlayerId = (int)cmd.Player,
+                    ToPlayerId = destId,
+                    Type = type,
+                    Amount = amount,
+                });
+            }
         }
 
         private void ApplySetTradingGoods(NetCommand cmd)

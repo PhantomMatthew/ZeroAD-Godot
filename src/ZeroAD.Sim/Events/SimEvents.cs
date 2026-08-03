@@ -113,6 +113,50 @@ namespace ZeroAD.Sim.Events
         public Components.LosVisibility New;
     }
 
+    // ── 统计追踪事件（驱动 StatisticsTracker 的计数器）。镜像原版各组件里的 IncreaseXxxCounter 调用点。──
+
+    /// <summary>资源采集入账（drop-off 时）。镜像 ResourceGatherer.js:286 的 IncreaseResourceGatheredCounter。</summary>
+    public sealed class ResourceGatheredEvent
+    {
+        public int PlayerId;
+        public Components.ResourceType Type;
+        public int Amount;
+        /// <summary>素食食物的二级类型（fruit/grain 等），仅 Type=Food 时有意义。用于 vegetarianFood 桶。</summary>
+        public string? GenericType;
+    }
+
+    /// <summary>资源花费（建造/训练/科研扣费时）。镜像 Player.js:349 的 IncreaseResourceUsedCounter。</summary>
+    public sealed class ResourceSpentEvent
+    {
+        public int PlayerId;
+        public Components.ResourceType Type;
+        public int Amount;
+    }
+
+    /// <summary>实体被击杀（生命值归零的命中）。携带 killer 用于归属。镜像 Health.js:221 的 KilledEntity/LostEntity。
+    /// 这是 kill 归属的唯一信号——DelayedDamage 命中后检测 IsDead 并 raise。</summary>
+    public sealed class EntityKilledEvent
+    {
+        public EntityId Victim;
+        public EntityId Killer;
+    }
+
+    /// <summary>贸易收入入账。镜像 Trader.js:197 的 IncreaseTradeIncomeCounter。</summary>
+    public sealed class TradeIncomeEvent
+    {
+        public int PlayerId;
+        public int Amount;
+    }
+
+    /// <summary>贡品发送/接收。镜像 Player.js:686,689 的 IncreaseTributesSent/ReceivedCounter。</summary>
+    public sealed class TributeEvent
+    {
+        public int FromPlayerId;
+        public int ToPlayerId;
+        public Components.ResourceType Type;
+        public int Amount;
+    }
+
     /// <summary>Raised when a player loses sight of a position and back: the mirage that stood
     /// in for <see cref="Parent"/> went HIDDEN because the real entity is visible again.
     /// Mirrors MT_EntityRenamed { entity: mirage, newentity: parent } in the original — the
@@ -141,6 +185,11 @@ namespace ZeroAD.Sim.Events
         public event Action<GameEndedEvent>? GameEnded;
         public event Action<VisibilityChangedEvent>? VisibilityChanged;
         public event Action<MirageSwapBackEvent>? MirageSwapBack;
+        public event Action<ResourceGatheredEvent>? ResourceGathered;
+        public event Action<ResourceSpentEvent>? ResourceSpent;
+        public event Action<EntityKilledEvent>? EntityKilled;
+        public event Action<TradeIncomeEvent>? TradeIncome;
+        public event Action<TributeEvent>? Tribute;
 
         public void RaisePlayerCommand(PlayerCommandEvent e) => PlayerCommand?.Invoke(e);
         public void RaiseTrainingQueued(TrainingQueuedEvent e) => TrainingQueued?.Invoke(e);
@@ -157,5 +206,10 @@ namespace ZeroAD.Sim.Events
         public void RaiseGameEnded(GameEndedEvent e) => GameEnded?.Invoke(e);
         public void RaiseVisibilityChanged(VisibilityChangedEvent e) => VisibilityChanged?.Invoke(e);
         public void RaiseMirageSwapBack(MirageSwapBackEvent e) => MirageSwapBack?.Invoke(e);
+        public void RaiseResourceGathered(ResourceGatheredEvent e) => ResourceGathered?.Invoke(e);
+        public void RaiseResourceSpent(ResourceSpentEvent e) => ResourceSpent?.Invoke(e);
+        public void RaiseEntityKilled(EntityKilledEvent e) => EntityKilled?.Invoke(e);
+        public void RaiseTradeIncome(TradeIncomeEvent e) => TradeIncome?.Invoke(e);
+        public void RaiseTribute(TributeEvent e) => Tribute?.Invoke(e);
     }
 }
