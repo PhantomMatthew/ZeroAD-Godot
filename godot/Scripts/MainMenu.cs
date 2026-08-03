@@ -167,6 +167,7 @@ public sealed partial class MainMenu : Control
             {
                 new("Manual", OnManual),
                 new("Tutorial", OnTutorial),
+                new("Structure Tree", OnStructree),
             }),
             new("Single-player", null, new MenuEntry[]
             {
@@ -359,6 +360,13 @@ public sealed partial class MainMenu : Control
         var manual = new ManualPanel();
         AddChild(manual);
         manual.Open();
+    }
+
+    private void OnStructree()
+    {
+        var panel = new StructreePanel();
+        AddChild(panel);
+        panel.Open();
     }
 
     private void OnLoadGame()
