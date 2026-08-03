@@ -26,6 +26,10 @@ public sealed class TerritoryManager
     /// <summary>网格边长(cell 数),表现层纹理尺寸用。</summary>
     public int GridWidth => _gridW;
 
+    /// <summary>领土归属网格的只读访问（AI 的 territoryMap.data[i] 等价物）。
+    /// 行主序 byte 数组：index = z * GridWidth + x，值 = owner player id（0=gaia）。</summary>
+    public ReadOnlySpan<byte> OwnerGrid => _owner.AsSpan();
+
     private const int MaxPlayers = LosGrid.MaxPlayers;
     private readonly ComponentManager _cm;
     private int _gridW;

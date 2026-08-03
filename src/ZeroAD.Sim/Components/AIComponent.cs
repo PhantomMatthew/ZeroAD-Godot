@@ -43,6 +43,14 @@ public sealed class AIComponent : ComponentBase
     private readonly List<EntityId> _ownedUnits = new();
     private readonly List<EntityId> _ownedBuildings = new();
 
+    /// <summary>本 AI 玩家的 per-entity 元数据（role/subrole/plan/access/base/...）。
+    /// Petra 到处读写；序列化进 OOS 哈希 + 存档（影响决策，各端须一致）。</summary>
+    public EntityMetadata Metadata { get; } = new EntityMetadata();
+
+    /// <summary>本 AI 玩家的事件缓冲（Create/Destroy/OwnershipChanged/Train/Build/Defeated）。
+    /// Petra 的 checkEvents 消费；per-turn 派生态，不序列化。</summary>
+    public AIEventBuffer Events { get; } = new AIEventBuffer();
+
     /// <summary>装配期注入内核引用。须在 <see cref="ComponentManager.AddComponent{T}"/> 前调
     /// (AddComponent 触发 OnInit);save/load 路径由 prepareComponent 重注入(见 SaveGameManager.Load)。</summary>
     public void Configure(ComponentManager cm, NetTurnManager net)
@@ -54,6 +62,7 @@ public sealed class AIComponent : ComponentBase
         _research = new ResearchManager(cm, net);
         _defense = new DefenseManager(cm, net);
         _attack = new AttackManager(cm, net);
+        Events.Attach(cm);
     }
 
     /// <summary>每 sim 回合入口。SimBridge.TickAI 在 TickSimulation 后、AdvanceTurn 前调,
@@ -93,6 +102,7 @@ public sealed class AIComponent : ComponentBase
         _research.Update(snapshot, playerId);
         _defense.Update(snapshot, playerId);
         _attack.Update(snapshot, playerId);
+        Events.Drain();  // think 结束清空事件缓冲，下一回合重新积累
     }
 
     /// <summary>重建 owned 列表。死实体已不在 AllEntities,故兼作清理——无需单独死实体剪枝。
@@ -148,6 +158,7 @@ public sealed class AIComponent : ComponentBase
         // 派生态清空(AI 不挂 modifier,无需像 AuraComponent 那样清残留)。
         _ownedUnits.Clear();
         _ownedBuildings.Clear();
+        if (_cm != null) Events.Detach(_cm);
     }
 
     public override void Serialize(ISerializer s)
@@ -159,6 +170,7 @@ public sealed class AIComponent : ComponentBase
         s.NumberI32("researchThinkCount", _research?._researchThinkCount ?? 0);
         s.NumberI32("attackThinkCount", _attack?._attackThinkCount ?? 0);
         s.NumberI32("targetVillagers", _economy?._targetVillagers ?? 12);
+        Metadata.Serialize(s);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -176,5 +188,6 @@ public sealed class AIComponent : ComponentBase
         if (_build != null) _build._buildThinkCount = buildThinkCount;
         if (_research != null) _research._researchThinkCount = researchThinkCount;
         if (_attack != null) _attack._attackThinkCount = attackThinkCount;
+        Metadata.Deserialize(d);
     }
 }

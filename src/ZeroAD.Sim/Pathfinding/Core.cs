@@ -118,6 +118,13 @@ public sealed class Grid<T>
             }
         return false;
     }
+
+    /// <summary>按线性索引访问原始数据（AI 的 passabilityMap.data[i] 等价物）。
+    /// 行主序：index = j * W + i。AI 地图分析（TerrainAnalysis/Accessibility）需此访问。</summary>
+    public ref readonly T this[int linearIndex] => ref _data[linearIndex];
+
+    /// <summary>原始数据数组的只读引用（供 AI 批量扫描，避免逐格 Get 开销）。</summary>
+    public ReadOnlySpan<T> AsSpan() => _data.AsSpan();
 }
 
 // --- SparseGrid<T> — ported from Grid.h:304 -----------------------------------

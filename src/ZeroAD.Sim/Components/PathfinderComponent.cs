@@ -35,6 +35,11 @@ namespace ZeroAD.Sim.Components
         public PassabilityClassDef DefaultClass => _gridBuilder.Default;
         public PassabilityClassDef ShipClass => _gridBuilder.Ship;
 
+        /// <summary>当前 passability grid（AI 地图分析用）。RebuildGrid 前为 null。</summary>
+        public Grid<NavcellData>? PassabilityGrid => _gridBuilder.Grid;
+        /// <summary>每边 navcell 数（grid 边长）。AI 的 mapWidth/Height 等价物。</summary>
+        public int NavcellsPerSide => _gridBuilder.NavcellsPerSide;
+
         public PathfinderComponent(ComponentManager cm) => _cm = cm;
 
         /// <summary>Resolve the system terrain component (single instance expected on the world entity).</summary>
