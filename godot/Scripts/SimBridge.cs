@@ -18,6 +18,8 @@ public sealed partial class SimBridge : Node
     private NetTurnManager _netTurn = null!;
     private ReplayRecorder? _recorder;       // 自动录像：非 null 时每回合录制命令批
     private ReplayDriver? _replayDriver;     // 回放播放：非 null 时每帧注入预录制命令
+    private ProjectilePool? _projectiles;    // 飞行投射物池（ranged 攻击的箭矢）
+    private ImpactEffectPool? _impacts;      // 命中特效池（血雾/扬尘）
     private double _simAccumulator;
     private const double SimTickRate = 0.1;
 
@@ -169,6 +171,9 @@ public sealed partial class SimBridge : Node
         // Kernel-side destruction (mirage self-destruct/cleanup, RemoveDeadEntities) → drop the
         // Godot node + cached state. Without this, kernel-destroyed entities leak nodes.
         _sim.EntityDestroyed += OnSimEntityDestroyed;
+        // 战斗观感：攻击发射 → 飞行投射物（ranged）；命中 → 血雾/扬尘（AttackLandedEvent 原零订阅，现接入）。
+        _sim.Events.AttackLaunched += OnAttackLaunched;
+        _sim.Events.AttackLanded += OnAttackLanded;
 
         int gridSize = 64;
         float cellSize = 4.0f;
@@ -619,6 +624,37 @@ public sealed partial class SimBridge : Node
         // 统一收尾录制：场景切回主菜单时 SimBridge 被销毁，无论从哪条路径退出
         // （胜利/暂停离开/场景切换）都会触发，保证录像文件完整落盘。幂等。
         FinalizeRecording();
+        // 退订战斗观感事件（防 sim 被回收后仍回调已销毁的池）。
+        if (_sim != null)
+        {
+            _sim.Events.AttackLaunched -= OnAttackLaunched;
+            _sim.Events.AttackLanded -= OnAttackLanded;
+        }
+    }
+
+    // ── 战斗观感 handler ──
+
+    private void OnAttackLaunched(ZeroAD.Sim.Events.AttackLaunchedEvent e)
+    {
+        // 仅 ranged 攻击生成飞行投射物（melee 只在命中时播特效）。
+        if (!e.IsRanged || _projectiles == null) return;
+        if (!_entityNodes.TryGetValue(e.Attacker, out var from) || !_entityNodes.TryGetValue(e.Target, out var to))
+            return;
+        // 抬高发射点（从单位腰部而非脚底发射），目标点稍高于地面。
+        _projectiles.Spawn(from.Position + Vector3.Up * 1.2f, to.Position + Vector3.Up * 0.8f);
+    }
+
+    private void OnAttackLanded(ZeroAD.Sim.Events.AttackLandedEvent e)
+    {
+        if (_impacts == null) return;
+        if (!_entityNodes.TryGetValue(e.Target, out var target)) return;
+        // 物理伤害 >0 才有受击特效（捕获命中无视觉反馈，对齐原版 MT_Attacked 接收序）。
+        if (e.DamageDealt <= 0) return;
+        // 判断是否击杀：查目标的 HealthComponent。
+        bool isKill = false;
+        var health = _sim?.QueryInterface<ZeroAD.Sim.Components.HealthComponent>(e.Target);
+        if (health != null) isKill = health.IsDead;
+        _impacts.Spawn(target.Position + Vector3.Up * 0.8f, isKill);
     }
 
     public override void _Ready()
@@ -630,6 +666,11 @@ public sealed partial class SimBridge : Node
             UnitContainer.ChildEnteredTree += OnUnitVisualEntered;
             UnitContainer.ChildExitingTree += OnUnitVisualExiting;
         }
+        // 战斗观感池：飞行投射物 + 命中特效（纯视觉，不进 sim 序列化/OOS 哈希）。
+        _projectiles = new ProjectilePool();
+        _impacts = new ImpactEffectPool();
+        AddChild(_projectiles);
+        AddChild(_impacts);
     }
 
     private void OnUnitVisualEntered(Node node)

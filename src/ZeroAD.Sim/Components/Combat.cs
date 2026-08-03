@@ -224,6 +224,9 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
             mod.Amounts[kv.Key] = (int)MathF.Round(
                 cm.Modifiers.Apply(prefix + kv.Key, kv.Value, Entity), MidpointRounding.AwayFromZero);
         DelayedDamage.ScheduleHit(cm, Entity, Target.Value, mod, delayTurns: 0);
+        // 攻击发射事件（表现层生成飞行投射物）。纯视觉——伤害已瞬间结算（原版 CCmpProjectileManager 同架构）。
+        cm.Events.RaiseAttackLaunched(new Events.AttackLaunchedEvent
+        { Attacker = Entity, Target = Target.Value, IsRanged = IsRanged });
         Cooldown = 1.0f / Rate;
     }
 
