@@ -107,6 +107,7 @@ public sealed partial class PauseMenu : CanvasLayer
         AddButton(vbox, "Load Game", OpenLoadGame);
         AddButton(vbox, "Manual", OpenManual);
         AddButton(vbox, "Options", OpenOptions);
+        AddButton(vbox, "Hotkeys", OpenHotkeys);
         AddButton(vbox, "Resign", ShowResignConfirm);
         AddButton(vbox, "Leave", () => OnLeave?.Invoke());
 
@@ -151,6 +152,13 @@ public sealed partial class PauseMenu : CanvasLayer
     private void OpenOptions()
     {
         var panel = new OptionsPanel(layer: 65, inGame: true);
+        AddChild(panel);
+        panel.Open();
+    }
+
+    private void OpenHotkeys()
+    {
+        var panel = new HotkeysPanel(layer: 65);
         AddChild(panel);
         panel.Open();
     }

@@ -124,6 +124,8 @@ public sealed partial class Main : Node3D
 		// Load 冷加载存档;Multiplayer/Lobby 显大厅 LobbyUI(不自动开局,等用户 Host/Join)。
 		// 先全量重放已存设置:音量/显示即时生效项 + 本会话场景图形项(light/env 已注册)。
 		OptionsApplier.ApplyAll(GetNode<UserConfig>("/root/UserConfig"), GetTree(), inGame: true);
+		// 恢复用户热键重绑到 InputMap（session-only，每次启动须重放）。
+		HotkeyApplier.ApplyAll(GetNode<UserConfig>("/root/UserConfig"));
 
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		switch (cfg.Mode)

@@ -182,6 +182,7 @@ public sealed partial class MainMenu : Control
             new("Settings", null, new MenuEntry[]
             {
                 new("Options", OnOptions),
+                new("Hotkeys", OnHotkeys),
             }),
             new("Quit", () => GetTree().Quit()),
         };
@@ -377,6 +378,13 @@ public sealed partial class MainMenu : Control
     private void OnOptions()
     {
         var panel = new OptionsPanel();
+        AddChild(panel);
+        panel.Open();
+    }
+
+    private void OnHotkeys()
+    {
+        var panel = new HotkeysPanel();
         AddChild(panel);
         panel.Open();
     }
