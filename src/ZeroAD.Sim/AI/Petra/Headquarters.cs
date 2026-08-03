@@ -232,46 +232,45 @@ public sealed class Headquarters
 /// 当前骨架——完整逻辑（base anchor/resource balancing）逐步填充。</summary>
 public sealed class BasesManager
 {
-    private readonly PetraConfig _config;
-    public readonly List<BaseAnchor> Bases = new();
+    public readonly PetraConfig Config;
+    public readonly List<BaseManager> Bases = new();
+    private int _nextBaseId = 1;
 
-    public BasesManager(PetraConfig config) => _config = config;
+    public BasesManager(PetraConfig config) => Config = config;
 
     public void Update(GameState gameState, AIEventBuffer events)
     {
-        // 原版 basesManager.update：
-        //   1. 检查每个 base 的 anchor（CC）是否还活着
-        //   2. 为无 base 的实体分配 base
-        //   3. 各 base 的 resource balancing
-        // 骨架版：遍历清理死 base
+        // 清理死基地 + 更新活基地
         Bases.RemoveAll(b =>
         {
-            var ent = gameState.GetEntityById(b.AnchorId);
+            if (b.AnchorId == null) return b.Buildings.Count == 0;
+            var ent = gameState.GetEntityById(b.AnchorId.Value);
             return ent == null || ent.IsDead;
         });
+        foreach (var b in Bases)
+            b.Update(gameState, events);
     }
 
     public bool HasActiveBase(GameState gameState)
     {
         foreach (var b in Bases)
-        {
-            var ent = gameState.GetEntityById(b.AnchorId);
-            if (ent != null && !ent.IsDead && ent.Owner == gameState.PlayerId)
-                return true;
-        }
-        return Bases.Count > 0;  // 简化
+            if (b.AnchorId != null)
+            {
+                var ent = gameState.GetEntityById(b.AnchorId.Value);
+                if (ent != null && !ent.IsDead && ent.Owner == gameState.PlayerId)
+                    return true;
+            }
+        return Bases.Count > 0;
     }
 
     public bool HasPotentialBase(GameState gameState)
-        => HasActiveBase(gameState);  // 简化
+        => HasActiveBase(gameState);
 
-    /// <summary>基地锚点（CC 实体 + 关联的 worker 列表）。</summary>
-    public sealed class BaseAnchor
+    public BaseManager CreateBase(GameState gameState, uint anchorId)
     {
-        public readonly uint AnchorId;  // CC entity id
-        public readonly List<uint> Workers = new();
-        public ushort AccessIndex;
-
-        public BaseAnchor(uint anchorId) => AnchorId = anchorId;
+        var b = new BaseManager(gameState, this, _nextBaseId++);
+        b.AnchorId = anchorId;
+        Bases.Add(b);
+        return b;
     }
 }
