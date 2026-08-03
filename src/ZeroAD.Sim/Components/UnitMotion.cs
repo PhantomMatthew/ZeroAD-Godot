@@ -223,7 +223,19 @@ public static class SimSystem
     private static PathfinderComponent? _pathfinder;
     private static WaterManager? _water;
     private static TerritoryManager? _territory;
-    public static void Init(ComponentManager cm) => _cm = cm;
+    public static void Init(ComponentManager cm)
+    {
+        _cm = cm;
+        // 重置所有系统级静态字段：Init 的语义是"开启一个新世界"，不应携带上一个世界的残留。
+        // 生产代码 (SimBridge) 紧接着会逐个 Set* 重新填充；测试代码只调 Init 时，这避免了
+        // 跨测试的静态状态泄漏（曾导致 WalkSpeed_Tech_AppliesAtMoveAdvance flaky：上一个测试
+        // 留下的 _obstructions 让 MoveToPoint 走错误的 FindPath 分支，用旧世界网格算路径）。
+        _obstructions = null;
+        _range = null;
+        _pathfinder = null;
+        _water = null;
+        _territory = null;
+    }
     public static ComponentManager? Sim => _cm;
     public static ObstructionManager? Obstructions => _obstructions;
     public static RangeManager? Range => _range;
