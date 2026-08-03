@@ -31,6 +31,14 @@ namespace ZeroAD.Sim.Net
         SetUnitStance = 15,
         Garrison = 16,
         Ungarrison = 17,
+        // Phase 4 缺口：Petra entity.js/common-api 用的命令（逐字移植优先级最高的 3 个）。
+        Repair = 18,           // builder 修复/建造地基（EntityId=builder, IntParam1=target）
+        ReturnResource = 19,   // gatherer 返回资源到投放站（EntityId=gatherer, IntParam1=dropsite）
+        AttackWalk = 20,       // 攻击移动（EntityId=单位组首, FixedParam1/2=x/z 目标）
+        WalkToRange = 21,      // 移动到攻击范围（EntityId=单位, IntParam1=target, FixedParam1/2=min/maxRange）
+        SetupTradeRoute = 22,  // 建立贸易路线（EntityId=trader, IntParam1=targetMarket, 第一市场=EntityId）
+        CollectTreasure = 23,  // 收集宝藏（EntityId=collector, IntParam1=treasure）
+        Guard = 24,            // 护卫（EntityId=guard, IntParam1=target）
     }
 
     /// <summary>
@@ -218,5 +226,40 @@ namespace ZeroAD.Sim.Net
         /// 原版 "unload"/"unload-all-by-owner")。</summary>
         public static NetCommand Ungarrison(uint player, uint holderId, int unitId = -1) =>
             new(player, NetCommandType.Ungarrison, holderId, unitId);
+
+        // ── Phase 4 缺口：Petra entity.js 用的命令工厂 ──
+
+        /// <summary>Repair: builder 修复/建造地基。EntityId=builder, IntParam1=target foundation。
+        /// 原版 cmd {type:"repair", target}。</summary>
+        public static NetCommand Repair(uint player, uint builderId, uint targetId) =>
+            new(player, NetCommandType.Repair, builderId, (int)targetId);
+
+        /// <summary>ReturnResource: gatherer 返回资源到投放站。
+        /// EntityId=gatherer, IntParam1=dropsite。原版 cmd {type:"returnresource", target}。</summary>
+        public static NetCommand ReturnResource(uint player, uint gathererId, uint dropsiteId) =>
+            new(player, NetCommandType.ReturnResource, gathererId, (int)dropsiteId);
+
+        /// <summary>AttackWalk: 攻击移动到坐标。EntityId=单位, FixedParam1/2=x/z。
+        /// 原版 cmd {type:"attack-walk", x, z, targetClasses}。</summary>
+        public static NetCommand AttackWalk(uint player, uint unitId, Fixed x, Fixed z) =>
+            new(player, NetCommandType.AttackWalk, unitId, 0, 0, x.InternalValue, z.InternalValue);
+
+        /// <summary>WalkToRange: 移动到目标的攻击范围内。
+        /// EntityId=单位, IntParam1=target, FixedParam1=minRange, FixedParam2=maxRange。</summary>
+        public static NetCommand WalkToRange(uint player, uint unitId, uint targetId, Fixed minRange, Fixed maxRange) =>
+            new(player, NetCommandType.WalkToRange, unitId, (int)targetId, 0, minRange.InternalValue, maxRange.InternalValue);
+
+        /// <summary>SetupTradeRoute: 建立贸易路线。EntityId=trader, IntParam1=target market。
+        /// 原版 cmd {type:"setup-trade-route", target}。</summary>
+        public static NetCommand SetupTradeRoute(uint player, uint traderId, uint marketId) =>
+            new(player, NetCommandType.SetupTradeRoute, traderId, (int)marketId);
+
+        /// <summary>CollectTreasure: 收集宝藏。EntityId=collector, IntParam1=treasure。</summary>
+        public static NetCommand CollectTreasureCmd(uint player, uint collectorId, uint treasureId) =>
+            new(player, NetCommandType.CollectTreasure, collectorId, (int)treasureId);
+
+        /// <summary>Guard: 护卫目标。EntityId=guard, IntParam1=target。</summary>
+        public static NetCommand Guard(uint player, uint guardId, uint targetId) =>
+            new(player, NetCommandType.Guard, guardId, (int)targetId);
     }
 }

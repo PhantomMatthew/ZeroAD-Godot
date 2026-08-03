@@ -58,6 +58,14 @@ namespace ZeroAD.Sim.Net
                 case NetCommandType.Tribute: ApplyTribute(cmd); break;
                 case NetCommandType.SetTradingGoods: ApplySetTradingGoods(cmd); break;
                 case NetCommandType.Barter: ApplyBarter(cmd); break;
+                // Phase 4 缺口
+                case NetCommandType.Repair: ApplyRepair(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.ReturnResource: ApplyReturnResource(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.AttackWalk: ApplyAttackWalk(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.WalkToRange: ApplyWalkToRange(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.SetupTradeRoute: ApplySetupTradeRoute(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.CollectTreasure: ApplyCollectTreasure(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Guard: ApplyGuard(new EntityId(cmd.EntityId), cmd); break;
             }
         }
 
@@ -406,6 +414,80 @@ namespace ZeroAD.Sim.Net
             var buy = (ResourceType)cmd.IntParam2;
             int amount = cmd.FixedParam1;
             BarterSystem.ExchangeResources(_cm, player, (int)cmd.Player, sell, buy, amount);
+        }
+
+        // ── Phase 4 缺口 Apply 方法 ──
+
+        private void ApplyRepair(EntityId builder, NetCommand cmd)
+        {
+            var target = new EntityId((uint)cmd.IntParam1);
+            var ai = _cm.QueryInterface<UnitAIComponent>(builder);
+            if (ai != null) ai.Repair(target);
+            _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "repair", Target = target });
+        }
+
+        private void ApplyReturnResource(EntityId gatherer, NetCommand cmd)
+        {
+            // ReturnResource 在 UnitAI 的 GATHER 状态树内自动处理。
+            // 这里设 dropsite 目标到 ResourceGatherer + 切 UnitAI 到相应状态。
+            var dropsite = new EntityId((uint)cmd.IntParam1);
+            var g = _cm.QueryInterface<ResourceGatherer>(gatherer);
+            if (g != null)
+            {
+                g.TargetDropsite = dropsite;
+                g.State = ResourceGatherer.GatherState.MovingToDropsite;
+            }
+            var motion = _cm.QueryInterface<UnitMotion>(gatherer);
+            var posComp = _cm.QueryInterface<PositionComponent>(dropsite);
+            if (motion != null && posComp != null)
+                motion.MoveToPoint(new Maths.FixedVector2D(posComp.Position.X, posComp.Position.Z));
+            _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "returnresource", Target = dropsite });
+        }
+
+        private void ApplyAttackWalk(EntityId entity, NetCommand cmd)
+        {
+            var x = Fixed.Zero.WithInternalValue(cmd.FixedParam1);
+            var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
+            // AttackWalk = 移动到坐标 + 沿途遇敌自动攻击。当前简化为 Walk（UnitAI 的 COMBAT 会自动处理遇敌）。
+            var ai = _cm.QueryInterface<UnitAIComponent>(entity);
+            if (ai != null) ai.Walk(new Maths.FixedVector2D(x, z));
+            else _cm.QueryInterface<UnitMotion>(entity)?.MoveToPoint(new Maths.FixedVector2D(x, z));
+        }
+
+        private void ApplyWalkToRange(EntityId entity, NetCommand cmd)
+        {
+            // 简化：移动到目标位置（忽略 min/max range，精确版需 UnitAI 的 walk-to-range order）
+            var target = new EntityId((uint)cmd.IntParam1);
+            var targetPos = _cm.QueryInterface<PositionComponent>(target);
+            if (targetPos == null) return;
+            var ai = _cm.QueryInterface<UnitAIComponent>(entity);
+            if (ai != null) ai.Walk(new Maths.FixedVector2D(targetPos.Position.X, targetPos.Position.Z));
+        }
+
+        private void ApplySetupTradeRoute(EntityId trader, NetCommand cmd)
+        {
+            var target = new EntityId((uint)cmd.IntParam1);
+            var ai = _cm.QueryInterface<UnitAIComponent>(trader);
+            if (ai != null) ai.Gather(target);  // 简化：走 Gather order（Trader 的 trade 接到 dropsite/market）
+            _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "setup-trade-route", Target = target });
+        }
+
+        private void ApplyCollectTreasure(EntityId collector, NetCommand cmd)
+        {
+            var treasure = new EntityId((uint)cmd.IntParam1);
+            var ai = _cm.QueryInterface<UnitAIComponent>(collector);
+            if (ai != null) ai.Gather(treasure);  // 简化：TreasureCollector 走 Gather-like 路径
+            _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "collect-treasure", Target = treasure });
+        }
+
+        private void ApplyGuard(EntityId guard, NetCommand cmd)
+        {
+            // Guard：护卫目标。当前简化为跟随（移动到目标位置）。
+            var target = new EntityId((uint)cmd.IntParam1);
+            var targetPos = _cm.QueryInterface<PositionComponent>(target);
+            if (targetPos == null) return;
+            var ai = _cm.QueryInterface<UnitAIComponent>(guard);
+            if (ai != null) ai.Walk(new Maths.FixedVector2D(targetPos.Position.X, targetPos.Position.Z));
         }
     }
 }
