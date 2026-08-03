@@ -14,6 +14,9 @@ public sealed class ScenarioMapLoader
         public float X, Z;
         public int Player;
         public float Orientation;
+        public bool IsActor;       // actor| 前缀：纯装饰物（不进 sim，只放视觉）
+        public bool IsTrigger;     // trigger| 前缀：触发器区域
+        public bool IsSkirmish;    // skirmish| 前缀：skirmish 替换实体
     }
 
     public sealed class ScenarioData
@@ -22,6 +25,14 @@ public sealed class ScenarioMapLoader
         public List<ScenarioEntity> Entities = new();
         public string Name = "";
         public string Description = "";
+        public string MapType = "scenario";  // scenario/skirmish
+        public List<PlayerData> PlayerData = new();
+    }
+
+    public sealed class PlayerData
+    {
+        public string Civ = "athen";
+        public int Team = -1;
     }
 
     public static ScenarioData Load(string baseName, string mapsRoot)
@@ -52,9 +63,11 @@ public sealed class ScenarioMapLoader
         {
             var template = entEl.Element("Template")?.Value ?? "";
             if (string.IsNullOrEmpty(template)) continue;
-            if (template.StartsWith("actor|")) continue;
-            if (template.StartsWith("trigger|")) continue;
-            if (template.StartsWith("skirmish|")) continue;
+
+            // 分类标记（不再跳过——全部加载，sim 侧按需处理）
+            bool isActor = template.StartsWith("actor|");
+            bool isTrigger = template.StartsWith("trigger|");
+            bool isSkirmish = template.StartsWith("skirmish|");
 
             var posEl = entEl.Element("Position");
             var playerEl = entEl.Element("Player");
@@ -80,11 +93,17 @@ public sealed class ScenarioMapLoader
                 Template = template,
                 X = x, Z = z,
                 Player = player,
-                Orientation = orient
+                Orientation = orient,
+                IsActor = isActor,
+                IsTrigger = isTrigger,
+                IsSkirmish = isSkirmish,
             });
         }
 
-        GD.Print($"ScenarioMapLoader: loaded {data.Entities.Count} entities from {baseName}");
+        GD.Print($"ScenarioMapLoader: loaded {data.Entities.Count} entities from {baseName} " +
+                 $"(actors:{data.Entities.Count(e => e.IsActor)}, " +
+                 $"triggers:{data.Entities.Count(e => e.IsTrigger)}, " +
+                 $"skirmish:{data.Entities.Count(e => e.IsSkirmish)})");
         return data;
     }
 }

@@ -97,7 +97,34 @@ namespace ZeroAD.Sim.Rmgen.Maps
         /// <summary>资源生成（森林/矿/食物/装饰）。子类可覆盖。</summary>
         protected virtual void GenerateResources()
         {
-            // 骨架——完整版调 CreateDefaultForests/CreateBalancedMetalMines/...
+            var avoidAll = RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 1, ClForest, 5);
+
+            // 森林
+            var treeCounts = RmgenCommon.GetTreeCounts(MinForestTrees, MaxForestTrees, ForestRatio, MapSize);
+            RmgenCommon.CreateDefaultForests(Rng, Map, new[] { BaseTerrain }, avoidAll, ClForest,
+                treeCounts, NumPlayers);
+
+            // 金属矿
+            RmgenCommon.CreateBalancedMetalMines(Rng, Map, MetalLargeTemplate,
+                RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 1, ClForest, 1), ClMetal);
+
+            // 石矿
+            RmgenCommon.CreateBalancedStoneMines(Rng, Map, StoneLargeTemplate,
+                RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 1, ClForest, 1, ClMetal, 10), ClRock);
+
+            // 食物（动物群）
+            RmgenCommon.CreateFood(Rng, Map, new[] { "gaia/fauna_deer", "gaia/fauna_rabbit" },
+                RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 1, ClForest, 1), ClForest);
+
+            // 装饰物
+            RmgenCommon.CreateDecoration(Rng, Map,
+                new[] { "actor|geology/stone_granite_med.xml", "actor|flora/trees/oak.xml" },
+                RmgenLibrary.AvoidClasses(ClPlayer, 10));
+
+            // 散落树木
+            RmgenCommon.CreateStragglerTrees(Rng, Map, new[] { TreeTemplate },
+                RmgenLibrary.AvoidClasses(ClForest, 8, ClHill, 1, ClPlayer, 12), ClForest,
+                treeCounts.stragglerTrees);
         }
     }
 

@@ -106,40 +106,101 @@ namespace ZeroAD.Sim.Rmgen.Common
             return ((int)(forestRatio * scaled), (int)((1 - forestRatio) * scaled));
         }
 
-        /// <summary>创建默认森林（原版 createDefaultForests）。骨架。</summary>
+        /// <summary>创建默认森林（简化版：随机放树）。</summary>
         public static void CreateDefaultForests(RmgenRng rng, RandomMap map,
             string[] terrainSet, IConstraint constraint, TileClass tileClass,
             (int forestTrees, int stragglerTrees) treeCounts, int numPlayers)
         {
-            // TODO: 完整版用 LayeredPainter + border/interior terrain 变体
+            string treeTemplate = "gaia/tree/oak_large";
+            // 放置森林：每片 ~10 棵树
+            int forests = treeCounts.forestTrees / 10;
+            for (int i = 0; i < forests; i++)
+            {
+                var pos = RandomCoordinate(rng, map, passableOnly: true);
+                if (!map.ValidTilePassable(pos) || !constraint.Allows(pos)) continue;
+                // 每片森林放一棵树（简化——完整版用 ClumpPlacer + LayeredPainter）
+                map.SetTerrainEntity(treeTemplate, 0, pos, rng.RandFloat(0, 2 * SafeMath.PI));
+                tileClass.Add(pos);
+            }
         }
 
-        /// <summary>创建金属矿（原版 createBalancedMetalMines）。骨架。</summary>
+        /// <summary>创建金属矿（每玩家附近放一个大矿）。</summary>
         public static void CreateBalancedMetalMines(RmgenRng rng, RandomMap map,
             string metalTemplate, IConstraint constraint, TileClass tileClass)
         {
-            // TODO: 每玩家附近放置金属矿
+            // 简化版：随机放 N 个矿
+            int count = (int)RmgenLibrary.ScaleByMapSize(2, 6, map.GetSize());
+            for (int i = 0; i < count; i++)
+            {
+                var pos = RandomCoordinate(rng, map, passableOnly: true);
+                if (!constraint.Allows(pos)) continue;
+                map.SetTerrainEntity(metalTemplate, 0, pos, rng.RandFloat(0, 2 * SafeMath.PI));
+                tileClass.Add(pos);
+            }
         }
 
-        /// <summary>创建石矿（原版 createBalancedStoneMines）。骨架。</summary>
+        /// <summary>创建石矿（每玩家附近放一个大矿）。</summary>
         public static void CreateBalancedStoneMines(RmgenRng rng, RandomMap map,
             string stoneTemplate, IConstraint constraint, TileClass tileClass)
         {
-            // TODO: 每玩家附近放置石矿
+            int count = (int)RmgenLibrary.ScaleByMapSize(2, 6, map.GetSize());
+            for (int i = 0; i < count; i++)
+            {
+                var pos = RandomCoordinate(rng, map, passableOnly: true);
+                if (!constraint.Allows(pos)) continue;
+                map.SetTerrainEntity(stoneTemplate, 0, pos, rng.RandFloat(0, 2 * SafeMath.PI));
+                tileClass.Add(pos);
+            }
         }
 
-        /// <summary>创建食物来源（原版 createFood）。骨架。</summary>
+        /// <summary>创建食物来源（随机放动物群）。</summary>
         public static void CreateFood(RmgenRng rng, RandomMap map,
-            object[] foodTypes, IConstraint constraint, TileClass tileClass)
+            string[] animalTemplates, IConstraint constraint, TileClass tileClass)
         {
-            // TODO: 按类型放置动物群
+            int count = (int)RmgenLibrary.ScaleByMapSize(10, 30, map.GetSize());
+            for (int i = 0; i < count; i++)
+            {
+                var pos = RandomCoordinate(rng, map, passableOnly: true);
+                if (!constraint.Allows(pos)) continue;
+                string tmpl = animalTemplates.Length > 0
+                    ? rng.PickRandom(new System.Collections.Generic.List<string>(animalTemplates))
+                    : "gaia/fauna_deer";
+                map.SetTerrainEntity(tmpl, 0, pos, rng.RandFloat(0, 2 * SafeMath.PI));
+                tileClass.Add(pos);
+            }
         }
 
-        /// <summary>创建装饰物（原版 createDecoration）。骨架。</summary>
+        /// <summary>创建装饰物（随机放岩石/草丛）。</summary>
         public static void CreateDecoration(RmgenRng rng, RandomMap map,
-            object[] decoratives, IConstraint constraint)
+            string[] decorativeTemplates, IConstraint constraint)
         {
-            // TODO: 按密度放置装饰物
+            int count = (int)RmgenLibrary.ScaleByMapSize(20, 60, map.GetSize());
+            for (int i = 0; i < count; i++)
+            {
+                var pos = RandomCoordinate(rng, map, passableOnly: true);
+                if (!constraint.Allows(pos)) continue;
+                string tmpl = decorativeTemplates.Length > 0
+                    ? rng.PickRandom(new System.Collections.Generic.List<string>(decorativeTemplates))
+                    : "actor|geology/stone_granite_med.xml";
+                map.SetTerrainEntity(tmpl, 0, pos, rng.RandFloat(0, 2 * SafeMath.PI));
+            }
+        }
+
+        /// <summary>创建散落树木（原版 createStragglerTrees）。</summary>
+        public static void CreateStragglerTrees(RmgenRng rng, RandomMap map,
+            string[] treeTemplates, IConstraint constraint, TileClass tileClass,
+            int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                var pos = RandomCoordinate(rng, map, passableOnly: true);
+                if (!constraint.Allows(pos)) continue;
+                string tmpl = treeTemplates.Length > 0
+                    ? rng.PickRandom(new System.Collections.Generic.List<string>(treeTemplates))
+                    : "gaia/tree/oak";
+                map.SetTerrainEntity(tmpl, 0, pos, rng.RandFloat(0, 2 * SafeMath.PI));
+                tileClass.Add(pos);
+            }
         }
 
         // ── player.js 放置 ──

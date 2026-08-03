@@ -130,10 +130,15 @@ namespace ZeroAD.Sim.Content
             var template = ent.Element("Template")?.Value ?? "";
             def.Template = template.Replace('|', '/');
             def.IsActor = template.StartsWith("actor|", StringComparison.Ordinal);
-            def.IsSimulationEntity = !def.IsActor &&
+            // skirmish| 实体：在原版由 SkirmishReplacer 组件替换为对应文明的实际模板。
+            // 简化处理：直接尝试替换为 structures/{civ}/civil_centre 或 units/{civ}/...
+            // 当前不替换——作为普通实体加载（模板名含 skirmish/，sim 侧会忽略未知的）。
+            // trigger| 实体：触发器区域，当前无触发器视觉——跳过（不影响 sim）。
+            def.IsSimulationEntity = !def.IsActor && !template.StartsWith("trigger|") &&
                 (def.Template.StartsWith("gaia/", StringComparison.Ordinal) ||
                  def.Template.StartsWith("units/", StringComparison.Ordinal) ||
-                 def.Template.StartsWith("structures/", StringComparison.Ordinal));
+                 def.Template.StartsWith("structures/", StringComparison.Ordinal) ||
+                 def.Template.StartsWith("skirmish/", StringComparison.Ordinal));
 
             var player = ent.Element("Player");
             if (player != null && int.TryParse(player.Value, out var pid))

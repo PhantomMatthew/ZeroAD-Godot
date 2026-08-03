@@ -703,6 +703,14 @@ public sealed partial class Main : Node3D
 
 	private void SetupTerrain(string? pmpRelPath = null)
 	{
+		// 随机地图：路径以 "random/" 开头 → 走 rmgen 生成
+		if (pmpRelPath != null && pmpRelPath.StartsWith("random/"))
+		{
+			string mapName = pmpRelPath.Substring("random/".Length);
+			SetupRmgenTerrain(mapName);
+			return;
+		}
+
 		// Track the rel path actually used so a save can rebuild this terrain on cold-load
 		// (embedded in the v6 save header; generated-terrain saves leave MapPath=null).
 		string? mapRel = pmpRelPath;
@@ -799,6 +807,85 @@ public sealed partial class Main : Node3D
 	}
 
 	/// <summary>Build a [MapSize,MapSize] passability grid from the PMP heightmap + water level and
+	/// <summary>随机地图生成（rmgen C#）。调 MapRegistry.Generate → MapExport → PmpMap → TerrainRenderer。
+	/// 接入 SetupTerrain 的 "random/" 路径前缀分支。</summary>
+	private void SetupRmgenTerrain(string mapName)
+	{
+		GD.Print($"[Main] Generating random map: {mapName}");
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		uint seed = cfg.Seed;
+		int mapSize = 192;
+
+		var rng = new ZeroAD.Sim.RmgenMath.RmgenRng(seed);
+		var settings = new ZeroAD.Sim.Rmgen.Common.MapSettings
+		{
+			Size = mapSize,
+			Seed = seed,
+			CircularMap = false,
+		};
+		// gaia + 2 players
+		settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = "gaia" });
+		settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = "athen" });
+		settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = "spart" });
+
+		var export = ZeroAD.Sim.Rmgen.Maps.MapRegistry.Generate(mapName, rng, settings);
+		if (export == null)
+		{
+			GD.PrintErr($"[Main] Unknown random map type: {mapName}, falling back to arcadia");
+			SetupTerrain(null);
+			return;
+		}
+
+		// MapExport → PmpMap 适配
+		int pps = export.Size / 16;
+		int verts = export.Size + 1;
+		var pmp = new PmpMap
+		{
+			Version = 7,
+			PatchesPerSide = pps,
+			Heightmap = export.Height,
+			TextureNames = new List<string>(export.TextureNames),
+			TileTex1 = export.TileIndex,
+		};
+
+		// 地形渲染（复用 PMP 路径）
+		var terrainNode = TerrainRenderer.CreateFromHeightmap(pmp);
+		AddChild(terrainNode);
+		_worldRoot.Position = new Vector3(0f, 0f, pmp.MapSizeMeters);
+
+		var fogOverlay = new MeshInstance3D
+		{
+			Mesh = terrainNode.Mesh,
+			Position = new Vector3(0f, 0.03f, 0f),
+			CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+			Name = "TerrainFogOverlay",
+			MaterialOverride = new ShaderMaterial
+			{
+				Shader = GD.Load<Shader>("res://Shaders/fog_territory_overlay.gdshader"),
+			},
+		};
+		AddChild(fogOverlay);
+		_sim.FogWorld.Attach(fogOverlay, pmp.MapSizeMeters);
+		_sim.TerritoryWorld.Attach(fogOverlay, pmp.MapSizeMeters);
+		TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
+
+		// 可通行性（全陆地——rmgen 的水面处理 TODO）
+		FillPassabilityAllLand();
+
+		// 放置实体（从 MapExport.Entities）
+		foreach (var ent in export.Entities)
+		{
+			float x = (float)ent.Position.X;
+			float z = (float)ent.Position.Y;
+			float angle = (float)ent.Orientation;
+			try { _sim.SpawnFromTemplate(ent.TemplateName, x, z); }
+			catch (System.Exception ex) { GD.PushWarning($"[Main] rmgen entity spawn failed: {ent.TemplateName}: {ex.Message}"); }
+		}
+
+		_sim.MapPath = $"random/{mapName}";
+		GD.Print($"[Main] rmgen terrain ready: {mapName} ({export.Size}×{export.Size}, {export.Entities.Count} entities)");
+	}
+
 	/// hand it to the sim-side TerrainComponent. Tiles at/below water are Water, the rest Land.
 	/// Also reconfigures TerrainComponent + ObstructionManager bounds to the real map size — they
 	/// default to 256m (64 tiles) but real maps are larger (tutorial = 768m), and without this the
