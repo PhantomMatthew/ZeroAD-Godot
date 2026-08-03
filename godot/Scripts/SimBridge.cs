@@ -16,6 +16,8 @@ public sealed partial class SimBridge : Node
 {
     private ComponentManager _sim = null!;
     private NetTurnManager _netTurn = null!;
+    private ReplayRecorder? _recorder;       // 自动录像：非 null 时每回合录制命令批
+    private ReplayDriver? _replayDriver;     // 回放播放：非 null 时每帧注入预录制命令
     private double _simAccumulator;
     private const double SimTickRate = 0.1;
 
@@ -240,6 +242,52 @@ public sealed partial class SimBridge : Node
             .Select(s => (uint)s.PlayerId)
             .ToHashSet();
         _netTurn = new NetTurnManager(_sim, commandDelay: 2, localPlayerId, role, expectedPlayers);
+    }
+
+    /// <summary>开始自动录像。InitWorld 后、SimulationRunning=true 前调用。
+    /// 自动录制所有对局（Standalone/Host）。Client 不录（命令不完整）。</summary>
+    public void StartRecording()
+    {
+        if (_netTurn.Role == NetRole.Client) return;  // Client 视角命令不完整，不录
+        try
+        {
+            string dir = ProjectSettings.GlobalizePath("user://replays/");
+            System.IO.Directory.CreateDirectory(dir);
+            string stamp = System.DateTimeOffset.UtcNow.ToString("yyyyMMdd_HHmmss");
+            string map = System.IO.Path.GetFileNameWithoutExtension(MapPath ?? "match");
+            string path = System.IO.Path.Combine(dir, $"{stamp}_{map}.zreplay");
+            string engineVersion = "0.29.0";  // 与存档一致：版本号在 header 记录，便于将来兼容
+            var meta = new ReplayMeta(
+                MapPath ?? string.Empty,
+                IsTutorialMode ? "tutorial" : (_netTurn.Role != NetRole.Standalone ? "multiplayer" : "singleplayer"),
+                IsTutorialMode, LocalPlayerId, _netTurn.Role, _netTurn.CommandDelay,
+                Slots, System.DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                $"Match {stamp}", engineVersion);
+            var fs = new System.IO.FileStream(path, System.IO.FileMode.Create);
+            var writer = ReplayFile.BeginRecording(fs, meta, _sim);
+            _recorder = new ReplayRecorder(writer, _netTurn, path);
+        }
+        catch (System.Exception ex)
+        {
+            GD.PrintErr($"[Replay] start recording failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>安装回放驱动器（Main.AutoReplay 在冷加载初始状态后调用）。</summary>
+    public void StartReplay(ReplayReader reader)
+        => _replayDriver = new ReplayDriver(this, reader);
+
+    /// <summary>录制器/驱动器是否活跃（用于 Main 判断当前是否回放模式）。</summary>
+    public bool IsReplayMode => _replayDriver != null;
+
+    /// <summary>回放总回合数（ReplayControls 显示用）。非回放模式返回 0。</summary>
+    public uint ReplayTotalTurns => _replayDriver?.TotalTurns ?? 0;
+
+    /// <summary>结束录制（胜利/失败/退出时）。幂等。</summary>
+    public void FinalizeRecording(string description = "")
+    {
+        _recorder?.Finalize(description);
+        _recorder = null;
     }
 
     public void StartTutorial()
@@ -563,6 +611,13 @@ public sealed partial class SimBridge : Node
     /// 空世界里判所有玩家 0 实体→进场即 Defeat。此闸门保证回合推进与世界完整同生。</summary>
     public bool SimulationRunning { get; set; }
 
+    public override void _ExitTree()
+    {
+        // 统一收尾录制：场景切回主菜单时 SimBridge 被销毁，无论从哪条路径退出
+        // （胜利/暂停离开/场景切换）都会触发，保证录像文件完整落盘。幂等。
+        FinalizeRecording();
+    }
+
     public override void _Ready()
     {
         // 阴影代理生命周期跟随单位视觉进/出树(EnsureVisual/装饰物/RebuildAllVisuals 全路径
@@ -593,6 +648,7 @@ public sealed partial class SimBridge : Node
     public override void _Process(double delta)
     {
         if (_sim == null) return;
+        _replayDriver?.Pump();  // 回放模式：注入当前回合预录制命令（播完则停止）。正常游戏为 null，零开销。
         if (!SimulationRunning) return;  // 加载中:世界未完整,冻结回合推进(渲染照常)
         if (Paused) return;   // 状态冻结;早于累加 delta 以避免恢复时补帧爆发
 

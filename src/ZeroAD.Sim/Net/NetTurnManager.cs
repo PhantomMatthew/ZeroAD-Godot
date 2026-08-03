@@ -93,6 +93,16 @@ namespace ZeroAD.Sim.Net
             list.Add(cmd);
         }
 
+        /// <summary>Replay 专用：为指定回合注入预录制命令。仅 Standalone 有效（回放不涉网络）。
+        /// 调用后该回合的 <see cref="AdvanceTurn"/> 会像本地生成的一样执行这些命令——turn 循环
+        /// 逻辑完全不变（CanAdvanceTurn 对 Standalone 永远 true，AdvanceTurn 照常从 _bundles 取命令），
+        /// 因此回放的每一步走与实时游戏完全相同的代码路径，确定性自动保证。</summary>
+        public void InjectReplayBundle(uint turn, NetCommand[] commands)
+        {
+            if (_role != NetRole.Standalone) return;
+            _bundles[turn] = new List<NetCommand>(commands);
+        }
+
         /// <summary>Host only: turns [0, commandDelay) can never contain commands, so
         /// their bundles are produced empty up front and the game can start immediately.</summary>
         public void HostBootstrap()

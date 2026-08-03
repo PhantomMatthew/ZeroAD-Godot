@@ -7,11 +7,12 @@ namespace ZeroAD.Godot;
 // 每次开始前 Reset,无此问题。Load 分支与 Slots 供 Phase 2(LoadGame)/MP 跨场景重构用。
 public partial class GameLaunchConfig : Node
 {
-    public enum LaunchMode { Lobby, SinglePlayer, Tutorial, Load, Multiplayer }
+    public enum LaunchMode { Lobby, SinglePlayer, Tutorial, Load, Replay, Multiplayer }
 
     public LaunchMode Mode = LaunchMode.Lobby;
     public uint Seed = 42;
     public string LoadSlot = "";
+    public string ReplaySlot = "";   // Replay 模式：user://replays/ 下的录像 slot 名
     public bool MpHost;
     public System.Collections.Generic.IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? Slots;
 
@@ -21,6 +22,7 @@ public partial class GameLaunchConfig : Node
         Mode = LaunchMode.Lobby;
         Seed = 42;
         LoadSlot = "";
+        ReplaySlot = "";
         MpHost = false;
         Slots = null;
     }

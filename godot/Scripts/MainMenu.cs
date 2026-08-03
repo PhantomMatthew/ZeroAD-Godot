@@ -172,6 +172,7 @@ public sealed partial class MainMenu : Control
             {
                 new("Matches", OnSinglePlayer),
                 new("Load Game", OnLoadGame),
+                new("Replays", OnReplay),
             }),
             new("Multiplayer", null, new MenuEntry[]
             {
@@ -362,6 +363,13 @@ public sealed partial class MainMenu : Control
     private void OnLoadGame()
     {
         var panel = new LoadGamePanel();
+        AddChild(panel);
+        panel.Open();
+    }
+
+    private void OnReplay()
+    {
+        var panel = new ReplayPanel();
         AddChild(panel);
         panel.Open();
     }

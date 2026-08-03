@@ -137,6 +137,9 @@ public sealed partial class Main : Node3D
 			case GameLaunchConfig.LaunchMode.Load:
 				CallDeferred(nameof(AutoLoad));
 				break;
+			case GameLaunchConfig.LaunchMode.Replay:
+				CallDeferred(nameof(AutoReplay));
+				break;
 			case GameLaunchConfig.LaunchMode.Multiplayer:
 				CallDeferred(nameof(AutoMp));
 				break;
@@ -337,6 +340,7 @@ public sealed partial class Main : Node3D
 
 		// 世界已完整:放行回合推进(SimBridge._Process 闸门)。分阶段加载在 Init 与本阶段
 		// 之间让帧,此间回合必须冻结,否则 TickVictory 在空世界判全员 0 实体→进场即 Defeat。
+		_sim.StartRecording();  // 自动录像：开局后立即开始录制（回放模式不录，见 AutoReplay）
 		_sim.SimulationRunning = true;
 
 		GD.Print(_isTutorial
@@ -469,6 +473,94 @@ public sealed partial class Main : Node3D
 		AddChild(_loadingOverlay);
 		_loadingOverlay.SetProgress(0.05f);
 		RunColdLoadStages(meta, cfg);
+	}
+
+	/// <summary>回放入口：打开录像 → 读 header → 加载初始状态 → 安装 ReplayDriver → 播放。
+	/// 镜像 AutoLoad 的三段式（AutoReplay → RunReplayStages → ReplayPlay），但不录制、不 StartRecording。</summary>
+	private void AutoReplay()
+	{
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		var reader = ReplayFileManager.Open(cfg.ReplaySlot);
+		if (reader == null)
+		{
+			GD.PrintErr($"[Replay] cannot open slot '{cfg.ReplaySlot}'");
+			cfg.Reset();
+			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+			return;
+		}
+		_loadingOverlay = new LoadingOverlay(reader.Meta.Description);
+		AddChild(_loadingOverlay);
+		_loadingOverlay.SetProgress(0.05f);
+		RunReplayStages(reader, cfg);
+	}
+
+	private async void RunReplayStages(ZeroAD.Sim.Net.ReplayReader reader, GameLaunchConfig cfg)
+	{
+		try
+		{
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+			_loadingOverlay!.SetProgress(0.3f);
+			ReplayPlay(reader);
+			_loadingOverlay.SetProgress(1f);
+		}
+		catch (System.Exception e)
+		{
+			GD.PrintErr($"[Replay] playback init failed: {e}");
+			cfg.Reset();
+			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+		}
+		finally
+		{
+			_loadingOverlay?.QueueFree();
+			_loadingOverlay = null;
+		}
+	}
+
+	/// <summary>镜像 ColdLoad：重建世界骨架 → 反序列化初始状态 → 安装播放驱动器 → 放行回合。</summary>
+	private void ReplayPlay(ZeroAD.Sim.Net.ReplayReader reader)
+	{
+		var meta = reader.Meta;
+		_gameStarted = true;
+		_isTutorial = meta.Tutorial;
+		_lobby.Hide();
+
+		string? templatesPath = FindTemplatesPath();
+		_sim.InitWorld(templatesPath, seed: 0, meta.LocalPlayerId, NetRole.Standalone, meta.Slots);
+
+		BuildSessionUi(meta.LocalPlayerId);
+		WireMirageSwapBack();
+
+		if (!string.IsNullOrEmpty(meta.MapPath))
+			SetupTerrain(meta.MapPath);
+
+		// 反序列化初始状态（从录像 payload，与 SaveGameManager.Load 同路径）。
+		using var ms = new System.IO.MemoryStream(reader.InitialStatePayload);
+		using var br = new System.IO.BinaryReader(ms);
+		_sim.Sim.DeserializeSaveGame(new ZeroAD.Sim.Serialization.BinaryDeserializer(br), comp =>
+		{
+			if (comp is ZeroAD.Sim.Components.LosManagerComponent los)
+				los.Attach(_sim.Range);
+			if (comp is ZeroAD.Sim.Components.AIComponent ai)
+				ai.Configure(_sim.Sim, _sim.NetTurn);
+		});
+
+		_sim.RebuildSpatialIndexesAfterLoad();
+		_sim.RebuildAllVisuals();
+		FocusCameraOnLocalPlayer();
+
+		// 安装回放驱动器（每帧注入预录制命令）+ 控制条。
+		_sim.StartReplay(reader);
+		var controls = new ReplayControls(_sim);
+		controls.OnExit += () =>
+		{
+			_sim.SimulationRunning = false;
+			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+		};
+		AddChild(controls);
+
+		_sim.SimulationRunning = true;
+		GD.Print($"[Replay] started '{meta.Description}' (commandDelay {meta.CommandDelay})");
 	}
 
 	/// <summary>冷加载分阶段驱动(同 RunTutorialLoadStages:段间 await 一帧让进度条重绘)。</summary>
