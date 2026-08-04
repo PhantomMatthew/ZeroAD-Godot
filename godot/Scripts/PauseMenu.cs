@@ -167,7 +167,7 @@ public sealed partial class PauseMenu : CanvasLayer
     {
         var btn = new Button
         {
-            Text = label,
+            Text = Localization.Tr(label),
             Theme = UITheme.GetTheme(),
             CustomMinimumSize = new Vector2(200, 34),
             SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,

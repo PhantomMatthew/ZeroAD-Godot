@@ -49,8 +49,14 @@ namespace ZeroAD.Sim.Rmgen.Maps
             MapSize = settings.Size;
             NumPlayers = RmgenCommon.GetNumPlayers(settings);
 
+            // biome:调用方指定 > 按 SupportedBiomes 自选(上游 gamesetup "random" 行为——
+            // 多数图每局随机 biome;选择消耗抽数,在生成最前,同 setBiome(mapSettings.Biome))。
+            var biome = settings.BiomeData
+                ?? BiomeLoader.Load(settings.DataRoot, "generic/" + rng.PickRandom(SupportedBiomes), rng);
+            Biome = biome;
+
             // 创建地图
-            Map = new RandomMap(rng, MapSize, HeightLand, BaseTerrain, settings.CircularMap);
+            Map = new RandomMap(rng, MapSize, HeightLand, biome.MainTerrain0, settings.CircularMap);
             RmgenLibrary.CurrentMap = Map;
 
             // 创建 TileClass
@@ -61,70 +67,111 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ClRock = new TileClass(MapSize);
             ClMetal = new TileClass(MapSize);
 
-            // 玩家基地
-            RmgenCommon.PlacePlayerBases(rng, Map, settings, BaseTerrain, ClPlayer);
+            // 玩家基地(含 CityPatch 基地区刷漆)
+            RmgenCommon.PlacePlayerBases(rng, Map, settings, biome.MainTerrain0, ClPlayer, biome);
 
             // 起伏
             RmgenCommon.CreateBumps(rng, Map,
                 RmgenLibrary.AvoidClasses(ClPlayer, 20));
 
             // 丘陵/山脉
-            GenerateTerrain();
+            GenerateTerrain(biome);
 
-            // 森林
+            // 森林(mainland.js:biome 树数 + pForest1/2 混合地表格)
             var (forestTrees, stragglerTrees) = RmgenCommon.GetTreeCounts(
-                MinForestTrees, MaxForestTrees, ForestRatio, MapSize);
+                biome.TreesMin, biome.TreesMax, biome.ForestProbability, MapSize);
 
-            // 资源
-            GenerateResources();
+            string ff1 = biome.ForestFloor1, ff2 = biome.ForestFloor2;
+            var pForest1 = new[] { ff2 + "|" + biome.Tree1, ff2 + "|" + biome.Tree2, ff2 };
+            var pForest2 = new[] { ff1 + "|" + biome.Tree4, ff1 + "|" + biome.Tree5, ff1 };
+            RmgenCommon.CreateDefaultForests(rng, Map,
+                new object[] { biome.MainTerrain0, ff1, ff2, pForest1, pForest2 },
+                RmgenLibrary.AvoidClasses(ClPlayer, 20, ClForest, 18, ClHill, 0),
+                ClForest, forestTrees);
+
+            // 资源 + 斑块(mainland.js 原参数)
+            GenerateResources(biome, stragglerTrees);
 
             return Map.MakeExportable();
         }
 
+        /// <summary>本图可随机的 biome 白名单(上游 SupportedBiomes;默认全 generic——
+        /// 多数上游图即如此,biome 每局随机)。强主题图覆盖。</summary>
+        protected virtual IReadOnlyList<string> SupportedBiomes => BiomeLoader.KnownBiomes;
+
+        /// <summary>本局 biome(Generate 中解析)。</summary>
+        protected BiomeSet Biome = null!;
+
         /// <summary>地形生成（丘陵/山脉）。子类可覆盖。</summary>
-        protected virtual void GenerateTerrain()
+        protected virtual void GenerateTerrain(BiomeSet biome)
         {
             if (Rng.RandBool())
-                RmgenCommon.CreateHills(Rng, Map, new[] { CliffTerrain, CliffTerrain, HillTerrain },
+                RmgenCommon.CreateHills(Rng, Map,
+                    new object[] { biome.Cliff, biome.Cliff, biome.Hill },
                     RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 15), ClHill,
                     count: (int)RmgenLibrary.ScaleByMapSize(3, 15, MapSize));
             else
-                RmgenCommon.CreateMountains(Rng, Map, CliffTerrain,
+                RmgenCommon.CreateMountains(Rng, Map, biome.Cliff,
                     RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 15), ClHill,
                     count: (int)RmgenLibrary.ScaleByMapSize(3, 15, MapSize));
         }
 
-        /// <summary>资源生成（森林/矿/食物/装饰）。子类可覆盖。</summary>
-        protected virtual void GenerateResources()
+        /// <summary>资源生成（斑块/森林/矿/食物/装饰/散落树,mainland.js 原参数）。</summary>
+        protected virtual void GenerateResources(BiomeSet biome, int stragglerTrees)
         {
-            var avoidAll = RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 1, ClForest, 5);
+            // 泥地分层斑块(mainland.js:三种尺寸 × [main→tier1→tier2→tier3] 渐变,widths [1,1])
+            RmgenCommon.CreateLayeredPatches(Rng, Map,
+                new[] { RmgenLibrary.ScaleByMapSize(3, 6, MapSize),
+                        RmgenLibrary.ScaleByMapSize(5, 10, MapSize),
+                        RmgenLibrary.ScaleByMapSize(8, 21, MapSize) },
+                new object[] {
+                    new[] { biome.MainTerrain0, biome.Tier1Terrain },
+                    new[] { biome.Tier1Terrain, biome.Tier2Terrain },
+                    new[] { biome.Tier2Terrain, biome.Tier3Terrain } },
+                new[] { 1, 1 },
+                RmgenLibrary.AvoidClasses(ClForest, 0, ClHill, 0, ClDirt, 5, ClPlayer, 12),
+                (int)RmgenLibrary.ScaleByMapSize(15, 45, MapSize), ClDirt);
 
-            // 森林
-            var treeCounts = RmgenCommon.GetTreeCounts(MinForestTrees, MaxForestTrees, ForestRatio, MapSize);
-            RmgenCommon.CreateDefaultForests(Rng, Map, new[] { BaseTerrain }, avoidAll, ClForest,
-                treeCounts, NumPlayers);
+            // 草地斑块(tier4)
+            RmgenCommon.CreatePatches(Rng, Map,
+                new[] { RmgenLibrary.ScaleByMapSize(2, 4, MapSize),
+                        RmgenLibrary.ScaleByMapSize(3, 7, MapSize),
+                        RmgenLibrary.ScaleByMapSize(5, 15, MapSize) },
+                biome.Tier4Terrain,
+                RmgenLibrary.AvoidClasses(ClForest, 0, ClHill, 0, ClDirt, 5, ClPlayer, 12),
+                (int)RmgenLibrary.ScaleByMapSize(15, 45, MapSize), ClDirt);
 
-            // 金属矿
-            RmgenCommon.CreateBalancedMetalMines(Rng, Map, MetalLargeTemplate,
-                RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 1, ClForest, 1), ClMetal);
+            // 金属矿/石矿
+            RmgenCommon.CreateBalancedMetalMines(Rng, Map, biome.MetalLarge,
+                RmgenLibrary.AvoidClasses(ClForest, 1, ClPlayer,
+                    RmgenLibrary.ScaleByMapSize(20, 35, MapSize), ClHill, 1), ClMetal);
+            RmgenCommon.CreateBalancedStoneMines(Rng, Map, biome.StoneLarge,
+                RmgenLibrary.AvoidClasses(ClForest, 1, ClPlayer,
+                    RmgenLibrary.ScaleByMapSize(20, 35, MapSize), ClHill, 1, ClMetal, 10), ClRock);
 
-            // 石矿
-            RmgenCommon.CreateBalancedStoneMines(Rng, Map, StoneLargeTemplate,
-                RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 1, ClForest, 1, ClMetal, 10), ClRock);
-
-            // 食物（动物群）
-            RmgenCommon.CreateFood(Rng, Map, new[] { "gaia/fauna_deer", "gaia/fauna_rabbit" },
-                RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 1, ClForest, 1), ClForest);
-
-            // 装饰物
+            // 装饰物(rock/grass/bush)
             RmgenCommon.CreateDecoration(Rng, Map,
-                new[] { "actor|geology/stone_granite_med.xml", "actor|flora/trees/oak.xml" },
-                RmgenLibrary.AvoidClasses(ClPlayer, 10));
+                new[] { biome.RockMedium, biome.RockLarge, biome.GrassShort,
+                        biome.Grass, biome.BushMedium, biome.BushSmall },
+                RmgenLibrary.AvoidClasses(ClForest, 0, ClPlayer, 10, ClHill, 0));
 
-            // 散落树木
-            RmgenCommon.CreateStragglerTrees(Rng, Map, new[] { TreeTemplate },
-                RmgenLibrary.AvoidClasses(ClForest, 8, ClHill, 1, ClPlayer, 12), ClForest,
-                treeCounts.stragglerTrees);
+            // 食物:主猎物群 + 浆果丛(mainland.js 两次 createFood)
+            var clFood = new TileClass(MapSize);
+            RmgenCommon.CreateFood(Rng, Map,
+                new[] { biome.MainHuntableAnimal, biome.SecondaryHuntableAnimal },
+                RmgenLibrary.AvoidClasses(ClForest, 0, ClPlayer, 20, ClHill, 1,
+                    ClMetal, 4, ClRock, 4, clFood, 20), clFood);
+            RmgenCommon.CreateFood(Rng, Map,
+                new[] { biome.FruitBush },
+                RmgenLibrary.AvoidClasses(ClForest, 0, ClPlayer, 20, ClHill, 1,
+                    ClMetal, 4, ClRock, 4, clFood, 10), clFood);
+
+            // 散落树木(mainland.js:[oTree1, oTree2, oTree4, oTree3])
+            RmgenCommon.CreateStragglerTrees(Rng, Map,
+                new[] { biome.Tree1, biome.Tree2, biome.Tree4, biome.Tree3 },
+                RmgenLibrary.AvoidClasses(ClForest, 8, ClHill, 1, ClPlayer, 12,
+                    ClMetal, 6, ClRock, 6, clFood, 1), ClForest,
+                stragglerTrees);
         }
     }
 
@@ -162,6 +209,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string CliffTerrain => "alpine_cliff_a";
         protected override string HillTerrain => "alpine_grass_rocky";
         protected override string TreeTemplate => "gaia/tree/pine";
+        /// <summary>上游 alpine_lakes.json SupportedBiomes = "alpine/"(专属 biome 目录,
+        /// 未移植——回退同名 generic biome)。</summary>
+        protected override IReadOnlyList<string> SupportedBiomes => new[] { "alpine" };
     }
 
     /// <summary>ambush.js（250 行）。</summary>

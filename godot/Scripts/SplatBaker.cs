@@ -36,12 +36,14 @@ public static class SplatBaker
 		}
 
 		// 只解码真正被 tile 引用的图层(多数地图 < 全部声明)。
+		// TileTex2 与 TileTex1 不等长(如 rmgen 适配器只填单层)时按"无 blend 层"处理。
+		bool hasTex2 = map.TileTex2.Length == map.TileTex1.Length;
 		var used = new bool[texCount];
 		int t = map.TilesPerSide;
 		for (int i = 0; i < map.TileTex1.Length; i++)
 		{
 			used[Math.Clamp(map.TileTex1[i], 0, texCount - 1)] = true;
-			if (map.TileTex2[i] != PmpMap.NoTexture)
+			if (hasTex2 && map.TileTex2[i] != PmpMap.NoTexture)
 				used[Math.Clamp(map.TileTex2[i], 0, texCount - 1)] = true;
 		}
 		var layers = new byte[texCount][];
@@ -58,7 +60,7 @@ public static class SplatBaker
 		for (int i = 0; i < t * t; i++)
 		{
 			int a = Math.Clamp(map.TileTex1[i], 0, texCount - 1);
-			bool blend = map.TileTex2[i] != PmpMap.NoTexture;
+			bool blend = hasTex2 && map.TileTex2[i] != PmpMap.NoTexture;
 			pick[i] = blend ? Math.Clamp(map.TileTex2[i], 0, texCount - 1) : a;
 		}
 

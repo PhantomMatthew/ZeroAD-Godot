@@ -38,6 +38,9 @@ public sealed partial class SimBridge : Node
     private EntityId _terrainEntity;
     private readonly Dictionary<uint, EntityId> _scenarioUidMap = new();
     private readonly List<Node3D> _decorativeNodes = new();
+    /// <summary>InitWorld 传入的模板根路径(simulation/templates)——SkirmishReplacer 由它
+    /// 推导 civs 数据目录(../data/civs)。</summary>
+    private string? _templatesPath;
 
     /// <summary>
     /// The single shared sim event bus. Delegates to <see cref="ComponentManager.Events"/> so
@@ -162,6 +165,7 @@ public sealed partial class SimBridge : Node
         if (auraCatalog != null) _sim.Auras = auraCatalog;
         SimSystem.Init(_sim);
         Templates = templates;
+        _templatesPath = templatesPath;
         LocalPlayerId = localPlayerId;
         Slots = slots;   // 存档头 v6 契约:冷加载用同一份槽位表重建世界
 
@@ -360,12 +364,55 @@ public sealed partial class SimBridge : Node
         }
     }
 
+    /// <summary>加载 skirmish 地图的 XML 实体并生成（占位模板经 SkirmishReplacer 按槽位文明
+    /// 替换后走正常 scenario 生成路径）。仅当地图 XML 存在且含 skirmish/ 占位实体时返回 true——
+    /// 普通 scenario 地图（实体全是确定模板）不走路径，保持既有沙盒生成不变。
+    /// mapRelPathNoExt 例 "maps/skirmishes/acropolis_bay_2p"。</summary>
+    public bool LoadSkirmishScenario(string dataRoot, string mapRelPathNoExt)
+    {
+        string? xmlPath = ScenarioLoader.FindScenarioPath(dataRoot, mapRelPathNoExt);
+        if (xmlPath == null) return false;
+        var scenario = ScenarioLoader.Load(xmlPath);
+        if (!scenario.Entities.Any(e => e.Template.StartsWith("skirmish/", StringComparison.Ordinal)))
+            return false;
+        SpawnScenarioEntities(scenario);
+        GD.Print($"[Skirmish] loaded map entities: {scenario.Entities.Count} ({scenario.Name})");
+        return true;
+    }
+
+    /// <summary>skirmish/ 占位实体的文明替换——原版 InitGame.js 广播 MT_SkirmishReplace 的移植：
+    /// 世界构建完成、首回合开始前，对全部 skirmish/ 占位实体按属主文明改写模板名（查 civ JSON
+    /// SkirmishReplacements 表 → 占位模板 general 兜底 → 都无则销毁）。civ 解析：玩家实体
+    /// PlayerComponent.Civ（槽位表注入）优先，场景 XML PlayerData.Civ 兜底；gaia(0) → 销毁；
+    /// 查不到文明 → 保留占位（原版 if (!civ) return）。</summary>
+    private void ApplySkirmishReplacements(ScenarioData scenario)
+    {
+        if (Templates == null) return;
+        if (!scenario.Entities.Any(e => e.Template.StartsWith("skirmish/", StringComparison.Ordinal)))
+            return;
+
+        var replacer = new SkirmishReplacer(Templates,
+            SkirmishReplacer.CivsRootFromTemplatesRoot(_templatesPath));
+        var (replaced, destroyed) = replacer.Apply(scenario.Entities, pid =>
+        {
+            if (pid == 0) return "gaia";   // gaia 属主的占位 → 销毁（原版告警地图作者错误）
+            string? civ = _sim?.GetPlayerEntity(pid)?.Civ;
+            if (string.IsNullOrEmpty(civ))
+                civ = scenario.Players.FirstOrDefault(p => p.PlayerId == pid)?.Civ;
+            return string.IsNullOrEmpty(civ) ? null : civ;
+        });
+        GD.Print($"[Skirmish] civ-replaced {replaced} placeholder entities, destroyed {destroyed} " +
+                 $"(no mapping for owner civ)");
+    }
+
     private void SpawnScenarioEntities(ScenarioData scenario)
     {
         _scenarioUidMap.Clear();
         foreach (var child in _decorativeNodes)
             child.QueueFree();
         _decorativeNodes.Clear();
+
+        ApplySkirmishReplacements(scenario);
 
         foreach (var def in scenario.Entities)
         {
@@ -589,26 +636,36 @@ public sealed partial class SimBridge : Node
 
     private void SpawnDecorativeActor(ScenarioEntityDef def)
     {
-        bool isTree = def.Template.Contains("tree", StringComparison.OrdinalIgnoreCase);
+        SpawnDecorative(def.Template, def.X, def.Z, def.OrientationY);
+    }
+
+    /// <summary>纯视觉装饰物(actor|/rmgen 装饰实体):不进 sim,只摆 actor 节点。
+    /// template 为去掉 actor| 前缀后的 actor 模板名(经 ModelLibrary 解析)。</summary>
+    public void SpawnDecorative(string template, float x, float z, float yaw = 0f)
+    {
+        bool isTree = template.Contains("tree", StringComparison.OrdinalIgnoreCase);
         var color = isTree ? new Color(0.15f, 0.45f, 0.12f) : new Color(0.35f, 0.55f, 0.2f);
 
-        Node3D? node = ModelLibrary.InstantiateForTemplate(def.Template, def.X, def.Z, color);
+        Node3D? node = ModelLibrary.InstantiateForTemplate(template, x, z, color);
         if (node != null)
-            node.Rotation = new Vector3(0, def.OrientationY, 0);
+            node.Rotation = new Vector3(0, yaw, 0);
         else
-            node = MakeFallbackBox(def, color);
+            node = MakeFallbackBox(template, x, z, color);
 
         UnitContainer.AddChild(node);
         _decorativeNodes.Add(node);
     }
 
     private static MeshInstance3D MakeFallbackBox(ScenarioEntityDef def, Color color)
+        => MakeFallbackBox(def.Template, def.X, def.Z, color, def.OrientationY);
+
+    private static MeshInstance3D MakeFallbackBox(string template, float x, float z, Color color, float yaw = 0f)
     {
         var box = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.5f, 2f, 1.5f) } };
         box.MaterialOverride = new StandardMaterial3D { AlbedoColor = color };
-        float h = TerrainHeightService.Sample(def.X, def.Z);
-        box.Position = new Vector3(def.X, h, def.Z);
-        box.Rotation = new Vector3(0, def.OrientationY, 0);
+        float h = TerrainHeightService.Sample(x, z);
+        box.Position = new Vector3(x, h, z);
+        box.Rotation = new Vector3(0, yaw, 0);
         return box;
     }
 
@@ -1306,7 +1363,7 @@ public sealed partial class SimBridge : Node
 
     // --- Entity spawning ---
 
-    public EntityId SpawnFromTemplate(string templateName, float x, float z)
+    public EntityId SpawnFromTemplate(string templateName, float x, float z, int playerId = 0)
     {
         _lastSpawnedTemplate = templateName;
         TemplateStats? stats = null;
@@ -1323,13 +1380,23 @@ public sealed partial class SimBridge : Node
         bool isStructure = templateName.StartsWith("structures/", StringComparison.OrdinalIgnoreCase);
         bool isResource = (stats?.ResourceAmount ?? 0) > 0;
 
-        return SpawnUnit(x, z,
+        var eid = SpawnUnit(x, z,
             isVillager: stats?.CanGather == true,
             isSoldier: stats?.AttackDamage > 0,
             stats: stats,
             isStructure: isStructure,
             isResource: isResource,
             templateName: templateName);
+
+        // 属主(rmgen 玩家基地等;上游 ParseEntities:currEnt.playerID → Ownership)。
+        // 与 SpawnScenarioUnit 同款:所有权落定后重注册 LOS/fogging(此前 ownerless 注册过
+        // 一次,幂等),否则 MP 真雾下该实体永不入属主索引。
+        if (playerId > 0)
+        {
+            _sim.AddComponent(eid, new OwnershipComponent { PlayerId = playerId });
+            EntityAssembler.RegisterForLos(_sim, eid, templateName, stats);
+        }
+        return eid;
     }
 
     public EntityId SpawnUnit(float x, float z, bool isVillager = false, bool isSoldier = false,
@@ -1390,6 +1457,17 @@ public sealed partial class SimBridge : Node
         // hardcodes them.
         if (isStructure && stats != null)
         {
+            // Footprint(原版 selectable 选择框/集结落点/驻防出入位置的数据源;
+            // 与 SpawnScenarioBuilding 同款——rmgen/sandbox 起始建筑此前没有,
+            // 选择框只能回退固定值,偏小且与 C++ 不一致)。
+            float fpSize = stats.FootprintSize0.ToFloat() is { } fp && fp > 0 ? fp : 12f;
+            _sim.AddComponent(entity, new FootprintComponent
+            {
+                Shape = stats.FootprintShape == "circle" ? FootprintShape.Circle : FootprintShape.Square,
+                Size0 = Fixed.FromFloat(fpSize),
+                Size1 = Fixed.FromFloat(stats.FootprintSize1.ToFloat() is { } fp1 && fp1 > 0 ? fp1 : fpSize),
+            });
+
             if (stats.CanTrain)
             {
                 // 训练列表数据驱动(原版 Trainer/Entities):tokens+原生文明随组件装配,

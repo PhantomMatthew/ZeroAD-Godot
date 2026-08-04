@@ -3,20 +3,118 @@ using ZeroAD.Sim.RmgenMath;
 
 namespace ZeroAD.Sim.Rmgen
 {
-    /// <summary>TerrainPainter（逐字移植 painter/TerrainPainter.js）——涂纹理。</summary>
+    /// <summary>TerrainPainter（逐字移植 painter/TerrainPainter.js）——对区域每格落 Terrain。
+    /// 接受 ITerrain(可为 "tex|entity" 混合);字符串构造器保持旧调用兼容(纯贴图)。</summary>
     public sealed class TerrainPainter : IPainter
     {
-        private readonly string _texture;
-        private readonly string? _tileClass;  // terrain entity 模板名（可选）
+        private readonly ITerrain _terrain;
+        private readonly RmgenRng _rng;
 
-        public TerrainPainter(string texture) { _texture = texture; }
-        public TerrainPainter(string texture, string? tileClass) { _texture = texture; _tileClass = tileClass; }
+        public TerrainPainter(string texture, RmgenRng? rng = null)
+        {
+            _terrain = TerrainFactory.CreateTerrain(texture);
+            _rng = rng ?? new RmgenRng(0);
+        }
+
+        public TerrainPainter(ITerrain terrain, RmgenRng rng)
+        {
+            _terrain = terrain;
+            _rng = rng;
+        }
 
         public void Paint(Area area)
         {
             var map = RmgenLibrary.CurrentMap;
             foreach (var p in area.GetPoints())
-                map.SetTexture(p, _texture);
+                _terrain.Place(map, _rng, p);
+        }
+    }
+
+    /// <summary>LayeredPainter（逐字移植 painter/LayeredPainter.js）——按"到区域边界的 BFS
+    /// 距离"分层落 Terrain:widths[i] = 第 i 层厚度,剩余中心区域落最后一个 terrain。
+    /// 原版经 breadthFirstSearchPaint(brushSize=1, withinArea=contains)。</summary>
+    public sealed class LayeredPainter : IPainter
+    {
+        private readonly List<ITerrain> _terrains;
+        private readonly int[] _widths;
+        private readonly RmgenRng _rng;
+
+        /// <param name="terrains">string → 按 "tex|entity" 解析;string[]/List&lt;string&gt; →
+        /// RandomTerrain;object[](string 与 string[] 混合,森林变体用) → 逐元素解析后 RandomTerrain;
+        /// 已是 ITerrain 的直接用。</param>
+        public LayeredPainter(IReadOnlyList<object> terrains, int[] widths, RmgenRng rng)
+        {
+            _terrains = new List<ITerrain>();
+            foreach (var t in terrains)
+                _terrains.Add(Resolve(t));
+            if (widths.Length != _terrains.Count - 1)
+                throw new System.ArgumentException("LayeredPainter: widths must have one item less than terrains");
+            _widths = widths;
+            _rng = rng;
+        }
+
+        private static ITerrain Resolve(object t)
+        {
+            switch (t)
+            {
+                case string s: return TerrainFactory.CreateTerrain(s);
+                case IReadOnlyList<string> arr: return TerrainFactory.CreateTerrain(arr);
+                case ITerrain it: return it;
+                case System.Collections.IEnumerable mix:
+                    // object[](string/string[] 混合,如森林 [ff, main, treeList])
+                    var list = new List<ITerrain>();
+                    foreach (var item in mix) list.Add(Resolve(item!));
+                    return new RandomTerrain(list);
+                default: throw new System.ArgumentException($"LayeredPainter: bad terrain {t}");
+            }
+        }
+
+        public void Paint(Area area)
+        {
+            var map = RmgenLibrary.CurrentMap;
+
+            // 多源 BFS:区域边界格(有邻格不在区域内)距离 1 起,向内递增。
+            var dist = new Dictionary<(int, int), int>();
+            var queue = new Queue<(int, int)>();
+            foreach (var p in area.GetPoints())
+            {
+                var pt = ((int)p.X, (int)p.Y);
+                bool border = !area.Contains(new RmgenVector2D(pt.Item1 + 1, pt.Item2))
+                    || !area.Contains(new RmgenVector2D(pt.Item1 - 1, pt.Item2))
+                    || !area.Contains(new RmgenVector2D(pt.Item1, pt.Item2 + 1))
+                    || !area.Contains(new RmgenVector2D(pt.Item1, pt.Item2 - 1));
+                if (border)
+                {
+                    dist[pt] = 1;
+                    queue.Enqueue(pt);
+                }
+            }
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                int d = dist[cur] + 1;
+                foreach (var nb in new[] { (cur.Item1 + 1, cur.Item2), (cur.Item1 - 1, cur.Item2),
+                                          (cur.Item1, cur.Item2 + 1), (cur.Item1, cur.Item2 - 1) })
+                {
+                    if (dist.ContainsKey(nb)) continue;
+                    if (!area.Contains(new RmgenVector2D(nb.Item1, nb.Item2))) continue;
+                    dist[nb] = d;
+                    queue.Enqueue(nb);
+                }
+            }
+
+            foreach (var p in area.GetPoints())
+            {
+                var pt = ((int)p.X, (int)p.Y);
+                int distance = dist.TryGetValue(pt, out var dd) ? dd : int.MaxValue;
+                int width = 0, i = 0;
+                for (; i < _widths.Length; i++)
+                {
+                    width += _widths[i];
+                    if (width >= distance) break;
+                }
+                _terrains[i].Place(map, _rng, p);
+            }
         }
     }
 

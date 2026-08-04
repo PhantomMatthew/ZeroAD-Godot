@@ -58,12 +58,14 @@ public sealed partial class MainMenu : Control
     {
         string tut = OS.GetEnvironment("ZEROAD_TUTORIAL");
         string auto = OS.GetEnvironment("ZEROAD_AUTOSTART");
-        if (string.IsNullOrEmpty(tut) && string.IsNullOrEmpty(auto))
+        string map = OS.GetEnvironment("ZEROAD_MAP");
+        if (string.IsNullOrEmpty(tut) && string.IsNullOrEmpty(auto) && string.IsNullOrEmpty(map))
             return false;
 
         // 清空:避免 Leave 回主菜单时 _Ready 再次读到,重触发自动开局。
         OS.SetEnvironment("ZEROAD_TUTORIAL", "");
         OS.SetEnvironment("ZEROAD_AUTOSTART", "");
+        OS.SetEnvironment("ZEROAD_MAP", "");
 
         var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
         cfg.Reset();
@@ -71,6 +73,9 @@ public sealed partial class MainMenu : Control
             ? GameLaunchConfig.LaunchMode.Tutorial
             : GameLaunchConfig.LaunchMode.SinglePlayer;
         cfg.Seed = 42;
+        // dev 选图钩子:ZEROAD_MAP=maps/skirmishes/acropolis_bay_2p.pmp（skirmish 图）
+        // 或 random/mainland（随机图）或 maps/scenarios/x.pmp。单独设置即隐含 SP autostart。
+        cfg.MapPath = map;
 
         CallDeferred(nameof(GotoSession));
         return true;
@@ -210,6 +215,8 @@ public sealed partial class MainMenu : Control
             {
                 new("Options", OnOptions),
                 new("Hotkeys", OnHotkeys),
+                // 原版 MainMenuItems.js:Settings 第三项即 Language(page_locale.xml)
+                new("Language", OnLanguage),
             }),
             new("Quit", () => GetTree().Quit()),
         };
@@ -356,7 +363,23 @@ public sealed partial class MainMenu : Control
         return null;
     }
 
-    private void OnSinglePlayer() => Start(GameLaunchConfig.LaunchMode.SinglePlayer);
+    private void OnSinglePlayer()
+    {
+        // 选图面板(对齐原版 gamesetup 地图浏览器):SP 不再硬编码 arcadia——
+        // random(MapRegistry)/skirmish/scenario 全目录可选,种子仅对 random 生效。
+        string? dataRoot = _binDir == null ? null : Path.Combine(_binDir, "data", "mods", "public");
+        var picker = new MapPickerPanel(MapCatalog.Scan(dataRoot));
+        picker.OnStart += (map, seed) =>
+        {
+            _cfg.Reset();
+            _cfg.Mode = GameLaunchConfig.LaunchMode.SinglePlayer;
+            _cfg.MapPath = map.RelPath;
+            _cfg.Seed = seed;
+            GotoSession();
+        };
+        picker.OnCancelled += () => picker.QueueFree();
+        AddChild(picker);
+    }
     private void OnTutorial() => Start(GameLaunchConfig.LaunchMode.Tutorial);
 
     // 原版 Multiplayer 子菜单:Host New Game / Connect by IP(gamesetup_mp 入口)。
@@ -424,9 +447,23 @@ public sealed partial class MainMenu : Control
 
     private void OnOptions()
     {
+        // 记录打开时 locale:面板关闭后若变了,重建主菜单让新语言立即全量生效
+        // (面板开着时不能重建——会把面板本身也 QueueFree)。
+        _localeAtOptionsOpen = Localization.CurrentLocale;
         var panel = new OptionsPanel();
         AddChild(panel);
+        panel.TreeExited += OnOptionsClosed;
         panel.Open();
+    }
+
+    private string? _localeAtOptionsOpen;
+
+    private void OnOptionsClosed()
+    {
+        if (_localeAtOptionsOpen == Localization.CurrentLocale) return;
+        foreach (var child in GetChildren())
+            child.QueueFree();
+        CallDeferred(nameof(BuildUi));
     }
 
     private void OnHotkeys()
@@ -436,12 +473,24 @@ public sealed partial class MainMenu : Control
         panel.Open();
     }
 
+    /// <summary>Settings → Language(原版 page_locale.xml 入口)。面板关闭后若 locale
+    /// 变了,重建主菜单全量应用(与 OnOptionsClosed 同机制)。</summary>
+    private void OnLanguage()
+    {
+        _localeAtOptionsOpen = Localization.CurrentLocale;
+        var panel = new LocalePanel();
+        AddChild(panel);
+        panel.TreeExited += OnOptionsClosed;
+        panel.Open();
+    }
+
     private void AddButton(Control parent, string label, Action onPressed,
         bool disabled = false, string tip = "")
     {
         var btn = new Button
         {
-            Text = label,
+            // 菜单文本经 gettext 表翻译(msgid = 英文原文;locale=en 时 Tr 原样返回)
+            Text = Localization.Tr(label),
             Theme = UITheme.GetTheme(),
             CustomMinimumSize = new Vector2(0, ButtonH),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,

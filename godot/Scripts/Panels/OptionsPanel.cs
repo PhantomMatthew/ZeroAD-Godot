@@ -75,7 +75,7 @@ public sealed partial class OptionsPanel : ModalPanelBase
             var cat = OptionsCatalog.Categories[i];
             var btn = new Button
             {
-                Text = cat.Label,
+                Text = Localization.Tr(cat.Label),
                 TooltipText = cat.Tooltip,
                 Theme = UITheme.GetTheme(),
                 ToggleMode = true,
@@ -162,7 +162,7 @@ public sealed partial class OptionsPanel : ModalPanelBase
             labelHost.AddThemeConstantOverride("margin_left", 25);
         var label = new Label
         {
-            Text = opt.Label,
+            Text = Localization.Tr(opt.Label),
             TooltipText = opt.Tooltip,
             Theme = UITheme.GetTheme(),
             VerticalAlignment = VerticalAlignment.Center,
@@ -254,7 +254,12 @@ public sealed partial class OptionsPanel : ModalPanelBase
             case "dropdownNumber":
             {
                 var ob = new OptionButton { TooltipText = opt.Tooltip, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-                var entries = opt.List ?? (IReadOnlyList<OptionListEntry>)Array.Empty<OptionListEntry>();
+                // locale 下拉动态填充(原版 options.js fillLocaleList 同款:静态 JSON 无法
+                // 预知用户放入的 .po 包);其余下拉走静态 list。
+                var entries = opt.Config == "locale"
+                    ? Localization.AvailableLocales()
+                        .Select(l => new OptionListEntry(l.Code, l.Name, null)).ToList()
+                    : (opt.List ?? (IReadOnlyList<OptionListEntry>)Array.Empty<OptionListEntry>());
                 foreach (var e in entries)
                     ob.AddItem(e.Label);
                 for (int i = 0; i < entries.Count; i++)
@@ -328,6 +333,10 @@ public sealed partial class OptionsPanel : ModalPanelBase
         if (_populating) return;
         string? oldUserValue = _cfg.GetUserValue(opt.Config);
         _cfg.SetUserValue(opt.Config, value);
+        // locale 改动即时切换语言包(之后打开的面板即用新语言;已打开面板不实时重排,
+        // tooltip 已注明回主菜单/重启后全量生效——与原版"部分页面需重开"行为一致)。
+        if (opt.Config == "locale")
+            Localization.SetLocale(value);
         OptionsApplier.Apply(opt, value, _cfg, GetTree(), _inGame);
         if (opt.TimeoutMs > 0)
             StartTimeoutConfirm(opt, oldUserValue);

@@ -14,6 +14,11 @@ public partial class GameLaunchConfig : Node
     public string LoadSlot = "";
     public string ReplaySlot = "";   // Replay 模式：user://replays/ 下的录像 slot 名
     public bool MpHost;
+    /// <summary>本局地图 rel 路径（SP 专用）。"" = 默认回退链（arcadia→laconia）。
+    /// 支持三类：scenario pmp（"maps/scenarios/x.pmp"）、skirmish pmp
+    /// （"maps/skirmishes/x.pmp"——XML 占位实体按槽位文明替换生成）、随机图
+    /// （"random/mainland" 等）。MP 未进协议前由 host 默认地图。</summary>
+    public string MapPath = "";
     public System.Collections.Generic.IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? Slots;
 
     /// <summary>开始新一局前重置为大厅默认(避免上一局残留 Mode 触发错误启动)。</summary>
@@ -24,6 +29,7 @@ public partial class GameLaunchConfig : Node
         LoadSlot = "";
         ReplaySlot = "";
         MpHost = false;
+        MapPath = "";
         Slots = null;
     }
 }

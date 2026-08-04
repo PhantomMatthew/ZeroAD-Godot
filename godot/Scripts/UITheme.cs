@@ -11,15 +11,22 @@ public static class UITheme
         if (_theme != null) return _theme;
         _theme = new Theme();
 
-        var btnNormal = MakeButtonStyle("res://assets/ui/center.png", new Color(1, 1, 1));
-        var btnHover = MakeButtonStyle("res://assets/ui/center.png", new Color(1.2f, 1.15f, 1.0f));
-        var btnPressed = MakeButtonStyle("res://assets/ui/center.png", new Color(0.8f, 0.75f, 0.65f));
+        // 原版 StoneButton(gui/common/sprites.xml)= global/button/button_stone_unselected.png
+        // 整幅拉伸(size="0 0 100% 100%")——即 btn_normal.png(256×32 石条)。hover/pressed 用
+        // button_stone_selected(btn_hover.png)。之前错用 button_brown 的 center 散件,与 C++ 版
+        // 明显不一致(gamesetup/对话框按钮都应是深色石条)。
+        var btnNormal = MakeButtonStyle("res://assets/ui/btn_normal.png", new Color(1, 1, 1));
+        var btnHover = MakeButtonStyle("res://assets/ui/btn_hover.png", new Color(1, 1, 1));
+        var btnPressed = MakeButtonStyle("res://assets/ui/btn_hover.png", new Color(0.85f, 0.8f, 0.7f));
+        var btnDisabled = MakeButtonStyle("res://assets/ui/btn_normal.png", new Color(0.5f, 0.5f, 0.5f, 0.6f));
 
         _theme.SetStylebox("normal", "Button", btnNormal);
         _theme.SetStylebox("hover", "Button", btnHover);
         _theme.SetStylebox("pressed", "Button", btnPressed);
+        _theme.SetStylebox("disabled", "Button", btnDisabled);
         _theme.SetColor("font_color", "Button", new Color(1f, 0.95f, 0.8f));
         _theme.SetColor("font_hover_color", "Button", Colors.White);
+        _theme.SetColor("font_disabled_color", "Button", new Color(0.8f, 0.8f, 0.8f, 0.6f));
         _theme.SetFontSize("font_size", "Button", 18);
 
         var panelStyle = MakePanelStyle("res://assets/ui/panel_bg.png");
@@ -37,6 +44,17 @@ public static class UITheme
         editStyle.SetContentMarginAll(6);
         _theme.SetStylebox("normal", "LineEdit", editStyle);
         _theme.SetColor("font_color", "LineEdit", new Color(1f, 0.95f, 0.8f));
+
+        // 下拉(OptionButton)/数值框(SpinBox 内嵌 LineEdit 已随上行)在大厅槽位表里裸露——
+        // 原版 ModernDropDown 是半透黑盒 + 金线(见 MakeModernDarkBox),套同款避免 Godot 默认灰蓝。
+        _theme.SetStylebox("normal", "OptionButton", MakeModernDarkBox());
+        _theme.SetStylebox("hover", "OptionButton", MakeModernDarkBox());
+        _theme.SetStylebox("pressed", "OptionButton", MakeModernDarkBox());
+        _theme.SetStylebox("disabled", "OptionButton", MakeModernDarkBox());
+        _theme.SetColor("font_color", "OptionButton", Colors.White);
+        _theme.SetColor("font_hover_color", "OptionButton", Colors.White);
+        _theme.SetColor("font_disabled_color", "OptionButton", new Color(0.7f, 0.7f, 0.7f, 0.5f));
+        _theme.SetFontSize("font_size", "OptionButton", 14);
 
         return _theme;
     }

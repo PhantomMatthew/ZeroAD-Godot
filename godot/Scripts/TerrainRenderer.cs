@@ -6,6 +6,12 @@ public static class TerrainRenderer
 {
     public static MeshInstance3D CreateFromHeightmap(PmpMap map)
     {
+        // 早失败:VerticesPerSide 未赋值(适配器漏填)会静默建出 0 顶点空 mesh——
+        // 地形不可见只剩天空色,极难排查。抛出让加载失败路径(回主菜单+日志)接管。
+        if (map.VerticesPerSide < 2)
+            throw new System.IO.InvalidDataException(
+                $"PmpMap.VerticesPerSide={map.VerticesPerSide} (patches={map.PatchesPerSide}, " +
+                $"heightmap={map.Heightmap.Length}) — adapter must set VerticesPerSide");
         int verts = map.VerticesPerSide;
         float tileSize = PmpMap.TileSize;
         float mapSize = map.MapSizeMeters;
@@ -50,6 +56,13 @@ public static class TerrainRenderer
 
         st.GenerateNormals();
         var mesh = st.Commit();
+
+        // 引擎层防线:0-surface mesh 上 SurfaceSetMaterial 只触发引擎错误(不抛 C# 异常),
+        // 结果是"地形隐形只剩天空色"且无任何托管堆栈。转为托管异常,让加载失败路径接管。
+        if (mesh.GetSurfaceCount() == 0)
+            throw new System.IO.InvalidDataException(
+                $"terrain mesh has 0 surfaces (verts={verts}, heightmap={map.Heightmap.Length}, " +
+                $"patches={map.PatchesPerSide})");
 
         // 烘焙 splat albedo → StandardMaterial3D:自定义 spatial shader 在 Compatibility
         // 完全收不到方向光阴影(渲染器限制),烘焙后走标准管线,受影/光照与 C++ 固定管线

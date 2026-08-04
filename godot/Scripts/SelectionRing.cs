@@ -30,6 +30,8 @@ public static class SelectionRing
     /// <summary>
     /// Selection marker matching the original: units get a circular ring,
     /// buildings get a square outline around their footprint.
+    /// 绘制为贴地三角带条(原版是带宽度贴图四边形;LineStrip 在 gl_compatibility
+    /// 只有 1px 发丝线,且线宽不可控)。
     /// </summary>
     public static MeshInstance3D Create(float radius, Color friendlyColor, Color enemyColor,
         Shape shape = Shape.Circle)
@@ -37,15 +39,55 @@ public static class SelectionRing
         EnsureMaterials(friendlyColor, enemyColor);
 
         var points = shape == Shape.Square ? SquarePoints(radius) : CirclePoints(radius);
+        float lineWidth = shape == Shape.Square ? 0.5f : 0.35f;
 
         var st = new SurfaceTool();
-        st.Begin(Mesh.PrimitiveType.LineStrip);
-        foreach (var p in points)
-            st.AddVertex(p);
+        st.Begin(Mesh.PrimitiveType.Triangles);
+        AppendOutlineBand(st, points, lineWidth);
         var mesh = st.Commit();
         var instance = new MeshInstance3D { Mesh = mesh };
         mesh.SurfaceSetMaterial(0, _ringMat);
         return instance;
+    }
+
+    /// <summary>按建筑实际 footprint 画矩形选择框(半宽/半深 + 带宽),替代固定半径正方形。</summary>
+    public static MeshInstance3D CreateRect(float halfX, float halfZ, Color color, float lineWidth = 0.5f)
+    {
+        EnsureMaterials(color, color);
+        var points = new Vector3[]
+        {
+            new(-halfX, 0.1f, -halfZ),
+            new(halfX, 0.1f, -halfZ),
+            new(halfX, 0.1f, halfZ),
+            new(-halfX, 0.1f, halfZ),
+            new(-halfX, 0.1f, -halfZ),
+        };
+        var st = new SurfaceTool();
+        st.Begin(Mesh.PrimitiveType.Triangles);
+        AppendOutlineBand(st, points, lineWidth);
+        var mesh = st.Commit();
+        var instance = new MeshInstance3D { Mesh = mesh };
+        mesh.SurfaceSetMaterial(0, _ringMat);
+        return instance;
+    }
+
+    /// <summary>把闭合折线画成带宽度的贴地带条:每段一个四边形(内外各偏 width/2,
+    /// 沿 XZ 平面法线),接缝处允许少量重叠(视觉无缝)。</summary>
+    private static void AppendOutlineBand(SurfaceTool st, Vector3[] points, float width)
+    {
+        float half = width * 0.5f;
+        for (int i = 0; i < points.Length - 1; i++)
+        {
+            var a = points[i];
+            var b = points[i + 1];
+            var dir = (b - a).Normalized();
+            // XZ 平面内向右法线
+            var n = new Vector3(-dir.Z, 0, dir.X) * half;
+            var aOut = a + n; var aIn = a - n;
+            var bOut = b + n; var bIn = b - n;
+            st.AddVertex(aIn); st.AddVertex(aOut); st.AddVertex(bOut);
+            st.AddVertex(aIn); st.AddVertex(bOut); st.AddVertex(bIn);
+        }
     }
 
     private static Vector3[] SquarePoints(float half) => new Vector3[]

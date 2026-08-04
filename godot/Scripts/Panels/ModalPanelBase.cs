@@ -248,7 +248,8 @@ public abstract partial class ModalPanelBase : CanvasLayer
     {
         var btn = new Button
         {
-            Text = label,
+            // 全局面板按钮统一过 gettext(msgid = 英文;未翻译时原样)。
+            Text = Localization.Tr(label),
             Theme = UITheme.GetTheme(),
             CustomMinimumSize = new Vector2(minWidth, 28),
             SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,

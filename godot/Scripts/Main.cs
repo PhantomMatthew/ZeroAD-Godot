@@ -31,9 +31,36 @@ public sealed partial class Main : Node3D
 	private bool _dragSelecting;
 	private Vector2 _dragStart;
 	private bool _isDragging;
+	private CanvasLayer? _bandBoxLayer;
+	private BandBoxRect? _bandBox;
+
+	/// <summary>框选矩形(原版 bandbox:拖拽时屏幕空间半透明白框)。</summary>
+	private sealed partial class BandBoxRect : Control
+	{
+		public Rect2 Rect;
+
+		public override void _Draw()
+		{
+			if (Rect.Size == Vector2.Zero) return;
+			DrawRect(Rect, new Color(1f, 1f, 1f, 0.08f));
+			DrawRect(Rect, new Color(1f, 1f, 1f, 0.9f), filled: false, width: 1.5f);
+		}
+	}
+
+	private void EnsureBandBox()
+	{
+		if (_bandBox != null) return;
+		_bandBoxLayer = new CanvasLayer { Layer = 40 };
+		_bandBox = new BandBoxRect { MouseFilter = Control.MouseFilterEnum.Ignore, Visible = false };
+		_bandBox.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		_bandBoxLayer.AddChild(_bandBox);
+		AddChild(_bandBoxLayer);
+	}
 	private bool _placeBuildingMode;
 	private string _buildTemplate = "";
 	private bool _gameStarted;
+	/// <summary>BeginGameplayInit 的生效槽位表(rmgen 玩家 civ 列表用;教程/冷加载为 null)。</summary>
+	private IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? _worldSlots;
 	private bool _isTutorial;
 	private TutorialPanel _tutorialPanel = null!;
 	private LoadingOverlay? _loadingOverlay;
@@ -111,12 +138,23 @@ public sealed partial class Main : Node3D
 		_lobby.OnClientConnect += (addr, port) => StartMpClient(addr, port);
 		// Lobby slot editing (host only): each edit re-broadcasts the slot table to clients.
 		_lobby.OnSlotEdit += (id, kind, civ, team) => _mp.HostSetSlot(id, kind, civ, team);
+		_lobby.OnMapEdit += map => _mp.HostSetMap(map);
+		_mp.OnMapChanged += map => _lobby.SetMapDisplay(map);
 		_lobby.OnStartGameRequested += () => _mp.HostStartGame();
 		_lobby.OnSinglePlayer += seed => StartSinglePlayer(seed);
 		_lobby.OnTutorialStart += () => StartTutorial();
 		// Lobby-state refresh: clients repaint their read-only slot list from the host's table.
 		// The host is the source of truth (its rows are editable) and never repaints from events.
 		_mp.OnLobbyStateChanged += slots => { if (!_mp.IsHost) _lobby.RefreshSlotDisplay(slots); };
+		// Start 拒绝(有 Human 槽未被认领)——原因显示到大厅状态行,否则按钮看似没反应。
+		_mp.OnStartRefused += msg => _lobby.SetStatus(msg);
+		// MP 面板 Cancel/Close:关 peer + 回主菜单(原仅关面板,用户困在无菜单的 session 场景)。
+		_lobby.OnCancelRequested += () =>
+		{
+			_mp.Shutdown();
+			GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Reset();
+			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+		};
 
 		_camera.SetFocus(new Vector3(128, 0, 128));
 
@@ -195,9 +233,12 @@ public sealed partial class Main : Node3D
 		}
 		catch (System.Exception e)
 		{
+			// 加载失败不再 rethrow:async void 里抛异常只会留一个无地形的"天蓝空世界",
+			// 用户看到的像卡死而不是崩溃。改为报错 + 回主菜单(同 ColdLoad 失败路径)。
 			GD.PrintErr($"[Gameplay] EXCEPTION in load: {e}");
 			GD.PrintErr($"[Gameplay] Stack: {e.StackTrace}");
-			throw;
+			GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Reset();
+			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 		}
 		finally
 		{
@@ -220,8 +261,8 @@ public sealed partial class Main : Node3D
 	private void StartMpHost(int port, uint seed)
 	{
 		_mp.StartHost(port, seed);
-		_mp.OnGameStart += (s, pid, slots) => StartMpGameplay(s, pid, slots, isHost: true);
-		_lobby.ShowSlotLobby(isHost: true, _mp.Slots);
+		_mp.OnGameStart += (s, pid, slots, map) => StartMpGameplay(s, pid, slots, isHost: true, map);
+		_lobby.ShowSlotLobby(isHost: true, _mp.Slots, LobbyMapCatalog(), "");
 		_lobby.SetStatus($"Hosting on port {port} — configure slots, then Start.");
 	}
 
@@ -231,23 +272,37 @@ public sealed partial class Main : Node3D
 	private void StartMpClient(string addr, int port)
 	{
 		_mp.StartClient(addr, port);
-		_mp.OnGameStart += (s, pid, slots) => StartMpGameplay(s, pid, slots, isHost: false);
-		_lobby.ShowSlotLobby(isHost: false, null);
+		_mp.OnGameStart += (s, pid, slots, map) => StartMpGameplay(s, pid, slots, isHost: false, map);
+		_lobby.ShowSlotLobby(isHost: false, null, LobbyMapCatalog(), "");
 		_lobby.SetStatus($"Connecting to {addr}:{port} — waiting for host…");
 	}
 
-	/// <summary>MP 正式开局(host 点 Start 后双端同走):加载等待页 + 分阶段构建。</summary>
-	private void StartMpGameplay(uint seed, uint playerId,
-		IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> slots, bool isHost)
+	/// <summary>大厅选图目录(scenario/skirmish 走数据根;random 由 MapRegistry 提供,始终可用)。</summary>
+	private List<MapEntry> LobbyMapCatalog()
 	{
-		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(PickSkirmishMapRel()));
+		string? dataRoot = FindDataRoot();
+		return MapCatalog.Scan(dataRoot);
+	}
+
+	/// <summary>MP 正式开局(host 点 Start 后双端同走):加载等待页 + 分阶段构建。
+	/// map 由 host 大厅冻结并经 GameStart 下发,与 seed 一起写回 cfg 供 SetupTerrain/rmgen 用。</summary>
+	private void StartMpGameplay(uint seed, uint playerId,
+		IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> slots, bool isHost, string map)
+	{
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		cfg.MapPath = map;
+		cfg.Seed = seed;   // rmgen 种子必须与 host 一致(cfg.Seed 的菜单值对 MP 无意义)
+		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(string.IsNullOrEmpty(map) ? PickSkirmishMapRel() : map));
 		AddChild(_loadingOverlay);
 		RunStagedGameplayLoad(seed, playerId, slots, tutorial: false, isMultiplayer: true, isHost: isHost);
 	}
 
-	/// <summary>SP/MP 默认地图(镜像 SetupTerrain 的 pmp 回退链),供加载页标题推导。</summary>
+	/// <summary>SP/MP 默认地图(镜像 SetupTerrain 的 pmp 回退链),供加载页标题推导。
+	/// GameLaunchConfig.MapPath 已选图(ZEROAD_MAP / 未来选图 UI)时优先返回所选。</summary>
 	private string? PickSkirmishMapRel()
 	{
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		if (!string.IsNullOrEmpty(cfg.MapPath)) return cfg.MapPath;
 		if (FindDataPath("maps/scenarios/arcadia.pmp") != null) return "maps/scenarios/arcadia.pmp";
 		if (FindDataPath("maps/scenarios/laconia_01.pmp") != null) return "maps/scenarios/laconia_01.pmp";
 		return null;
@@ -296,6 +351,7 @@ public sealed partial class Main : Node3D
 					new() { PlayerId = 2, Kind = ZeroAD.Sim.Net.PlayerSlotKind.AI,    Civ = "gaul",  Team = -1 },
 				});
 		_sim.InitWorld(templatesPath, seed, playerId, role, effectiveSlots);
+		_worldSlots = effectiveSlots;   // rmgen 玩家 civ 列表(SetupRmgenTerrain)等用
 		GD.Print("[Tutorial] InitWorld done");
 
 		if (isMultiplayer)
@@ -822,11 +878,24 @@ public sealed partial class Main : Node3D
 			Size = mapSize,
 			Seed = seed,
 			CircularMap = false,
+			DataRoot = FindDataRoot(),   // biome JSON(rmbiome/generic/*.json)经 junction 读取
 		};
-		// gaia + 2 players
+		// 玩家 civ 列表:gaia + 冻结槽位表(MP 双端同表 → 同图;SP 来自选图面板/默认 1v1)。
+		// 原硬编码 gaia/athen/spart 会让 gaul 玩家的出生基地按 spart 生成。
 		settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = "gaia" });
-		settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = "athen" });
-		settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = "spart" });
+		if (_worldSlots != null)
+		{
+			foreach (var slot in _worldSlots.OrderBy(s => s.PlayerId))
+			{
+				if (slot.Kind == ZeroAD.Sim.Net.PlayerSlotKind.Closed) continue;
+				settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = slot.Civ });
+			}
+		}
+		if (settings.PlayerData.Count == 1)   // 无槽位信息(教程/冷加载):沿用旧默认
+		{
+			settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = "athen" });
+			settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = "spart" });
+		}
 
 		var export = ZeroAD.Sim.Rmgen.Maps.MapRegistry.Generate(mapName, rng, settings);
 		if (export == null)
@@ -838,14 +907,19 @@ public sealed partial class Main : Node3D
 
 		// MapExport → PmpMap 适配
 		int pps = export.Size / 16;
-		int verts = export.Size + 1;
 		var pmp = new PmpMap
 		{
 			Version = 7,
 			PatchesPerSide = pps,
+			// 顶点数 = Size+1(export.Height 恰为 (Size+1)²)。漏赋默认 0 →
+			// TerrainRenderer 建出 0 顶点空 mesh → 地形不可见(只剩天空色)。
+			VerticesPerSide = export.Size + 1,
 			Heightmap = export.Height,
 			TextureNames = new List<string>(export.TextureNames),
 			TileTex1 = export.TileIndex,
+			// rmgen 每 tile 只有单层贴图索引(无 blend 第二层)——TileTex2 必须显式填满
+			// NoTexture 与 TileTex1 等长;留空数组会让 SplatBaker 越界(PMP 加载路径恒双数组)。
+			TileTex2 = System.Linq.Enumerable.Repeat(PmpMap.NoTexture, export.TileIndex.Length).ToArray(),
 		};
 
 		// 地形渲染（复用 PMP 路径）
@@ -872,13 +946,27 @@ public sealed partial class Main : Node3D
 		// 可通行性（全陆地——rmgen 的水面处理 TODO）
 		FillPassabilityAllLand();
 
-		// 放置实体（从 MapExport.Entities）
+		// 放置实体（从 MapExport.Entities）。rmgen 实体坐标单位是 TILES——上游
+		// MapReader::ParseEntities ×TERRAIN_TILE_SIZE 转米;不乘 4 会把全部实体挤进
+		// 西南角 192×192m（地图实际 768m）,点击全落空。
 		foreach (var ent in export.Entities)
 		{
-			float x = (float)ent.Position.X;
-			float z = (float)ent.Position.Y;
-			float angle = (float)ent.Orientation;
-			try { _sim.SpawnFromTemplate(ent.TemplateName, x, z); }
+			float x = (float)ent.Position.X * PmpMap.TileSize;
+			float z = (float)ent.Position.Y * PmpMap.TileSize;
+			float yaw = (float)ent.Orientation;
+			try
+			{
+				if (ent.TemplateName.StartsWith("actor|", System.StringComparison.Ordinal))
+				{
+					// 装饰物(actor| 前缀):纯视觉不进 sim,同 scenario actor| 路径。
+					_sim.SpawnDecorative(ent.TemplateName.Substring("actor|".Length), x, z, yaw);
+					continue;
+				}
+				// 属主随 rmgen PlayerID(上游 ParseEntities 同款)——玩家基地/起始单位归属。
+				var eid = _sim.SpawnFromTemplate(ent.TemplateName, x, z, ent.PlayerID);
+				if (_sim.EntityNodes.TryGetValue(eid, out var node) && yaw != 0f)
+					node.Rotation = new Vector3(0, yaw, 0);
+			}
 			catch (System.Exception ex) { GD.PushWarning($"[Main] rmgen entity spawn failed: {ent.TemplateName}: {ex.Message}"); }
 		}
 
@@ -1095,20 +1183,51 @@ public sealed partial class Main : Node3D
 
 	private void SetupGameWorld(uint playerId, IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> slots, bool isMultiplayer)
 	{
-		SetupTerrain();
+		// 选图来源:SP = GameLaunchConfig.MapPath(选图面板/ZEROAD_MAP);MP = host 大厅冻结、
+		// GameStart 下发并写回 cfg(StartMpGameplay)——双端同图,皆确定性(pmp 同数据,
+		// random 同 seed 同槽位表),不构成 OOS 源。
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		string? mapPath = string.IsNullOrEmpty(cfg.MapPath) ? null : cfg.MapPath;
+		SetupTerrain(mapPath);
 		bool useRealTemplates = _sim.Templates != null;
 
-		// Every non-Closed slot gets a starting base + local tree cluster in its deterministic
-		// corner. This also fixes the old MP bug where slot 2 was an inert shell with no base or
-		// units: now every player — human or AI — starts with a TC, villagers, and soldiers.
-		foreach (var slot in slots)
+		// skirmish 地图:XML 内含 skirmish/ 占位实体 → 全部实体由地图提供(占位经
+		// SkirmishReplacer 按槽位文明替换为各玩家 CC/单位/墙),跳过沙盒出生基地/树簇/中立兵。
+		// random 地图:rmgen 自带玩家基地(CC+起始单位)与全部资源,同样跳过沙盒生成,
+		// 否则玩家会拿到双基地( rmgen 环形位 + 沙盒固定角落 )。
+		// 普通 scenario / 默认图走既有沙盒生成,行为不变。
+		bool spawnedFromMap = false;
+		bool isRandomMap = mapPath != null && mapPath.StartsWith("random/", System.StringComparison.Ordinal);
+		if (mapPath != null && !isRandomMap
+			&& FindDataPath(mapPath) != null)   // pmp 缺失时 SetupTerrain 已回退默认图,不能再配 skirmish XML
 		{
-			if (slot.Kind == ZeroAD.Sim.Net.PlayerSlotKind.Closed) continue;
-			int idx = slot.PlayerId - 1;
-			if ((uint)idx >= StartPositions.Length) continue;
-			var (bx, bz) = StartPositions[idx];
-			SpawnStartingBase(slot.PlayerId, slot.Civ, bx, bz);
-			SpawnTreeCluster(bx, bz, useRealTemplates);
+			string? dataRoot = FindDataRoot();
+			if (dataRoot != null)
+			{
+				string relNoExt = mapPath.EndsWith(".pmp", System.StringComparison.OrdinalIgnoreCase)
+					? mapPath[..^4] : mapPath;
+				spawnedFromMap = _sim.LoadSkirmishScenario(dataRoot, relNoExt);
+			}
+		}
+
+		if (!spawnedFromMap && !isRandomMap)
+		{
+			// Every non-Closed slot gets a starting base + local tree cluster in its deterministic
+			// corner. This also fixes the old MP bug where slot 2 was an inert shell with no base or
+			// units: now every player — human or AI — starts with a TC, villagers, and soldiers.
+			foreach (var slot in slots)
+			{
+				if (slot.Kind == ZeroAD.Sim.Net.PlayerSlotKind.Closed) continue;
+				int idx = slot.PlayerId - 1;
+				if ((uint)idx >= StartPositions.Length) continue;
+				var (bx, bz) = StartPositions[idx];
+				SpawnStartingBase(slot.PlayerId, slot.Civ, bx, bz);
+				SpawnTreeCluster(bx, bz, useRealTemplates);
+			}
+
+			// Ownerless neutral soldiers — mid-map (768m world → centre ~384) so they overlap no base.
+			_sim.SpawnUnit(380, 380, isSoldier: true);
+			_sim.SpawnUnit(385, 385, isSoldier: true);
 		}
 
 		// AI brains are kernel-resident (Phase 2): AIComponent on the player entity → brain state
@@ -1122,8 +1241,7 @@ public sealed partial class Main : Node3D
 		}
 
 		// Ownerless neutral soldiers — mid-map (768m world → centre ~384) so they overlap no base.
-		_sim.SpawnUnit(380, 380, isSoldier: true);
-		_sim.SpawnUnit(385, 385, isSoldier: true);
+		// (moved into the !spawnedFromMap branch above — skirmish maps author their own entities)
 
 		// Initial buildings/units were spawned AFTER the map-load RebuildGrid; rebuild once more so
 		// pathing accounts for the town centres and any scenario buildings.
@@ -1132,6 +1250,14 @@ public sealed partial class Main : Node3D
 		// Fog: sandbox/SP spawns owner-less world-dev entities with no seers, so reveal the map so
 		// the dev world isn't shrouded. MP keeps real fog — each human only sees their own vision.
 		_sim.Range.SetLosRevealAll((int)playerId, isMultiplayer ? false : true);
+
+		if (spawnedFromMap || isRandomMap)
+		{
+			// 地图自带出生点(skirmish 实体 / rmgen 基地):取景本地玩家首个所属实体
+			// (其 CC,同 ColdLoad),而非沙盒固定角落。
+			FocusCameraOnLocalPlayer();
+			return;
+		}
 
 		// Frame the player's starting town centre so the game opens on their base. StartPositions
 		// is 0-indexed by player id - 1; clamp guards against an out-of-range local player id.
@@ -1443,15 +1569,27 @@ public sealed partial class Main : Node3D
 			int ownerPlayerId = st?.OwnerPlayerId ?? -1;
 			int healthMax = st?.HealthMax ?? 0;
 			float healthFraction = st?.HealthFraction ?? 0f;
-			float ringRadius = isBuilding ? 10f : 2f;
 
 			Color friendlyColor = ownerPlayerId == 1
 				? new Color(0.08f, 0.22f, 0.58f)
 				: new Color(0.72f, 0.06f, 0.06f);
 			Color enemyColor = new Color(0.72f, 0.06f, 0.06f);
 
-			var ring = SelectionRing.Create(ringRadius, friendlyColor, enemyColor,
-				isBuilding ? SelectionRing.Shape.Square : SelectionRing.Shape.Circle);
+			// 建筑选择框 = footprint 精确半宽/半深(原版 SelectionShape=<Footprint/>,
+			// 无边距;CC = 32×32 → 半 16),无 footprint 组件才回退 10。
+			MeshInstance3D ring;
+			if (isBuilding)
+			{
+				var fp = _sim.Sim.QueryInterface<FootprintComponent>(eid);
+				float halfX = fp != null ? fp.Size0.ToFloat() * 0.5f : 10f;
+				float halfZ = fp != null ? fp.Size1.ToFloat() * 0.5f : 10f;
+				ring = SelectionRing.CreateRect(halfX, halfZ, friendlyColor);
+			}
+			else
+			{
+				ring = SelectionRing.Create(2f, friendlyColor, enemyColor,
+					SelectionRing.Shape.Circle);
+			}
 			ring.Position = new Vector3(0, 0.1f, 0);
 			node.AddChild(ring);
 			_selectionMarkers.Add(ring);
@@ -1611,17 +1749,27 @@ public sealed partial class Main : Node3D
 				_dragStart = mb.Position;
 				_dragSelecting = true;
 				_isDragging = false;
+				EnsureBandBox();
+				_bandBox!.Rect = new Rect2();
+				_bandBox.Visible = false;
 			}
 			else if (mb.ButtonIndex == MouseButton.Right)
 				HandleRightClick(mb.Position, mb.CtrlPressed);
 		}
 
 		if (@event is InputEventMouseMotion mm && _dragSelecting && mm.Position.DistanceTo(_dragStart) > 8f)
+		{
 			_isDragging = true;
+			// 框选矩形(原版 bandbox):实时跟随鼠标
+			_bandBox!.Rect = new Rect2(_dragStart, mm.Position - _dragStart).Abs();
+			_bandBox.Visible = true;
+			_bandBox.QueueRedraw();
+		}
 
 		if (@event is InputEventMouseButton mbu && !mbu.Pressed && mbu.ButtonIndex == MouseButton.Left && _dragSelecting)
 		{
 			_dragSelecting = false;
+			if (_bandBox != null) _bandBox.Visible = false;
 			if (_isDragging) HandleDragSelect(_dragStart, mbu.Position);
 			else HandleLeftClick(mbu.Position);
 		}

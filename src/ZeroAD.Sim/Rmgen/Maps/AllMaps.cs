@@ -60,6 +60,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "savanna_grass_b_dryseason";
+        /// <summary>上游 fields_of_meroe.json SupportedBiomes = "fields_of_meroe/"(专属,
+        /// 未移植——回退最接近的 generic/nubia,同处尼罗河流域)。</summary>
+        protected override IReadOnlyList<string> SupportedBiomes => new[] { "nubia" };
     }
 
     public sealed class NgorongoroMap : StandardMap

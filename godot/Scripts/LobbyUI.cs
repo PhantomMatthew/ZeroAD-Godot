@@ -29,6 +29,11 @@ public sealed partial class LobbyUI : CanvasLayer
     public event System.Action<int, PlayerSlotKind, string, int>? OnSlotEdit;
     /// <summary>Host clicked Start Game. Wired to <c>MultiplayerController.HostStartGame</c>.</summary>
     public event System.Action? OnStartGameRequested;
+    /// <summary>Host 改选大厅地图(rel pmp / "random/name" / "" = 默认)。接 HostSetMap。</summary>
+    public event System.Action<string>? OnMapEdit;
+    /// <summary>任一 MP 面板的 Cancel/Close：返回主菜单（Main 负责关 peer + 切场景）。
+    /// 之前只 QueueFree 面板——用户被丢在无菜单的 session 场景里出不去。</summary>
+    public event System.Action? OnCancelRequested;
 
     /// <summary>Lobby civ choices offered in each slot's civ dropdown.</summary>
     private static readonly string[] CivChoices = { "athen", "spart", "gaul" };
@@ -39,6 +44,23 @@ public sealed partial class LobbyUI : CanvasLayer
     private readonly OptionButton?[] _civOpts = new OptionButton?[PlayerSlotSetupCodec.MaxSlots];
     private readonly SpinBox?[] _teamSpins = new SpinBox?[PlayerSlotSetupCodec.MaxSlots];
     private bool _lobbyIsHost;
+    private List<MapEntry> _lobbyMaps = new();
+    private OptionButton? _mapOpt;    // host 的地图下拉
+    private Label? _mapLabel;         // client 的只读地图行
+
+    /// <summary>rel 路径 → 显示名("" → "Default (Arcadia)";目录查不到回退原始路径)。</summary>
+    private string DisplayNameOf(string relPath)
+    {
+        if (string.IsNullOrEmpty(relPath)) return "Default (Arcadia)";
+        var m = _lobbyMaps.Find(e => e.RelPath == relPath);
+        return m?.DisplayName ?? relPath;
+    }
+
+    /// <summary>客户端收到 host 的地图广播 → 刷新只读地图行(host 自己改下拉,不经此)。</summary>
+    public void SetMapDisplay(string relPath)
+    {
+        if (_mapLabel != null) _mapLabel.Text = DisplayNameOf(relPath);
+    }
 
     private sealed record MenuItem(string Caption, string Tooltip, System.Action? OnPress, MenuItem[]? Submenu = null);
 
@@ -308,7 +330,7 @@ public sealed partial class LobbyUI : CanvasLayer
 
         var title = new Label
         {
-            Text = isHost ? "Host Game" : "Join Game",
+            Text = Localization.Tr(isHost ? "Host Game" : "Join Game"),
             HorizontalAlignment = HorizontalAlignment.Center,
         };
         title.AddThemeFontSizeOverride("font_size", 22);
@@ -316,7 +338,9 @@ public sealed partial class LobbyUI : CanvasLayer
 
         if (isHost)
         {
-            _seedEdit = AddRow(vbox, "Seed", "42");
+            // 同 SP 选图:预填随机种子(原版 gamesetup 行为),手改可锁种子;固定 42
+            // 会让每局 random 图逐位相同。
+            _seedEdit = AddRow(vbox, "Seed", ((uint)GD.RandRange(0, 999999)).ToString());
         }
         _portEdit = AddRow(vbox, "Port", "25565");
         if (!isHost)
@@ -326,7 +350,7 @@ public sealed partial class LobbyUI : CanvasLayer
 
         var btnStart = new Button
         {
-            Text = isHost ? "Start Hosting" : "Connect",
+            Text = Localization.Tr(isHost ? "Start Hosting" : "Connect"),
             Theme = UITheme.GetTheme(),
         };
         btnStart.Pressed += () =>
@@ -338,11 +362,12 @@ public sealed partial class LobbyUI : CanvasLayer
         };
         vbox.AddChild(btnStart);
 
-        var btnCancel = new Button { Text = "Cancel", Theme = UITheme.GetTheme() };
+        var btnCancel = new Button { Text = Localization.Tr("Cancel"), Theme = UITheme.GetTheme() };
         btnCancel.Pressed += () =>
         {
             panel.QueueFree();
             _lobbyPanel = null;
+            OnCancelRequested?.Invoke();
         };
         vbox.AddChild(btnCancel);
 
@@ -365,10 +390,14 @@ public sealed partial class LobbyUI : CanvasLayer
     /// <summary>Build the slot-config lobby. Called by Main after transport is up:
     /// host (isHost=true, initialSlots = the host's editable slot table) or client
     /// (isHost=false, initialSlots=null — rows built as disabled placeholders, populated by
-    /// <see cref="RefreshSlotDisplay"/> when the host's table arrives).</summary>
-    public void ShowSlotLobby(bool isHost, IReadOnlyList<PlayerSlotSetup>? initialSlots)
+    /// <see cref="RefreshSlotDisplay"/> when the host's table arrives).
+    /// maps = MapCatalog 目录(host 得可编辑下拉;client 得只读行,随广播刷新);
+    /// currentMap = 当前地图 rel 路径("" = 默认)。</summary>
+    public void ShowSlotLobby(bool isHost, IReadOnlyList<PlayerSlotSetup>? initialSlots,
+        List<MapEntry>? maps = null, string currentMap = "")
     {
         _lobbyIsHost = isHost;
+        _lobbyMaps = maps ?? new List<MapEntry>();
         if (_lobbyPanel != null) { _lobbyPanel.QueueFree(); _lobbyPanel = null; }
         for (int i = 0; i < _kindOpts.Length; i++)
         {
@@ -393,17 +422,39 @@ public sealed partial class LobbyUI : CanvasLayer
         vbox.AddThemeConstantOverride("separation", 8);
         panel.AddChild(vbox);
 
-        var title = new Label { Text = "Game Lobby", HorizontalAlignment = HorizontalAlignment.Center };
+        var title = new Label { Text = Localization.Tr("Game Lobby"), HorizontalAlignment = HorizontalAlignment.Center };
         title.AddThemeFontSizeOverride("font_size", 22);
         vbox.AddChild(title);
+
+        // 地图行:host = 可编辑下拉(原版 gamesetup 的 map 选择);client = 只读,随广播刷新。
+        var mapRow = new HBoxContainer();
+        mapRow.AddThemeConstantOverride("separation", 8);
+        mapRow.AddChild(new Label { Text = Localization.Tr("Map"), CustomMinimumSize = new Vector2(50, 0) });
+        if (isHost)
+        {
+            _mapOpt = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            _mapOpt.AddItem("Default (Arcadia)");
+            foreach (var m in _lobbyMaps) _mapOpt.AddItem(m.DisplayName);
+            int sel = _lobbyMaps.FindIndex(m => m.RelPath == currentMap);
+            _mapOpt.Selected = sel >= 0 ? sel + 1 : 0;
+            _mapOpt.ItemSelected += idx =>
+                OnMapEdit?.Invoke(idx == 0 ? "" : _lobbyMaps[(int)idx - 1].RelPath);
+            mapRow.AddChild(_mapOpt);
+        }
+        else
+        {
+            _mapLabel = new Label { Text = DisplayNameOf(currentMap), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            mapRow.AddChild(_mapLabel);
+        }
+        vbox.AddChild(mapRow);
 
         // Column header.
         var header = new HBoxContainer();
         header.AddThemeConstantOverride("separation", 8);
-        header.AddChild(new Label { Text = "Slot",  CustomMinimumSize = new Vector2(50, 0) });
-        header.AddChild(new Label { Text = "Kind",  CustomMinimumSize = new Vector2(110, 0) });
-        header.AddChild(new Label { Text = "Civ",   CustomMinimumSize = new Vector2(110, 0) });
-        header.AddChild(new Label { Text = "Team",  CustomMinimumSize = new Vector2(60, 0) });
+        header.AddChild(new Label { Text = Localization.Tr("Slot"),  CustomMinimumSize = new Vector2(50, 0) });
+        header.AddChild(new Label { Text = Localization.Tr("Kind"),  CustomMinimumSize = new Vector2(110, 0) });
+        header.AddChild(new Label { Text = Localization.Tr("Civ"),   CustomMinimumSize = new Vector2(110, 0) });
+        header.AddChild(new Label { Text = Localization.Tr("Team"),  CustomMinimumSize = new Vector2(60, 0) });
         vbox.AddChild(header);
 
         var slots = initialSlots ?? DefaultFourSlots();
@@ -416,7 +467,7 @@ public sealed partial class LobbyUI : CanvasLayer
 
         if (isHost)
         {
-            var btnStart = new Button { Text = "Start Game", Theme = UITheme.GetTheme() };
+            var btnStart = new Button { Text = Localization.Tr("Start Game"), Theme = UITheme.GetTheme() };
             btnStart.Pressed += () => OnStartGameRequested?.Invoke();
             vbox.AddChild(btnStart);
         }
@@ -424,13 +475,18 @@ public sealed partial class LobbyUI : CanvasLayer
         {
             vbox.AddChild(new Label
             {
-                Text = "Waiting for host to start…",
+                Text = Localization.Tr("Waiting for host to start…"),
                 HorizontalAlignment = HorizontalAlignment.Center,
             });
         }
 
-        var btnCancel = new Button { Text = "Cancel", Theme = UITheme.GetTheme() };
-        btnCancel.Pressed += () => { panel.QueueFree(); _lobbyPanel = null; };
+        var btnCancel = new Button { Text = Localization.Tr("Close"), Theme = UITheme.GetTheme() };
+        btnCancel.Pressed += () =>
+        {
+            panel.QueueFree();
+            _lobbyPanel = null;
+            OnCancelRequested?.Invoke();
+        };
         vbox.AddChild(btnCancel);
     }
 

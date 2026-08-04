@@ -1,0 +1,220 @@
+# 0 A.D. Godot Rewrite — 简体中文包
+# gettext .po 格式(msgid = 游戏内英文字符串原文;大小写/标点须完全一致)。
+# 覆盖:主菜单 / 选项页(General + 通用按钮)/ 暂停菜单 / 选图面板 / MP 大厅。
+# 更多面板可照此格式直接追加词条。
+msgid ""
+msgstr ""
+"Project-Id-Version: 0ad-godot-rewrite\n"
+"Language: 简体中文 (zh_CN)\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+# ── 主菜单 ──
+msgid "Learn to Play"
+msgstr "学习玩法"
+
+msgid "Manual"
+msgstr "手册"
+
+msgid "Tutorial"
+msgstr "教程"
+
+msgid "Structure Tree"
+msgstr "科技树"
+
+msgid "Civilization Overview"
+msgstr "文明概览"
+
+msgid "Single-player"
+msgstr "单人游戏"
+
+msgid "Matches"
+msgstr "开局"
+
+msgid "Load Game"
+msgstr "读取存档"
+
+msgid "Replays"
+msgstr "录像回放"
+
+msgid "Multiplayer"
+msgstr "多人游戏"
+
+msgid "Host New Game"
+msgstr "主持新游戏"
+
+msgid "Connect by IP"
+msgstr "按 IP 连接"
+
+msgid "Lobby"
+msgstr "大厅"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Options"
+msgstr "选项"
+
+msgid "Hotkeys"
+msgstr "热键"
+
+msgid "Quit"
+msgstr "退出"
+
+# ── 选项页 ──
+msgid "General"
+msgstr "常规"
+
+msgid "Graphics (general)"
+msgstr "图像(常规)"
+
+msgid "Graphics (advanced)"
+msgstr "图像(高级)"
+
+msgid "Sound"
+msgstr "声音"
+
+msgid "Game Setup"
+msgstr "对局设置"
+
+msgid "Networking / Lobby"
+msgstr "网络 / 大厅"
+
+msgid "Chat & Notifications"
+msgstr "聊天与通知"
+
+msgid "Display"
+msgstr "显示"
+
+msgid "Gameplay"
+msgstr "游戏性"
+
+msgid "Language"
+msgstr "语言"
+
+msgid "Player name (single-player)"
+msgstr "玩家名称(单人)"
+
+msgid "Player name (multiplayer)"
+msgstr "玩家名称(多人)"
+
+msgid "Background pause"
+msgstr "后台暂停"
+
+msgid "Reset"
+msgstr "重置"
+
+msgid "Revert"
+msgstr "还原"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Close"
+msgstr "关闭"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Yes"
+msgstr "是"
+
+msgid "No"
+msgstr "否"
+
+msgid "Warning"
+msgstr "警告"
+
+# ── 暂停菜单 ──
+msgid "Menu"
+msgstr "菜单"
+
+msgid "Resume"
+msgstr "继续"
+
+msgid "Quick Load"
+msgstr "快速读取"
+
+msgid "Resign"
+msgstr "认输"
+
+msgid "Leave"
+msgstr "离开"
+
+msgid "Are you sure you want to resign?\nYou will be defeated."
+msgstr "确定要认输吗?\n你将被判负。"
+
+# ── 选图面板 ──
+msgid "Select Map"
+msgstr "选择地图"
+
+msgid "Start Game"
+msgstr "开始游戏"
+
+msgid "All"
+msgstr "全部"
+
+msgid "Random"
+msgstr "随机"
+
+msgid "Skirmish"
+msgstr "遭遇战"
+
+msgid "Scenario"
+msgstr "剧本"
+
+msgid "Seed:"
+msgstr "种子:"
+
+# ── MP 大厅 ──
+msgid "Host Game"
+msgstr "主持游戏"
+
+msgid "Join Game"
+msgstr "加入游戏"
+
+msgid "Start Hosting"
+msgstr "开始主持"
+
+msgid "Connect"
+msgstr "连接"
+
+msgid "Game Lobby"
+msgstr "游戏大厅"
+
+msgid "Map"
+msgstr "地图"
+
+msgid "Slot"
+msgstr "槽位"
+
+msgid "Kind"
+msgstr "类型"
+
+msgid "Civ"
+msgstr "文明"
+
+msgid "Team"
+msgstr "队伍"
+
+msgid "Waiting for host to start…"
+msgstr "等待主持人开始…"
+
+# ── 大厅槽位类型(Kind 下拉)──
+msgid "Closed"
+msgstr "关闭"
+
+msgid "Human"
+msgstr "人类"
+
+msgid "AI"
+msgstr "AI"
+
+# ── 语言选择页(page_locale)──
+msgid "Language:"
+msgstr "语言:"
+
+msgid "Locale:"
+msgstr "区域码:"
+
+msgid "Accept"
+msgstr "确定"
