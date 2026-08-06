@@ -79,6 +79,7 @@ public sealed partial class Main : Node3D
 	private GameSpeedPanel? _gameSpeedPanel;
 	private DiplomacyPanel? _diplomacyPanel;
 	private TradePanel? _tradePanel;
+	private StructreePanel? _structreePanel;
 	private MatchSettingsPanel? _matchSettingsPanel;
 
 	public IReadOnlySet<EntityId> SelectedEntities => _selectedEntities;
@@ -351,11 +352,13 @@ public sealed partial class Main : Node3D
 		// default to a 1v1 Human-vs-AI table (slot 1 = this player, slot 2 = AI opponent);
 		// tutorial is single-player (one Human slot, no AI). Slot count is data-driven now.
 		IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup> effectiveSlots = slots
-			?? (tutorial
-				? new List<ZeroAD.Sim.Net.PlayerSlotSetup>
-				{
-					new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "athen" },
-				}
+				?? (tutorial
+					? new List<ZeroAD.Sim.Net.PlayerSlotSetup>
+					{
+						// 教程地图(introductory_tutorial)PlayerData[1].Civ=spart——
+						// 槽位文明须与地图一致(TechnologyManager 文明键在世界构建时定型)。
+						new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "spart" },
+					}
 				: new List<ZeroAD.Sim.Net.PlayerSlotSetup>
 				{
 					new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "athen", Team = -1 },
@@ -496,6 +499,10 @@ public sealed partial class Main : Node3D
 		AddChild(_diplomacyPanel);
 		AddChild(_tradePanel);
 		AddChild(_matchSettingsPanel);
+		// 科技树(原版顶栏民族徽标 → page_structree):面板自载模板/科技数据,
+		// 打开时预选本地玩家文明。
+		_structreePanel = new StructreePanel();
+		AddChild(_structreePanel);
 
 		// FPS 叠层:overlay.fps 改动经 UserConfig.ConfigChanged 即时显隐(Options 页改动不落盘也生效)。
 		_fpsOverlay = new CanvasLayer { Layer = 45, Visible = false };
@@ -994,6 +1001,16 @@ public sealed partial class Main : Node3D
 					_sim.SpawnDecorative(ent.TemplateName.Substring("actor|".Length), x, z, yaw);
 					continue;
 				}
+				if (ent.TemplateName.StartsWith("trigger/trigger_point_", System.StringComparison.Ordinal))
+				{
+					// 触发点(trigger_point_X):注册进触发系统(地图脚本的生成/区域锚点),
+					// 不生成实体(原版 TriggerPoint 实体只作位置注册)。
+					string tref = ent.TemplateName.Substring("trigger/trigger_point_".Length);
+					_sim.Sim.Triggers.RegisterTriggerPoint(tref,
+						new ZeroAD.Sim.Maths.FixedVector2D(
+							ZeroAD.Sim.Maths.Fixed.FromFloat(x), ZeroAD.Sim.Maths.Fixed.FromFloat(z)));
+					continue;
+				}
 				// 属主随 rmgen PlayerID(上游 ParseEntities 同款)——玩家基地/起始单位归属。
 				var eid = _sim.SpawnFromTemplate(ent.TemplateName, x, z, ent.PlayerID);
 				if (_sim.EntityNodes.TryGetValue(eid, out var node) && yaw != 0f)
@@ -1003,6 +1020,8 @@ public sealed partial class Main : Node3D
 		}
 
 		_sim.MapPath = $"random/{mapName}";
+		// 地图脚本(_triggers.js 移植件):触发点已注册完毕,安装并跑 OnInit。
+		_sim.InitMapScript(mapName);
 		GD.Print($"[Main] rmgen terrain ready: {mapName} ({export.Size}×{export.Size}, {export.Entities.Count} entities)");
 	}
 
@@ -1288,6 +1307,8 @@ public sealed partial class Main : Node3D
 		// Initial buildings/units were spawned AFTER the map-load RebuildGrid; rebuild once more so
 		// pathing accounts for the town centres and any scenario buildings.
 		_sim.Pathfinder.RebuildGrid();
+		// AI 水陆区域图(Accessibility)随网格定型重建(Petra 海军/码头选址的前置)。
+		_sim.RefreshAiAccessibility();
 
 		// Fog: sandbox/SP spawns owner-less world-dev entities with no seers, so reveal the map so
 		// the dev world isn't shrouded. MP keeps real fog — each human only sees their own vision.
@@ -1342,10 +1363,20 @@ public sealed partial class Main : Node3D
 		if (!_gameStarted
 			|| _sim.NetTurn.Role != NetRole.Standalone
 			|| GetNode<UserConfig>("/root/UserConfig").GetEffective("pauseonfocusloss") != "true"
-			|| _pauseMenu is not { Visible: false })
+			|| _pauseMenu is not { Visible: false }
+			|| AnyModalPanelOpen())   // 模态面板(科技树等)的 Popup 会触发失焦——不打扰
 			return;
 		OpenPauseMenu();
 	}
+
+	/// <summary>任一模态面板开着?(失焦自动暂停的豁免:面板的下拉 Popup 会抢焦,
+	/// 不应因此弹暂停菜单盖住面板)。</summary>
+	private bool AnyModalPanelOpen()
+		=> _structreePanel is { Visible: true }
+		|| _gameSpeedPanel is { Visible: true }
+		|| _diplomacyPanel is { Visible: true }
+		|| _tradePanel is { Visible: true }
+		|| _matchSettingsPanel is { Visible: true };
 
 	public override void _ExitTree()
 	{
@@ -1698,10 +1729,11 @@ public sealed partial class Main : Node3D
 			int healthMax = st?.HealthMax ?? 0;
 			float healthFraction = st?.HealthFraction ?? 0f;
 
-			Color friendlyColor = ownerPlayerId == 1
-				? new Color(0.08f, 0.22f, 0.58f)
-				: new Color(0.72f, 0.06f, 0.06f);
-			Color enemyColor = new Color(0.72f, 0.06f, 0.06f);
+			// 选择框颜色(原版:属主玩家色;gaia = 白)。此前非 P1 一律红——gaia 动物/树也红。
+			Color friendlyColor = ownerPlayerId <= 0
+				? Colors.White
+				: SimBridge.GetPlayerColor(ownerPlayerId);
+			Color enemyColor = SimBridge.GetPlayerColor(ownerPlayerId);
 
 			// 建筑选择框 = footprint 精确形状/尺寸(原版 SelectionShape=<Footprint/>):
 			// 方形 → 半宽/半深矩形;圆形 → 半径圆环(如 tholos 圆形神庙)。
@@ -1733,15 +1765,68 @@ public sealed partial class Main : Node3D
 
 			if (healthMax > 0)
 			{
+				// 头顶高度 = 模型 AABB 顶 + 0.3(原版状态条悬于实体顶;固定 2.5/6 对
+                // 高塔矮兵都不对)。缓存进 meta,重复选择不重算。
+				float topY = BarTopHeight(node);
 				var bar = SelectionRing.CreateHealthBar(healthFraction);
-				bar.Position = new Vector3(0, isBuilding ? 6f : 2.5f, 0);
+				bar.Position = new Vector3(0, topY, 0);
 				node.AddChild(bar);
 				_selectionMarkers.Add(bar);
+
+				// 占领条(蓝条,血条上方;原版可占领建筑的双条):各玩家 CP 占比分段。
+				var capturable = _sim.Sim.QueryInterface<CapturableComponent>(eid);
+				float maxCp = capturable?.MaxCapturePoints.ToFloat() ?? 0f;
+				if (capturable != null && maxCp > 0f)
+				{
+					var segs = new List<(float, Color)>();
+					int n = System.Math.Min(capturable.CapturePoints.Length, 9);
+					for (int p = 0; p < n; p++)
+					{
+						float cp = capturable.CapturePoints[p].ToFloat();
+						if (cp > 0f)
+							segs.Add((cp / maxCp, SimBridge.GetPlayerColor(p)));
+					}
+					var capBar = SelectionRing.CreateCaptureBar(segs);
+					capBar.Position = new Vector3(0, topY + 0.45f, 0);
+					node.AddChild(capBar);
+					_selectionMarkers.Add(capBar);
+				}
 			}
 		}
 
 		// Rally-point marker (flag + path line) is cached across frames — see ReconcileRallyMarker.
 		ReconcileRallyMarker();
+	}
+
+	/// <summary>实体头顶条高度(原版状态条悬于模型顶):取首个网格 AABB 顶 + 0.3;
+	/// 无网格回退按建筑/单位 6/2.2。结果缓存进节点 meta(模型不换不重用算)。</summary>
+	private static float BarTopHeight(Node3D node)
+	{
+		if (node.HasMeta("barTopY"))
+			return (float)node.GetMeta("barTopY").AsDouble();
+		float top = 0f;
+		var meshNode = FindFirstMeshNode(node);
+		if (meshNode?.Mesh != null)
+		{
+			var aabb = meshNode.Mesh.GetAabb();
+			top = aabb.End.Y;
+		}
+		if (top < 0.5f)
+			top = 2.2f;   // 无网格兜底(演员缺失的占位)
+		float result = top + 0.3f;
+		node.SetMeta("barTopY", result);
+		return result;
+	}
+
+	private static MeshInstance3D? FindFirstMeshNode(Node node)
+	{
+		foreach (var child in node.GetChildren())
+		{
+			if (child is MeshInstance3D mi && mi.Mesh != null) return mi;
+			var found = FindFirstMeshNode(child);
+			if (found != null) return found;
+		}
+		return null;
 	}
 
 	/// <summary>Reconcile the cached rally marker (_rallyMarker) with the current selection:
@@ -1891,6 +1976,7 @@ public sealed partial class Main : Node3D
 			{
 				if (_placeBuildingMode) { PlaceBuilding(mb.Position); return; }
 				if (_commandTargetMode != null) { HandleCommandTargetClick(mb.Position); return; }
+				_pendingDoubleClick = mb.DoubleClick;   // 双击标记在按下帧;释放时消费
 				_dragStart = mb.Position;
 				_dragSelecting = true;
 				_isDragging = false;
@@ -1916,6 +2002,7 @@ public sealed partial class Main : Node3D
 			_dragSelecting = false;
 			if (_bandBox != null) _bandBox.Visible = false;
 			if (_isDragging) HandleDragSelect(_dragStart, mbu.Position);
+			else if (_pendingDoubleClick) HandleDoubleClick(mbu.Position);
 			else HandleLeftClick(mbu.Position);
 		}
 	}
@@ -1972,6 +2059,39 @@ public sealed partial class Main : Node3D
 						_sim.CommandPatrol(unit, worldPos.Value.X, worldPos.Value.Z);
 				break;
 			}
+		}
+	}
+
+	private bool _pendingDoubleClick;
+
+	/// <summary>双击同类全选(原版 input.js 双击语义):屏幕内所有与目标同模板、
+	/// 同属主的实体入列。屏幕范围 = 相机视锥。</summary>
+	private void HandleDoubleClick(Vector2 screenPos)
+	{
+		var worldPos = ScreenToWorld(screenPos);
+		if (worldPos == null) return;
+		var targets = _sim.GetEntitiesAtPosition(worldPos.Value, 3f);
+		if (targets.Count == 0) return;
+		var hit = targets[0];
+		var identity = _sim.Sim.QueryInterface<IdentityComponent>(hit);
+		if (identity == null || identity.TemplateName.Length == 0) return;
+		int owner = _sim.Sim.QueryInterface<OwnershipComponent>(hit)?.PlayerId ?? -1;
+
+		var camera = GetViewport().GetCamera3D();
+		_selectedEntities.Clear();
+		foreach (var (eid, node) in _sim.EntityNodes)
+		{
+			var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
+			if (id == null || id.TemplateName != identity.TemplateName) continue;
+			var own = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
+			if ((own?.PlayerId ?? -1) != owner) continue;
+			if (camera != null && !camera.IsPositionInFrustum(node.GlobalPosition)) continue;
+			_selectedEntities.Add(eid);
+		}
+		if (_selectedEntities.Count > 0)
+		{
+			UpdateSelectionMarkers();
+			PlaySelectionSound("select");
 		}
 	}
 
@@ -2095,14 +2215,27 @@ public sealed partial class Main : Node3D
 		// 采集者在资源目标上优先采集光标(鹿对村民=猎取;对齐 HandleRightClick 分流)。
 		if (canGather && _sim.Sim.QueryInterface<ResourceSupply>(e) is { } supply)
 		{
-			// 按资源大类映射光标(原版按 specificType 细分 fish/fruit/meat 等;
-			// 我们的 Supply 只有大类,food 统一走 grain)。
-			return supply.Type switch
+			// 按 specificType 细分(原版 cursors/action-gather-{fruit,fish,meat,...}.png);
+			// 大类兜底(旧数据无 specificType 时回退)。
+			return supply.SpecificType switch
 			{
-				ResourceType.Wood => "action-gather-tree",
-				ResourceType.Stone => "action-gather-rock",
-				ResourceType.Metal => "action-gather-ore",
-				_ => "action-gather-grain",
+				"tree" => "action-gather-tree",
+				"rock" => "action-gather-rock",
+				"ore" => "action-gather-ore",
+				"fruit" => "action-gather-fruit",
+				"fish" => "action-gather-fish",
+				"meat" => "action-gather-meat",
+				"milk" => "action-gather-milk",
+				"rice" => "action-gather-rice",
+				"ruins" => "action-gather-ruins",
+				"grain" => "action-gather-grain",
+				_ => supply.Type switch
+				{
+					ResourceType.Wood => "action-gather-tree",
+					ResourceType.Stone => "action-gather-rock",
+					ResourceType.Metal => "action-gather-ore",
+					_ => "action-gather-grain",
+				}
 			};
 		}
 		if (canAttack
@@ -2501,6 +2634,16 @@ public sealed partial class Main : Node3D
 	/// <summary>选中编队组(图标条点击与数字热键同路)。</summary>
 	public void SelectControlGroupPublic(int group) => SelectControlGroup(group);
 
+	/// <summary>多选网格点击(原版 unitSelectionButton):选中给定实体组。</summary>
+	public void SelectOnly(IEnumerable<EntityId> entities)
+	{
+		_selectedEntities.Clear();
+		foreach (var e in entities) _selectedEntities.Add(e);
+		UpdateSelectionMarkers();
+		if (_selectedEntities.Count > 0)
+			PlaySelectionSound("select");
+	}
+
 	/// <summary>建筑升级命令(原版 upgrade 按钮:哨塔→防御塔等)。</summary>
 	public void CommandUpgrade(EntityId building, EntityId? builder)
 		=> _sim.CommandUpgrade(building, builder);
@@ -2605,6 +2748,15 @@ public sealed partial class Main : Node3D
 
 	/// <summary>顶栏 Trade 按钮回调:打开贸易面板(易物/贸易品比例,不暂停 sim)。</summary>
 	public void OpenTradePanel() => _tradePanel?.Open();
+
+	/// <summary>顶栏民族徽标回调:打开科技树,预选本地玩家文明(原版 CivIcon.onPress)。</summary>
+	public void OpenStructreePanel()
+	{
+		if (_structreePanel == null) return;
+		string civ = _sim.GetPlayer()?.Civ ?? "athen";
+		_structreePanel.SetCiv(civ);
+		_structreePanel.Open();
+	}
 
 	/// <summary>顶栏 Settings 按钮回调:打开对局设置摘要面板(只读,不暂停 sim)。</summary>
 	public void OpenMatchSettingsPanel() => _matchSettingsPanel?.Open();

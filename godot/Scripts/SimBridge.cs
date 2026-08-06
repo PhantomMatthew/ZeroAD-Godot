@@ -51,8 +51,9 @@ public sealed partial class SimBridge : Node
 
         public void ShowMessage(string text) => _bridge.TriggerMessage?.Invoke(text);
 
-        public void SpawnEntities(string template, int playerId, float x, float z, int count, float spread)
+        public IReadOnlyList<EntityId> SpawnEntities(string template, int playerId, float x, float z, int count, float spread)
         {
+            var spawned = new List<EntityId>(count);
             for (int i = 0; i < count; i++)
             {
                 float ox = 0f, oz = 0f;
@@ -63,13 +64,19 @@ public sealed partial class SimBridge : Node
                     ox = r * (float)System.Math.Cos(angle);
                     oz = r * (float)System.Math.Sin(angle);
                 }
-                _bridge.SpawnFromTemplate(template, x + ox, z + oz, playerId);
+                spawned.Add(_bridge.SpawnFromTemplate(template, x + ox, z + oz, playerId));
             }
+            return spawned;
         }
     }
     /// <summary>InitWorld 传入的模板根路径(simulation/templates)——SkirmishReplacer 由它
     /// 推导 civs 数据目录(../data/civs)。</summary>
     private string? _templatesPath;
+    private TechCatalog? _techCatalog;
+    /// <summary>Petra 共享状态(模板/科技目录 + Accessibility 水陆区域图;每图一份,
+    /// 各 AI 玩家共用)。InitWorld 末构建;AttachAi 注入 AIComponent——此前从未接线,
+    /// 导致 HQ 主循环在实战恒不跑(只有旧版兜底管理器在跑)。</summary>
+    private ZeroAD.Sim.AI.CommonApi.SharedState? _sharedState;
 
     /// <summary>
     /// The single shared sim event bus. Delegates to <see cref="ComponentManager.Events"/> so
@@ -284,6 +291,41 @@ public sealed partial class SimBridge : Node
             .Select(s => (uint)s.PlayerId)
             .ToHashSet();
         _netTurn = new NetTurnManager(_sim, commandDelay: 2, localPlayerId, role, expectedPlayers);
+
+        // Petra 共享状态:模板+科技目录就绪即建;Accessibility 在地图网格定型后
+        // 由 RefreshAiAccessibility 补齐(Main 在末次 RebuildGrid 后调)。
+        _techCatalog = techCatalog;
+        _sharedState = templates != null && techCatalog != null
+            ? new ZeroAD.Sim.AI.CommonApi.SharedState(templates, techCatalog)
+            : null;
+        SimSystem.SetNet(_netTurn);   // 地图脚本/内核侧命令通道(gaia 狼群攻击等)
+    }
+
+    /// <summary>安装地图脚本(原版 _triggers.js 的 C# 移植件;Main 在地图加载完成后
+    /// 按图名调用)。OnInit 即执行(原版 OnInitGame 时机);Tick 随 TriggerSystem 逐回合。</summary>
+    public void InitMapScript(string mapName)
+    {
+        if (_sim == null) return;
+        ZeroAD.Sim.Triggers.IMapScriptBehavior? script = mapName switch
+        {
+            "polar_sea" => new ZeroAD.Sim.Triggers.PolarSeaScript(),
+            "elephantine" => new ZeroAD.Sim.Triggers.ElephantineScript(),
+            _ => null,
+        };
+        _sim.Triggers.MapScript = script;
+        if (script != null)
+        {
+            script.OnInit(_sim);
+            GD.Print($"[Map] trigger script installed: {mapName}");
+        }
+    }
+
+    /// <summary>地图加载/障碍定型后重建 AI 水陆可达性区域图(原版 Accessibility
+    /// 每图构建一次)。Main 在末次 Pathfinder.RebuildGrid 之后调用。</summary>
+    public void RefreshAiAccessibility()
+    {
+        if (_sharedState != null && _pathfinder.PassabilityGrid != null)
+            _sharedState.BuildAccessibility(_pathfinder);
     }
 
     /// <summary>开始自动录像。InitWorld 后、SimulationRunning=true 前调用。
@@ -375,6 +417,9 @@ public sealed partial class SimBridge : Node
                     player.Stone = pd.Stone;
                     player.Metal = pd.Metal;
                     player.PopulationLimit = 20;
+                    // 文明随地图 XML(原版 scenario 行为;此前漏设——单位按 spart
+                    // 模板生成但玩家文明停在默认 athen,徽标/科技树全错)。
+                    if (pd.Civ.Length > 0) player.Civ = pd.Civ;
                 }
             }
             else if (pd.PlayerId == 2)
@@ -386,7 +431,8 @@ public sealed partial class SimBridge : Node
                     Food = pd.Food,
                     Stone = pd.Stone,
                     Metal = pd.Metal,
-                    PopulationLimit = 20
+                    PopulationLimit = 20,
+                    Civ = pd.Civ.Length > 0 ? pd.Civ : "athen",
                 });
                 _sim.AddComponent(enemy, new OwnershipComponent { PlayerId = pd.PlayerId });
                 _sim.AddComponent(enemy, new DiplomacyComponent());
@@ -407,8 +453,75 @@ public sealed partial class SimBridge : Node
         ApplyScenarioCivs(scenario);
         ApplyVictoryConditions(scenario);
         SpawnScenarioEntities(scenario);
+        // 弑君模式(原版 maps/scripts/Regicide.js 的数据驱动移植):实体落地后,
+        // 按玩家文明随机选英雄生成在其最佳建筑旁(CivCentre > Structure > Ship)。
+        if (_sim?.EndGame.HasCondition("regicide") == true)
+            SpawnRegicideHeroes();
         GD.Print($"[Map] loaded map entities: {scenario.Entities.Count} ({scenario.Name})");
         return scenario;
+    }
+
+    /// <summary>为每位非 gaia 玩家生成弑君英雄(原版 InitRegicideGame +
+    /// SpawnRegicideHero)。英雄模板 = units/ 下 Hero 类且 Civ 匹配;随机选取走
+    /// cm.RNG(锁步确定);出生点取玩家 CivCentre > 其他建筑 > Ship 的首个,
+    /// 位置经 Footprint.PickSpawnPoint(无 footprint 回退 +X 偏移)。</summary>
+    private void SpawnRegicideHeroes()
+    {
+        if (_sim == null || Templates == null) return;
+        var range = _range;
+        foreach (int pid in _sim.Players.GetNonGaiaPlayerIds())
+        {
+            var player = _sim.GetPlayerEntity(pid);
+            if (player == null) continue;
+
+            // 该文明的英雄模板(确定性:模板名排序后 RNG 抽取)。
+            var heroes = new List<string>();
+            foreach (var kvp in Templates.Cache)
+            {
+                if (!kvp.Key.StartsWith("units/", StringComparison.Ordinal)) continue;
+                var identity = kvp.Value.GetChild("Identity");
+                if (!identity.IsOk) continue;
+                string civ = identity.GetChild("Civ").ToString();
+                if (civ != player.Civ) continue;
+                string classes = identity.GetChild("Classes").ToString() + " "
+                    + identity.GetChild("VisibleClasses").ToString();
+                if (!classes.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("Hero")) continue;
+                heroes.Add(kvp.Key);
+            }
+            if (heroes.Count == 0) continue;
+            heroes.Sort(StringComparer.Ordinal);
+            string heroTemplate = heroes[(int)(_sim.RNG.NextDouble() * heroes.Count) % heroes.Count];
+
+            // 出生点:CivCentre > Structure > Ship(原版 spawnPreferences);
+            // 同偏好按实体 id 小者优先(确定性)。
+            EntityId? best = null; int bestPref = -1;
+            foreach (var ent in range.GetEntitiesByPlayer(pid))
+            {
+                var id = _sim.QueryInterface<IdentityComponent>(ent);
+                if (id == null) continue;
+                int pref = id.HasClass("CivCentre") ? 3
+                    : id.IsBuilding ? 2
+                    : id.HasClass("Ship") ? 1 : 0;
+                if (pref > bestPref || (pref == bestPref && best.HasValue && ent.Value < best.Value.Value))
+                { best = ent; bestPref = pref; }
+            }
+            if (best == null) continue;   // 无任何实体(原版:取偏好序首实体,任意实体皆可)
+
+            var anchorPos = _sim.QueryInterface<PositionComponent>(best.Value);
+            if (anchorPos == null) continue;
+            float hx = anchorPos.Position.X.ToFloat() + 3f;
+            float hz = anchorPos.Position.Z.ToFloat();
+            var footprint = _sim.QueryInterface<FootprintComponent>(best.Value);
+            if (footprint != null)
+            {
+                var spawn = footprint.PickSpawnPoint(ZeroAD.Sim.Maths.Fixed.FromFloat(1f));
+                hx = spawn.X.ToFloat();
+                hz = spawn.Z.ToFloat();
+            }
+            var hero = SpawnFromTemplate(heroTemplate, hx, hz, pid);
+            _sim.EndGame.RegicideHeroes[pid] = hero;
+            GD.Print($"[Map] regicide hero for player {pid}: {heroTemplate}");
+        }
     }
 
     /// <summary>地图 ScriptSettings 的胜利条件注入 EndGameManager(原版 InitGame.js →
@@ -423,6 +536,9 @@ public sealed partial class SimBridge : Node
         endGame.WonderVictoryDuration = scenario.WonderVictoryDuration;
         endGame.RelicVictoryDuration = scenario.RelicVictoryDuration;
         endGame.CeasefireDuration = scenario.CeasefireDuration;
+        // 同盟共胜 = LockTeams || !LastManStanding(原版 Setup.js)。
+        endGame.AlliedVictory = scenario.LockTeams || !scenario.LastManStanding;
+        endGame.RegicideGarrison = scenario.RegicideGarrison;
         if (scenario.VictoryConditions.Count > 0)
             GD.Print($"[Map] victory conditions: {string.Join(",", scenario.VictoryConditions)}");
         // 停战设置(原版 Setup.js:if (settings.Ceasefire) StartCeasefire)——
@@ -1228,16 +1344,46 @@ public sealed partial class SimBridge : Node
             {
                 if (_entityNodes.TryGetValue(entity, out var node))
                 {
-                    var mat = new StandardMaterial3D();
-                    float alpha = 0.3f + 0.7f * foundation.BuildFraction;
-                    mat.AlbedoColor = new Color(0.6f, 0.5f, 0.4f, alpha);
-                    mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-                    if (node is MeshInstance3D mi && mi.Mesh is BoxMesh bm)
+                    if (node.HasMeta("riseHeight"))
+                    {
+                        // 真实模型地基:随进度从地下升起(原版建造动画)。
+                        float rise = (float)node.GetMeta("riseHeight").AsDouble();
+                        float baseY = (float)node.GetMeta("baseY").AsDouble();
+                        float f = Math.Max(foundation.BuildFraction, 0.08f);
+                        node.Position = new Vector3(node.Position.X,
+                            baseY - rise * (1f - f), node.Position.Z);
+                    }
+                    else if (node is MeshInstance3D mi && mi.Mesh is BoxMesh bm)
+                    {
+                        // 幽灵盒兜底:透明度渐升(旧行为)。
+                        var mat = new StandardMaterial3D();
+                        float alpha = 0.3f + 0.7f * foundation.BuildFraction;
+                        mat.AlbedoColor = new Color(0.6f, 0.5f, 0.4f, alpha);
+                        mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
                         bm.Material = mat;
+                    }
+
+                    // 建造进度条(原版地基血条随建造涨;整百分点变化才重建网格)。
+                    if (_foundationBars.TryGetValue(entity, out var bar))
+                    {
+                        int pct = (int)(100f * foundation.BuildFraction);
+                        if (!bar.HasMeta("pct") || bar.GetMeta("pct").AsInt32() != pct)
+                        {
+                            var parent = bar.GetParent();
+                            var barPos = bar.Position;
+                            bar.QueueFree();
+                            var nb = SelectionRing.CreateHealthBar(pct / 100f);
+                            nb.Position = barPos;
+                            nb.SetMeta("pct", pct);
+                            parent.AddChild(nb);
+                            _foundationBars[entity] = nb;
+                        }
+                    }
                 }
                 continue;
             }
 
+            _foundationBars.Remove(entity);   // 完工:条目清除(条随节点释放)
             completed.Add(entity);
         }
 
@@ -1449,13 +1595,12 @@ public sealed partial class SimBridge : Node
         int playerId = owner?.PlayerId ?? e.OwnerPlayerId;
         Color color = GetPlayerColor(playerId);
 
-        // Foundations (placed via SimCommandExecutor.ApplyBuild in the kernel) get a ghost
-        // preview; everything else uses the unit-size heuristic.
+        // Foundations (placed via SimCommandExecutor.ApplyBuild in the kernel):真实建筑
+        // 模型沉地,随进度升起(原版建造动画)+ 头顶血条;模型缺失回退幽灵盒。
         bool isFoundation = _sim.QueryInterface<FoundationComponent>(e.Entity) != null;
         if (isFoundation)
         {
-            CreateVisualFor(e.Entity, new Color(0.6f, 0.5f, 0.4f, 0.3f), 6f,
-                isBuilding: true, isGhost: true, templateName: e.TemplateName);
+            CreateFoundationVisual(e.Entity, e.TemplateName, playerId);
         }
         else
         {
@@ -1469,6 +1614,66 @@ public sealed partial class SimBridge : Node
     }
 
     // --- Entity spawning ---
+
+    // 建造中地基的头顶血条(随完成释放;键=地基实体)。
+    private readonly Dictionary<EntityId, MeshInstance3D> _foundationBars = new();
+
+    /// <summary>地基视觉(原版地基/建造动画):真实建筑模型沉入地下,随建造进度升到
+    /// 地表(TickFoundations 每 tick 调 Y);头顶挂血条。模型缺失 → 旧幽灵盒兜底。
+    /// meta: riseHeight(模型 AABB 高)/baseY(地表高),TickFoundations 读取。</summary>
+    private void CreateFoundationVisual(EntityId entity, string template, int playerId)
+    {
+        Color color = GetPlayerColor(playerId);
+        var visual = ModelLibrary.InstantiateForTemplate(template, 0, 0, color);
+        if (visual == null)
+        {
+            // 无模型(演员缺失/未知模板)→ 旧幽灵盒路径,表现不变。
+            CreateVisualFor(entity, new Color(0.6f, 0.5f, 0.4f, 0.3f), 6f,
+                isBuilding: true, isGhost: true, templateName: template);
+            return;
+        }
+
+        var pos = _sim.QueryInterface<PositionComponent>(entity);
+        float vx = pos?.Position.X.ToFloat() ?? 0;
+        float vz = pos?.Position.Z.ToFloat() ?? 0;
+        float baseY = TerrainHeightService.Sample(vx, vz);
+
+        // 升起行程 = 模型包围盒高(取首个网格子节点的 AABB;无则回退 6m);
+        // 初始 8% 露出(原版地基起手有一小截脚手架,不是从零全埋)。
+        float rise = 6f;
+        var meshNode = visual as MeshInstance3D ?? FindFirstMesh(visual);
+        if (meshNode?.Mesh != null)
+        {
+            var aabb = meshNode.Mesh.GetAabb();
+            if (aabb.Size.Y > 0.1f) rise = aabb.Size.Y;
+        }
+        visual.SetMeta("riseHeight", rise);
+        visual.SetMeta("baseY", baseY);
+        visual.Position = new Vector3(vx, baseY - rise * 0.92f, vz);   // 8% 露出
+
+        // 头顶血条(原版地基建造中显示血量;TickFoundations 每 tick 刷新)。
+        var bar = SelectionRing.CreateHealthBar(1f);
+        bar.Position = new Vector3(0, rise + 1.5f, 0);
+        visual.AddChild(bar);
+        _foundationBars[entity] = bar;
+
+        visual.SetMeta("entityId", (int)entity.Value);
+        UnitContainer.AddChild(visual);
+        _entityNodes[entity] = visual;
+        _entityCacheDirty = true;
+    }
+
+    /// <summary>首个 MeshInstance3D 子节点(深度优先;建筑模型多为容器节点)。</summary>
+    private static MeshInstance3D? FindFirstMesh(Node node)
+    {
+        foreach (var child in node.GetChildren())
+        {
+            if (child is MeshInstance3D mi) return mi;
+            var found = FindFirstMesh(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
 
     public EntityId SpawnFromTemplate(string templateName, float x, float z, int playerId = 0)
     {
@@ -1730,6 +1935,8 @@ public sealed partial class SimBridge : Node
         if (playerEntity == null) return;
         var ai = new AIComponent();
         ai.Configure(_sim, _netTurn);
+        if (_sharedState != null)
+            ai.ConfigureSharedState(_sharedState);   // Petra HQ 主循环的激活钥匙
         _sim.AddComponent(playerEntity.Value, ai);
     }
 

@@ -11,6 +11,7 @@ public sealed partial class HUD : CanvasLayer
     private readonly Main _main;
 
     private TextureRect _topBar = null!;
+    private TextureButton _civEmblemBtn = null!;
     private readonly List<ResourceCounter> _resourceCounters = new();
     private Minimap _minimap = null!;
     private Panel _bottomBar = null!;
@@ -20,7 +21,6 @@ public sealed partial class HUD : CanvasLayer
     private ProgressBar _selHealth = null!;
     private Label _selHealthText = null!;
     private CaptureBar _selCapture = null!;
-    private Label _selExtra = null!;
     private Label _selGarrison = null!;
     private HBoxContainer _garrisonRow = null!;
     private string _garrisonSignature = "";
@@ -39,10 +39,10 @@ public sealed partial class HUD : CanvasLayer
     private ProgressBar _researchBar = null!;
     private string _researchTech = "";
     private readonly System.Collections.Generic.Dictionary<string, Button> _stanceButtons = new();
-    private const int QueueSlotCount = 8;     // 训练队列池大小(选中面板最多显示的槽数)
+    private const int QueueSlotCount = 16;    // 队列条槽数(原版 unitQueuePanel repeat 16)
     private HBoxContainer _queueRow = null!;
     private readonly QueueSlot[] _queueSlots = new QueueSlot[QueueSlotCount];
-    private HBoxContainer _commandBox = null!;
+    private HFlowContainer _commandBox = null!;
 
     private static readonly string[] _resNames = { "food", "wood", "stone", "metal" };
     private static readonly string[] _resIcons = { "resources/food.png", "resources/wood.png", "resources/stone.png", "resources/metal.png" };
@@ -61,6 +61,27 @@ public sealed partial class HUD : CanvasLayer
 
     /// <summary>居中置顶的一行提示(原版红字错误提示的移植:建造拒绝等原因回显)。
     /// 3s 自动隐;连发时序号失效旧计时器,只保留最后一次。</summary>
+    /// <summary>民族徽标(原版 CivIcon.rebuild):按本地玩家文明取
+    /// session/portraits/emblems/emblem_{name}.png。</summary>
+    private void RefreshCivEmblem()
+    {
+        string civ = _sim.GetPlayer()?.Civ ?? "athen";
+        string emblemName = CivEmblemNames.GetValueOrDefault(civ, "hellenes");
+        var tex = LoadTex($"session/portraits/emblems/emblem_{emblemName}.png");
+        if (tex != null)
+            _civEmblemBtn.TextureNormal = tex;
+    }
+
+    /// <summary>文明代码 → 徽标文件名(原版 civData.Emblem 的命名约定)。</summary>
+    private static readonly Dictionary<string, string> CivEmblemNames = new(System.StringComparer.Ordinal)
+    {
+        ["athen"] = "athenians", ["spart"] = "spartans", ["gaul"] = "celts",
+        ["brit"] = "britons", ["rome"] = "romans", ["kart"] = "carthaginians",
+        ["ptol"] = "ptolemies", ["sele"] = "seleucids", ["kush"] = "kushites",
+        ["maur"] = "mauryas", ["iber"] = "iberians", ["pers"] = "achaemenids",
+        ["theb"] = "thebans", ["mace"] = "macedonians",
+    };
+
     private void SetupToast()
     {
         _toast = new Label { Text = "", Visible = false };
@@ -122,7 +143,7 @@ public sealed partial class HUD : CanvasLayer
         _researchPanel = new HBoxContainer();
         _researchPanel.AnchorLeft = 0.5f; _researchPanel.AnchorRight = 0.5f;
         _researchPanel.AnchorTop = 0f; _researchPanel.AnchorBottom = 0f;
-        _researchPanel.OffsetLeft = -150; _researchPanel.OffsetRight = 150;
+        _researchPanel.OffsetLeft = -330; _researchPanel.OffsetRight = -60;
         _researchPanel.OffsetTop = 4; _researchPanel.OffsetBottom = 34;
         _researchPanel.AddThemeConstantOverride("separation", 6);
         _researchPanel.Visible = false;
@@ -148,6 +169,21 @@ public sealed partial class HUD : CanvasLayer
         };
         _researchPanel.AddChild(_researchBar);
         _topBar.AddChild(_researchPanel);
+
+        // 民族徽标钮(原版 top_panel/CivIcon.xml):顶栏正中的圆形文明徽标
+        // (size 50%±48, y −26..70——跨栏下探),点击开科技树(structree)。
+        _civEmblemBtn = new TextureButton
+        {
+            TooltipText = "View Structure Tree",
+            StretchMode = TextureButton.StretchModeEnum.KeepAspectCentered,
+        };
+        _civEmblemBtn.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+        _civEmblemBtn.OffsetLeft = -48; _civEmblemBtn.OffsetRight = 48;
+        _civEmblemBtn.OffsetTop = -8; _civEmblemBtn.OffsetBottom = 88;
+        _civEmblemBtn.GrowHorizontal = Control.GrowDirection.Both;
+        _civEmblemBtn.Pressed += () => _main.OpenStructreePanel();
+        _topBar.AddChild(_civEmblemBtn);
+        RefreshCivEmblem();
 
         // 对齐 C++ TopPanel 右侧(top_panel/MenuButton.xml + IconButtons/*):
         // 从左到右 GameSpeed(100%−284) / Diplomacy / Trade / MatchSettings(28×28 图标,
@@ -306,8 +342,63 @@ public sealed partial class HUD : CanvasLayer
         SetupSupplementalZone(_bottomBar, new Vector2(196, 204 - 166), new Vector2(206, 166));
         SetupSelectionZone(_bottomBar, new Vector2(398, 0), new Vector2(228, 204));
         SetupCommandZone(_bottomBar, new Vector2(622, 204 - 173), new Vector2(402, 173));
+        // 队列条(原版 unitQueuePanel:size="4 -56 100% 0"——第四面板上方 56px 横条,
+        // 上缘探出底栏顶):生产图标+剩余时间 + 16 槽(40×40 带进度遮罩)。
+        SetupQueueStrip(_bottomBar, new Vector2(622 + 4, 204 - 173 - 56), new Vector2(398, 56));
 
         AddChild(_bottomBar);
+    }
+
+    private Control _queueStrip = null!;
+    private Label _queueTime = null!;
+
+    private void SetupQueueStrip(Control parent, Vector2 pos, Vector2 size)
+    {
+        _queueStrip = new Control { Position = pos, Size = size, Visible = false };
+
+        // 生产图标(左,52×54)+ 剩余时间文本(原版 queueTimeRemaining)。
+        var prodIcon = new TextureRect
+        {
+            Texture = LoadIcon("production"),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+            Position = new Vector2(-4, 0),
+            Size = new Vector2(52, 54),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _queueStrip.AddChild(prodIcon);
+        _queueTime = new Label
+        {
+            Text = "",
+            Position = new Vector2(-4, 36),
+            Size = new Vector2(52, 18),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _queueTime.AddThemeFontSizeOverride("font_size", 11);
+        _queueTime.AddThemeColorOverride("font_color", Colors.White);
+        _queueTime.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _queueTime.AddThemeConstantOverride("outline_size", 2);
+        _queueStrip.AddChild(_queueTime);
+
+        // 16 槽(原版 repeat 16,40×40;点击取消=全额退款)。
+        _queueRow = new HBoxContainer { Position = new Vector2(52, 6) };
+        _queueRow.AddThemeConstantOverride("separation", 2);
+        for (int i = 0; i < _queueSlots.Length; i++)
+        {
+            _queueSlots[i] = new QueueSlot
+            {
+                CustomMinimumSize = new Vector2(40, 40),
+                Visible = false,
+                SlotIndex = i,
+                TooltipText = "Click to cancel (full refund)",
+            };
+            _queueSlots[i].Clicked += idx => _main.CancelProductionAt(idx);
+            _queueRow.AddChild(_queueSlots[i]);
+        }
+        _queueStrip.AddChild(_queueRow);
+
+        parent.AddChild(_queueStrip);
     }
 
     /// <summary>hud_panels.png 的区底图(原版 sprite 的 real_texture_placement 裁剪)。
@@ -427,6 +518,7 @@ public sealed partial class HUD : CanvasLayer
 
         var vbox = new VBoxContainer();
         vbox.AddThemeConstantOverride("separation", 6);
+        vbox.SetAnchorsPreset(Control.LayoutPreset.FullRect);   // 此前缺失:右/下负偏移在无锚点时矩形为负
         vbox.OffsetLeft = 8; vbox.OffsetTop = 8;
         vbox.OffsetRight = -8; vbox.OffsetBottom = -8;
         panel.AddChild(vbox);
@@ -516,36 +608,7 @@ public sealed partial class HUD : CanvasLayer
         };
         vbox.AddChild(_alertBtn);
 
-        // 快捷易物行(原版 barter_panel 左栏的紧凑版):选资源 + Buy/Sell 100。
-        // 原版以物易物仅 town+(market),校验在 BarterSystem 服务端,拒绝会 toast。
-        var barterRow = new HBoxContainer();
-        barterRow.AddThemeConstantOverride("separation", 4);
-        _barterResource = new OptionButton { Theme = UITheme.GetTheme(), CustomMinimumSize = new Vector2(80, 0) };
-        foreach (var r in new[] { "wood", "food", "stone", "metal" })
-            _barterResource.AddItem(r);
-        barterRow.AddChild(_barterResource);
-        var buyBtn = new Button { Text = "Buy", Theme = UITheme.GetTheme(), TooltipText = "Buy 100 (barter)" };
-        buyBtn.Pressed += () => Barter(buy: true);
-        barterRow.AddChild(buyBtn);
-        var sellBtn = new Button { Text = "Sell", Theme = UITheme.GetTheme(), TooltipText = "Sell 100 (barter)" };
-        sellBtn.Pressed += () => Barter(buy: false);
-        barterRow.AddChild(sellBtn);
-        vbox.AddChild(barterRow);
-
         parent.AddChild(panel);
-    }
-
-    private OptionButton _barterResource = null!;
-
-    /// <summary>快捷易物(原版 barter_panel):卖所选资源买食物(默认配对;
-    /// 完整配比在 Trade 面板)。amount=100(原版快捷档)。</summary>
-    private void Barter(bool buy)
-    {
-        var type = (ZeroAD.Sim.Components.ResourceType)_barterResource.Selected;
-        if (buy)
-            _main.CommandBarter(ZeroAD.Sim.Components.ResourceType.Food, type, 100);
-        else
-            _main.CommandBarter(type, ZeroAD.Sim.Components.ResourceType.Food, 100);
     }
 
     private void SetupSelectionZone(Control parent, Vector2 pos, Vector2 size)
@@ -576,58 +639,68 @@ public sealed partial class HUD : CanvasLayer
         }
         AddBorderFrame(panel);
 
-        var vbox = new VBoxContainer();
-        vbox.AddThemeConstantOverride("separation", 8);
-        vbox.OffsetLeft = 8; vbox.OffsetTop = 8;
-        vbox.OffsetRight = -8; vbox.OffsetBottom = -8;
-        panel.AddChild(vbox);
+        // ── 单选区(原版 detailsAreaSingle:4 4 100%-4 100%-44;底 40px 让位命令条)──
+        _singleArea = new Control
+        {
+            Position = new Vector2(4, 4),
+            Size = new Vector2(size.X - 8, size.Y - 48),
+        };
+        panel.AddChild(_singleArea);
 
-        var header = new HBoxContainer();
-        header.AddThemeConstantOverride("separation", 10);
-        vbox.AddChild(header);
-
+        // 大头像 96×96(左上,原版 iconBorder 框)。
         _selIcon = new TextureRect
         {
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-            CustomMinimumSize = new Vector2(96, 96),
+            Position = new Vector2(0, 0),
+            Size = new Vector2(96, 96),
         };
-        header.AddChild(_selIcon);
+        _singleArea.AddChild(_selIcon);
 
-        _selName = new Label { Text = "", VerticalAlignment = VerticalAlignment.Center };
-        _selName.AddThemeFontSizeOverride("font_size", 14);
-        _selName.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
-        _selName.AddThemeColorOverride("font_outline_color", Colors.Black);
-        _selName.AddThemeConstantOverride("outline_size", 3);
-        header.AddChild(_selName);
-
-        // 训练队列行(原版 selection_details training queue):池化 8 槽,选中生产建筑时
-        // 显示在训单位头像 + 头项进度遮罩。UpdateSelectionPanel 每帧填字段 + QueueRedraw。
-        _queueRow = new HBoxContainer { Visible = false };
-        _queueRow.AddThemeConstantOverride("separation", 2);
-        for (int i = 0; i < _queueSlots.Length; i++)
+        // 军衔图标(原版 rankIcon,头像左上 4,4 20×20;无军衔隐藏)。
+        _rankIcon = new TextureRect
         {
-            _queueSlots[i] = new QueueSlot
-            {
-                CustomMinimumSize = new Vector2(36, 36),
-                Visible = false,
-                SlotIndex = i,
-                TooltipText = "Click to cancel (full refund)",
-            };
-            _queueSlots[i].Clicked += idx => _main.CancelProductionAt(idx);
-            _queueRow.AddChild(_queueSlots[i]);
-        }
-        vbox.AddChild(_queueRow);
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+            Position = new Vector2(4, 4),
+            Size = new Vector2(20, 20),
+            Visible = false,
+        };
+        _singleArea.AddChild(_rankIcon);
 
-        var healthRow = new HBoxContainer();
-        healthRow.AddThemeConstantOverride("separation", 8);
-        vbox.AddChild(healthRow);
+        // 经验竖条(原版 experience:头像左边 2,2 宽 6;仅可晋升单位)。
+        _xpBar = new ProgressBar
+        {
+            MinValue = 0, MaxValue = 100,
+            Position = new Vector2(2, 2),
+            Size = new Vector2(6, 92),
+            FillMode = (int)ProgressBar.FillModeEnum.BottomToTop,
+            ShowPercentage = false,
+            Visible = false,
+        };
+        _xpBar.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(0.1f, 0.1f, 0.1f, 0.8f) });
+        _xpBar.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = new Color(0.2f, 0.5f, 0.9f) });
+        _singleArea.AddChild(_xpBar);
 
+        // 右侧栏(x100 起,宽 116):capture/health/resource 三段(文本行 14px + 条 7px)。
+        const float bx = 100, bw = 116;
+        _captureLabel = MakeStatLabel("Capture", false, bx, 2, bw);
+        _captureStats = MakeStatLabel("", true, bx, 2, bw);
+        _selCapture = new CaptureBar
+        {
+            Position = new Vector2(bx, 16),
+            Size = new Vector2(bw, 7),
+            Visible = false,
+            TooltipText = "",
+        };
+        _singleArea.AddChild(_selCapture);
+
+        _selHealthText = MakeStatLabel("", true, bx, 26, bw);
         _selHealth = new ProgressBar
         {
             MinValue = 0, MaxValue = 100, Value = 100,
-            CustomMinimumSize = new Vector2(200, 7),
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            Position = new Vector2(bx, 40),
+            Size = new Vector2(bw, 7),
             ShowPercentage = false,
         };
         _selHealth.AddThemeStyleboxOverride("background", new StyleBoxFlat
@@ -635,35 +708,196 @@ public sealed partial class HUD : CanvasLayer
             BgColor = new Color(0.5f, 0, 0, 0.8f),
             BorderColor = new Color(0, 0, 0, 0.5f),
         });
-        _selHealth.AddThemeStyleboxOverride("fill", new StyleBoxFlat
-        {
-            BgColor = new Color(0.1f, 0.7f, 0.1f),
-        });
-        healthRow.AddChild(_selHealth);
+        _selHealth.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = new Color(0.1f, 0.7f, 0.1f) });
+        _singleArea.AddChild(_selHealth);
 
-        _selHealthText = new Label { Text = "", VerticalAlignment = VerticalAlignment.Center };
-        _selHealthText.AddThemeFontSizeOverride("font_size", 13);
-        _selHealthText.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
-        healthRow.AddChild(_selHealthText);
-
-        // 占领条(原版 selection_details 的 capture bar):选中可占领实体时显示,
-        // 分段=各玩家 CP 占比(玩家色,升序确定),tooltip 给数值明细。
-        _selCapture = new CaptureBar
+        _resLabel = MakeStatLabel("", false, bx, 50, bw);
+        _resStats = MakeStatLabel("", true, bx, 50, bw);
+        _resBar = new ProgressBar
         {
-            CustomMinimumSize = new Vector2(200, 7),
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            MinValue = 0, MaxValue = 100, Value = 100,
+            Position = new Vector2(bx, 64),
+            Size = new Vector2(bw, 7),
+            ShowPercentage = false,
             Visible = false,
-            TooltipText = "",
         };
-        vbox.AddChild(_selCapture);
+        _resBar.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(0.15f, 0.12f, 0.08f, 0.8f) });
+        _resBar.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = new Color(0.75f, 0.65f, 0.3f) });
+        _singleArea.AddChild(_resBar);
 
-        _selExtra = new Label { Text = "", AutowrapMode = TextServer.AutowrapMode.WordSmart };
-        _selExtra.AddThemeFontSizeOverride("font_size", 13);
-        _selExtra.AddThemeColorOverride("font_color", new Color(0.85f, 0.80f, 0.65f));
-        vbox.AddChild(_selExtra);
+        // 底条(y74..100,右栏内):攻防图标(左)+ 携带量(右)。
+        _attackIcon = new TextureRect
+        {
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+            Position = new Vector2(bx, 72),
+            Size = new Vector2(28, 28),
+            Texture = LoadIcon("stances/defensive"),
+            TooltipText = "Attack and Resistance",
+        };
+        _singleArea.AddChild(_attackIcon);
+        _carryText = new Label
+        {
+            Text = "",
+            Position = new Vector2(bx + 32, 76),
+            Size = new Vector2(bw - 60, 20),
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        _carryText.AddThemeFontSizeOverride("font_size", 12);
+        _carryText.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
+        _singleArea.AddChild(_carryText);
+        _carryIcon = new TextureRect
+        {
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+            Position = new Vector2(bx + bw - 26, 72),
+            Size = new Vector2(26, 26),
+            Visible = false,
+        };
+        _singleArea.AddChild(_carryIcon);
+
+        // 名称区(原版 statsArea 顶部):主名(通用名)居中 + 次名(专名)居中。
+        _selName = MakeNameLabel(102, 13);
+        _selName2 = MakeNameLabel(120, 11);
+
+        // 玩家带(原版 civ 徽标带):玩家色底 + 文明徽标 + 玩家名。
+        _playerBand = new ColorRect
+        {
+            Position = new Vector2(0, 136),
+            Size = new Vector2(size.X - 8, 18),
+            Color = new Color(0.3f, 0.3f, 0.3f, 0.55f),
+        };
+        _singleArea.AddChild(_playerBand);
+        _playerCivEmblem = new TextureRect
+        {
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+            Position = new Vector2((size.X - 8) / 2 - 60, 137),
+            Size = new Vector2(120, 16),
+        };
+        _singleArea.AddChild(_playerCivEmblem);
+        _playerLabel = new Label
+        {
+            Text = "",
+            Position = new Vector2(0, 136),
+            Size = new Vector2(size.X - 8, 18),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _playerLabel.AddThemeFontSizeOverride("font_size", 11);
+        _playerLabel.AddThemeColorOverride("font_color", Colors.White);
+        _playerLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _playerLabel.AddThemeConstantOverride("outline_size", 2);
+        _singleArea.AddChild(_playerLabel);
+
+        // ── 多选区(原版 detailsAreaMultiple:单位图标网格 + 右侧计数/竖条)──
+        _multiArea = new Control
+        {
+            Position = new Vector2(6, 6),
+            Size = new Vector2(size.X - 12, size.Y - 50),
+            Visible = false,
+        };
+        panel.AddChild(_multiArea);
+        _multiGrid = new HFlowContainer
+        {
+            Position = new Vector2(0, 0),
+            Size = new Vector2(160, size.Y - 50),
+        };
+        _multiGrid.AddThemeConstantOverride("h_separation", 2);
+        _multiGrid.AddThemeConstantOverride("v_separation", 2);
+        _multiArea.AddChild(_multiGrid);
+        _multiCount = new Label
+        {
+            Text = "",
+            Position = new Vector2(164, 4),
+            Size = new Vector2(48, 28),
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        _multiCount.AddThemeFontSizeOverride("font_size", 15);
+        _multiCount.AddThemeColorOverride("font_color", Colors.White);
+        _multiCount.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _multiCount.AddThemeConstantOverride("outline_size", 2);
+        _multiArea.AddChild(_multiCount);
+        _multiHealth = new ProgressBar
+        {
+            MinValue = 0, MaxValue = 100,
+            Position = new Vector2(176, 36),
+            Size = new Vector2(10, size.Y - 100),
+            FillMode = (int)ProgressBar.FillModeEnum.BottomToTop,
+            ShowPercentage = false,
+        };
+        _multiHealth.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(0.5f, 0, 0, 0.8f) });
+        _multiHealth.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = new Color(0.1f, 0.7f, 0.1f) });
+        _multiArea.AddChild(_multiHealth);
+
+        // ── 单位命令条(原版 unitCommandPanel:0 100%-40 100% 100%-4)──
+        _unitActionRow = new HBoxContainer
+        {
+            Position = new Vector2(6, size.Y - 38),
+            Size = new Vector2(size.X - 12, 36),
+        };
+        _unitActionRow.AddThemeConstantOverride("separation", 4);
+        panel.AddChild(_unitActionRow);
 
         parent.AddChild(panel);
     }
+
+    // 选择详情区控件(原版 single/multiple details area 成员)。
+    private Control _singleArea = null!;
+    private Control _multiArea = null!;
+    private TextureRect _rankIcon = null!;
+    private ProgressBar _xpBar = null!;
+    private Label _captureLabel = null!;
+    private Label _captureStats = null!;
+    private Label _resLabel = null!;
+    private Label _resStats = null!;
+    private ProgressBar _resBar = null!;
+    private TextureRect _attackIcon = null!;
+    private Label _carryText = null!;
+    private TextureRect _carryIcon = null!;
+    private Label _selName2 = null!;
+    private ColorRect _playerBand = null!;
+    private TextureRect _playerCivEmblem = null!;
+    private Label _playerLabel = null!;
+    private HFlowContainer _multiGrid = null!;
+    private Label _multiCount = null!;
+    private ProgressBar _multiHealth = null!;
+    private HBoxContainer _unitActionRow = null!;
+
+    private Label MakeStatLabel(string text, bool right, float x, float y, float w)
+    {
+        var lbl = new Label
+        {
+            Text = text,
+            Position = new Vector2(x, y),
+            Size = new Vector2(w, 14),
+            HorizontalAlignment = right ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+        };
+        lbl.AddThemeFontSizeOverride("font_size", 11);
+        lbl.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
+        lbl.AddThemeColorOverride("font_outline_color", Colors.Black);
+        lbl.AddThemeConstantOverride("outline_size", 2);
+        _singleArea.AddChild(lbl);
+        return lbl;
+    }
+
+    private Label MakeNameLabel(float y, int fontSize)
+    {
+        var lbl = new Label
+        {
+            Text = "",
+            Position = new Vector2(0, y),
+            Size = new Vector2(212, 18),
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        lbl.AddThemeFontSizeOverride("font_size", fontSize);
+        lbl.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
+        lbl.AddThemeColorOverride("font_outline_color", Colors.Black);
+        lbl.AddThemeConstantOverride("outline_size", 2);
+        _singleArea.AddChild(lbl);
+        return lbl;
+    }
+
 
     private void SetupCommandZone(Control parent, Vector2 pos, Vector2 size)
     {
@@ -679,8 +913,9 @@ public sealed partial class HUD : CanvasLayer
         scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
         panel.AddChild(scroll);
 
-        _commandBox = new HBoxContainer();
-        _commandBox.AddThemeConstantOverride("separation", 6);
+        _commandBox = new HFlowContainer();
+        _commandBox.AddThemeConstantOverride("h_separation", 6);
+        _commandBox.AddThemeConstantOverride("v_separation", 6);
         _commandBox.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         scroll.AddChild(_commandBox);
 
@@ -689,9 +924,55 @@ public sealed partial class HUD : CanvasLayer
         RebuildCommands();
     }
 
-    private void RebuildCommands()
+    /// <summary>单位命令行(第三面板底条;原版 selection_panels_middle/unit_commands.xml):
+    /// 6 个 32×32 命令钮——Delete(任意己方实体)/Stop(己方单位)/Garrison(可驻防)/
+    /// Repair(建造者)/Guard/Patrol。由 RebuildCommands 随选择变化驱动。</summary>
+    private void RebuildUnitActions(bool hasOwnUnit, bool hasOwnEntity)
     {
-        foreach (var child in _commandBox.GetChildren())
+        foreach (var child in _unitActionRow.GetChildren())
+            child.QueueFree();
+        _unitActionRow.Visible = hasOwnEntity;
+
+        // 与右面板同套布尔量,但按原版顺序:delete 在 stop 前。
+        if (hasOwnEntity)
+            AddUnitActionButton(LoadIcon("die"), "Delete", () => _main.DeleteSelectedEntities());
+        if (!hasOwnUnit) return;
+        AddUnitActionButton(LoadTex("session/icons/cancel.png"), "Stop", () => _main.StopSelectedUnits());
+
+        bool anyGarrisonable = false, anyBuilder = false;
+        foreach (var eid in _main.SelectedEntities)
+        {
+            if (_sim.Sim.QueryInterface<GarrisonableComponent>(eid) != null) anyGarrisonable = true;
+            if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) anyBuilder = true;
+        }
+        if (anyGarrisonable)
+            AddUnitActionButton(LoadIcon("garrison"), "Garrison", () => _main.EnterCommandTargetMode("garrison"));
+        if (anyBuilder)
+            AddUnitActionButton(LoadIcon("repair"), "Repair", () => _main.EnterCommandTargetMode("repair"));
+        AddUnitActionButton(LoadIcon("add-guard"), "Guard", () => _main.EnterCommandTargetMode("guard"));
+        AddUnitActionButton(LoadIcon("patrol"), "Patrol", () => _main.EnterCommandTargetMode("patrol"));
+    }
+
+    /// <summary>32×32 命令钮(原版 unitCommandButton 尺寸;图标缺失时显示名保底)。</summary>
+    private void AddUnitActionButton(Texture2D? tex, string name, System.Action onPressed)
+    {
+        var btn = new Button
+        {
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(32, 32),
+            TooltipText = name,
+            ExpandIcon = true,
+            IconAlignment = HorizontalAlignment.Center,
+            VerticalIconAlignment = VerticalAlignment.Center,
+        };
+        if (tex != null) btn.Icon = tex;
+        else btn.Text = name;
+        btn.Pressed += () => onPressed();
+        _unitActionRow.AddChild(btn);
+    }
+
+    private void RebuildCommands()
+    {        foreach (var child in _commandBox.GetChildren())
             child.QueueFree();
 
         bool hasBuilder = false, hasProducer = false;
@@ -713,30 +994,14 @@ public sealed partial class HUD : CanvasLayer
             if (identity.TemplateName.Contains("arsenal")) hasArsenal = true;
         }
 
-        // Stop/Delete(原版 unit_commands 命令区):Stop 仅己方单位,Delete 任意己方实体。
-        if (hasOwnUnit)
-            AddCmdButton("stop", "Stop", () => _main.StopSelectedUnits());
-        if (hasOwnEntity)
-            AddCmdButton("delete", "Delete", () => _main.DeleteSelectedEntities());
+        // 单位命令行(stop/delete/garrison/repair/guard/patrol)在第三面板
+        // (选择详情底条,原版 selection_panels_middle/unit_commands.xml)——见
+        // RebuildUnitActions;本面板(右)只留生产类:打包/升级/门/训练/建造/研究。
+        RebuildUnitActions(hasOwnUnit, hasOwnEntity);
 
-        // 命令键行(原版 unit_actions 按钮):Garrison(可驻防单位)/Repair(建造者)/
-        // Guard(任意己方单位)/Patrol——进目标模式,下击选目标(与右键分流/热键同路)。
+        // 打包栏(原版 pack_panel,右面板):选中含可打包/解包攻城器时显示对应按钮。
         if (hasOwnUnit)
         {
-            bool anyGarrisonable = false, anyBuilder = false;
-            foreach (var eid in _main.SelectedEntities)
-            {
-                if (_sim.Sim.QueryInterface<GarrisonableComponent>(eid) != null) anyGarrisonable = true;
-                if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) anyBuilder = true;
-            }
-            if (anyGarrisonable)
-                AddCmdButton(LoadIcon("garrison"), "Garrison", () => _main.EnterCommandTargetMode("garrison"));
-            if (anyBuilder)
-                AddCmdButton(LoadIcon("repair"), "Repair", () => _main.EnterCommandTargetMode("repair"));
-            AddCmdButton(LoadIcon("add-guard"), "Guard", () => _main.EnterCommandTargetMode("guard"));
-            AddCmdButton(LoadIcon("patrol"), "Patrol", () => _main.EnterCommandTargetMode("patrol"));
-
-            // 打包栏(原版 pack_panel):选中含可打包/解包攻城器时显示对应按钮。
             bool anyCanPack = false, anyCanUnpack = false;
             foreach (var eid in _main.SelectedEntities)
             {
@@ -918,6 +1183,7 @@ public sealed partial class HUD : CanvasLayer
     private void AddTrainButton(string template)
     {
         var stats = _sim.Sim.Templates?.ExtractStats(template);
+        if (!RequirementsMet(stats)) return;   // 阶段过滤(原版同:未到阶段不显示)
         string label = stats != null && stats.GenericName.Length > 0
             ? stats.GenericName
             : template[(template.LastIndexOf('/') + 1)..];
@@ -936,9 +1202,25 @@ public sealed partial class HUD : CanvasLayer
         AddCmdButton(tex, text, () => _main.TrainUnit(t, Input.IsKeyPressed(Key.Shift)));
     }
 
+    /// <summary>前置科技全满足?(原版训练/建造面板的阶段过滤:requirements 未满足
+    /// → 整钮隐藏,如城镇阶段才解锁的市场/靶场)。空前置 = 恒真。</summary>
+    private bool RequirementsMet(ZeroAD.Sim.Content.TemplateStats? stats)
+    {
+        if (stats == null || stats.RequiredTechs.Length == 0) return true;
+        var tm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.TechnologyManager>(
+            _sim.Sim.GetPlayerEntityId((int)_sim.LocalPlayerId) ?? default);
+        if (tm == null) return true;
+        foreach (var tok in stats.RequiredTechs.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (tok.StartsWith("-") || tok.StartsWith("!")) continue;   // 否定项不参与
+            if (!tm.IsResearched(tok)) return false;
+        }
+        return true;
+    }
+
     /// <summary>研究按钮(数据驱动,research_panel):图标=JSON icon 字段的原版立绘
-    /// (portraits/technologies/),标签=GenericName+资源费;已研究跳过,前置未满足置灰禁用
-    /// (与服务端 CanResearch 同判定)。</summary>
+    /// (portraits/technologies/),标签=GenericName+资源费;已研究跳过,前置未满足
+    /// (如未到本阶段)**整钮隐藏**——原版研究面板只列当前可研究项,不置灰展示。</summary>
     private void AddResearchButton(string tech, ZeroAD.Sim.Components.TechnologyManager tm)
     {
         // phase 归一(与 GameState.ResolveTechName 同款):无特制文件的文明回落 *_generic。
@@ -952,6 +1234,8 @@ public sealed partial class HUD : CanvasLayer
         if (tm.IsResearched(tech)) return;
         var def = tm.GetDefinition(tech);
         if (def == null) return;
+        // 原版过滤:requirements 未满足(高阶段科技)→ 不显示(而非置灰)。
+        if (!tm.CanResearch(tech)) return;
 
         string label = def.GenericName;
         var costs = new List<string>();
@@ -962,10 +1246,8 @@ public sealed partial class HUD : CanvasLayer
         string text = costs.Count > 0 ? $"{label}\n{string.Join(' ', costs)}" : label;
 
         var tex = def.Icon.Length > 0 ? LoadPortraitFromIcon("technologies/" + def.Icon) : null;
-        bool canResearch = tm.CanResearch(tech);
         string t = tech;
-        var btn = AddCmdButton(tex, text, () => _main.ResearchTech(t), canResearch);
-        if (!canResearch) btn.Modulate = new Color(1f, 1f, 1f, 0.45f);
+        AddCmdButton(tex, text, () => _main.ResearchTech(t));
     }
 
     /// <summary>建造按钮(数据驱动,construction_panel):头像取模板 Identity/Icon 原版立绘,
@@ -973,6 +1255,7 @@ public sealed partial class HUD : CanvasLayer
     private void AddBuildButton(string template)
     {
         var stats = _sim.Sim.Templates?.ExtractStats(template);
+        if (!RequirementsMet(stats)) return;   // 阶段过滤(原版同:未到阶段不显示)
         string label = stats != null && stats.GenericName.Length > 0
             ? stats.GenericName
             : template[(template.LastIndexOf('/') + 1)..];
@@ -1165,76 +1448,48 @@ public sealed partial class HUD : CanvasLayer
     {
         if (selected.Count == 0)
         {
-            _selName.Text = "";
-            _selHealth.Value = 0;
-            _selHealthText.Text = "";
-            _selCapture.Visible = false;
-            _selExtra.Text = "";
-            _queueRow.Visible = false;
+            _singleArea.Visible = false;
+            _multiArea.Visible = false;
+            _queueStrip.Visible = false;
             _selGarrison.Text = "";
             _garrisonRow.Visible = false;
             _garrisonSignature = "";
-            _selIcon.Texture = null;
             RefreshStanceHighlight();
+            RefreshFormationRow();
             return;
         }
 
         EntityId first = default;
         foreach (var e in selected) { first = e; break; }
 
-        var identity = _sim.Sim.QueryInterface<IdentityComponent>(first);
-        var health = _sim.Sim.QueryInterface<HealthComponent>(first);
-
-        string name = identity?.Name ?? "Entity";
-        _selName.Text = selected.Count > 1 ? $"{name} (+{selected.Count - 1})" : name;
-
-        if (health != null && health.Max > 0)
+        // 单选 → detailsAreaSingle;多选 → detailsAreaMultiple(图标网格)。
+        if (selected.Count == 1)
         {
-            _selHealth.Value = 100.0 * health.Current / health.Max;
-            _selHealthText.Text = $"{health.Current}/{health.Max}";
+            _multiArea.Visible = false;
+            _singleArea.Visible = true;
+            FillSingleDetails(first);
         }
         else
         {
-            _selHealth.Value = 100;
-            _selHealthText.Text = "";
+            _singleArea.Visible = false;
+            _multiArea.Visible = true;
+            FillMultiDetails(selected);
         }
-
-        // 占领条:仅可占领实体(Capturable)显示;分段宽=CP/max,玩家色,升序确定。
-        var capturable = _sim.Sim.QueryInterface<CapturableComponent>(first);
-        float maxCp = capturable?.MaxCapturePoints.ToFloat() ?? 0f;
-        if (capturable != null && maxCp > 0f)
-        {
-            int n = System.Math.Min(capturable.CapturePoints.Length, CaptureBar.MaxPlayers);
-            var sb = new System.Text.StringBuilder("Capture");
-            for (int p = 0; p < n; p++)
-            {
-                float cp = capturable.CapturePoints[p].ToFloat();
-                _selCapture.Fractions[p] = cp / maxCp;
-                if (cp > 0f) sb.Append($"  P{p}:{(int)cp}");
-            }
-            _selCapture.Count = n;
-            _selCapture.TooltipText = sb.Append($"/{(int)maxCp}").ToString();
-            _selCapture.Visible = true;
-            _selCapture.QueueRedraw();
-        }
-        else
-        {
-            _selCapture.Visible = false;
-        }
-
-        var supply = _sim.Sim.QueryInterface<ResourceSupply>(first);
-        if (supply != null && supply.Amount > 0)
-            _selExtra.Text = $"Resources: {supply.Amount}";
-        else if (identity != null)
-            _selExtra.Text = identity.IsBuilding ? "Building" : identity.IsUnit ? "Unit" : "";
-        else
-            _selExtra.Text = "";
 
         // 训练队列(仅生产建筑有非空 ProductionQueue 时显示):头项画进度遮罩,余者待训压暗。
+        // 位置 = 第四面板上方横条(原版 unitQueuePanel);剩余时间 = 队列总秒数。
         var queue = _sim.Sim.QueryInterface<ProductionQueue>(first);
         if (queue != null && queue.QueueCount > 0)
         {
             int n = System.Math.Min(queue.QueueCount, _queueSlots.Length);
+            float remaining = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                var item = queue.Queue[i];
+                remaining += item.BuildTime * item.Count;
+            }
+            if (n > 0) remaining -= queue.Progress;
+            _queueTime.Text = $"{(int)System.Math.Max(remaining, 0f)}s";
             for (int i = 0; i < _queueSlots.Length; i++)
             {
                 var slot = _queueSlots[i];
@@ -1248,11 +1503,11 @@ public sealed partial class HUD : CanvasLayer
                 slot.RefreshCount();
                 slot.QueueRedraw();
             }
-            _queueRow.Visible = true;
+            _queueStrip.Visible = true;
         }
         else
         {
-            _queueRow.Visible = false;
+            _queueStrip.Visible = false;
         }
 
         // 驻军数 + 驻军头像行(原版 garrison 选择面板:头像点击=卸载该单位,
@@ -1310,10 +1565,276 @@ public sealed partial class HUD : CanvasLayer
             _garrisonSignature = "";
         }
 
-        _selIcon.Texture = LoadPortraitForIdentity(identity);
         RefreshStanceHighlight();
         RefreshFormationRow();
     }
+
+    // 通用名缓存(ExtractStats 每帧太贵;模板名 → GenericName)。
+    private readonly Dictionary<string, string> _genericNameCache = new();
+
+    private string GenericNameOf(IdentityComponent identity)
+    {
+        if (_genericNameCache.TryGetValue(identity.TemplateName, out var cached)) return cached;
+        string generic = identity.Name;
+        try
+        {
+            var stats = _sim.Sim.Templates?.ExtractStats(identity.TemplateName);
+            if (stats != null && stats.GenericName.Length > 0) generic = stats.GenericName;
+        }
+        catch { }
+        _genericNameCache[identity.TemplateName] = generic;
+        return generic;
+    }
+
+    /// <summary>单选详情(原版 detailsAreaSingle 的逐字段填充)。</summary>
+    private void FillSingleDetails(EntityId ent)
+    {
+        var identity = _sim.Sim.QueryInterface<IdentityComponent>(ent);
+        var health = _sim.Sim.QueryInterface<HealthComponent>(ent);
+
+        _selIcon.Texture = LoadPortraitForIdentity(identity);
+        if (identity != null)
+        {
+            _selName.Text = GenericNameOf(identity);          // 主名 = 通用名
+            _selName2.Text = identity.Name;                   // 次名 = 专名
+        }
+        else
+        {
+            _selName.Text = "Entity";
+            _selName2.Text = "";
+        }
+
+        // 军衔图标(Basic/Advanced/Elite → ranks/ 图标;无件或无军衔隐藏)。
+        string rank = identity != null
+            ? identity.HasClass("Elite") ? "Elite"
+            : identity.HasClass("Advanced") ? "Advanced"
+            : identity.HasClass("Basic") ? "Basic" : ""
+            : "";
+        var rankTex = rank.Length > 0 ? LoadIcon($"ranks/{rank}") : null;
+        _rankIcon.Texture = rankTex;
+        _rankIcon.Visible = rankTex != null;
+
+        // 经验条(仅可晋升单位)。
+        var promotion = _sim.Sim.QueryInterface<PromotionComponent>(ent);
+        if (promotion != null && promotion.XpNext > 0)
+        {
+            _xpBar.Value = 100.0 * promotion.XP / promotion.XpNext;
+            _xpBar.Visible = true;
+        }
+        else
+        {
+            _xpBar.Visible = false;
+        }
+
+        // 血条。
+        if (health != null && health.Max > 0)
+        {
+            _selHealth.Value = 100.0 * health.Current / health.Max;
+            _selHealthText.Text = $"{health.Current}/{health.Max}";
+        }
+        else
+        {
+            _selHealth.Value = 100;
+            _selHealthText.Text = "";
+        }
+
+        // 占领条:仅可占领实体(Capturable)显示;分段宽=CP/max,玩家色,升序确定。
+        var capturable = _sim.Sim.QueryInterface<CapturableComponent>(ent);
+        float maxCp = capturable?.MaxCapturePoints.ToFloat() ?? 0f;
+        if (capturable != null && maxCp > 0f)
+        {
+            float total = 0;
+            int n = System.Math.Min(capturable.CapturePoints.Length, CaptureBar.MaxPlayers);
+            var sb = new System.Text.StringBuilder("Capture");
+            for (int p = 0; p < n; p++)
+            {
+                float cp = capturable.CapturePoints[p].ToFloat();
+                _selCapture.Fractions[p] = cp / maxCp;
+                total += cp;
+                if (cp > 0f) sb.Append($"  P{p}:{(int)cp}");
+            }
+            _selCapture.Count = n;
+            _selCapture.TooltipText = sb.Append($"/{(int)maxCp}").ToString();
+            _selCapture.Visible = true;
+            _selCapture.QueueRedraw();
+            _captureLabel.Text = "Capture";
+            _captureStats.Text = $"{(int)total}/{(int)maxCp}";
+        }
+        else
+        {
+            _selCapture.Visible = false;
+            _captureLabel.Text = "";
+            _captureStats.Text = "";
+        }
+
+        // 资源条(原版 resourceSection:gaia 资源/尸体剩余量)。
+        var supply = _sim.Sim.QueryInterface<ResourceSupply>(ent);
+        if (supply != null && supply.MaxAmount > 0)
+        {
+            _resLabel.Text = supply.Type.ToString();
+            _resStats.Text = $"{supply.Amount}/{supply.MaxAmount}";
+            _resBar.Value = 100.0 * supply.Amount / supply.MaxAmount;
+            _resBar.Visible = true;
+        }
+        else
+        {
+            _resLabel.Text = "";
+            _resStats.Text = "";
+            _resBar.Visible = false;
+        }
+
+        // 携带量(原版 resourceCarryingText/Icon:采集者身上的资源)。
+        var gatherer = _sim.Sim.QueryInterface<ResourceGatherer>(ent);
+        if (gatherer != null && gatherer.CarryAmount > 0)
+        {
+            _carryText.Text = gatherer.CarryAmount.ToString();
+            _carryIcon.Texture = LoadTex($"session/icons/resources/{gatherer.CarryType.ToString().ToLowerInvariant()}.png")
+                ?? LoadTex($"icon_{gatherer.CarryType.ToString().ToLowerInvariant()}.png");
+            _carryIcon.Visible = true;
+        }
+        else
+        {
+            _carryText.Text = "";
+            _carryIcon.Visible = false;
+        }
+
+        // 攻防 tooltip(原版 attackAndResistanceStats 的悬浮详情)。
+        var attack = _sim.Sim.QueryInterface<AttackComponent>(ent);
+        var resistance = _sim.Sim.QueryInterface<ResistanceComponent>(ent);
+        if (attack != null || resistance != null)
+        {
+            var sb = new System.Text.StringBuilder();
+            if (attack != null)
+                sb.Append($"Attack: {attack.Damage.TotalPhysical}");
+            if (resistance != null)
+            {
+                if (sb.Length > 0) sb.Append("  ");
+                sb.Append($"Resistance: H{resistance.Resistances.GetValueOrDefault(DamageType.Hack)} " +
+                    $"P{resistance.Resistances.GetValueOrDefault(DamageType.Pierce)} " +
+                    $"C{resistance.Resistances.GetValueOrDefault(DamageType.Crush)}");
+            }
+            _attackIcon.TooltipText = sb.ToString();
+        }
+        else
+        {
+            _attackIcon.TooltipText = "";
+        }
+
+        // 玩家带:色块 + 文明徽标 + 玩家号(原版 playerCivIcon/playerColorBackground/player)。
+        var owner = _sim.Sim.QueryInterface<OwnershipComponent>(ent);
+        int pid = owner?.PlayerId ?? -1;
+        if (pid >= 0)
+        {
+            _playerBand.Color = SimBridge.GetPlayerColor(pid) with { A = 0.55f };
+            var player = _sim.Sim.GetPlayerEntity(pid);
+            string civ = player?.Civ ?? "";
+            _playerLabel.Text = pid == 0 ? "Gaia" : $"Player {pid}";
+            var emblemTex = civ.Length > 0
+                ? LoadTex($"session/portraits/emblems/emblem_{CivEmblemNames.GetValueOrDefault(civ, "hellenes")}.png")
+                : null;
+            _playerCivEmblem.Texture = emblemTex;
+            _playerCivEmblem.Visible = emblemTex != null;
+        }
+        else
+        {
+            _playerBand.Color = new Color(0.2f, 0.2f, 0.2f, 0.55f);
+            _playerLabel.Text = "";
+            _playerCivEmblem.Visible = false;
+        }
+    }
+
+    // 多选网格的健康微条引用(按钮按签名重建,血条每帧刷新)。
+    private readonly List<(ColorRect Bar, List<EntityId> Group)> _multiBars = new();
+    private string _multiSignature = "";
+
+    /// <summary>多选详情(原版 detailsAreaMultiple):按模板分组的图标网格
+    /// (38×38,头像+计数+底部健康微条),右侧总数 + 竖向平均血条;
+    /// 点击图标 = 选中该模板组(原版 unitSelectionButton 行为)。</summary>
+    private void FillMultiDetails(IReadOnlySet<EntityId> selected)
+    {
+        // 分组:模板名 → 成员(组序按模板名字典序,确定性)。
+        var groups = new Dictionary<string, List<EntityId>>(System.StringComparer.Ordinal);
+        foreach (var eid in selected)
+        {
+            string key = _sim.Sim.QueryInterface<IdentityComponent>(eid)?.TemplateName ?? "?";
+            if (!groups.TryGetValue(key, out var list)) groups[key] = list = new List<EntityId>();
+            list.Add(eid);
+        }
+        var ordered = groups.OrderBy(k => k.Key, System.StringComparer.Ordinal).ToList();
+
+        string sig = string.Join('|', ordered.Select(k => $"{k.Key}:{k.Value.Count}"));
+        if (sig != _multiSignature)
+        {
+            _multiSignature = sig;
+            foreach (var child in _multiGrid.GetChildren()) child.QueueFree();
+            _multiBars.Clear();
+            foreach (var (template, members) in ordered)
+            {
+                var btn = new Button
+                {
+                    Theme = UITheme.GetTheme(),
+                    CustomMinimumSize = new Vector2(38, 38),
+                    TooltipText = members[0].ToString(),
+                    ExpandIcon = true,
+                    IconAlignment = HorizontalAlignment.Center,
+                    VerticalIconAlignment = VerticalAlignment.Center,
+                };
+                var identity = _sim.Sim.QueryInterface<IdentityComponent>(members[0]);
+                btn.TooltipText = identity?.Name ?? template;
+                var tex = LoadPortraitForIdentity(identity);
+                if (tex != null) btn.Icon = tex;
+                // 计数角标 + 底部健康微条。
+                var count = new Label
+                {
+                    Text = members.Count > 1 ? members.Count.ToString() : "",
+                    Position = new Vector2(20, 22),
+                    Size = new Vector2(18, 14),
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                };
+                count.AddThemeFontSizeOverride("font_size", 10);
+                count.AddThemeColorOverride("font_color", Colors.White);
+                count.AddThemeColorOverride("font_outline_color", Colors.Black);
+                count.AddThemeConstantOverride("outline_size", 2);
+                btn.AddChild(count);
+                var bar = new ColorRect
+                {
+                    Position = new Vector2(2, 35),
+                    Size = new Vector2(34, 3),
+                    Color = new Color(0.1f, 0.7f, 0.1f),
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                };
+                btn.AddChild(bar);
+                var group = members;
+                btn.Pressed += () => _main.SelectOnly(group);
+                _multiGrid.AddChild(btn);
+                _multiBars.Add((bar, group));
+            }
+        }
+
+        // 每帧刷新:微条宽度 = 组平均血;右侧竖条 = 全体平均血;计数 = 总数。
+        float totalFrac = 0;
+        int healthCounted = 0;
+        foreach (var (bar, group) in _multiBars)
+        {
+            float sum = 0;
+            int n = 0;
+            foreach (var eid in group)
+            {
+                var h = _sim.Sim.QueryInterface<HealthComponent>(eid);
+                if (h == null || h.Max <= 0) continue;
+                sum += (float)h.Current / h.Max;
+                n++;
+            }
+            float frac = n > 0 ? sum / n : 1f;
+            bar.Size = new Vector2(34 * frac, 3);
+            totalFrac += frac;
+            healthCounted++;
+        }
+        _multiHealth.Value = healthCounted > 0 ? 100.0 * totalFrac / healthCounted : 100;
+        _multiCount.Text = $"×{selected.Count}";
+    }
+
 
     /// <summary>阵型行(原版 formation_panel):编队控制器选中 → 只显 null(解散);
     /// ≥2 同主可编队单位 → 按首个单位模板 UnitAI/Formations 列出阵型图标。
@@ -1348,25 +1869,31 @@ public sealed partial class HUD : CanvasLayer
             return;
         }
 
-        if (ownUnits.Count < 2)
+        // 只数"可编队"单位(模板 FormationShapes 非空):support 系(村民)原版即
+        // <Formations disable=""/>——混选时不能让它们打头把整行判没(原版:≥2 可编队即显示)。
+        var formable = new List<(EntityId Id, ZeroAD.Sim.Content.TemplateStats Stats)>();
+        foreach (var eid in ownUnits)
+        {
+            var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
+            var st = id != null ? _sim.Sim.Templates?.ExtractStats(id.TemplateName) : null;
+            if (st != null && st.FormationShapes.Length > 0)
+                formable.Add((eid, st));
+        }
+        if (formable.Count < 2)
         {
             _formationRow.Visible = false;
             return;
         }
 
-        // 首个单位的可编队形列表(模板 UnitAI/Formations;strip special/formations/ 前缀)
-        var identity = _sim.Sim.QueryInterface<IdentityComponent>(ownUnits[0]);
-        var stats = identity != null ? _sim.Sim.Templates?.ExtractStats(identity.TemplateName) : null;
-        if (stats == null || stats.FormationShapes.Length == 0)
-        {
-            _formationRow.Visible = false;
-            return;
-        }
+        // 阵型列表取首个可编队单位的模板(原版同款:同列表所有可编队单位共用)。
+        var stats = formable[0].Stats;
 
         foreach (var raw in stats.FormationShapes.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
         {
             string shape = raw.Replace("special/formations/", "");
-            var btn = MakeSmallIconButton(LoadIcon($"formations/{shape}"), $"Formation: {shape}");
+            var tex = LoadIcon($"formations/{shape}");
+            var btn = MakeSmallIconButton(tex, $"Formation: {shape}");
+            if (tex == null) btn.Text = shape;   // 贴图缺失时保底显示名(不致"空按钮看不见")
             string s = shape;
             btn.Pressed += () => _main.FormSelectedUnits(s);
             _formationRow.AddChild(btn);

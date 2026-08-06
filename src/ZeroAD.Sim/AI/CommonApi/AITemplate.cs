@@ -53,8 +53,11 @@ public sealed class AITemplate
     public string Classes => Get("Identity/Classes") ?? "";
     public string VisibleClasses => Get("Identity/VisibleClasses") ?? "";
 
+    /// <summary>原版 GetIdentityClasses 语义:Classes + VisibleClasses 合并判定
+    /// (VisibleClasses 承载 "Dock"/"Siege" 等功能类——此前只查 Classes,码头等漏判)。</summary>
     public bool HasClass(string className)
-        => Array.IndexOf(Classes.Split(' ', StringSplitOptions.RemoveEmptyEntries), className) >= 0;
+        => Array.IndexOf(Classes.Split(' ', StringSplitOptions.RemoveEmptyEntries), className) >= 0
+        || Array.IndexOf(VisibleClasses.Split(' ', StringSplitOptions.RemoveEmptyEntries), className) >= 0;
 
     public bool IsUnit => HasClass("Unit") || !_node.HasChild("Building");
     public bool IsStructure => HasClass("Structure") || HasClass("Defensive") || HasClass("CivCentre");

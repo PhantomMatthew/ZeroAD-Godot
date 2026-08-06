@@ -39,8 +39,34 @@ public sealed class PetraEconomyTests
         public required EntityId Worker;
     }
 
+    /// <summary>给玩家补 N 座 Village 类建筑(phase 科技 entity 前置的满足件);
+    /// 带 RangeManager 注册(CountClassStructures 从范围索引数)。</summary>
+    private static void AddVillageHouses(ComponentManager cm, int owner, int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            var e = cm.CreateEntity();
+            var pos = new PositionComponent();
+            cm.AddComponent(e, pos);
+            pos.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+                ZeroAD.Sim.Maths.Fixed.FromInt(30 + i * 8), ZeroAD.Sim.Maths.Fixed.Zero, ZeroAD.Sim.Maths.Fixed.FromInt(60));
+            cm.AddComponent(e, new OwnershipComponent { PlayerId = owner });
+            cm.AddComponent(e, new IdentityComponent
+            {
+                TemplateName = "structures/gaul/house",
+                IsBuilding = true,
+                Classes = new System.Collections.Generic.List<string> { "Village", "Structure" },
+            });
+            cm.NotifyEntityCreated(e);
+            cm.NotifyOwnerChanged(e, -1, owner);
+            var p = new ZeroAD.Sim.Maths.FixedVector2D(pos.Position.X, pos.Position.Z);
+            cm.NotifyPositionChanged(e, p, p);
+        }
+    }
+
     private static AiWorld? NewAiWorld()
     {
+
         var templatesRoot = FindRepoPath("binaries/data/mods/public/simulation/templates");
         var techRoot = FindRepoPath("binaries/data/mods/public/simulation/data/technologies");
         if (templatesRoot == null || techRoot == null) return null;
@@ -51,6 +77,9 @@ public sealed class PetraEconomyTests
 
         var cm = new ComponentManager(rngSeed: 42, templates: templates);
         SimSystem.Init(cm);
+        // RangeManager:entity 前置(phase 科技需 N 个 Village 建筑)从范围索引计数。
+        SimSystem.SetRangeManager(new RangeManager(cm,
+            ZeroAD.Sim.Maths.Fixed.FromInt(256), ZeroAD.Sim.Maths.Fixed.FromInt(256)));
         var events = new AIEventBuffer();
         events.Attach(cm);   // 实体创建即录事件(AIComponent 同款;turnMod 轮转靠它)
 
@@ -184,6 +213,8 @@ public sealed class PetraEconomyTests
         var p2 = w.Cm.GetPlayerEntity(2)!;
         p2.Wood = 5000; p2.Food = 5000; p2.Stone = 5000; p2.Metal = 5000;
         w.Cm.AddComponent(w.Cc, new ResearcherComponent());
+        // phase_town 前置(entity 形态):需 5 个 Village 类建筑——补 5 座民房。
+        AddVillageHouses(w.Cm, 2, 5);
         var plan = new ResearchPlan(w.Gs, "phase_town_gaul");
         Assert.True(plan.CanStart(w.Gs));
         plan.Start(w.Gs);

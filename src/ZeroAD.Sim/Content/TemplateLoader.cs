@@ -126,6 +126,15 @@ namespace ZeroAD.Sim.Content
                 var category = identity.GetChild("Category");
                 if (category.IsOk)
                     stats.Category = category.ToString();
+                // Identity/Requirements/Techs:前置科技(phase_* 等;训练/建造/研究面板的
+                // 阶段过滤数据源——原版未满足即隐藏)。否定 token(-/!)跳过。
+                var reqs = identity.GetChild("Requirements");
+                if (reqs.IsOk)
+                {
+                    var techs = reqs.GetChild("Techs");
+                    if (techs.IsOk)
+                        stats.RequiredTechs = techs.ToString();
+                }
                 // Identity/Civ:模板原生文明({native} 占位替换值;PlayerComponent.Civ 是
                 // 属主文明,二者在被占领建筑上不同——原版 Trainer.js 正是如此区分)。
                 var civ = identity.GetChild("Civ");
@@ -753,6 +762,9 @@ namespace ZeroAD.Sim.Content
         public string Name = "Entity";
         public string GenericName = "";
         public string Category = "";
+        /// <summary>Identity/Requirements/Techs 原文(空格分隔;含否定 token)。
+        /// 空 = 无前置。阶段过滤:全部肯定 token 已研究才显示/可用。</summary>
+        public string RequiredTechs = "";
         public string Classes = "";
         public string VisibleClasses = "";
         /// <summary>&lt;Auras datatype="tokens"&gt;:空格分隔的 aura 文件名(units/heroes/iber_hero_indibil)。

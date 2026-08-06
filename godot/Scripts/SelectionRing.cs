@@ -150,8 +150,54 @@ public static class SelectionRing
         mat.VertexColorUseAsAlbedo = true;
         mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
         mat.NoDepthTest = true;
+        // 头顶条恒朝相机(原版 status bars 是公告板;平面四边形在斜视时只剩一条线)。
+        mat.BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled;
         mesh.SurfaceSetMaterial(0, mat);
         instance.Position = new Vector3(0, 4f, 0);
+        return instance;
+    }
+
+    /// <summary>占领条(原版建筑头顶的蓝条,在血条上方):分段=各玩家 CP 占比,
+    /// 段色=玩家色,升序(与 HUD CaptureBar 同规则,确定性)。</summary>
+    public static MeshInstance3D CreateCaptureBar(IReadOnlyList<(float Fraction, Color Color)> segments)
+    {
+        float w = 2f;
+        float h = 0.24f;
+        var st = new SurfaceTool();
+        st.Begin(Mesh.PrimitiveType.Triangles);
+        float cursor = -w / 2;
+        foreach (var (frac, color) in segments)
+        {
+            if (frac <= 0f) continue;
+            float segW = w * Mathf.Clamp(frac, 0f, 1f);
+            st.SetColor(color);
+            st.AddVertex(new Vector3(cursor, 0, 0));
+            st.AddVertex(new Vector3(cursor + segW, 0, 0));
+            st.AddVertex(new Vector3(cursor + segW, h, 0));
+            st.AddVertex(new Vector3(cursor, 0, 0));
+            st.AddVertex(new Vector3(cursor + segW, h, 0));
+            st.AddVertex(new Vector3(cursor, h, 0));
+            cursor += segW;
+        }
+        // 剩余未占段(灰黑底)。
+        if (cursor < w / 2)
+        {
+            st.SetColor(new Color(0.15f, 0.15f, 0.15f));
+            st.AddVertex(new Vector3(cursor, 0, 0));
+            st.AddVertex(new Vector3(w / 2, 0, 0));
+            st.AddVertex(new Vector3(w / 2, h, 0));
+            st.AddVertex(new Vector3(cursor, 0, 0));
+            st.AddVertex(new Vector3(w / 2, h, 0));
+            st.AddVertex(new Vector3(cursor, h, 0));
+        }
+        var mesh = st.Commit();
+        var instance = new MeshInstance3D { Mesh = mesh };
+        var mat = new StandardMaterial3D();
+        mat.VertexColorUseAsAlbedo = true;
+        mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+        mat.NoDepthTest = true;
+        mat.BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled;
+        mesh.SurfaceSetMaterial(0, mat);
         return instance;
     }
 

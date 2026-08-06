@@ -19,6 +19,16 @@ namespace ZeroAD.Sim.Components
     {
         /// <summary>当前胜利条件(空 = 默认征服)。</summary>
         public List<string> VictoryConditions = new();
+        /// <summary>同盟共胜(原版 alliedVictory = LockTeams || !LastManStanding):
+        /// true → 剩余活跃玩家互为同盟即全体共胜;false = 最后一人站立(LMS)模式,
+        /// 只剩 1 人才判胜。默认 true(原版默认)。</summary>
+        public bool AlliedVictory = true;
+        /// <summary>弑君模式各玩家的英雄(玩家 → 英雄实体;Regicide.js 移植)。
+        /// 地图加载后由 SimBridge 依玩家文明随机选英雄注入;空 = 未开局/非弑君。</summary>
+        public readonly Dictionary<int, EntityId> RegicideHeroes = new();
+        /// <summary>弑君英雄可驻军(RegicideGarrison 设置;false = "ungarrisonable|" 前缀,
+        /// 本移植未接该模板过滤器,仅记录设置)。</summary>
+        public bool RegicideGarrison;
         /// <summary>奇观胜利所需守住秒数(原版游戏设置,默认 600s)。</summary>
         public float WonderVictoryDuration = 600f;
         /// <summary>圣物持有胜利所需秒数(默认同奇观)。</summary>
@@ -108,6 +118,14 @@ namespace ZeroAD.Sim.Components
             VictoryConditions.Count == 0
                 ? name == "conquest"
                 : VictoryConditions.Contains(name, StringComparer.Ordinal);
+
+        /// <summary>征服系任一条件(conquest/units/civic_centers)生效——零实体判负的总门。
+        /// 原版:判负由对应条件模块注册;纯 wonder/relic/regicide 局不清零判负。</summary>
+        public bool HasAnyConquest =>
+            VictoryConditions.Count == 0
+            || VictoryConditions.Contains("conquest", StringComparer.Ordinal)
+            || VictoryConditions.Contains("conquest_units", StringComparer.Ordinal)
+            || VictoryConditions.Contains("conquest_civic_centers", StringComparer.Ordinal);
 
         /// <summary>从地图 ScriptSettings 注入胜利条件(空表 = 保持默认征服)。</summary>
         public void SetVictoryConditions(IEnumerable<string> conditions)

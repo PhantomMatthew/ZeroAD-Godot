@@ -168,6 +168,28 @@ public sealed class SimCommandExecutorTests
     public void Research_StartsExactlyOnce()
     {
         var cm = BuildWorldWithRichPlayer();
+        // phase_town 前置(entity 形态:5 个 Village 类建筑)+ 范围索引(计数数据源)。
+        SimSystem.SetRangeManager(new RangeManager(cm,
+            ZeroAD.Sim.Maths.Fixed.FromInt(256), ZeroAD.Sim.Maths.Fixed.FromInt(256)));
+        for (int i = 0; i < 5; i++)
+        {
+            var house = cm.CreateEntity();
+            var hp = new PositionComponent();
+            cm.AddComponent(house, hp);
+            hp.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+                ZeroAD.Sim.Maths.Fixed.FromInt(20 + i * 8), ZeroAD.Sim.Maths.Fixed.Zero, ZeroAD.Sim.Maths.Fixed.FromInt(50));
+            cm.AddComponent(house, new OwnershipComponent { PlayerId = 1 });
+            cm.AddComponent(house, new IdentityComponent
+            {
+                TemplateName = "structures/athen/house",
+                IsBuilding = true,
+                Classes = new System.Collections.Generic.List<string> { "Village", "Structure" },
+            });
+            cm.NotifyEntityCreated(house);
+            cm.NotifyOwnerChanged(house, -1, 1);
+            var hp2 = new ZeroAD.Sim.Maths.FixedVector2D(hp.Position.X, hp.Position.Z);
+            cm.NotifyPositionChanged(house, hp2, hp2);
+        }
         var building = cm.CreateEntity();
         cm.AddComponent(building, new ResearcherComponent());
         cm.AddComponent(building, new OwnershipComponent { PlayerId = 1 });

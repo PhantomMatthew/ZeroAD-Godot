@@ -38,8 +38,14 @@ public sealed partial class StructreePanel : ModalPanelBase
         _civInfo = new Label { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, AutowrapMode = TextServer.AutowrapMode.WordSmart };
         header.AddChild(_civInfo);
 
-        // 中部：3 个 phase 列（ScrollContainer 包裹）
-        var scroll = new ScrollContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+        // 中部：3 个 phase 列（ScrollContainer 包裹)。
+        // 必须给定最小高宽:面板按内容自动撑高,ExpandFill 的滚动区在自动求高中
+        // 最小高=0 → 列内容全被压没(此前"有数据无显示"的成因)。
+        var scroll = new ScrollContainer
+        {
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(920, 460),
+        };
         _columns = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         _columns.AddThemeConstantOverride("separation", 12);
         scroll.AddChild(_columns);
@@ -60,6 +66,17 @@ public sealed partial class StructreePanel : ModalPanelBase
 
     private void OnCivSelected(long index) => ShowCiv((int)index);
 
+    /// <summary>按文明代码预选(原版 OpenChildPage 的 civ 参数;会话内顶栏徽标进树用)。</summary>
+    public void SetCiv(string code)
+    {
+        if (_civs.Count == 0) LoadData();   // 兜底:首次加载失败(路径/时序)时重试
+        var ordered = _civs.Values.OrderBy(c => c.Name).ToList();
+        int idx = ordered.FindIndex(c => c.Code == code);
+        if (idx < 0) return;
+        _civSelector.Selected = idx;
+        ShowCiv(idx);
+    }
+
     private void ShowCiv(int index)
     {
         if (index < 0 || index >= _civSelector.ItemCount) return;
@@ -71,7 +88,11 @@ public sealed partial class StructreePanel : ModalPanelBase
         foreach (var child in _columns.GetChildren())
             ((Node)child).QueueFree();
 
-        if (_templates == null || _techCatalog == null) return;
+        if (_templates == null || _techCatalog == null)
+        {
+            GD.PrintErr($"[Structree] ShowCiv({code}): templates={_templates != null} techCatalog={_techCatalog != null} — LoadData 未完成");
+            return;
+        }
 
         var tree = TechTreeBuilder.Build(civ, _templates, _techCatalog);
         foreach (var phase in tree.Phases)

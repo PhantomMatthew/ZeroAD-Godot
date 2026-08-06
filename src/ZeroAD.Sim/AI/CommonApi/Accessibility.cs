@@ -32,19 +32,20 @@ public sealed class Accessibility
         Length = Width * Height;
 
         // ── TerrainAnalysis: passability → 地形分类 ──
+        // 原版 terrain-analysis.js:land 受阻 → IMPASSABLE;其中水(船)可通 → DEEP_WATER;
+        // land 可通且水可通 → SHALLOW_WATER;land 可通水受阻 → LAND。
         _map = new byte[Length];
         var span = passabilityGrid.AsSpan();
         for (int i = 0; i < Length && i < span.Length; i++)
         {
             ushort cell = span[i];
             bool landBlocked = (cell & landMask.Mask) != 0;    // 不可陆通行
-            bool waterBlocked = (cell & waterMask.Mask) != 0;   // 不可水通行
+            bool waterBlocked = (cell & waterMask.Mask) != 0;  // 不可水(船)通行
 
-            _map[i] = landBlocked ? TerrainStates.Impassable : TerrainStates.Land;
-            if (waterBlocked && _map[i] == TerrainStates.Impassable)
-                _map[i] = TerrainStates.DeepWater;
-            else if (waterBlocked && _map[i] == TerrainStates.Land)
-                _map[i] = TerrainStates.ShallowWater;
+            if (landBlocked)
+                _map[i] = waterBlocked ? TerrainStates.Impassable : TerrainStates.DeepWater;
+            else
+                _map[i] = waterBlocked ? TerrainStates.Land : TerrainStates.ShallowWater;
         }
 
         // ── Accessibility: 双 flood-fill ──
@@ -172,6 +173,92 @@ public sealed class Accessibility
             trajects = newTrajects;
         }
         return null;
+    }
+
+    /// <summary>原版 getTrajectTo(terrain-analysis.js:158-179):世界坐标两点间的
+    /// 区域路径。起点落格:陆格 >1 走陆,否则水格 >1 走水,皆不可 → null(不可达);
+    /// 终点取陆格、陆不可则取水格,皆不可 → null。返回含首尾的区域 id 序列
+    /// (陆海交替;海军运输的"需要哪片海的码头"判据)。</summary>
+    public List<int>? GetTrajectTo(float sx, float sz, float ex, float ez)
+    {
+        int istart = ToIndex(sx, sz);
+        int iend = ToIndex(ex, ez);
+
+        bool onLand = true;
+        if (_landPassMap[istart] <= 1 && _navalPassMap[istart] > 1)
+            onLand = false;
+        if (_landPassMap[istart] <= 1 && _navalPassMap[istart] <= 1)
+            return null;
+
+        int endRegion = _landPassMap[iend];
+        if (endRegion <= 1 && _navalPassMap[iend] > 1)
+            endRegion = _navalPassMap[iend];
+        else if (endRegion <= 1)
+            return null;
+
+        int startRegion = onLand ? _landPassMap[istart] : _navalPassMap[istart];
+        return GetTrajectToIndex(startRegion, endRegion);
+    }
+
+    /// <summary>世界坐标 → 格索引(边界钳制)。</summary>
+    private int ToIndex(float px, float pz)
+    {
+        int x = (int)(px / CellSize);
+        int y = (int)(pz / CellSize);
+        x = x >= Width ? Width - 1 : x < 0 ? 0 : x;
+        y = y >= Height ? Height - 1 : y < 0 ? 0 : y;
+        return x + y * Width;
+    }
+
+    /// <summary>某格的区域类型("land"/"water"/"inaccessible";原版 regionType)。</summary>
+    public string GetRegionType(int regionId) =>
+        regionId >= 0 && regionId < _regionType.Count ? _regionType[regionId] : "inaccessible";
+
+    /// <summary>陆地区域 id(0/1 = 非陆地)。</summary>
+    public ushort LandRegionAt(float px, float pz) => _landPassMap[ToIndex(px, pz)];
+    /// <summary>水域区域 id(0/1 = 非水域)。</summary>
+    public ushort WaterRegionAt(float px, float pz) => _navalPassMap[ToIndex(px, pz)];
+
+    /// <summary>最大水域区域的格数(0 = 无水域;Petra navalMap 判定的输入:
+    /// 原版按水域规模决定是否当海图运营)。</summary>
+    public int LargestWaterRegionSize()
+    {
+        int best = 0;
+        for (int id = 2; id < _regionType.Count; id++)
+            if (_regionType[id] == "water" && _regionSize[id] > best)
+                best = _regionSize[id];
+        return best;
+    }
+
+    /// <summary>以 (cx,cz) 为心做扩环扫描,找最近的岸线格(陆格且 4 邻接水域
+    /// region>1;码头选址用)。命中输出该格中心世界坐标;扫描半径内无 → false。
+    /// 确定性:半径升序、环内按 (dx,dz) 字典序。</summary>
+    public bool TryFindShoreline(float cx, float cz, out float sx, out float sz,
+        int maxRadiusCells = 80)
+    {
+        int ci = (int)(cx / CellSize), cj = (int)(cz / CellSize);
+        for (int r = 1; r <= maxRadiusCells; r++)
+        {
+            for (int dz = -r; dz <= r; dz++)
+                for (int dx = -r; dx <= r; dx++)
+                {
+                    if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dz)) != r) continue;
+                    int x = ci + dx, y = cj + dz;
+                    if (x < 1 || y < 1 || x >= Width - 1 || y >= Height - 1) continue;
+                    int idx = x + y * Width;
+                    if (_landPassMap[idx] <= 1) continue;
+                    // 4 邻接有水域?
+                    if (_navalPassMap[idx - 1] > 1 || _navalPassMap[idx + 1] > 1
+                        || _navalPassMap[idx - Width] > 1 || _navalPassMap[idx + Width] > 1)
+                    {
+                        sx = (x + 0.5f) * CellSize;
+                        sz = (y + 0.5f) * CellSize;
+                        return true;
+                    }
+                }
+        }
+        sx = sz = 0;
+        return false;
     }
 
     /// <summary>区域大小（cells 数）。</summary>

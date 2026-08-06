@@ -22,6 +22,8 @@
        (AllMapsGenerationTests.AllPmpMaps_Load_AndXmlParses)。 -->
   <ItemGroup>
     <Compile Include="../../godot/Scripts/PmpMap.cs" />
+    <!-- TechTreeBuilder 同为纯 C#(只用 TemplateLoader/TechCatalog/CivData),供科技树回归。 -->
+    <Compile Include="../../godot/Scripts/Structree/TechTreeBuilder.cs" />
   </ItemGroup>
 
 </Project>

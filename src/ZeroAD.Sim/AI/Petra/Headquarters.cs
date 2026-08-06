@@ -30,9 +30,17 @@ public sealed class Headquarters
     public EmergencyManager EmergencyManager;
     public DefenseManager DefenseManager;
     public GarrisonManager GarrisonManager;
-    // public NavalManager NavalManager;  // 海图未启用,保持骨架(见 Update 注释)
-    // public DiplomacyManager DiplomacyManager;  // Phase 3
-    // public VictoryManager VictoryManager;  // Phase 3
+    public NavalManager NavalManager;
+    public DiplomacyManager DiplomacyManager;
+    public VictoryManager VictoryManager;
+
+    /// <summary>海图标记(原版 HQ.navalMap):首个水域区域 ≥ NavalMapMinWaterCells
+    /// 即当海图运营(建码头/训船)。首次 Update 时从 Accessibility 计算,只增不减。</summary>
+    public bool NavalMap { get; private set; }
+    private bool _navalMapComputed;
+    /// <summary>海图水域阈值(navcell 数;64×64 地图全水约 4096 格,取 200 =
+    /// 一块像样的湖/海,小水洼不算)。</summary>
+    private const int NavalMapMinWaterCells = 200;
 
     public int Phasing;  // 0=无，>0=正在升级到 phase i
     public int CurrentPhase;
@@ -74,6 +82,9 @@ public sealed class Headquarters
         EmergencyManager = new EmergencyManager(config);
         DefenseManager = new DefenseManager(config);
         GarrisonManager = new GarrisonManager(config);
+        NavalManager = new NavalManager(config);
+        DiplomacyManager = new DiplomacyManager(config);
+        VictoryManager = new VictoryManager(config);
         TargetNumWorkers = config.Economy.TargetNumWorkers;
         SupportRatio = config.Economy.SupportRatio;
         TowerLapseTime = config.Military.TowerLapseTime;
@@ -147,10 +158,20 @@ public sealed class Headquarters
             GarrisonManager.Update(gameState);
             DefenseManager.Update(gameState, events);
         }
-        // NavalManager: 海图未启用,不挂(骨架在 NavalManager.cs,启用时
-        // 需 Accessibility.getTrajectTo 跨海判定先落地)。
-        // DiplomacyManager.Update(gameState, events);  // Phase 3
-        // VictoryManager.Update(gameState, events);  // Phase 3
+        // 海军(原版 navalManager.update 门控:navalMap):首 Update 从 Accessibility
+        // 判定海图(有 ≥200 格水域区域),海图才运营码头/船。
+        if (!_navalMapComputed)
+        {
+            _navalMapComputed = true;
+            NavalMap = (gameState.Accessibility?.LargestWaterRegionSize() ?? 0) >= NavalMapMinWaterCells;
+        }
+        if (NavalMap && hasActive)
+            NavalManager.Update(gameState, Queues, events);
+        // 外交/胜利(原版顺序压轴:diplomacyManager → victoryManager):
+        // 贡品输送/LMS 背叛;奇迹建造/弑君护主。
+        DiplomacyManager.Update(gameState, events);
+        VictoryManager.Update(gameState, events, Queues);
+        // NavalManager:海图由 Accessibility 判定(见 Update),已启用码头/训船闭环。
 
         // 资源队列管理器
         Queues.Update(gameState);

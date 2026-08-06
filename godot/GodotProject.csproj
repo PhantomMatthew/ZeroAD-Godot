@@ -8,4 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="../src/ZeroAD.Sim/ZeroAD.Sim.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="XmppDotNet" Version="3.3.0" />
+  </ItemGroup>
 </Project>

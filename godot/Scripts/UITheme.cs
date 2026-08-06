@@ -136,6 +136,110 @@ public static class UITheme
         }
     }
 
+    // =========================================================================
+    // Modern 风(mods/mod gui/common/modern):gamesetup_mp 等 MP 对话框的原版样式。
+    // =========================================================================
+
+    /// <summary>ModernButtonRed(modern/sprites.xml):红石按钮。原版图集为 9 件
+    /// (8px 边),已离线拼成单幅 red-button-9patch.png(144×32);Godot
+    /// StyleBoxTexture 8px 纹理边距等价 9-patch。hover=微亮,pressed=压暗,
+    /// disabled=降饱和半透明(原版同贴图不同色)。</summary>
+    public static Theme GetRedButtonTheme()
+    {
+        var theme = new Theme();
+        theme.SetStylebox("normal", "Button", MakeRedButtonStyle(Colors.White));
+        theme.SetStylebox("hover", "Button", MakeRedButtonStyle(new Color(1.12f, 1.08f, 1.02f)));
+        theme.SetStylebox("pressed", "Button", MakeRedButtonStyle(new Color(0.82f, 0.76f, 0.70f)));
+        theme.SetStylebox("disabled", "Button", MakeRedButtonStyle(new Color(0.7f, 0.7f, 0.7f, 0.55f)));
+        // 原版:sans-bold-stroke-14 白字居中;disabled 210 210 210 160。
+        theme.SetColor("font_color", "Button", Colors.White);
+        theme.SetColor("font_hover_color", "Button", Colors.White);
+        theme.SetColor("font_pressed_color", "Button", Colors.White);
+        theme.SetColor("font_disabled_color", "Button", new Color(210f / 255f, 210f / 255f, 210f / 255f, 160f / 255f));
+        theme.SetFontSize("font_size", "Button", 14);
+        return theme;
+    }
+
+    private static StyleBox MakeRedButtonStyle(Color modulate)
+    {
+        var tex = TryLoad("res://assets/ui/modern/button/red-button-9patch.png");
+        if (tex == null)
+        {
+            var flat = new StyleBoxFlat { BgColor = new Color(0.45f, 0.16f, 0.12f) * modulate };
+            flat.SetContentMarginAll(8);
+            return flat;
+        }
+        var style = new StyleBoxTexture { Texture = tex, ModulateColor = modulate };
+        style.SetTextureMarginAll(8);
+        style.SetContentMarginAll(8);
+        style.AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Tile;
+        style.AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Tile;
+        return style;
+    }
+
+    /// <summary>ModernDialog(modern/sprites.xml)装饰:深色底(background.png 平铺)
+    /// + 上下金线(border.png)+ 顶/底渐变阴影(shadow-low.png 底部正置、顶部翻转)。
+    /// Godot 单层 StyleBox 无法叠加 → Panel 底盒 + 子 TextureRect 叠层。</summary>
+    public static void ApplyModernDialog(Panel panel)
+    {
+        var bgTex = TryLoad("res://assets/ui/modern/background.png");
+        if (bgTex != null)
+        {
+            var bg = new StyleBoxTexture { Texture = bgTex };
+            bg.AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Tile;
+            bg.AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Tile;
+            bg.SetContentMarginAll(10);
+            panel.AddThemeStyleboxOverride("panel", bg);
+        }
+        else
+        {
+            panel.AddThemeStyleboxOverride("panel",
+                new StyleBoxFlat { BgColor = new Color(0.10f, 0.09f, 0.08f, 0.98f) });
+        }
+
+        var borderTex = TryLoad("res://assets/ui/modern/border.png");
+        if (borderTex != null)
+        {
+            foreach (bool top in new[] { true, false })
+            {
+                var line = new TextureRect
+                {
+                    Texture = borderTex,
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                    StretchMode = TextureRect.StretchModeEnum.Tile,
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                };
+                line.SetAnchorsPreset(top ? Control.LayoutPreset.TopWide : Control.LayoutPreset.BottomWide);
+                line.OffsetLeft = 4; line.OffsetRight = -4;
+                if (top) { line.OffsetTop = 0; line.OffsetBottom = 4; }
+                else { line.OffsetTop = -8; line.OffsetBottom = 0; }
+                panel.AddChild(line);
+            }
+        }
+
+        var shadowTex = TryLoad("res://assets/ui/modern/shadow-low.png");
+        if (shadowTex != null)
+        {
+            foreach (bool top in new[] { true, false })
+            {
+                var shade = new TextureRect
+                {
+                    Texture = shadowTex,
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                    StretchMode = TextureRect.StretchModeEnum.Scale,
+                    FlipV = top,   // 原版顶部为同图上下镜像
+                    Modulate = new Color(1, 1, 1, 0.5f),
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                };
+                shade.SetAnchorsPreset(top ? Control.LayoutPreset.TopWide : Control.LayoutPreset.BottomWide);
+                shade.OffsetLeft = 4; shade.OffsetRight = -4;
+                if (top) { shade.OffsetTop = 4; shade.OffsetBottom = 60; }
+                else { shade.OffsetTop = -60; shade.OffsetBottom = -4; }
+                panel.AddChild(shade);
+            }
+        }
+    }
+
     public static Texture2D? TryLoad(string resPath)
     {
         string abs = ProjectSettings.GlobalizePath(resPath);

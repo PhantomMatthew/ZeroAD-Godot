@@ -48,8 +48,19 @@ namespace ZeroAD.Sim.Triggers
     public interface ITriggerSink
     {
         void ShowMessage(string text);
-        /// <summary>在 (x,z) 附近生成 count 个 template 实体,属主 playerId(0=gaia)。</summary>
-        void SpawnEntities(string template, int playerId, float x, float z, int count, float spread);
+        /// <summary>在 (x,z) 附近生成 count 个 template 实体,属主 playerId(0=gaia)。
+        /// 返回生成的实体 id(地图脚本要给它们下命令;顺序 = 生成序,确定性)。</summary>
+        IReadOnlyList<EntityId> SpawnEntities(string template, int playerId, float x, float z, int count, float spread);
+    }
+
+    /// <summary>地图脚本行为(maps/random/*_triggers.js 的 C# 移植接口)。
+    /// OnInit 在地图加载完成时调一次(原版 OnInitGame);Tick 每 sim 回合由
+    /// TriggerSystem.Tick 驱动(原版 DoAfterDelay/DoRepeatedly 用脚本内自排程实现,
+    /// RNG 一律走 cm.RNG 保锁步一致)。</summary>
+    public interface IMapScriptBehavior
+    {
+        void OnInit(ComponentManager cm);
+        void Tick(ComponentManager cm, float dt);
     }
 
     /// <summary>触发器系统(原版 Trigger.js 的 C# 数据驱动移植框架)。
@@ -64,7 +75,27 @@ namespace ZeroAD.Sim.Triggers
         /// <summary>可选效果出口(消息/生成)。null 时 ShowMessage/SpawnEntities 静默跳过。</summary>
         public ITriggerSink? Sink;
 
+        /// <summary>地图脚本(当前图的 _triggers.js 移植件;null = 该图无脚本)。</summary>
+        public IMapScriptBehavior? MapScript;
+
+        // 触发点注册表(ref → 世界坐标;rmgen 的 trigger/trigger_point_X 实体经此入库)。
+        private readonly Dictionary<string, List<Maths.FixedVector2D>> _triggerPoints = new(StringComparer.Ordinal);
+
         public IReadOnlyList<TriggerDefinition> Triggers => _triggers;
+
+        /// <summary>注册触发点(原版 Trigger.RegisterTriggerPoint 的坐标版——
+        /// 我们只记位置不建实体)。</summary>
+        public void RegisterTriggerPoint(string reference, Maths.FixedVector2D pos)
+        {
+            if (!_triggerPoints.TryGetValue(reference, out var list))
+                _triggerPoints[reference] = list = new List<Maths.FixedVector2D>();
+            list.Add(pos);
+        }
+
+        /// <summary>取触发点(原版 GetTriggerPoints;无该 ref → 空表)。</summary>
+        public IReadOnlyList<Maths.FixedVector2D> GetTriggerPoints(string reference) =>
+            _triggerPoints.TryGetValue(reference, out var list) ? list
+                : (IReadOnlyList<Maths.FixedVector2D>)Array.Empty<Maths.FixedVector2D>();
 
         public void Add(TriggerDefinition trigger) => _triggers.Add(trigger);
 
@@ -80,6 +111,7 @@ namespace ZeroAD.Sim.Triggers
         /// <summary>每回合推进。dt 为本回合秒数(0.1)。返回本回合触发次数(测试观察用)。</summary>
         public int Tick(ComponentManager cm, float dt)
         {
+            MapScript?.Tick(cm, dt);
             int fired = 0;
             // 按索引遍历:动作可启用/禁用触发器(含自禁用),不修改集合本身。
             for (int i = 0; i < _triggers.Count; i++)

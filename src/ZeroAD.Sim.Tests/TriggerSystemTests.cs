@@ -14,8 +14,11 @@ public sealed class TriggerSystemTests
         public readonly List<string> Messages = new();
         public readonly List<(string Template, int PlayerId, float X, float Z, int Count, float Spread)> Spawns = new();
         public void ShowMessage(string text) => Messages.Add(text);
-        public void SpawnEntities(string template, int playerId, float x, float z, int count, float spread)
-            => Spawns.Add((template, playerId, x, z, count, spread));
+        public IReadOnlyList<EntityId> SpawnEntities(string template, int playerId, float x, float z, int count, float spread)
+        {
+            Spawns.Add((template, playerId, x, z, count, spread));
+            return System.Array.Empty<EntityId>();
+        }
     }
 
     private static ComponentManager SetupWorld()

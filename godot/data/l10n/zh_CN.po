@@ -218,3 +218,48 @@ msgstr "区域码:"
 
 msgid "Accept"
 msgstr "确定"
+
+msgid "Joining an existing game."
+msgstr "加入一场正在进行的游戏。"
+
+msgid "Set up your server to host."
+msgstr "设置你的服务器以开设对局。"
+
+msgid "Player Name"
+msgstr "玩家名称"
+
+msgid "Server Hostname or IP"
+msgstr "服务器主机名或 IP"
+
+msgid "Server Port"
+msgstr "服务器端口"
+
+msgid "Seed"
+msgstr "种子"
+
+msgid "Continue"
+msgstr "继续"
+
+msgid "Map"
+msgstr "地图"
+
+msgid "Slot"
+msgstr "位置"
+
+msgid "Kind"
+msgstr "类型"
+
+msgid "Civ"
+msgstr "文明"
+
+msgid "Team"
+msgstr "队伍"
+
+msgid "Waiting for host to start…"
+msgstr "等待主机开始…"
+
+msgid "Ceasefire — you can attack in %(time)s"
+msgstr "停战中——%(time)s 后方可开战"
+
+msgid "You can attack now!"
+msgstr "现在可以开战了!"

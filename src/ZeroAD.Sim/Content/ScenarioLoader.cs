@@ -50,6 +50,13 @@ namespace ZeroAD.Sim.Content
         public float RelicVictoryDuration = 600f;
         /// <summary>停战秒数(ScriptSettings.Ceasefire,分钟 → 秒;0 = 无停战)。</summary>
         public float CeasefireDuration;
+        /// <summary>锁定队伍(ScriptSettings.LockTeams,默认 false)。</summary>
+        public bool LockTeams;
+        /// <summary>最后一人站立模式(ScriptSettings.LastManStanding,默认 false)。
+        /// 同盟共胜 = LockTeams || !LastManStanding(原版 Setup.js)。</summary>
+        public bool LastManStanding;
+        /// <summary>弑君英雄可驻军(ScriptSettings.RegicideGarrison,默认 false)。</summary>
+        public bool RegicideGarrison;
     }
 
     public static class ScenarioLoader
@@ -113,6 +120,13 @@ namespace ZeroAD.Sim.Content
                 data.RelicVictoryDuration = (float)(rmin * 60.0);
             if (root.TryGetProperty("Ceasefire", out var cf) && cf.TryGetDouble(out var cmin))
                 data.CeasefireDuration = (float)(cmin * 60.0);
+            // 队伍/模式设置(原版 Setup.js:alliedVictory = LockTeams || !LastManStanding)。
+            if (root.TryGetProperty("LockTeams", out var lt) && lt.ValueKind == JsonValueKind.True)
+                data.LockTeams = true;
+            if (root.TryGetProperty("LastManStanding", out var lms) && lms.ValueKind == JsonValueKind.True)
+                data.LastManStanding = true;
+            if (root.TryGetProperty("RegicideGarrison", out var rg) && rg.ValueKind == JsonValueKind.True)
+                data.RegicideGarrison = true;
 
             if (!root.TryGetProperty("PlayerData", out var players))
                 return;

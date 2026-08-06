@@ -125,7 +125,25 @@ public sealed partial class XmppLobbyPanel : CanvasLayer
             CallDeferred(nameof(HideLobby), reason);
         };
 
-        await _client.ConnectAsync(user, pass, "arena", user);
+        try
+        {
+            await _client.ConnectAsync(user, pass, "arena", user);
+        }
+        catch (Exception ex)
+        {
+            // 连接/认证失败(网络不可达、证书、账号错误):复位按钮并把原因摊到聊天日志。
+            _connectBtn.Disabled = false;
+            _connectBtn.Text = "Connect";
+            AppendChatMessage(new LobbyMessage
+            {
+                Type = LobbyMessage.MsgType.System,
+                Level = "error",
+                Text = "Connection failed: " + ex.Message,
+                Time = DateTime.Now,
+            });
+            _client.Dispose();
+            _client = null;
+        }
     }
 
     private void OnDisconnect()

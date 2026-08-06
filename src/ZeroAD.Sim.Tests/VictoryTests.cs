@@ -370,4 +370,117 @@ public sealed class VictoryTests
         Assert.True(cm.Players.GetPlayerEntity(1)!.HasWon());
         Assert.True(cm.IsGameOver);
     }
+
+    // --- endless / 同盟共胜 / 弑君 ---
+
+    [Fact]
+    public void Endless_NoDefeatNoWin_EvenWithZeroEntities()
+    {
+        var cm = SetupTwoPlayerWorld();
+        cm.EndGame.SetVictoryConditions(new[] { "endless" });
+        var p1Unit = MakeUnit(cm, owner: 1);
+        MakeUnit(cm, owner: 2);
+
+        Kill(p1Unit, 1, cm);
+        for (int i = 0; i < 10; i++) cm.TickVictory();
+
+        // 零实体不判负、无人判胜——对局永不结束(原版 endlessGame 语义)。
+        Assert.True(cm.Players.GetPlayerEntity(1)!.IsActive());
+        Assert.False(cm.IsGameOver);
+    }
+
+    [Fact]
+    public void AlliedVictory_RemainingAllies_CoWin()
+    {
+        // 三玩家:2、3 互为同盟;1 被灭后,2、3 应共胜(原版 AlliedVictoryCheck)。
+        var cm = new ComponentManager(rngSeed: 1);
+        Components.SimSystem.Init(cm);
+        for (int p = 1; p <= 3; p++)
+        {
+            var pe = cm.CreateEntity();
+            cm.AddComponent(pe, new PlayerComponent());
+            cm.Players.AddPlayer(p, pe);
+            cm.AddComponent(pe, new DiplomacyComponent());
+        }
+        var range = new Components.RangeManager(cm, ZeroAD.Sim.Maths.Fixed.FromInt(256), ZeroAD.Sim.Maths.Fixed.FromInt(256));
+        Components.SimSystem.SetRangeManager(range);
+        // 2 ⇄ 3 互相同盟。
+        var p2e = cm.Players.GetPlayerEntityId(2)!.Value;
+        var p3e = cm.Players.GetPlayerEntityId(3)!.Value;
+        cm.QueryInterface<DiplomacyComponent>(p2e)!.SetAlly(3);
+        cm.QueryInterface<DiplomacyComponent>(p3e)!.SetAlly(2);
+        cm.EndGame.AlliedVictory = true;
+
+        var u1 = MakeUnit(cm, owner: 1);
+        MakeUnit(cm, owner: 2);
+        MakeUnit(cm, owner: 3);
+
+        Kill(u1, 1, cm);
+        cm.TickVictory();
+
+        Assert.True(cm.Players.GetPlayerEntity(1)!.IsDefeated());
+        Assert.True(cm.Players.GetPlayerEntity(2)!.HasWon());
+        Assert.True(cm.Players.GetPlayerEntity(3)!.HasWon());
+        Assert.True(cm.IsGameOver);
+    }
+
+    [Fact]
+    public void LastManStanding_AlliesDoNotCoWin()
+    {
+        // LMS 模式(AlliedVictory=false):同盟不共胜,只剩 1 人才判胜。
+        var cm = SetupTwoPlayerWorld();
+        var p1e = cm.Players.GetPlayerEntityId(1)!.Value;
+        var p2e = cm.Players.GetPlayerEntityId(2)!.Value;
+        cm.AddComponent(p1e, new DiplomacyComponent());
+        cm.AddComponent(p2e, new DiplomacyComponent());
+        cm.QueryInterface<DiplomacyComponent>(p1e)!.SetAlly(2);
+        cm.QueryInterface<DiplomacyComponent>(p2e)!.SetAlly(1);
+        cm.EndGame.AlliedVictory = false;
+
+        MakeUnit(cm, owner: 1);
+        MakeUnit(cm, owner: 2);
+        for (int i = 0; i < 5; i++) cm.TickVictory();
+
+        Assert.False(cm.IsGameOver);   // 同盟仍在,但 LMS 不共胜
+        Assert.True(cm.Players.GetPlayerEntity(1)!.IsActive());
+        Assert.True(cm.Players.GetPlayerEntity(2)!.IsActive());
+    }
+
+    [Fact]
+    public void Regicide_HeroLost_DefeatsOwner()
+    {
+        var cm = SetupTwoPlayerWorld();
+        cm.EndGame.SetVictoryConditions(new[] { "regicide" });
+        var hero1 = MakeUnit(cm, owner: 1, name: "Hero");
+        MakeUnit(cm, owner: 1);          // 普通单位——英雄死了还有兵也应判负
+        MakeUnit(cm, owner: 2);
+        cm.EndGame.RegicideHeroes[1] = hero1;
+
+        cm.TickVictory();
+        Assert.True(cm.Players.GetPlayerEntity(1)!.IsActive());   // 英雄健在
+
+        Kill(hero1, 1, cm);
+        cm.TickVictory();
+
+        Assert.True(cm.Players.GetPlayerEntity(1)!.IsDefeated());
+        Assert.True(cm.Players.GetPlayerEntity(2)!.HasWon());
+    }
+
+    [Fact]
+    public void Regicide_WithoutConquest_ZeroEntitiesDoesNotDefeat()
+    {
+        // 纯弑君局(无征服系条件):清零不判负——只有英雄死亡判负(原版图 Regicide.js
+        // 只注册 CheckRegicideDefeat,无 conquest 模块)。
+        var cm = SetupTwoPlayerWorld();
+        cm.EndGame.SetVictoryConditions(new[] { "regicide" });
+        var hero1 = MakeUnit(cm, owner: 1, name: "Hero");
+        var other = MakeUnit(cm, owner: 1);
+        MakeUnit(cm, owner: 2);
+        cm.EndGame.RegicideHeroes[1] = hero1;
+
+        Kill(other, 1, cm);   // 普通单位死光(英雄还在)→ 不判负
+        cm.TickVictory();
+        Assert.True(cm.Players.GetPlayerEntity(1)!.IsActive());
+        Assert.False(cm.IsGameOver);
+    }
 }

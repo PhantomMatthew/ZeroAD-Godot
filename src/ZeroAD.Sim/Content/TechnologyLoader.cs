@@ -7,10 +7,11 @@ using ZeroAD.Sim.Components;
 
 namespace ZeroAD.Sim.Content;
 
-/// <summary>科技前置条件。entity 形态({class,number})不建模——解析时视为满足
-/// (否则阶段科技永远无法研究;设计文档 §5 记录的取舍)。</summary>
+/// <summary>科技前置条件。entity 形态({class,number})= 拥有 N 个该类建筑
+/// (phase_town=5×Village,phase_city=3×Town),由 TechnologyManager 按玩家实体计数评估。</summary>
 public sealed record TechRequirement(string? Tech, string? Civ,
-    IReadOnlyList<TechRequirement>? Any, IReadOnlyList<TechRequirement>? All);
+    IReadOnlyList<TechRequirement>? Any, IReadOnlyList<TechRequirement>? All,
+    string? EntityClass = null, int EntityNumber = 0);
 
 public sealed record TechnologyDefinition(
     string Name, string GenericName,
@@ -113,7 +114,20 @@ public static class TechnologyLoader
                     if (prop.Value.ValueKind == JsonValueKind.Array)
                         result.Add(new TechRequirement(null, null, null, ParseReqList(prop.Value)));
                     break;
-                // "entity" 等其他形态:跳过(视为满足)
+                case "entity":
+                    // 原版 entity 形态:{class, number}(阶段科技用:phase_town 需 5 个
+                    // Village 类建筑等);class 可为 null(number = 任意建筑数)。
+                    if (prop.Value.ValueKind == JsonValueKind.Object)
+                    {
+                        string? cls = null;
+                        int number = 0;
+                        if (prop.Value.TryGetProperty("class", out var c) && c.ValueKind == JsonValueKind.String)
+                            cls = c.GetString();
+                        if (prop.Value.TryGetProperty("number", out var n) && n.ValueKind == JsonValueKind.Number)
+                            number = n.GetInt32();
+                        result.Add(new TechRequirement(null, null, null, null, cls, number));
+                    }
+                    break;
             }
         }
         return result;
@@ -126,7 +140,7 @@ public static class TechnologyLoader
         {
             var reqs = ParseRequirements(item);
             if (reqs.Count == 0)
-                // 项内只有 entity 等被跳过的形态 → 恒真占位(entity 视为满足,设计文档 §5)
+                // 空对象项 → 恒真占位
                 result.Add(new TechRequirement(null, null, null, null));
             else
                 result.AddRange(reqs);

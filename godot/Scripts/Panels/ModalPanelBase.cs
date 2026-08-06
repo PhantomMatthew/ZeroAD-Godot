@@ -323,6 +323,17 @@ public abstract partial class ModalPanelBase : CanvasLayer
 
     public void Close() => Visible = false;
 
+    /// <summary>Esc 关闭(原版面板行为;消费事件,不再穿透到游戏层清选择/开菜单)。</summary>
+    public override void _UnhandledInput(InputEvent e)
+    {
+        if (!Visible) return;
+        if (e is InputEventKey k && k.Pressed && k.Keycode == Key.Escape)
+        {
+            Close();
+            GetViewport().SetInputAsHandled();
+        }
+    }
+
     /// <summary>面板打开时刷新动态内容(子类重写:重读 sim 状态重建行/数值)。</summary>
     protected virtual void OnOpen() { }
 }

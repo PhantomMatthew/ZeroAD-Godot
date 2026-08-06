@@ -304,6 +304,8 @@ public sealed partial class LobbyUI : CanvasLayer
         ShowLobbyPanel(isHost);
     }
 
+    private LineEdit _nameEdit = null!;
+
     private void ShowLobbyPanel(bool isHost)
     {
         if (_lobbyPanel != null)
@@ -312,67 +314,151 @@ public sealed partial class LobbyUI : CanvasLayer
             _lobbyPanel = null;
         }
 
-        var panel = new Panel { Theme = UITheme.GetTheme() };
-        // 居中 400×300:直写 anchors+offsets(Center+Position 写法会跑偏)。
+        // 原版 gamesetup_mp.xml:ModernDialog 460×240 居中(size 50%±230 × 50%±120),
+        // 标题 "Multiplayer" 顶带,副标题,右对齐标签 + ModernInput 行,
+        // 底部 Cancel(左半)/Continue(右半)ModernButtonRed。
+        var panel = new Panel();
         panel.AnchorLeft = 0.5f; panel.AnchorRight = 0.5f; panel.AnchorTop = 0.5f; panel.AnchorBottom = 0.5f;
-        panel.OffsetLeft = -200; panel.OffsetRight = 200; panel.OffsetTop = -150; panel.OffsetBottom = 150;
+        panel.OffsetLeft = -230; panel.OffsetRight = 230; panel.OffsetTop = -120; panel.OffsetBottom = 120;
         panel.GrowHorizontal = Control.GrowDirection.Both;
         panel.GrowVertical = Control.GrowDirection.Both;
+        UITheme.ApplyModernDialog(panel);
         AddChild(panel);
         _lobbyPanel = panel;
 
-        var vbox = new VBoxContainer();
-        vbox.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        vbox.OffsetLeft = 20; vbox.OffsetTop = 20;
-        vbox.OffsetRight = -20; vbox.OffsetBottom = -20;
-        vbox.AddThemeConstantOverride("separation", 10);
-        panel.AddChild(vbox);
+        var cfg = GetNode<UserConfig>("/root/UserConfig");
 
+        // 标题带(原版 ModernLabelText,"Multiplayer")。
         var title = new Label
         {
-            Text = Localization.Tr(isHost ? "Host Game" : "Join Game"),
+            Text = Localization.Tr("Multiplayer"),
             HorizontalAlignment = HorizontalAlignment.Center,
         };
-        title.AddThemeFontSizeOverride("font_size", 22);
-        vbox.AddChild(title);
+        title.AddThemeFontSizeOverride("font_size", 16);
+        title.AddThemeColorOverride("font_color", Colors.White);
+        title.Position = new Vector2(0, 4);
+        title.Size = new Vector2(460, 22);
+        panel.AddChild(title);
 
-        if (isHost)
+        // 副标题(原版 pageJoin/pageHost 首行)。
+        var subtitle = new Label
         {
-            // 同 SP 选图:预填随机种子(原版 gamesetup 行为),手改可锁种子;固定 42
-            // 会让每局 random 图逐位相同。
-            _seedEdit = AddRow(vbox, "Seed", ((uint)GD.RandRange(0, 999999)).ToString());
-        }
-        _portEdit = AddRow(vbox, "Port", "25565");
+            Text = Localization.Tr(isHost ? "Set up your server to host." : "Joining an existing game."),
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        subtitle.AddThemeFontSizeOverride("font_size", 14);
+        subtitle.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
+        subtitle.Position = new Vector2(0, 32);
+        subtitle.Size = new Vector2(460, 22);
+        panel.AddChild(subtitle);
+
+        // 行布局(原版:label x20..50% 右对齐;input x50%+10..100%-20,高 24;行距 40):
+        // join = Player Name / Server Hostname or IP / Server Port;
+        // host = Player Name / Server Port(+ 我们的 Seed 扩展行,面板加高一行)。
+        float y = 66;
+        _nameEdit = AddModernRow(panel, Localization.Tr("Player Name") + ":",
+            cfg.GetEffective("playername") is { Length: > 0 } n ? n : "Player", y);
+        y += 40;
         if (!isHost)
         {
-            _addressEdit = AddRow(vbox, "Address", "127.0.0.1");
+            _addressEdit = AddModernRow(panel, Localization.Tr("Server Hostname or IP") + ":",
+                cfg.GetEffective("multiplayerserver") is { Length: > 0 } a ? a : "127.0.0.1", y);
+            y += 40;
+        }
+        _portEdit = AddModernRow(panel, Localization.Tr("Server Port") + ":",
+            cfg.GetEffective("multiplayerhosting.port") is { Length: > 0 } p ? p : "25565", y);
+        y += 40;
+        if (isHost)
+        {
+            // 同 SP 选图:预填随机种子(原版 gamesetup 行为),手改可锁种子。
+            _seedEdit = AddModernRow(panel, Localization.Tr("Seed") + ":",
+                ((uint)GD.RandRange(0, 999999)).ToString(), y);
+            y += 40;
         }
 
-        var btnStart = new Button
+        // 状态行(原版 hostFeedback,红色)。
+        _statusLabel = new Label
         {
-            Text = Localization.Tr(isHost ? "Start Hosting" : "Connect"),
-            Theme = UITheme.GetTheme(),
+            Text = "",
+            HorizontalAlignment = HorizontalAlignment.Center,
         };
-        btnStart.Pressed += () =>
-        {
-            if (isHost)
-                OnHostStart?.Invoke(int.Parse(_portEdit.Text), uint.Parse(_seedEdit.Text));
-            else
-                OnClientConnect?.Invoke(_addressEdit.Text, int.Parse(_portEdit.Text));
-        };
-        vbox.AddChild(btnStart);
+        _statusLabel.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
+        _statusLabel.AddThemeFontSizeOverride("font_size", 13);
+        _statusLabel.Position = new Vector2(20, y + 4);
+        _statusLabel.Size = new Vector2(420, 20);
+        panel.AddChild(_statusLabel);
 
-        var btnCancel = new Button { Text = Localization.Tr("Cancel"), Theme = UITheme.GetTheme() };
+        // 底部按钮(原版:Cancel 左半 18..50%-5,Continue 右半 50%+5..100%-18,高 28)。
+        float panelH = isHost ? 280 : 240;   // host 多一行 Seed → 加高 40
+        float btnY = panelH - 43;
+        var btnCancel = new Button
+        {
+            Text = Localization.Tr("Cancel"),
+            Theme = UITheme.GetRedButtonTheme(),
+            Position = new Vector2(18, btnY),
+            Size = new Vector2(460f / 2 - 5 - 18, 28),
+        };
         btnCancel.Pressed += () =>
         {
             panel.QueueFree();
             _lobbyPanel = null;
             OnCancelRequested?.Invoke();
         };
-        vbox.AddChild(btnCancel);
+        panel.AddChild(btnCancel);
 
-        _statusLabel = new Label { Text = "", HorizontalAlignment = HorizontalAlignment.Center };
-        vbox.AddChild(_statusLabel);
+        var btnContinue = new Button
+        {
+            Text = Localization.Tr("Continue"),
+            Theme = UITheme.GetRedButtonTheme(),
+            Position = new Vector2(460f / 2 + 5, btnY),
+            Size = new Vector2(460f / 2 - 5 - 18, 28),
+        };
+        btnContinue.Pressed += () =>
+        {
+            // 持久化输入(原版 gamesetup_mp 写回 user config)。
+            cfg.SetUserValue("playername", _nameEdit.Text);
+            cfg.SetUserValue("multiplayerhosting.port", _portEdit.Text);
+            if (!isHost) cfg.SetUserValue("multiplayerserver", _addressEdit.Text);
+            cfg.Save();
+            if (isHost)
+                OnHostStart?.Invoke(int.Parse(_portEdit.Text), uint.Parse(_seedEdit.Text));
+            else
+                OnClientConnect?.Invoke(_addressEdit.Text, int.Parse(_portEdit.Text));
+        };
+        panel.AddChild(btnContinue);
+
+        // host 多一行 Seed → 面板加高 40(460×280),重设底边。
+        if (isHost)
+        {
+            panel.OffsetTop = -140; panel.OffsetBottom = 140;
+        }
+    }
+
+    /// <summary>gamesetup_mp 行:右对齐标签(x20..50%)+ ModernInput(x50%+10..100%-20)。
+    /// 面板固定 460 宽,直接写像素。</summary>
+    private LineEdit AddModernRow(Panel panel, string label, string defaultValue, float y)
+    {
+        var lbl = new Label
+        {
+            Text = label,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Position = new Vector2(20, y),
+            Size = new Vector2(460f / 2 - 20, 24),
+        };
+        lbl.AddThemeFontSizeOverride("font_size", 14);
+        lbl.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
+        panel.AddChild(lbl);
+
+        var edit = new LineEdit
+        {
+            Text = defaultValue,
+            Position = new Vector2(460f / 2 + 10, y),
+            Size = new Vector2(460f / 2 - 30, 24),
+        };
+        UITheme.ApplyModernInput(edit);
+        panel.AddChild(edit);
+        return edit;
     }
 
     private LineEdit AddRow(VBoxContainer parent, string label, string defaultValue)
@@ -382,6 +468,7 @@ public sealed partial class LobbyUI : CanvasLayer
         var lbl = new Label { Text = label + ":", CustomMinimumSize = new Vector2(80, 0) };
         row.AddChild(lbl);
         var edit = new LineEdit { Text = defaultValue, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        UITheme.ApplyModernInput(edit);
         row.AddChild(edit);
         parent.AddChild(row);
         return edit;
@@ -406,12 +493,13 @@ public sealed partial class LobbyUI : CanvasLayer
             _teamSpins[i] = null;
         }
 
-        var panel = new Panel { Theme = UITheme.GetTheme() };
+        var panel = new Panel();
         // 居中 520×440:直写 anchors+offsets(Center+Position 写法会跑偏)。
         panel.AnchorLeft = 0.5f; panel.AnchorRight = 0.5f; panel.AnchorTop = 0.5f; panel.AnchorBottom = 0.5f;
         panel.OffsetLeft = -260; panel.OffsetRight = 260; panel.OffsetTop = -220; panel.OffsetBottom = 220;
         panel.GrowHorizontal = Control.GrowDirection.Both;
         panel.GrowVertical = Control.GrowDirection.Both;
+        UITheme.ApplyModernDialog(panel);
         AddChild(panel);
         _lobbyPanel = panel;
 
@@ -463,31 +551,54 @@ public sealed partial class LobbyUI : CanvasLayer
             BuildSlotRow(vbox, slots[i], editable: isHost);
 
         _statusLabel = new Label { Text = "", HorizontalAlignment = HorizontalAlignment.Center };
+        _statusLabel.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
+        _statusLabel.AddThemeFontSizeOverride("font_size", 13);
         vbox.AddChild(_statusLabel);
 
-        if (isHost)
-        {
-            var btnStart = new Button { Text = Localization.Tr("Start Game"), Theme = UITheme.GetTheme() };
-            btnStart.Pressed += () => OnStartGameRequested?.Invoke();
-            vbox.AddChild(btnStart);
-        }
-        else
-        {
-            vbox.AddChild(new Label
-            {
-                Text = Localization.Tr("Waiting for host to start…"),
-                HorizontalAlignment = HorizontalAlignment.Center,
-            });
-        }
+        // 底部按钮行(原版 gamesetup_mp 惯例:Cancel/Close 左半,主按钮右半,红石按钮)。
+        var btnRow = new HBoxContainer();
+        btnRow.AddThemeConstantOverride("separation", 10);
+        vbox.AddChild(btnRow);
 
-        var btnCancel = new Button { Text = Localization.Tr("Close"), Theme = UITheme.GetTheme() };
+        var btnCancel = new Button
+        {
+            Text = Localization.Tr("Close"),
+            Theme = UITheme.GetRedButtonTheme(),
+            CustomMinimumSize = new Vector2(0, 28),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
         btnCancel.Pressed += () =>
         {
             panel.QueueFree();
             _lobbyPanel = null;
             OnCancelRequested?.Invoke();
         };
-        vbox.AddChild(btnCancel);
+        btnRow.AddChild(btnCancel);
+
+        if (isHost)
+        {
+            var btnStart = new Button
+            {
+                Text = Localization.Tr("Start Game"),
+                Theme = UITheme.GetRedButtonTheme(),
+                CustomMinimumSize = new Vector2(0, 28),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            };
+            btnStart.Pressed += () => OnStartGameRequested?.Invoke();
+            btnRow.AddChild(btnStart);
+        }
+        else
+        {
+            var wait = new Label
+            {
+                Text = Localization.Tr("Waiting for host to start…"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            };
+            wait.AddThemeFontSizeOverride("font_size", 13);
+            btnRow.AddChild(wait);
+        }
     }
 
     /// <summary>One slot row. Items are added in enum/array order so the OptionButton index

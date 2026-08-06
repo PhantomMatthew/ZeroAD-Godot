@@ -30,21 +30,21 @@ public static class TechTreeBuilder
 {
     private static readonly string[] PhaseOrder = { "phase_village", "phase_town", "phase_city" };
 
-    /// <summary>构建指定文明的科技树。</summary>
+    /// <summary>构建指定文明的科技树。
+    /// 遍历对齐原版 compileTemplateLists:从 StartEntities 出发,沿三类链接 BFS——
+    /// Trainer/Entities(建筑/CC → 可训单位)、Builder/Entities(单位 → 可建建筑,
+    /// 原版建筑列表实际挂在工人模板上)、Researcher/Technologies(叶子)。
+    /// 此前只从建筑读 Builder(恒空)导致树只剩 CC 一张卡。</summary>
     public static CivTree Build(CivData civ, TemplateLoader templates, TechCatalog techCatalog)
     {
-        // BFS：从 StartEntities 出发，收集所有可达建筑。
         var visited = new HashSet<string>();
         var queue = new Queue<string>();
         var buildings = new List<TreeEntry>();
 
-        // 种子里的建筑（structures/ 开头）入队；单位直接作为 CC 的可训练项。
+        // 种子:全部起始实体(建筑与单位都入队——单位携 Builder/Entities 链接)。
         foreach (var seed in civ.StartEntities)
-        {
-            if (!templates.TemplateExists(seed)) continue;
-            if (seed.StartsWith("structures/"))
+            if (templates.TemplateExists(seed))
                 queue.Enqueue(seed);
-        }
 
         while (queue.Count > 0)
         {
@@ -52,27 +52,38 @@ public static class TechTreeBuilder
             if (!visited.Add(tmpl)) continue;  // 去重
             if (!templates.Cache.TryGetValue(tmpl, out var node)) continue;
 
-            var stats = templates.ExtractStats(tmpl);
-            int phaseIdx = GetPhaseIndex(node);
+            bool isStructure = tmpl.StartsWith("structures/", System.StringComparison.Ordinal);
+            if (isStructure)
+            {
+                var stats = templates.ExtractStats(tmpl);
+                int phaseIdx = GetPhaseIndex(node);
 
-            // 读 Trainer/Entities（可训练单位）。
-            var units = ReadTokenList(node, "Trainer", "Entities")
-                .Select(t => ResolveTemplate(t, civ.Code, templates))
-                .Where(t => t != null && templates.TemplateExists(t))
-                .Select(t => MakeUnitEntry(t!, templates))!;
+                // 读 Trainer/Entities（可训练单位）。
+                var units = ReadTokenList(node, "Trainer", "Entities")
+                    .Select(t => ResolveTemplate(t, civ.Code, templates))
+                    .Where(t => t != null && templates.TemplateExists(t))
+                    .Select(t => MakeUnitEntry(t!, templates))!;
 
-            // 读 Researcher/Technologies（可研究科技）。
-            var techs = ReadTokenList(node, "Researcher", "Technologies")
-                .Select(t => ResolveTech(t, civ.Code, techCatalog))
-                .Where(t => t != null)
-                .Select(t => MakeTechEntry(t!, techCatalog))!;
+                // 读 Researcher/Technologies（可研究科技）。
+                var techs = ReadTokenList(node, "Researcher", "Technologies")
+                    .Select(t => ResolveTech(t, civ.Code, techCatalog))
+                    .Where(t => t != null)
+                    .Select(t => MakeTechEntry(t!, techCatalog))!;
 
-            buildings.Add(new TreeEntry(
-                tmpl, stats.GenericName.Length > 0 ? stats.GenericName : stats.Name,
-                stats.Icon, phaseIdx,
-                units.ToList(), techs.ToList()));
+                buildings.Add(new TreeEntry(
+                    tmpl, stats.GenericName.Length > 0 ? stats.GenericName : stats.Name,
+                    stats.Icon, phaseIdx,
+                    units.ToList(), techs.ToList()));
+            }
 
-            // 读 Builder/Entities（可建造的下一级建筑）→ 入队继续 BFS。
+            // 链接遍历(建筑/单位通用):Trainer/Entities(生产列表)+
+            // Builder/Entities(可建列表;挂在工人单位模板上)。
+            foreach (var child in ReadTokenList(node, "Trainer", "Entities"))
+            {
+                var resolved = ResolveTemplate(child, civ.Code, templates);
+                if (resolved != null && templates.TemplateExists(resolved) && !visited.Contains(resolved))
+                    queue.Enqueue(resolved);
+            }
             foreach (var child in ReadTokenList(node, "Builder", "Entities"))
             {
                 var resolved = ResolveTemplate(child, civ.Code, templates);
@@ -103,7 +114,8 @@ public static class TechTreeBuilder
         if (!child.HasChild(child2)) return System.Array.Empty<string>();
         var value = child.GetChild(child2).Value;
         if (string.IsNullOrWhiteSpace(value)) return System.Array.Empty<string>();
-        return value.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+        // 按全部空白符分词(XML 原文有换行/缩进;按空格分会把 \n 带进 token)。
+        return value.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries);
     }
 
     /// <summary>解析 {civ} 占位符 → 实际模板名。{civ}=civ code；{native}=模板的 Identity/Civ。

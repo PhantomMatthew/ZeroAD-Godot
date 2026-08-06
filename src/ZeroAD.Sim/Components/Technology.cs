@@ -18,11 +18,23 @@ public sealed class TechnologyManager : ComponentBase, IComponentMessageHandler
     private readonly HashSet<string> _researched = new();
     private readonly HashSet<string> _lockedByPair = new();
     private readonly Dictionary<string, string> _pairOf = new(); // tech → pair 文件名
+    // 禁用科技(原版 Player.SetDisabledTechnologies;地图脚本如 polar_sea 用)。
+    private readonly HashSet<string> _disabled = new();
     private TechCatalog _catalog = new(new Dictionary<string, TechnologyDefinition>(),
                                        new Dictionary<string, IReadOnlyList<string>>());
     private string _civ = "athen";
 
     public IReadOnlySet<string> Researched => _researched;
+
+    /// <summary>禁用科技表(原版 Player.js SetDisabledTechnologies):整表替换。
+    /// 禁用的科技 CanResearch 恒 false(HUD 置灰、AI 不入队)。</summary>
+    public void SetDisabledTechnologies(IEnumerable<string> techs)
+    {
+        _disabled.Clear();
+        foreach (var t in techs) _disabled.Add(t);
+    }
+
+    public bool IsTechDisabled(string tech) => _disabled.Contains(tech);
 
     /// <summary>注入数据目录(世界初始化时、任何研究判定前调用)。civ 用于 requirements {civ} 判定。</summary>
     public void Configure(TechCatalog catalog, string civ)
@@ -43,6 +55,7 @@ public sealed class TechnologyManager : ComponentBase, IComponentMessageHandler
     /// <summary>可否开始研究:定义存在 + 未研究 + 未被 pair 锁定 + requirements 全满足。</summary>
     public bool CanResearch(string tech)
     {
+        if (_disabled.Contains(tech)) return false;
         if (!_catalog.Technologies.TryGetValue(tech, out var def)) return false;
         if (_researched.Contains(tech) || _lockedByPair.Contains(tech)) return false;
         return def.Requirements.All(ReqMet);
@@ -54,7 +67,38 @@ public sealed class TechnologyManager : ComponentBase, IComponentMessageHandler
         if (r.Civ != null) return string.Equals(r.Civ, _civ, StringComparison.OrdinalIgnoreCase);
         if (r.Any != null) return r.Any.Any(ReqMet);
         if (r.All != null) return r.All.All(ReqMet);
-        return true; // entity 等被跳过形态的恒真占位(设计文档 §5)
+        // entity 形态(原版 requirements/entity:拥有 N 个该类建筑;class=null → 任意建筑)。
+        // 用于阶段科技:phase_town 需 5×Village,phase_city 需 3×Town。
+        if (r.EntityNumber > 0) return CountClassStructures(r.EntityClass) >= r.EntityNumber;
+        return true;
+    }
+
+    /// <summary>数本玩家已建成(非地基)的该类建筑。class=null → 任意建筑。
+    /// 无 sim 上下文(纯目录测试)→ 0(不满足,保守不显示)。</summary>
+    private int CountClassStructures(string? className)
+    {
+        var cm = SimSystem.Sim;
+        if (cm == null) return 0;
+        var range = SimSystem.Range;
+        if (range == null) return 0;
+        // 本组件挂在玩家实体上: Ownership 直读,缺失时反查玩家注册表(测试/旧存档路径)。
+        int owner = cm.QueryInterface<OwnershipComponent>(Entity)?.PlayerId ?? -1;
+        if (owner < 0)
+        {
+            foreach (int pid in cm.Players.GetNonGaiaPlayerIds())
+                if (cm.Players.GetPlayerEntityId(pid) == Entity) { owner = pid; break; }
+        }
+        if (owner < 0) return 0;
+        int count = 0;
+        foreach (var ent in range.GetEntitiesByPlayer(owner))
+        {
+            var id = cm.QueryInterface<IdentityComponent>(ent);
+            if (id == null || !id.IsBuilding) continue;
+            if (cm.QueryInterface<FoundationComponent>(ent) != null) continue;   // 地基不算
+            if (className != null && !id.HasClass(className)) continue;
+            count++;
+        }
+        return count;
     }
 
     /// <summary>
@@ -114,6 +158,9 @@ public sealed class TechnologyManager : ComponentBase, IComponentMessageHandler
         var locked = _lockedByPair.OrderBy(k => k, StringComparer.Ordinal).ToList();
         s.NumberI32("locked", locked.Count);
         foreach (var tech in locked) s.StringASCII("lock", tech);
+        var disabled = _disabled.OrderBy(k => k, StringComparer.Ordinal).ToList();
+        s.NumberI32("disabled", disabled.Count);
+        foreach (var tech in disabled) s.StringASCII("dis", tech);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -125,6 +172,9 @@ public sealed class TechnologyManager : ComponentBase, IComponentMessageHandler
         int locked = d.NumberI32("locked");
         _lockedByPair.Clear();
         for (int i = 0; i < locked; i++) _lockedByPair.Add(d.StringASCII("lock"));
+        int disabled = d.NumberI32("disabled");
+        _disabled.Clear();
+        for (int i = 0; i < disabled; i++) _disabled.Add(d.StringASCII("dis"));
         // 修改值不在此重建——由调用方在 Configure 后调 RebuildModifiers。
     }
 

@@ -37,6 +37,21 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     private Fixed _lastGoalX, _lastGoalZ;
     private bool _hasLastGoal;
 
+    // --- 阻挡缓释(原版 CCmpUnitMotion C++ 侧防卡 + UnitAI obstructionMitigationAttempted)---
+    // A. 不可达目标不穿墙:长程求解为空且直线受阻时,沿直线取最远合法点走到即停
+    //    (原版 likelyFailure → FinishOrder 的等价;此前直接直线穿墙)。
+    // B. 卡死看门狗:有目标但 StuckWindowSec 窗口位移 < StuckMinProgress(人群夹死)
+    //    → 垂直方向试探侧绕点(±3m/±6m 首个直线可达),到侧点后自动重解原目标。
+    //    每次全新求解只试一次(_mitigationAttempted 随 full-solve 重置)。
+    // 全部为瞬态:不序列化,不进 OOS 哈希(同 waypoints 惯例)。
+    private const float StuckWindowSec = 0.6f;
+    private const float StuckMinProgress = 0.05f;
+    private float _stuckTimer;
+    private FixedVector2D _stuckAnchor;
+    private bool _stuckAnchorValid;
+    private bool _mitigationAttempted;
+    private bool _sidestepping;                     // 正在走侧绕点(到点 → 重解原目标)
+
     protected override void OnInit()
     {
         Speed = Fixed.FromFloat(8.0f);
@@ -72,6 +87,9 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         _lastGoalX = target.X;
         _lastGoalZ = target.Y;
         _pathAge = 0f;
+        // 全新求解 = 新的移动尝试:阻挡缓释重新获得一次机会。
+        _mitigationAttempted = false;
+        _sidestepping = false;
 
         _waypoints.Clear();
         _currentWaypoint = 0;
@@ -98,7 +116,26 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
             foreach (var wp in path.Waypoints)
                 _waypoints.Add((wp.X.ToFloat(), wp.Z.ToFloat()));
             if (_waypoints.Count == 0)
-                _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+            {
+                // 长程求解为空:起点≈终点 → 直线即达;否则目标不可达——不直线穿墙,
+                // 沿直线钳到最远合法点(缓释 A);完全堵死 → 不动(订单随后 FinishOrder)。
+                float dxs = target.X.ToFloat() - start.X.ToFloat();
+                float dzs = target.Y.ToFloat() - start.Y.ToFloat();
+                if (dxs * dxs + dzs * dzs < 1f)
+                {
+                    _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+                    return;
+                }
+                if (TryClampToReachable(pathfinder, start, target, out var clamped))
+                {
+                    _waypoints.Add((clamped.X.ToFloat(), clamped.Y.ToFloat()));
+                    TargetPos = clamped;   // 到点判定按可达点(原目标不可达)
+                }
+                else
+                {
+                    HasMoveTarget = false;
+                }
+            }
             return;
         }
 
@@ -138,8 +175,20 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         _pathAge += dt;
         if (!HasMoveTarget || _currentWaypoint >= _waypoints.Count)
         {
+            // 侧绕点走完 → 自动重解原目标(缓释 B 的续程;_mitigationAttempted 保持,
+            // 不再二次侧绕)。
+            if (HasMoveTarget && _sidestepping)
+            {
+                _sidestepping = false;
+                var resume = TargetPos;
+                MoveToPoint(resume);
+                _mitigationAttempted = true;   // MoveToPoint 的 full-solve 会重置,补回
+                return;
+            }
             HasMoveTarget = false;
             CurrentSpeed = Fixed.Zero;
+            _stuckTimer = 0;
+            _stuckAnchorValid = false;
             return;
         }
 
@@ -186,6 +235,70 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         SimSystem.NotifyPositionChanged(Entity, oldPos2D, newPos2D);
 
         CurrentSpeed = Speed;
+
+        // 卡死看门狗(缓释 B):窗口实际位移不足 → 一次侧绕。
+        _stuckTimer += dt;
+        if (!_stuckAnchorValid) { _stuckAnchor = newPos2D; _stuckAnchorValid = true; }
+        if (_stuckTimer >= StuckWindowSec)
+        {
+            float disp = (newPos2D - _stuckAnchor).Length().ToFloat();
+            _stuckAnchor = newPos2D;
+            _stuckTimer = 0;
+            if (disp < StuckMinProgress && !_mitigationAttempted && !_sidestepping)
+                TrySidestep(posComp);
+        }
+    }
+
+    /// <summary>缓释 A:直线受阻时,从远到近采样 12 档取首个 CheckMovement 可达点
+    /// (走到即停,不再穿墙)。直线本就可走 → 原目标;无寻路(纯测试)→ 原目标。</summary>
+    private static bool TryClampToReachable(PathfinderComponent? pf, FixedVector2D from,
+        FixedVector2D to, out FixedVector2D result)
+    {
+        result = to;
+        if (pf == null) return true;
+        var pc = pf.DefaultClass.Mask;
+        if (pf.CheckMovement(from, to, pc)) return true;
+        for (int i = 11; i >= 1; i--)
+        {
+            float t = i / 12f;
+            var candidate = new FixedVector2D(
+                from.X + (to.X - from.X).Multiply(Fixed.FromFloat(t)),
+                from.Y + (to.Y - from.Y).Multiply(Fixed.FromFloat(t)));
+            if (pf.CheckMovement(from, candidate, pc))
+            {
+                result = candidate;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>缓释 B:垂直于目标方向试探侧绕点(±3m/±6m,确定性顺序),
+    /// 首个直线可达者替换路标;到点后由 Tick 的 _sidestepping 分支重解原目标。</summary>
+    private void TrySidestep(PositionComponent posComp)
+    {
+        _mitigationAttempted = true;
+        var pf = SimSystem.Pathfinder;
+        if (pf == null) return;
+        var from = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
+        float fx = from.X.ToFloat(), fz = from.Y.ToFloat();
+        float dx = TargetPos.X.ToFloat() - fx;
+        float dz = TargetPos.Y.ToFloat() - fz;
+        float len = MathF.Sqrt(dx * dx + dz * dz);
+        if (len < 0.01f) return;
+        float px = -dz / len, pz = dx / len;   // 垂直单位向量
+        var pc = pf.DefaultClass.Mask;
+        foreach (float side in new[] { 3f, -3f, 6f, -6f })
+        {
+            var c = new FixedVector2D(
+                Fixed.FromFloat(fx + px * side), Fixed.FromFloat(fz + pz * side));
+            if (!pf.CheckMovement(from, c, pc)) continue;
+            _waypoints.Clear();
+            _waypoints.Add((c.X.ToFloat(), c.Y.ToFloat()));
+            _currentWaypoint = 0;
+            _sidestepping = true;
+            return;
+        }
     }
 
     /// <summary>经修正值管线的移动速度(科技如 "UnitMotion/WalkSpeed" ×1.15)。
@@ -223,6 +336,7 @@ public static class SimSystem
     private static PathfinderComponent? _pathfinder;
     private static WaterManager? _water;
     private static TerritoryManager? _territory;
+    private static Net.NetTurnManager? _net;
     public static void Init(ComponentManager cm)
     {
         _cm = cm;
@@ -235,6 +349,7 @@ public static class SimSystem
         _pathfinder = null;
         _water = null;
         _territory = null;
+        _net = null;
     }
     public static ComponentManager? Sim => _cm;
     public static ObstructionManager? Obstructions => _obstructions;
@@ -242,11 +357,14 @@ public static class SimSystem
     public static PathfinderComponent? Pathfinder => _pathfinder;
     public static WaterManager? Water => _water;
     public static TerritoryManager? Territory => _territory;
+    /// <summary>回合管理器(地图脚本下 gaia 命令等内核侧命令通道;InitWorld 注入)。</summary>
+    public static Net.NetTurnManager? Net => _net;
     public static void SetObstructionManager(ObstructionManager mgr) => _obstructions = mgr;
     public static void SetRangeManager(RangeManager mgr) => _range = mgr;
     public static void SetPathfinder(PathfinderComponent mgr) => _pathfinder = mgr;
     public static void SetWaterManager(WaterManager mgr) => _water = mgr;
     public static void SetTerritoryManager(TerritoryManager mgr) => _territory = mgr;
+    public static void SetNet(Net.NetTurnManager net) => _net = net;
     public static T? GetComponent<T>(EntityId entity) where T : class, IComponent =>
         _cm?.QueryInterface<T>(entity);
 

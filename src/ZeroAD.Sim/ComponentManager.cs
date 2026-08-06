@@ -197,50 +197,96 @@ namespace ZeroAD.Sim
             foreach (var _ in Players.GetNonGaiaPlayerIds()) nonGaia++;
             if (nonGaia < 2) return;
 
-            // 1. Mark any active player with zero condition-relevant entities as defeated.
-            foreach (int pid in Players.GetNonGaiaPlayerIds())
+            // endless:无任何判负/判胜(原版 endlessGame 跳过 AlliedVictoryCheck;
+            // 无征服条件模块注册 → 无清零判负)。奇观/圣物计时仍走 EndGame.Tick。
+            if (!EndGame.HasCondition("endless"))
             {
-                var player = Players.GetPlayerEntity(pid);
-                if (player == null || !player.IsActive()) continue;
-
-                if (CountDefeatEntities(pid, range) == 0)
+                // 1a. 弑君判负(Regicide.js CheckRegicideDefeat 的轮询等价):
+                // 已分配英雄的玩家,英雄被毁或易主 → 判负。
+                if (EndGame.HasCondition("regicide") && EndGame.RegicideHeroes.Count > 0)
                 {
-                    if (player.SetDefeated())
-                        Events.RaisePlayerDefeated(new PlayerDefeatedEvent
+                    foreach (int pid in Players.GetNonGaiaPlayerIds())
+                    {
+                        var player = Players.GetPlayerEntity(pid);
+                        if (player == null || !player.IsActive()) continue;
+                        if (!EndGame.RegicideHeroes.TryGetValue(pid, out var hero)) continue;
+                        var heroOwner = QueryInterface<OwnershipComponent>(hero);
+                        if (heroOwner == null || heroOwner.PlayerId != pid)
                         {
-                            PlayerId = pid,
-                            Reason = DefeatReason()
-                        });
+                            if (player.SetDefeated())
+                                Events.RaisePlayerDefeated(new PlayerDefeatedEvent
+                                {
+                                    PlayerId = pid,
+                                    Reason = "Lost hero."
+                                });
+                        }
+                    }
                 }
-            }
 
-            // 2. If only one active player remains, they win and the match ends.
-            int winnerId = -1;
-            int activeCount = 0;
-            foreach (int pid in Players.GetNonGaiaPlayerIds())
-            {
-                var player = Players.GetPlayerEntity(pid);
-                if (player != null && player.IsActive())
+                // 1b. 征服系清零判负(仅征服系条件生效时;原版由各条件模块注册)。
+                if (EndGame.HasAnyConquest)
                 {
-                    activeCount++;
-                    if (activeCount == 1) winnerId = pid;
-                    else { winnerId = -1; break; }  // more than one active → no winner yet
-                }
-            }
+                    foreach (int pid in Players.GetNonGaiaPlayerIds())
+                    {
+                        var player = Players.GetPlayerEntity(pid);
+                        if (player == null || !player.IsActive()) continue;
 
-            if (activeCount <= 1 && winnerId > 0)
-            {
-                var winner = Players.GetPlayerEntity(winnerId);
-                if (winner != null && winner.SetWon())
+                        if (CountDefeatEntities(pid, range) == 0)
+                        {
+                            if (player.SetDefeated())
+                                Events.RaisePlayerDefeated(new PlayerDefeatedEvent
+                                {
+                                    PlayerId = pid,
+                                    Reason = DefeatReason()
+                                });
+                        }
+                    }
+                }
+
+                // 2. 判胜(原版 AlliedVictoryCheck):
+                //    alliedVictory(默认)→ 剩余活跃玩家互为同盟即全体共胜;
+                //    LMS 模式 → 只剩 1 人才判胜。
+                var actives = new List<int>();
+                foreach (int pid in Players.GetNonGaiaPlayerIds())
                 {
-                    IsGameOver = true;
-                    Events.RaisePlayerWon(new PlayerWonEvent { PlayerId = winnerId });
-                    Events.RaiseGameEnded(new GameEndedEvent { WinnerPlayerId = winnerId });
-                    return;
+                    var player = Players.GetPlayerEntity(pid);
+                    if (player != null && player.IsActive()) actives.Add(pid);
+                }
+                if (actives.Count > 0)
+                {
+                    bool crownAll = actives.Count == 1;
+                    if (!crownAll && EndGame.AlliedVictory)
+                    {
+                        // 全体互为同盟?(原版:IsMutualAlly(allies[0]) 逐查——
+                        // 同盟关系在锁队下是等价类,查首人互为同盟即可)
+                        crownAll = true;
+                        for (int i = 1; i < actives.Count && crownAll; i++)
+                            if (!Players.GetMutualAllies(actives[0]).Contains(actives[i]))
+                                crownAll = false;
+                    }
+                    if (crownAll)
+                    {
+                        int crowned = 0;
+                        foreach (int pid in actives)
+                        {
+                            var player = Players.GetPlayerEntity(pid);
+                            if (player != null && player.SetWon())
+                            {
+                                crowned++;
+                                Events.RaisePlayerWon(new PlayerWonEvent { PlayerId = pid });
+                            }
+                        }
+                        if (crowned > 0)
+                        {
+                            IsGameOver = true;
+                            Events.RaiseGameEnded(new GameEndedEvent { WinnerPlayerId = actives[0] });
+                            return;
+                        }
+                    }
                 }
             }
 
-            // 3. 奇观/圣物/停战胜利(EndGameManager 计时推进)。
+            // 3. 奇观/圣物计时 + 停战推进(EndGameManager)。
             if (EndGame.Tick(this, 0.1f))
                 IsGameOver = true;
         }

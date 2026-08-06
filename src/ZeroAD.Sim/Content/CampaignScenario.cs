@@ -105,8 +105,9 @@ namespace ZeroAD.Sim.Content
             { _inner = inner; _onMessage = onMessage; }
             public void ShowMessage(string text)
             { _inner?.ShowMessage(text); _onMessage(text); }
-            public void SpawnEntities(string template, int playerId, float x, float z, int count, float spread)
-                => _inner?.SpawnEntities(template, playerId, x, z, count, spread);
+            public IReadOnlyList<EntityId> SpawnEntities(string template, int playerId, float x, float z, int count, float spread)
+                => _inner?.SpawnEntities(template, playerId, x, z, count, spread)
+                    ?? (IReadOnlyList<EntityId>)Array.Empty<EntityId>();
         }
     }
 

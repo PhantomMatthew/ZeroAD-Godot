@@ -53,8 +53,22 @@ public sealed class ConstructionPlan : QueuePlan
         var builder = builders.Values().First();
         if (builder == null) return;
 
-        // 2. 选址
-        var pos = FindGoodPosition(gameState);
+        // 2. 选址(metadata "position" 显式指定优先——码头等岸线建筑由
+        // NavalManager 经 Accessibility.TryFindShoreline 预算;否则默认选址)。
+        BuildPosition? pos = null;
+        if (Metadata.TryGetValue("position", out var pobj)
+            && pobj is FixedVector2D explicitPos)
+        {
+            pos = new BuildPosition
+            {
+                X = explicitPos.X,
+                Z = explicitPos.Y,
+                Angle = 0,
+                Base = 1,
+                Access = 0,
+            };
+        }
+        pos ??= FindGoodPosition(gameState);
         if (pos == null) return;
 
         // 3. 设 metadata（base + access）

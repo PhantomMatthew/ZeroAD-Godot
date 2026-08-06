@@ -216,7 +216,8 @@ public sealed class GameState
     /// <summary>可训练/可建造 tokens 的占位替换({native}/{civ} → 属主文明)。
     /// 模板原样存占位符,裸 Contains 永远匹配不到文明具体模板名;
     /// 实体已被 Owner==PlayerId 过滤,属主文明即玩家文明。</summary>
-    private string ResolveTokens(string? tokens)
+    /// <summary>{native}/{civ} 令牌展开(原版 template 名的 civ 替换惯例)。</summary>
+    public string ResolveTokens(string? tokens)
         => (tokens ?? "").Replace("{native}", GetPlayerCiv()).Replace("{civ}", GetPlayerCiv());
 
     public EntityCollection FindTrainers(string template)
