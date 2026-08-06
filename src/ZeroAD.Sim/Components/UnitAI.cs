@@ -1231,6 +1231,46 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 CallMemberGuard(u, m.Cm!, t);
             m.Cm!.QueryInterface<FormationComponent>(u.Entity)?.Disband(m.Cm);
         });
+        fc.On("Order.Patrol", (u, m) =>
+        {
+            if (!HasMotion(u, m.Cm!)) { u.FinishOrder(); return; }
+            // 原版 PATROL.enter:首个巡逻单锚定起点(往返用)。
+            var pos = m.Cm!.QueryInterface<PositionComponent>(u.Entity);
+            if (pos != null && u._patrolStart == null)
+                u._patrolStart = new FixedVector2D(pos.Position.X, pos.Position.Z);
+            u.FsmNextState = "PATROL.PATROLLING";
+        });
+
+        // CallMemberFunction 广播型订单(原版控制器同名 handler):在射程内直接广播 +
+        // MEMBER 等待;否则 CALLMEMBER.APPROACHING 整队压近(原版 WalkToTargetRange
+        // 前插 + secondTry 的等价)。成员无对应能力时其个体 handler 自行拒收。
+        fc.On("Order.Gather", (u, m) => FormationCallMemberOrder(u, m, 10f));
+        fc.On("Order.Heal", (u, m) => FormationCallMemberOrder(u, m, 10f));
+        fc.On("Order.Repair", (u, m) => FormationCallMemberOrder(u, m, 10f));
+        fc.On("Order.CollectTreasure", (u, m) => FormationCallMemberOrder(u, m, 20f));
+        fc.On("Order.GatherNearPosition", (u, m) =>
+        {
+            if (m.Order == null) { u.FinishOrder(); return; }
+            if (ControllerWithinPointRange(u, m.Order.Position, 20f, m.Cm!))
+            {
+                CallMemberOrderFor(u, m.Cm!, m.Order);
+                u.FsmNextState = "MEMBER";
+            }
+            else
+            {
+                u.FsmNextState = "CALLMEMBER.APPROACHING";
+            }
+        });
+        fc.On("Order.Pack", (u, m) =>
+        {
+            CallMemberPack(u, m.Cm!, unpack: false);
+            u.FsmNextState = "MEMBER";
+        });
+        fc.On("Order.Unpack", (u, m) =>
+        {
+            CallMemberPack(u, m.Cm!, unpack: true);
+            u.FsmNextState = "MEMBER";
+        });
 
         // IDLE:定期 RequestFormationUpdate()(非强制重排;成员变动使偏移作废后在此补齐)。
         fc.State("IDLE")
@@ -1295,6 +1335,101 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                         u.FsmNextState = "MEMBER";
                         return;
                     }
+                }
+                var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
+                if (motion != null && !motion.HasMoveTarget)
+                    u.FinishOrder();
+            })
+            .Leave(u => StopMoving(u));
+
+        // PATROL(原版控制器巡逻子树):整队压向路点,沿途 1s 索敌(接敌 → MEMBER,
+        // ReturningState 回 PATROLLING 续巡);到达 → CHECKINGWAYPOINT 停留
+        // PatrolWaitTime 后折返(起点⇄终点往返,同个体巡逻的双推语义)。
+        var fcPatrol = fc.State("PATROL");
+        fcPatrol.State("PATROLLING")
+            .Enter(u =>
+            {
+                u.ResetFormationTimer();
+                u._combatScanElapsed = 0;
+                var cm = SimSystem.Sim;
+                cm?.QueryInterface<FormationComponent>(u.Entity)
+                    ?.ArrangeFormation(cm, moveCenter: true, force: true, "combat");
+                if (u.CurrentOrder is { } order)
+                {
+                    order.ReturningState = "PATROL.PATROLLING";
+                    SimSystem.GetComponent<UnitMotion>(u.Entity)?.MoveToPoint(order.Position);
+                }
+            })
+            .On("Timer", (u, m) =>
+            {
+                var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
+                if (motion != null && !motion.HasMoveTarget)
+                {
+                    u._patrolWaitElapsed = 0;
+                    u.FsmNextState = "PATROL.CHECKINGWAYPOINT";
+                    return;
+                }
+                u._combatScanElapsed += m.Dt;
+                if (u._combatScanElapsed >= StanceScanIntervalCombat)
+                {
+                    u._combatScanElapsed = 0;
+                    if (MembersEngageVisibleEnemies(u, m.Cm!))
+                        u.FsmNextState = "MEMBER";
+                }
+            })
+            .Leave(u => StopMoving(u));
+        fcPatrol.State("CHECKINGWAYPOINT")
+            .On("Timer", (u, m) =>
+            {
+                u._patrolWaitElapsed += m.Dt;
+                if (u._patrolWaitElapsed >= PatrolWaitTime)
+                {
+                    // 折返:起点回单 + 当前点回单(Queued 不清 _patrolStart)。
+                    var cur = u.CurrentOrder;
+                    if (u._patrolStart is { } start)
+                        u.PushOrder(new UnitOrder { Type = "Patrol", Position = start, Queued = true });
+                    if (cur != null)
+                        u.PushOrder(new UnitOrder { Type = "Patrol", Position = cur.Position, Queued = true });
+                    u.FinishOrder();
+                    return;
+                }
+                u._combatScanElapsed += m.Dt;
+                if (u._combatScanElapsed >= StanceScanIntervalCombat)
+                {
+                    u._combatScanElapsed = 0;
+                    if (MembersEngageVisibleEnemies(u, m.Cm!))
+                        u.FsmNextState = "MEMBER";
+                }
+            });
+
+        // CALLMEMBER(广播型订单的整队压近;原版 WalkToTargetRange 前插的等价):
+        // 控制器走向目标/目标点,进入订单射程 → 广播 + MEMBER。
+        fc.State("CALLMEMBER").State("APPROACHING")
+            .Enter(u =>
+            {
+                u.ResetFormationTimer();
+                var cm = SimSystem.Sim;
+                cm?.QueryInterface<FormationComponent>(u.Entity)
+                    ?.ArrangeFormation(cm, moveCenter: true, force: true, null);
+                if (u.CurrentOrder?.Target is { } t)
+                    MoveToTarget(u, t, cm!);
+                else if (u.CurrentOrder is { Type: "GatherNearPosition" } o)
+                    SimSystem.GetComponent<UnitMotion>(u.Entity)?.MoveToPoint(o.Position);
+            })
+            .On("Timer", (u, m) =>
+            {
+                var order = u.CurrentOrder;
+                if (order == null) { u.FinishOrder(); return; }
+                float range = order.Type is "CollectTreasure" or "GatherNearPosition" ? 20f : 10f;
+                bool inRange = order.Target is { } t
+                    ? ControllerWithinRange(u, t, m.Cm!, range)
+                    : order.Type == "GatherNearPosition"
+                        && ControllerWithinPointRange(u, order.Position, range, m.Cm!);
+                if (inRange)
+                {
+                    CallMemberOrderFor(u, m.Cm!, order);
+                    u.FsmNextState = "MEMBER";
+                    return;
                 }
                 var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
                 if (motion != null && !motion.HasMoveTarget)
@@ -1494,6 +1629,91 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         formation.ResetFinishedEntities();
         foreach (var member in formation.Members)
             cm.QueryInterface<UnitAIComponent>(member)?.Guard(target);
+    }
+
+    /// <summary>广播型订单(Gather/Heal/Repair/CollectTreasure)的入口分流
+    /// (原版控制器同名 Order handler):控制器在射程内 → 立即广播 + MEMBER;
+    /// 否则 CALLMEMBER.APPROACHING 整队压近。</summary>
+    private static void FormationCallMemberOrder(UnitAIComponent u, FsmMessage m, float range)
+    {
+        if (m.Order?.Target is not { } t) { u.FinishOrder(); return; }
+        if (ControllerWithinRange(u, t, m.Cm!, range))
+        {
+            CallMemberOrderFor(u, m.Cm!, m.Order);
+            u.FsmNextState = "MEMBER";
+        }
+        else
+        {
+            u.FsmNextState = "CALLMEMBER.APPROACHING";
+        }
+    }
+
+    /// <summary>控制器中心到目标中心距离 ≤ range(原版 CheckTargetRangeExplicit 的
+    /// 近似:不做障碍边缘折算,广播半径 10/20m 本身已宽松)。</summary>
+    private static bool ControllerWithinRange(UnitAIComponent u, EntityId target, ComponentManager cm, float range)
+    {
+        var pos = cm.QueryInterface<PositionComponent>(u.Entity);
+        var tp = cm.QueryInterface<PositionComponent>(target);
+        if (pos == null || tp == null || !tp.InWorld) return false;
+        float dx = tp.Position.X.ToFloat() - pos.Position.X.ToFloat();
+        float dz = tp.Position.Z.ToFloat() - pos.Position.Z.ToFloat();
+        return dx * dx + dz * dz <= range * range;
+    }
+
+    private static bool ControllerWithinPointRange(UnitAIComponent u, FixedVector2D point, float range, ComponentManager cm)
+    {
+        var pos = cm.QueryInterface<PositionComponent>(u.Entity);
+        if (pos == null) return false;
+        float dx = point.X.ToFloat() - pos.Position.X.ToFloat();
+        float dz = point.Y.ToFloat() - pos.Position.Z.ToFloat();
+        return dx * dx + dz * dz <= range * range;
+    }
+
+    /// <summary>按订单类型向成员广播对应个体订单(原版 CallMemberFunction 的
+    /// Gather/Heal/Repair/CollectTreasure/GatherNearPosition 分支)。成员无能力
+    /// 时其个体 Order handler 拒收(FinishOrder 出队)——广播本身恒发。</summary>
+    private static void CallMemberOrderFor(UnitAIComponent u, ComponentManager cm, UnitOrder order)
+    {
+        var formation = cm.QueryInterface<FormationComponent>(u.Entity);
+        if (formation == null) return;
+        formation.ResetFinishedEntities();
+        foreach (var member in formation.Members)
+        {
+            var ai = cm.QueryInterface<UnitAIComponent>(member);
+            if (ai == null) continue;
+            switch (order.Type)
+            {
+                case "Gather":
+                    if (order.Target is { } gt) ai.Gather(gt);
+                    break;
+                case "Heal":
+                    if (order.Target is { } ht) ai.Heal(ht);
+                    break;
+                case "Repair":
+                    if (order.Target is { } rt) ai.Repair(rt);
+                    break;
+                case "CollectTreasure":
+                    if (order.Target is { } ct) ai.CollectTreasure(ct);
+                    break;
+                case "GatherNearPosition":
+                    ai.GatherNearPosition(order.Position);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>原版 CallMemberFunction("Pack"/"Unpack"):逐成员打包/解包。</summary>
+    private static void CallMemberPack(UnitAIComponent u, ComponentManager cm, bool unpack)
+    {
+        var formation = cm.QueryInterface<FormationComponent>(u.Entity);
+        if (formation == null) return;
+        formation.ResetFinishedEntities();
+        foreach (var member in formation.Members)
+        {
+            var ai = cm.QueryInterface<UnitAIComponent>(member);
+            if (unpack) ai?.Unpack();
+            else ai?.Pack();
+        }
     }
 
     /// <summary>原版控制器的 FindWalkAndFightTargets(= CallMemberFunction 同名):

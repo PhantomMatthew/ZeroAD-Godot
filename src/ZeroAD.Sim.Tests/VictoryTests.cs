@@ -286,21 +286,73 @@ public sealed class VictoryTests
     }
 
     [Fact]
-    public void Ceasefire_AllActivePlayersCoWin_WhenTimerExpires()
+    public void Ceasefire_NeutralizesEnemies_ThenRestoresDiplomacy()
     {
+        // 原版 CeasefireManager:停战不是胜利条件——期间全体互置中立,到期恢复。
         var cm = SetupTwoPlayerWorld();
-        cm.EndGame.SetVictoryConditions(new[] { "ceasefire" });
+        var p1e = cm.Players.GetPlayerEntityId(1)!.Value;
+        var p2e = cm.Players.GetPlayerEntityId(2)!.Value;
+        cm.AddComponent(p1e, new DiplomacyComponent());
+        cm.AddComponent(p2e, new DiplomacyComponent());
+        cm.QueryInterface<DiplomacyComponent>(p1e)!.SetEnemy(2);
+        cm.QueryInterface<DiplomacyComponent>(p2e)!.SetEnemy(1);
         cm.EndGame.CeasefireDuration = 2f;
         MakeUnit(cm, owner: 1);
         MakeUnit(cm, owner: 2);
 
-        for (int i = 0; i < 15; i++) cm.TickVictory();  // 1.5s → nothing yet
-        Assert.False(cm.IsGameOver);
+        cm.EndGame.StartCeasefire(cm);
+        Assert.True(cm.EndGame.CeasefireActive);
+        Assert.False(cm.Players.IsEnemy(1, 2));   // 互置中立 → 攻击门自然封死
+        Assert.False(cm.Players.IsEnemy(2, 1));
 
-        for (int i = 0; i < 10; i++) cm.TickVictory();  // 累计 2.5s > 2s → both co-win
-        Assert.True(cm.Players.GetPlayerEntity(1)!.HasWon());
-        Assert.True(cm.Players.GetPlayerEntity(2)!.HasWon());
-        Assert.True(cm.IsGameOver);
+        for (int i = 0; i < 15; i++) cm.TickVictory();  // 1.5s:仍在停战
+        Assert.True(cm.EndGame.CeasefireActive);
+        Assert.False(cm.IsGameOver);                     // 停战不产生胜者
+
+        for (int i = 0; i < 10; i++) cm.TickVictory();  // 2.5s:停战结束
+        Assert.False(cm.EndGame.CeasefireActive);
+        Assert.True(cm.Players.IsEnemy(1, 2));          // 外交恢复
+        Assert.True(cm.Players.IsEnemy(2, 1));
+        Assert.False(cm.IsGameOver);
+    }
+
+    [Fact]
+    public void Ceasefire_EventsRaised()
+    {
+        var cm = SetupTwoPlayerWorld();
+        cm.EndGame.CeasefireDuration = 1f;
+        MakeUnit(cm, owner: 1);
+        MakeUnit(cm, owner: 2);
+        bool started = false, ended = false;
+        cm.Events.CeasefireStarted += e => { started = true; Assert.Equal(1f, e.RemainingSeconds); };
+        cm.Events.CeasefireEnded += _ => ended = true;
+
+        cm.EndGame.StartCeasefire(cm);
+        Assert.True(started);
+        for (int i = 0; i < 15; i++) cm.TickVictory();
+        Assert.True(ended);
+    }
+
+    [Fact]
+    public void Ceasefire_AllyStancePreservedAcrossCeasefire()
+    {
+        // 盟友关系不受停战影响,且快照恢复不降级。
+        var cm = SetupTwoPlayerWorld();
+        var p1e = cm.Players.GetPlayerEntityId(1)!.Value;
+        var p2e = cm.Players.GetPlayerEntityId(2)!.Value;
+        cm.AddComponent(p1e, new DiplomacyComponent());
+        cm.AddComponent(p2e, new DiplomacyComponent());
+        cm.QueryInterface<DiplomacyComponent>(p1e)!.SetAlly(2);
+        cm.QueryInterface<DiplomacyComponent>(p2e)!.SetAlly(1);
+        cm.EndGame.CeasefireDuration = 1f;
+        MakeUnit(cm, owner: 1);
+        MakeUnit(cm, owner: 2);
+
+        cm.EndGame.StartCeasefire(cm);
+        Assert.True(cm.Players.GetPlayerEntity(1) != null);
+        for (int i = 0; i < 15; i++) cm.TickVictory();
+        var dip1 = cm.QueryInterface<DiplomacyComponent>(p1e)!;
+        Assert.True(dip1.IsAlly(2));   // 盟友未被中立化(快照只改 Enemy)
     }
 
     [Fact]

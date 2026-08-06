@@ -116,10 +116,11 @@ public sealed class AIComponent : ComponentBase
         _economy.Update(snapshot, playerId);
         _build.Update(snapshot, playerId);
         _research.Update(snapshot, playerId);
-        _defense.Update(snapshot, playerId);
-        _attack.Update(snapshot, playerId);
 
-        // Petra 完整版 HQ 更新（如果有 SharedState = 地图已加载 + 模板就绪）
+        // Petra 完整版 HQ 更新（如果有 SharedState = 地图已加载 + 模板就绪）。
+        // HQ 激活时,旧版 defense/attack 停跑——两套防御会重复下令(旧版全军扑一个
+        // 威胁 vs Petra 的限量回防+驻军避险),旧版留作无地图/无模板环境的兜底。
+        bool petraActive = false;
         if (_hq != null && _sharedState != null && _petraConfig != null)
         {
             var gameState = _sharedState.CreateGameState(_cm, (int)playerId, Metadata, Events);
@@ -135,7 +136,13 @@ public sealed class AIComponent : ComponentBase
                     AI.Petra.StartingStrategy.ConfigFirstBase(_hq, gameState);
                 }
                 _hq.Update(gameState, Events);
+                petraActive = true;
             }
+        }
+        if (!petraActive)
+        {
+            _defense.Update(snapshot, playerId);
+            _attack.Update(snapshot, playerId);
         }
 
         Events.Drain();  // think 结束清空事件缓冲，下一回合重新积累

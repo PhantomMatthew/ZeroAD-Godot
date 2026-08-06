@@ -425,6 +425,13 @@ public sealed partial class SimBridge : Node
         endGame.CeasefireDuration = scenario.CeasefireDuration;
         if (scenario.VictoryConditions.Count > 0)
             GD.Print($"[Map] victory conditions: {string.Join(",", scenario.VictoryConditions)}");
+        // 停战设置(原版 Setup.js:if (settings.Ceasefire) StartCeasefire)——
+        // 期间全体非 gaia 互置中立,到期恢复外交。
+        if (scenario.CeasefireDuration > 0 && _sim != null)
+        {
+            endGame.StartCeasefire(_sim);
+            GD.Print($"[Map] ceasefire: {scenario.CeasefireDuration}s");
+        }
     }
 
     /// <summary>XML PlayerData 的 civ 写入玩家实体(原版 scenario:文明由地图定义,

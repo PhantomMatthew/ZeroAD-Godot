@@ -297,4 +297,100 @@ public sealed class FormationCombatTests
         cm.NotifyPositionChanged(e, old,
             new ZeroAD.Sim.Maths.FixedVector2D(pos.Position.X, pos.Position.Z));
     }
+
+    // --- 控制器巡逻 + CallMemberFunction 广播 ---
+
+    [Fact]
+    public void ControllerPatrol_Arrival_ThenPingPongBackToStart()
+    {
+        var cm = SetupWorld();
+        var (ctrl, form, m1, m2) = MakeFormation(cm, 0, 0);
+
+        AI(cm, ctrl).Patrol(new ZeroAD.Sim.Maths.FixedVector2D(
+            ZeroAD.Sim.Maths.Fixed.FromInt(20), ZeroAD.Sim.Maths.Fixed.Zero));
+        for (int i = 0; i < 3; i++) AI(cm, ctrl).Tick(0.1f, cm);
+        Assert.Equal("FORMATIONCONTROLLER.PATROL.PATROLLING", AI(cm, ctrl).FsmStateName);
+
+        // 到达路点(搬过去 + 停走)→ CHECKINGWAYPOINT。
+        Teleport(cm, ctrl, 20, 0);
+        cm.QueryInterface<UnitMotion>(ctrl)!.Stop();
+        AI(cm, ctrl).Tick(0.1f, cm);
+        Assert.Equal("FORMATIONCONTROLLER.PATROL.CHECKINGWAYPOINT", AI(cm, ctrl).FsmStateName);
+
+        // 停留 1s(PatrolWaitTime)→ FinishOrder + 折返双单;下一拍派发回起点单。
+        for (int i = 0; i < 12; i++) AI(cm, ctrl).Tick(0.1f, cm);
+        Assert.Equal("FORMATIONCONTROLLER.PATROL.PATROLLING", AI(cm, ctrl).FsmStateName);
+        var order = AI(cm, ctrl).CurrentOrder;
+        Assert.NotNull(order);
+        Assert.Equal("Patrol", order!.Type);
+        Assert.Equal(1f, order.Position.X.ToFloat());   // 回起点(控制器锚定处 1,0)
+    }
+
+    [Fact]
+    public void ControllerGather_InRange_BroadcastsToMembers_AndWaitsMember()
+    {
+        var cm = SetupWorld();
+        var (ctrl, form, m1, m2) = MakeFormation(cm, 0, 0);
+        var tree = MakeSoldier(cm, 0, 5, 0);   // 5m 内(广播半径 10m)
+
+        AI(cm, ctrl).Gather(tree);
+        for (int i = 0; i < 3; i++) AI(cm, ctrl).Tick(0.1f, cm);
+
+        // 成员收到个体 Gather 订单;控制器转 MEMBER 等待(散开作业)。
+        Assert.Equal("FORMATIONCONTROLLER.MEMBER", AI(cm, ctrl).FsmStateName);
+        Assert.Equal("Gather", AI(cm, m1).CurrentOrder?.Type);
+        Assert.Equal("Gather", AI(cm, m2).CurrentOrder?.Type);
+    }
+
+    [Fact]
+    public void ControllerGather_OutOfRange_ApproachesFirst()
+    {
+        var cm = SetupWorld();
+        var (ctrl, form, m1, m2) = MakeFormation(cm, 0, 0);
+        var tree = MakeSoldier(cm, 0, 50, 0);  // 50m 外
+
+        AI(cm, ctrl).Gather(tree);
+        for (int i = 0; i < 3; i++) AI(cm, ctrl).Tick(0.1f, cm);
+        Assert.Equal("FORMATIONCONTROLLER.CALLMEMBER.APPROACHING", AI(cm, ctrl).FsmStateName);
+        // 未进射程前不广播。
+        Assert.NotEqual("Gather", AI(cm, m1).CurrentOrder?.Type);
+
+        // 整队到位 → 广播 + MEMBER。
+        Teleport(cm, ctrl, 48, 0);
+        for (int i = 0; i < 3; i++) AI(cm, ctrl).Tick(0.1f, cm);
+        Assert.Equal("FORMATIONCONTROLLER.MEMBER", AI(cm, ctrl).FsmStateName);
+        Assert.Equal("Gather", AI(cm, m1).CurrentOrder?.Type);
+    }
+
+    [Fact]
+    public void ControllerPack_BroadcastsPackToMembers()
+    {
+        var cm = SetupWorld();
+        var (ctrl, form, m1, m2) = MakeFormation(cm, 0, 0);
+
+        AI(cm, ctrl).Pack();
+        for (int i = 0; i < 3; i++) AI(cm, ctrl).Tick(0.1f, cm);
+
+        Assert.Equal("FORMATIONCONTROLLER.MEMBER", AI(cm, ctrl).FsmStateName);
+        Assert.Equal("Pack", AI(cm, m1).CurrentOrder?.Type);
+        Assert.Equal("Pack", AI(cm, m2).CurrentOrder?.Type);
+    }
+
+    [Fact]
+    public void ControllerGatherNearPosition_OutOfRange_ApproachesThenBroadcasts()
+    {
+        var cm = SetupWorld();
+        var (ctrl, form, m1, m2) = MakeFormation(cm, 0, 0);
+        var point = new ZeroAD.Sim.Maths.FixedVector2D(
+            ZeroAD.Sim.Maths.Fixed.FromInt(60), ZeroAD.Sim.Maths.Fixed.Zero);
+
+        AI(cm, ctrl).GatherNearPosition(point);
+        for (int i = 0; i < 3; i++) AI(cm, ctrl).Tick(0.1f, cm);
+        Assert.Equal("FORMATIONCONTROLLER.CALLMEMBER.APPROACHING", AI(cm, ctrl).FsmStateName);
+
+        Teleport(cm, ctrl, 59, 0);
+        for (int i = 0; i < 3; i++) AI(cm, ctrl).Tick(0.1f, cm);
+        Assert.Equal("FORMATIONCONTROLLER.MEMBER", AI(cm, ctrl).FsmStateName);
+        Assert.Equal("GatherNearPosition", AI(cm, m1).CurrentOrder?.Type);
+    }
 }

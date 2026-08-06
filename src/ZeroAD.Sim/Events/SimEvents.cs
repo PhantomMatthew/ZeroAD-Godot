@@ -95,6 +95,18 @@ namespace ZeroAD.Sim.Events
         public int PlayerId;
     }
 
+    /// <summary>停战开始(MT_CeasefireStarted):全体非 gaia 玩家互置中立,倒计时期间禁攻击。
+    /// RemainingSeconds 供表现层显示倒计时通知。</summary>
+    public sealed class CeasefireStartedEvent
+    {
+        public float RemainingSeconds;
+    }
+
+    /// <summary>停战结束(MT_CeasefireEnded):外交立场恢复停战前快照,可以开打。</summary>
+    public sealed class CeasefireEndedEvent
+    {
+    }
+
     /// <summary>Raised once when the match ends — the sole surviving player has won.
     /// The presentation layer shows the victory/defeat overlay on this.</summary>
     public sealed class GameEndedEvent
@@ -207,6 +219,8 @@ namespace ZeroAD.Sim.Events
         public event Action<ChatMessageEvent>? ChatMessage;
         public event Action<PlayerDefeatedEvent>? PlayerDefeated;
         public event Action<PlayerWonEvent>? PlayerWon;
+        public event Action<CeasefireStartedEvent>? CeasefireStarted;
+        public event Action<CeasefireEndedEvent>? CeasefireEnded;
         public event Action<GameEndedEvent>? GameEnded;
         public event Action<VisibilityChangedEvent>? VisibilityChanged;
         public event Action<MirageSwapBackEvent>? MirageSwapBack;
@@ -230,6 +244,8 @@ namespace ZeroAD.Sim.Events
         public void RaiseChatMessage(ChatMessageEvent e) => ChatMessage?.Invoke(e);
         public void RaisePlayerDefeated(PlayerDefeatedEvent e) => PlayerDefeated?.Invoke(e);
         public void RaisePlayerWon(PlayerWonEvent e) => PlayerWon?.Invoke(e);
+        public void RaiseCeasefireStarted(CeasefireStartedEvent e) => CeasefireStarted?.Invoke(e);
+        public void RaiseCeasefireEnded(CeasefireEndedEvent e) => CeasefireEnded?.Invoke(e);
         public void RaiseGameEnded(GameEndedEvent e) => GameEnded?.Invoke(e);
         public void RaiseVisibilityChanged(VisibilityChangedEvent e) => VisibilityChanged?.Invoke(e);
         public void RaiseMirageSwapBack(MirageSwapBackEvent e) => MirageSwapBack?.Invoke(e);

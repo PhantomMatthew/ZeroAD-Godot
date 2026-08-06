@@ -28,9 +28,9 @@ public sealed class Headquarters
     public AttackManager AttackManager;
     public TradeManager TradeManager;
     public EmergencyManager EmergencyManager;
+    public DefenseManager DefenseManager;
+    public GarrisonManager GarrisonManager;
     // public NavalManager NavalManager;  // 海图未启用,保持骨架(见 Update 注释)
-    // public DefenseManager DefenseManager;  // Phase 3
-    // public GarrisonManager GarrisonManager;  // 2.7
     // public DiplomacyManager DiplomacyManager;  // Phase 3
     // public VictoryManager VictoryManager;  // Phase 3
 
@@ -72,6 +72,8 @@ public sealed class Headquarters
         AttackManager = new AttackManager(config);
         TradeManager = new TradeManager(config);
         EmergencyManager = new EmergencyManager(config);
+        DefenseManager = new DefenseManager(config);
+        GarrisonManager = new GarrisonManager(config);
         TargetNumWorkers = config.Economy.TargetNumWorkers;
         SupportRatio = config.Economy.SupportRatio;
         TowerLapseTime = config.Military.TowerLapseTime;
@@ -138,8 +140,13 @@ public sealed class Headquarters
         // 进攻管理(原版门控:难度 > Sandbox 且(有活基地或不可造兵))
         if (Config.Difficulty > DifficultyLevel.Sandbox && (hasActive || !CanBuildUnits))
             AttackManager.Update(gameState, Queues, events);
-        // DefenseManager.Update(gameState, events);  // Phase 3
-        // GarrisonManager.Update(gameState, events);  // 2.7
+        // 守家(原版顺序:tradeManager → garrisonManager → defenseManager):
+        // 先驻军避险,再调空闲兵力回防——驻军消耗 idle 池,回防取其剩余。
+        if (Config.Difficulty > DifficultyLevel.Sandbox && hasActive)
+        {
+            GarrisonManager.Update(gameState);
+            DefenseManager.Update(gameState, events);
+        }
         // NavalManager: 海图未启用,不挂(骨架在 NavalManager.cs,启用时
         // 需 Accessibility.getTrajectTo 跨海判定先落地)。
         // DiplomacyManager.Update(gameState, events);  // Phase 3

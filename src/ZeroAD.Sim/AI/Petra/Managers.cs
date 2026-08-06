@@ -93,47 +93,5 @@ public sealed class EmergencyManager
     }
 }
 
-/// <summary>驻军管理器（原版 petra/garrisonManager.js，393 行）。
-/// 管理单位进出驻军（受伤时驻入回血、危险时避难、攻击时出驻）。
-/// 骨架版——核心 keepGarrisoned 决策移植，出驻逻辑标 TODO。</summary>
-public sealed class GarrisonManager
-{
-    private readonly PetraConfig _config;
-
-    public GarrisonManager(PetraConfig config) => _config = config;
-
-    /// <summary>主更新（原版 update，29-296 行）。
-    /// 简化版：检查每个驻军持有者，决定是否保持驻军或释放。</summary>
-    public void Update(GameState gameState, AIEventBuffer events)
-    {
-        foreach (var holder in gameState.GetOwnStructures().Filter(e => e.GarrisonedCount > 0).Values())
-        {
-            // 简化：低血量单位保持驻军（回血）；满血 + 无威胁 → 释放
-            foreach (var entId in GetGarrisonedEntities(gameState, holder))
-            {
-                var ent = gameState.GetEntityById(entId);
-                if (ent == null) continue;
-                if (ent.HealthLevel > _config.GarrisonHealthLevel.High)
-                {
-                    // 满血 → 释放（TODO: 下达 ungarrison 命令）
-                }
-            }
-        }
-    }
-
-    /// <summary>判断单位是否应保持驻军（原版 keepGarrisoned，297-393 行）。
-    /// 简化版：血量低或附近有敌人 → 保持。</summary>
-    public bool KeepGarrisoned(GameState gameState, AIEntity ent, AIEntity holder)
-    {
-        if (ent.HealthLevel < _config.GarrisonHealthLevel.Medium) return true;
-        // TODO: 检查附近是否有威胁
-        return false;
-    }
-
-    private static System.Collections.Generic.List<uint> GetGarrisonedEntities(GameState gameState, AIEntity holder)
-    {
-        // 简化：从 GarrisonHolderComponent 读（需要 ComponentManager 查询）
-        // 当前 AIEntity 不暴露 garrisoned 列表——返回空
-        return new();
-    }
-}
+/// <summary>驻军管理器已独立成件:见 GarrisonManager.cs(核心闭环移植——威胁塞人/
+/// 安全放出,含 Ungarrison 命令下达)。原骨架(keepGarrisoned 决策,命令未接线)废弃。</summary>

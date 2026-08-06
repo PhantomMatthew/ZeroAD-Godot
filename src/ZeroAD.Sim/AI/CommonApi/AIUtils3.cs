@@ -10,11 +10,21 @@ public static class AIUtils3
     public static float Distance(FixedVector2D a, FixedVector2D b)
         => (a - b).Length().ToFloat();
 
-    /// <summary>2D 平方距离（原版 SquareVectorDistance，避免 sqrt）。</summary>
+    /// <summary>2D 平方距离（原版 SquareVectorDistance，避免 sqrt）。
+    /// 注意:返回的是**内部定点单位的平方**(1m = 65536),只能用于排序比较;
+    /// 阈值判定请用 <see cref="SquareDistanceMeters"/>。</summary>
     public static long SquareDistance(FixedVector2D a, FixedVector2D b)
     {
         var d = a - b;
         return (long)d.X.InternalValue * d.X.InternalValue + (long)d.Y.InternalValue * d.Y.InternalValue;
+    }
+
+    /// <summary>2D 平方距离(米²)——阈值判定用(threat/muster range 等)。</summary>
+    public static float SquareDistanceMeters(FixedVector2D a, FixedVector2D b)
+    {
+        var d = a - b;
+        float x = d.X.ToFloat(), y = d.Y.ToFloat();
+        return x * x + y * y;
     }
 
     /// <summary>地图缩放的最大索引（原版 getMaxMapIndex）。gamePos → 缩放 map 的索引。</summary>

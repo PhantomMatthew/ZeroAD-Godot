@@ -470,6 +470,9 @@ public sealed partial class Main : Node3D
 		_sim.Sim.Events.AttackLanded += OnAttackAlert;
 		// 数据驱动触发器消息(ShowMessage 动作)→ HUD toast。
 		_sim.TriggerMessage += OnTriggerMessage;
+		// 停战开始/结束(原版 CeasefireManager 的倒计时/开打通知)。
+		_sim.Sim.Events.CeasefireStarted += OnCeasefireStarted;
+		_sim.Sim.Events.CeasefireEnded += OnCeasefireEnded;
 
 		// Pause menu (Menu 按钮 → 暂停叠层):冻结 sim + 存档/读档/离开。事件解耦同 LobbyUI:
 		// 存档/读档复用 QuickSave/QuickLoad(含视觉重建),离开回主菜单。
@@ -1363,6 +1366,8 @@ public sealed partial class Main : Node3D
 			_sim.Sim.Events.AttackLaunched -= OnAttackLaunchedSound;
 			_sim.Sim.Events.AttackLanded -= OnAttackAlert;
 			_sim.TriggerMessage -= OnTriggerMessage;
+			_sim.Sim.Events.CeasefireStarted -= OnCeasefireStarted;
+			_sim.Sim.Events.CeasefireEnded -= OnCeasefireEnded;
 		}
 		if (_mp != null)
 			_mp.OnChatReceived -= OnMpChatReceived;
@@ -1422,6 +1427,18 @@ public sealed partial class Main : Node3D
 
 	/// <summary>触发器 ShowMessage → HUD toast(经本地化表,缺译回退原文)。</summary>
 	private void OnTriggerMessage(string text) => _hud?.ShowToast(Localization.Tr(text));
+
+	/// <summary>停战开始(原版 AddTimeNotification "You can attack in %(time)s")。</summary>
+	private void OnCeasefireStarted(ZeroAD.Sim.Events.CeasefireStartedEvent e)
+	{
+		int total = (int)e.RemainingSeconds;
+		_hud?.ShowToast(Localization.Tr("Ceasefire — you can attack in %(time)s")
+			.Replace("%(time)s", $"{total / 60}:{total % 60:00}"));
+	}
+
+	/// <summary>停战结束(原版 "You can attack now!")。</summary>
+	private void OnCeasefireEnded(ZeroAD.Sim.Events.CeasefireEndedEvent e)
+		=> _hud?.ShowToast(Localization.Tr("You can attack now!"));
 
 	private void UpdateBattleMusic(double delta)
 	{
@@ -1931,8 +1948,9 @@ public sealed partial class Main : Node3D
 			case "repair":
 			{
 				if (target == null || !IsOwn(target.Value)) return;
-				foreach (var unit in _selectedEntities)
-					if (_sim.Sim.QueryInterface<BuilderComponent>(unit) != null)
+				// 编队路由:控制器 Repair 广播给有 Builder 的成员(无件成员自行拒收)。
+				foreach (var unit in ExpandFormationOrderTargets())
+					if (_sim.Sim.QueryInterface<BuilderComponent>(unit) != null || IsFormationController(unit))
 						_sim.CommandRepair(unit, target.Value);
 				break;
 			}
@@ -1940,14 +1958,16 @@ public sealed partial class Main : Node3D
 			{
 				if (target == null || !IsOwn(target.Value)) return;
 				if (_sim.Sim.QueryInterface<UnitAIComponent>(target.Value) == null) return;
-				foreach (var unit in _selectedEntities)
+				// 编队路由:整队全选 → 控制器 Guard(成员广播 Guard + 解散,原版同)。
+				foreach (var unit in ExpandFormationOrderTargets())
 					if (unit != target.Value && _sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
 						_sim.CommandGuard(unit, target.Value);
 				break;
 			}
 			case "patrol":
 			{
-				foreach (var unit in _selectedEntities)
+				// 编队路由:整队全选 → 控制器巡逻(整队往返,成员随队)。
+				foreach (var unit in ExpandFormationOrderTargets())
 					if (_sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
 						_sim.CommandPatrol(unit, worldPos.Value.X, worldPos.Value.Z);
 				break;
@@ -2165,7 +2185,7 @@ public sealed partial class Main : Node3D
 				orderSound ??= "order_garrison";
 			}
 			else if (isResource && targetEntity.HasValue
-				&& _sim.Sim.QueryInterface<ResourceGatherer>(unit) != null)
+				&& (_sim.Sim.QueryInterface<ResourceGatherer>(unit) != null || IsFormationController(unit)))
 			{
 				// 采集者优先采集(鹿=enemy+resource 双身份:村民猎鹿=采集,
 				// 女兵有弱攻击也不能去杀食材)。
