@@ -14,7 +14,9 @@ public sealed record ResolvedActorSpec(
 	IReadOnlyList<AnimRef> Animations,
 	string? Material,
 	bool CastShadow,
-	IReadOnlyDictionary<string, StatePropDelta> StateProps); // animation-state name -> prop delta
+	IReadOnlyDictionary<string, StatePropDelta> StateProps, // animation-state name -> prop delta
+	DecalSpec? Decal = null,                        // <decal/> 贴花(替代 mesh 渲染)
+	string? Particles = null);                      // <particles/> 粒子(跳过渲染)
 
 public sealed record PropSpec(string ActorPath, int SubSeed);
 
@@ -41,6 +43,8 @@ public static class SpecMerger
 		string? mesh = null;
 		string? material = doc.Material;
 		bool castShadow = doc.CastShadow;
+		DecalSpec? decal = null;
+		string? particles = null;
 		var textures = new Dictionary<string, string>();
 		var props = new Dictionary<string, PropSpec>();
 		var anims = new List<AnimRef>();
@@ -56,6 +60,8 @@ public static class SpecMerger
 
 			if (!string.IsNullOrEmpty(v.Mesh)) mesh = v.Mesh;
 			if (!string.IsNullOrEmpty(v.Material)) material = v.Material;
+			if (v.Decal != null) decal = v.Decal;
+			if (v.Particles != null) particles = v.Particles;
 
 			foreach (var kv in v.Textures)
 				textures[kv.Key] = kv.Value;
@@ -149,7 +155,9 @@ public static class SpecMerger
             anims,
             material,
             castShadow,
-            stateProps);
+            stateProps,
+            decal,
+            particles);
     }
 
     public static ResolvedActorSpec? MergeFromActorPath(

@@ -28,8 +28,9 @@ public sealed class TradeManager
     /// <summary>主更新（原版 tradeManager.js:687-714）。</summary>
     public void Update(GameState gameState, AIEventBuffer events, QueueManager queues)
     {
-        // 1. 易物（有市场时）
-        // TODO: PerformBarter（资源严重失衡时交换）
+        // 1. 易物（有市场时;资源严重失衡才换,节流每 5 回合）
+        if (Route != null || gameState.GetOwnStructures().Filter(e => e.HasClass("Market")).HasEntities())
+            PerformBarter(gameState);
 
         if (_config.Difficulty <= DifficultyLevel.VeryEasy) return;
 
@@ -60,6 +61,26 @@ public sealed class TradeManager
         // 4. 寻找新市场位置
         if (RouteProspection)
             ProspectForNewMarket(gameState, queues);
+    }
+
+    /// <summary>资源严重失衡时易物(原版 performBarter 简化版):某资源 <100 且另一
+    /// 资源 >1000 时换 500。每 5 回合节流。</summary>
+    private void PerformBarter(GameState gameState)
+    {
+        if (gameState.Events.Events.Count % 5 != 0) return;
+        var res = gameState.GetResources();
+        (int amount, ZeroAD.Sim.Components.ResourceType type)[] stocks =
+        {
+            (res.Wood, ZeroAD.Sim.Components.ResourceType.Wood),
+            (res.Food, ZeroAD.Sim.Components.ResourceType.Food),
+            (res.Stone, ZeroAD.Sim.Components.ResourceType.Stone),
+            (res.Metal, ZeroAD.Sim.Components.ResourceType.Metal),
+        };
+        var scarce = stocks.OrderBy(s => s.amount).First();
+        var surplus = stocks.OrderByDescending(s => s.amount).First();
+        if (scarce.amount < 100 && surplus.amount > 1000 && surplus.type != scarce.type)
+            gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Barter(
+                (uint)gameState.PlayerId, surplus.type, scarce.type, 500));
     }
 
     /// <summary>检查事件（市场建造/销毁）。返回 true = 市场变动。</summary>
@@ -110,11 +131,16 @@ public sealed class TradeManager
     }
 
     /// <summary>更新单个商队（原版 updateTrader）。
-    /// 简化版：检查是否在贸易路线上。</summary>
+    /// 简化版：商队无双市场目标时指派到贸易路线远端市场(SetupTradeRoute 命令)。</summary>
     private void UpdateTrader(GameState gameState, AIEntity trader)
     {
         if (Route == null) return;
-        // TODO: 下达 setup-trade-route 命令（需 NetCommand）
+        var tc = gameState.Cm.QueryInterface<ZeroAD.Sim.Components.TraderComponent>(
+            new ZeroAD.Sim.EntityId(trader.Id));
+        if (tc == null || tc.HasBothMarkets()) return;
+        // 指派到路线另一端市场(原版 route assignment 简化:统一指向 Market2,源=近端)。
+        gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.SetupTradeRoute(
+            (uint)gameState.PlayerId, trader.Id, Route.Market2));
     }
 
     /// <summary>训练更多商队（原版 trainMoreTraders）。</summary>
@@ -122,15 +148,30 @@ public sealed class TradeManager
     {
         if (_traders.Count >= TargetNumTraders) return;
         if (Route == null) return;
-        // TODO: 入队 TrainingPlan 商队单位
+        if (queues.GetQueue("trader")?.HasQueuedUnits == true) return;
+        queues.AddPlan("trader",
+            new TrainingPlan(gameState, "units/{civ}/support_trader"));
     }
 
     /// <summary>设置贸易品比例（原版 setTradingGoods）。
-    /// 简化版：按当前资源量选最少的那种。</summary>
+    /// 简化版：最缺资源设为买入,其余按存量比例卖出(SetTradingGoods 命令)。</summary>
     private void SetTradingGoods(GameState gameState)
     {
         var res = gameState.GetResources();
-        // TODO: 通过 PlayerComponent.SetTradingGoods 设置
+        int total = res.Wood + res.Food + res.Stone + res.Metal + 1;
+        // 原版按 tradeRate 配平;简化:缺的买 100,其余按存量占比卖。
+        int wood = 100, food = 100, stone = 100, metal = 100;
+        var scarce = new (int amount, int idx)[] { (res.Wood, 0), (res.Food, 1), (res.Stone, 2), (res.Metal, 3) }
+            .OrderBy(s => s.amount).First().idx;
+        switch (scarce)
+        {
+            case 0: wood = 0; break;
+            case 1: food = 0; break;
+            case 2: stone = 0; break;
+            case 3: metal = 0; break;
+        }
+        gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.SetTradingGoods(
+            (uint)gameState.PlayerId, wood, food, stone, metal));
     }
 
     /// <summary>寻找新市场位置（原版 prospectForNewMarket）。</summary>

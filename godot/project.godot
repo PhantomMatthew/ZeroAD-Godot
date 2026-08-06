@@ -20,6 +20,9 @@ config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 GameLaunchConfig="*res://Scripts/Autoload/GameLaunchConfig.cs"
 MatchSummaryStore="*res://Scripts/Autoload/MatchSummaryStore.cs"
 UserConfig="*res://Scripts/Autoload/UserConfig.cs"
+MCPScreenshot="*res://addons/godot_mcp/Runtime/McpScreenshotService.cs"
+MCPInputService="*res://addons/godot_mcp/Runtime/McpInputService.cs"
+MCPGameInspector="*res://addons/godot_mcp/Runtime/McpGameInspectorService.cs"
 
 [dotnet]
 
@@ -27,7 +30,7 @@ project/assembly_name="GodotProject"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/zeroad_editor/plugin.cfg")
+enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg", "res://addons/zeroad_editor/plugin.cfg")
 
 [input]
 

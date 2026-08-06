@@ -62,9 +62,10 @@ public sealed class ConstructionPlan : QueuePlan
             Metadata["base"] = pos.Base;
         Metadata["access"] = pos.Access;
 
-        // 4. 下达 Build 命令
-        // TODO: 通过 SubmitAiCommand 下达 Build 命令
-        // 简化版：记录位置，完整版需 NetCommand.Build + builderId + x/z
+        // 4. 下达 Build 命令(经 AI 本地通道,与玩家建造同路径同延迟;
+        // 原版 queueplanBuilding.start 的 PostCommand 等价)
+        gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Build(
+            (uint)gameState.PlayerId, builder.Id, Type, pos.X, pos.Z));
         _position = new FixedVector2D(pos.X, pos.Z);
     }
 

@@ -92,9 +92,16 @@ namespace ZeroAD.Sim.Content
             return stats;
         }
 
-        public static TemplateStats ExtractStatsFromNode(ParamNode node)
+        /// <summary>读模板节点的属性子节点:ParamNode 把 XML 属性存为 "@name"(ApplyLayer),
+        /// 先试 "@name",无则回落元素子节点(兼容手写模板)。</summary>
+        private static ParamNode Attr(ParamNode node, string name)
         {
-            var stats = new TemplateStats();
+            var a = node.GetChild("@" + name);
+            return a.IsOk ? a : node.GetChild(name);
+        }
+
+        public static TemplateStats ExtractStatsFromNode(ParamNode node)
+        {            var stats = new TemplateStats();
 
             // <Auras> 是 <Entity> 直接子(datatype="tokens"),不在 <Identity> 内。
             // 空格分隔的 aura 文件名,供 AuraComponent 装配时读取。
@@ -186,6 +193,60 @@ namespace ZeroAD.Sim.Content
                 if (entities.IsOk)
                     stats.TrainableEntities = entities.ToString().Trim();
             }
+
+            // Builder/Entities(可建造列表;同 Trainer/Entities 的 tokens 合并与
+            // {civ}/{native} 占位语义——建造面板数据驱动用,由 HUD 按属主实时解析)。
+            var builderEnts = node.GetChild("Builder");
+            if (builderEnts.IsOk)
+            {
+                var entities = builderEnts.GetChild("Entities");
+                if (entities.IsOk)
+                    stats.BuildableEntities = entities.ToString().Trim();
+            }
+
+            // Researcher/Technologies(可研究列表;同语义——研究面板数据驱动用)。
+            var researcher = node.GetChild("Researcher");
+            if (researcher.IsOk)
+            {
+                var techs = researcher.GetChild("Technologies");
+                if (techs.IsOk)
+                    stats.ResearchableTechnologies = techs.ToString().Trim();
+            }
+
+            // UnitAI/Formations(可编队形列表;阵型面板数据驱动用——单位级 tokens,
+            // special/formations/{shape} 全名)。无节点 = 不可编队。
+            var unitAi = node.GetChild("UnitAI");
+            if (unitAi.IsOk)
+            {
+                var formations = unitAi.GetChild("Formations");
+                if (formations.IsOk)
+                    stats.FormationShapes = formations.ToString().Trim();
+            }
+
+            // Upgrade(建筑升级路径,原版 Upgrade.js):首个升级子节点的目标模板/造价/时间。
+            // 哨塔→防御塔等;Entity 含 {civ} 占位,解析端替换。
+            var upgrade = node.GetChild("Upgrade");
+            if (upgrade.IsOk)
+            {
+                var target = upgrade.GetOnlyChild();
+                if (target.IsOk)
+                {
+                    stats.UpgradeToTemplate = target.GetChild("Entity").ToString().Trim();
+                    var upCost = target.GetChild("Cost");
+                    if (upCost.IsOk)
+                    {
+                        stats.UpgradeCostWood = upCost.GetChild("wood").IsOk ? upCost.GetChild("wood").ToInt() : 0;
+                        stats.UpgradeCostFood = upCost.GetChild("food").IsOk ? upCost.GetChild("food").ToInt() : 0;
+                        stats.UpgradeCostStone = upCost.GetChild("stone").IsOk ? upCost.GetChild("stone").ToInt() : 0;
+                        stats.UpgradeCostMetal = upCost.GetChild("metal").IsOk ? upCost.GetChild("metal").ToInt() : 0;
+                    }
+                    stats.UpgradeTime = target.GetChild("Time").IsOk ? target.GetChild("Time").ToFloat() : 0f;
+                }
+            }
+
+            // Gate(城门标记;GateComponent 装配/门面板按钮用)
+            if (node.GetChild("Gate").IsOk)
+                stats.HasGate = true;
 
             var attack = node.GetChild("Attack");
             if (attack.IsOk)
@@ -436,8 +497,20 @@ namespace ZeroAD.Sim.Content
                 if (fGap.IsOk) stats.FormationCenterGap = fGap.ToFixed().ToFloat();
             }
 
+            // FormationAttack(编队作战;template_formation 默认 CanAttackAsFormation=false,
+            // phalanx/syntagma 等为 true)。该组件在原版注册为 IID_Attack(控制器无实体攻击,
+            // 仅聚合成员射程 + 标记编队是否可整体作战)。
+            var fAttackNode = node.GetChild("FormationAttack");
+            if (fAttackNode.IsOk)
+            {
+                var caaf = fAttackNode.GetChild("CanAttackAsFormation");
+                if (caaf.IsOk) stats.FormationCanAttackAsFormation = caaf.ToBool();
+            }
+
             // Footprint: physical extent used for spawn-point search (FootprintComponent) and click
-            // hit-testing. Either <Square width depth/> or <Circle radius/>.
+            // hit-testing. Either <Square width depth/> or <Circle radius/> — width/depth/radius
+            // 是 XML **属性**,ParamNode 以 "@name" 子节点存储(见 ParamNode.ApplyLayer);
+            // 裸名读取恒取不到 → 曾全局回落 12(选择框/阻挡全偏小)。
             var footprint = node.GetChild("Footprint");
             if (footprint.IsOk)
             {
@@ -445,14 +518,14 @@ namespace ZeroAD.Sim.Content
                 if (square.IsOk)
                 {
                     stats.FootprintShape = "square";
-                    stats.FootprintSize0 = square.GetChild("width").IsOk ? square.GetChild("width").ToFixed() : stats.FootprintSize0;
-                    stats.FootprintSize1 = square.GetChild("depth").IsOk ? square.GetChild("depth").ToFixed() : stats.FootprintSize1;
+                    stats.FootprintSize0 = Attr(square, "width").IsOk ? Attr(square, "width").ToFixed() : stats.FootprintSize0;
+                    stats.FootprintSize1 = Attr(square, "depth").IsOk ? Attr(square, "depth").ToFixed() : stats.FootprintSize1;
                 }
                 var circle = footprint.GetChild("Circle");
                 if (circle.IsOk)
                 {
                     stats.FootprintShape = "circle";
-                    stats.FootprintSize0 = circle.GetChild("radius").IsOk ? circle.GetChild("radius").ToFixed() : stats.FootprintSize0;
+                    stats.FootprintSize0 = Attr(circle, "radius").IsOk ? Attr(circle, "radius").ToFixed() : stats.FootprintSize0;
                     stats.FootprintSize1 = stats.FootprintSize0;
                 }
                 var height = footprint.GetChild("Height");
@@ -468,8 +541,8 @@ namespace ZeroAD.Sim.Content
                 if (staticEl.IsOk)
                 {
                     stats.ObstructionShape = "static";
-                    stats.ObstructionSize0 = staticEl.GetChild("width").IsOk ? staticEl.GetChild("width").ToFixed() : stats.ObstructionSize0;
-                    stats.ObstructionSize1 = staticEl.GetChild("depth").IsOk ? staticEl.GetChild("depth").ToFixed() : stats.ObstructionSize1;
+                    stats.ObstructionSize0 = Attr(staticEl, "width").IsOk ? Attr(staticEl, "width").ToFixed() : stats.ObstructionSize0;
+                    stats.ObstructionSize1 = Attr(staticEl, "depth").IsOk ? Attr(staticEl, "depth").ToFixed() : stats.ObstructionSize1;
                 }
                 else if (obstruction.GetChild("Unit").IsOk)
                 {
@@ -604,6 +677,53 @@ namespace ZeroAD.Sim.Content
                 if (garrisonMult.IsOk) stats.TraderGarrisonGainMultiplier = garrisonMult.ToFixed().ToFloat();
             }
 
+            // Loot(战利品;template_unit/gaia 动物等 247 模板):xp + 四资源直子节点。
+            var lootNode = node.GetChild("Loot");
+            if (lootNode.IsOk)
+            {
+                stats.HasLoot = true;
+                var xp = lootNode.GetChild("xp");
+                if (xp.IsOk) stats.LootXp = xp.ToInt();
+                var lf = lootNode.GetChild("food");
+                if (lf.IsOk) stats.LootFood = lf.ToInt();
+                var lw = lootNode.GetChild("wood");
+                if (lw.IsOk) stats.LootWood = lw.ToInt();
+                var ls = lootNode.GetChild("stone");
+                if (ls.IsOk) stats.LootStone = ls.ToInt();
+                var lm = lootNode.GetChild("metal");
+                if (lm.IsOk) stats.LootMetal = lm.ToInt();
+            }
+
+            // ResourceTrickle(资源涓流;奇观/牲口棚/玩家模板):Rates 四资源 + Interval(ms)。
+            var trickleNode = node.GetChild("ResourceTrickle");
+            if (trickleNode.IsOk)
+            {
+                stats.HasResourceTrickle = true;
+                var interval = trickleNode.GetChild("Interval");
+                if (interval.IsOk) stats.TrickleIntervalMs = interval.ToFixed().ToFloat();
+                var rates = trickleNode.GetChild("Rates");
+                if (rates.IsOk)
+                {
+                    var tf = rates.GetChild("food");
+                    if (tf.IsOk) stats.TrickleFood = tf.ToFixed().ToFloat();
+                    var tw = rates.GetChild("wood");
+                    if (tw.IsOk) stats.TrickleWood = tw.ToFixed().ToFloat();
+                    var ts = rates.GetChild("stone");
+                    if (ts.IsOk) stats.TrickleStone = ts.ToFixed().ToFloat();
+                    var tm = rates.GetChild("metal");
+                    if (tm.IsOk) stats.TrickleMetal = tm.ToFixed().ToFloat();
+                }
+            }
+
+            // Repairable(可修理;template_structure 默认 + 攻城器/船):RepairTimeRatio。
+            var repairableNode = node.GetChild("Repairable");
+            if (repairableNode.IsOk)
+            {
+                stats.HasRepairable = true;
+                var ratio = repairableNode.GetChild("RepairTimeRatio");
+                if (ratio.IsOk) stats.RepairTimeRatio = ratio.ToFixed().ToFloat();
+            }
+
             // Market(市场/船坞):TradeType token 串(land/naval)+ InternationalBonus。
             var marketNode = node.GetChild("Market");
             if (marketNode.IsOk)
@@ -729,6 +849,9 @@ namespace ZeroAD.Sim.Content
         public int FormationMaxColumns;
         public int FormationMaxRows;
         public float FormationCenterGap;
+        /// <summary>FormationAttack/CanAttackAsFormation(编队整体作战能力;
+        /// phalanx/syntagma 类为 true,默认 false)。</summary>
+        public bool FormationCanAttackAsFormation;
         /// <summary>TrainingRestrictions/Category (Civilian/Hero/WarDog/...). Empty if absent.</summary>
         public string TrainingCategory = "";
 
@@ -742,6 +865,22 @@ namespace ZeroAD.Sim.Content
         /// 占位;合并语义=父列表保留+子追加+"-token"删除,对齐 CParamNode)。空 = 不可训练。
         /// 装配进 ProductionQueue.TrainableTokens,按属主文明实时解析。</summary>
         public string TrainableEntities = "";
+        /// <summary>Builder/Entities tokens(可建造列表;{civ}/{native} 占位,解析端替换)。</summary>
+        public string BuildableEntities = "";
+        /// <summary>Researcher/Technologies tokens(可研究列表;同占位语义)。</summary>
+        public string ResearchableTechnologies = "";
+        /// <summary>UnitAI/Formations tokens(可编队形列表,special/formations/{shape} 全名)。</summary>
+        public string FormationShapes = "";
+
+        /// <summary>升级目标模板(Upgrade 首个子节点的 Entity;含 {civ} 占位)。空 = 不可升级。</summary>
+        public string UpgradeToTemplate = "";
+        public int UpgradeCostWood;
+        public int UpgradeCostFood;
+        public int UpgradeCostStone;
+        public int UpgradeCostMetal;
+        public float UpgradeTime;
+        /// <summary>Gate 节点存在(城门模板;GateComponent 装配与 gate 面板按钮用)。</summary>
+        public bool HasGate;
 
         // Footprint: physical extent for spawn-point search + click hit-testing.
         // Shape: "" (none), "square" (Size0=width, Size1=depth), "circle" (Size0=radius).
@@ -821,6 +960,26 @@ namespace ZeroAD.Sim.Content
         public float TraderGainMultiplier = 0.75f;
         /// <summary>Trader/GarrisonGainMultiplier(可选;0 = 无舰载商人加成)。</summary>
         public float TraderGarrisonGainMultiplier;
+
+        // Loot(战利品;template_unit/gaia 动物):HasLoot=false → 不装配。
+        public bool HasLoot;
+        public int LootXp;
+        public int LootFood;
+        public int LootWood;
+        public int LootStone;
+        public int LootMetal;
+
+        // ResourceTrickle(资源涓流;奇观/牲口棚/玩家模板):HasResourceTrickle=false → 不装配。
+        public bool HasResourceTrickle;
+        public float TrickleIntervalMs = 1000f;
+        public float TrickleFood;
+        public float TrickleWood;
+        public float TrickleStone;
+        public float TrickleMetal;
+
+        // Repairable(可修理;template_structure 默认 + 攻城器/船):HasRepairable=false → 不装配。
+        public bool HasRepairable;
+        public float RepairTimeRatio = 2.0f;
 
         // Market(市场/船坞;template_structure_economic_market):HasMarket=false → 不装配。
         public bool HasMarket;

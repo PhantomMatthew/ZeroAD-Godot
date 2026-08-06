@@ -39,6 +39,20 @@ namespace ZeroAD.Sim.Net
         SetupTradeRoute = 22,  // 建立贸易路线（EntityId=trader, IntParam1=targetMarket, 第一市场=EntityId）
         CollectTreasure = 23,  // 收集宝藏（EntityId=collector, IntParam1=treasure）
         Guard = 24,            // 护卫（EntityId=guard, IntParam1=target）
+        Patrol = 25,           // 巡逻（EntityId=单位, FixedParam1/2=x/z 目标点）
+        /// <summary>Formation: 编队创建/解散。TemplateName 载荷 "shape|id1,id2,..."
+        /// (shape=null → 解散所列成员的控制器;否则创建 special/formations/{shape} 控制器)。
+        /// 原版 cmd {type:"formation", entities, name}。</summary>
+        Formation = 26,
+        /// <summary>Pack: 攻城器打包/解包。EntityId=单位, IntParam1: 0=pack, 1=unpack。
+        /// 原版 cmd {type:"pack"/"unpack"}。</summary>
+        Pack = 27,
+        /// <summary>Upgrade: 建筑升级(哨塔→防御塔等)。EntityId=建筑, IntParam1=建造者实体。
+        /// 原版 cmd {type:"upgrade", entities}。</summary>
+        Upgrade = 28,
+        /// <summary>Gate: 城门锁切换。EntityId=城门, IntParam1: 0=解锁(通行), 1=上锁(阻挡)。
+        /// 原版 cmd {type:"lock-gate"/"unlock-gate"}。</summary>
+        Gate = 29,
     }
 
     /// <summary>
@@ -261,5 +275,29 @@ namespace ZeroAD.Sim.Net
         /// <summary>Guard: 护卫目标。EntityId=guard, IntParam1=target。</summary>
         public static NetCommand Guard(uint player, uint guardId, uint targetId) =>
             new(player, NetCommandType.Guard, guardId, (int)targetId);
+
+        /// <summary>Patrol: 巡逻到坐标(起点=下单时位置,自动往返)。
+        /// EntityId=单位, FixedParam1/2=x/z。原版 cmd {type:"patrol", x, z}。</summary>
+        public static NetCommand Patrol(uint player, uint unitId, Fixed x, Fixed z) =>
+            new(player, NetCommandType.Patrol, unitId, 0, 0, x.InternalValue, z.InternalValue);
+
+        /// <summary>Formation: 编队命令。shape=null → 解散;否则创建编队。
+        /// TemplateName = "shape|id1,id2,..."。原版 cmd {type:"formation", entities, name}。</summary>
+        public static NetCommand FormationCmd(uint player, string shape, IReadOnlyList<uint> memberIds) =>
+            new(player, NetCommandType.Formation, 0, 0, 0, 0, 0,
+                shape + "|" + string.Join(',', memberIds));
+
+        /// <summary>Pack: 攻城器打包(unpack=false)/解包(true)。EntityId=单位。</summary>
+        public static NetCommand Pack(uint player, uint unitId, bool unpack) =>
+            new(player, NetCommandType.Pack, unitId, unpack ? 1 : 0);
+
+        /// <summary>Upgrade: 建筑升级。EntityId=建筑, IntParam1=建造者(0=无需指派)。
+        /// 原版 cmd {type:"upgrade", entities}。</summary>
+        public static NetCommand Upgrade(uint player, uint buildingId, uint builderId) =>
+            new(player, NetCommandType.Upgrade, buildingId, (int)builderId);
+
+        /// <summary>Gate: 城门锁切换。EntityId=城门;locked=true 上锁(阻挡),false 解锁(通行)。</summary>
+        public static NetCommand Gate(uint player, uint gateId, bool locked) =>
+            new(player, NetCommandType.Gate, gateId, locked ? 1 : 0);
     }
 }

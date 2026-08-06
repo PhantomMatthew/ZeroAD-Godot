@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Godot;
 using ZeroAD.Godot.Options;
 
@@ -26,9 +27,23 @@ public sealed partial class MainMenu : Control
         _cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
         // 已存设置全量重放(音量/全屏/垂直同步/GUI 缩放等即时生效项;场景相关项此处无 light/env
         // → no-op,进 session 后由 Main 再重放)。菜单上下文 inGame:false(adaptivefps 取 menu 值)。
-        OptionsApplier.ApplyAll(GetNode<UserConfig>("/root/UserConfig"), GetTree(), inGame: false);
+        var userCfg = GetNode<UserConfig>("/root/UserConfig");
+        OptionsApplier.ApplyAll(userCfg, GetTree(), inGame: false);
+        // 音量滑杆改动即时生效(菜单音乐实时调)。具名方法 + _ExitTree 退订防悬垂。
+        userCfg.ConfigChanged += OnUserConfigChangedAudio;
         BuildUi();
         MaybeRunScreenshotHook();
+    }
+
+    private void OnUserConfigChangedAudio(System.Collections.Generic.IReadOnlyList<string> keys)
+    {
+        if (keys.Any(k => k.StartsWith("sound.", StringComparison.Ordinal)))
+            AudioManager.RefreshVolumes(this);
+    }
+
+    public override void _ExitTree()
+    {
+        GetNode<UserConfig>("/root/UserConfig").ConfigChanged -= OnUserConfigChangedAudio;
     }
 
     // dev 截图钩子:ZEROAD_SHOT=hotkeys/options 自动开对应面板,1.5s 后截屏存 user://shot_<名>.png 退出。
@@ -87,6 +102,9 @@ public sealed partial class MainMenu : Control
         // 见 PregameBackground);binaries 缺失时回退渐变底。
         string? binDir = FindBinariesDir();
         _binDir = binDir;
+        // 音频:初始化 + 主菜单音乐列表(原版 music.js MENU:Honor_Bound 等 shuffle)。
+        AudioManager.Init(this, binDir == null ? null : Path.Combine(binDir, "data", "mods", "public"));
+        AudioManager.StartPlaylist("menu");
         var parallax = new PregameBackground();
         if (parallax.Init(binDir))
         {
@@ -499,6 +517,7 @@ public sealed partial class MainMenu : Control
         };
         // StoneButtonFancy 贴图样式(按钮高 28、白字描边 14,对齐 common/styles.xml)。
         StoneButtonStyle.Apply(btn, _binDir);
+        btn.Pressed += () => AudioManager.PlayUi("ui_button_click");   // 原版 styles.xml sound_pressed
         btn.Pressed += onPressed;
         parent.AddChild(btn);
     }

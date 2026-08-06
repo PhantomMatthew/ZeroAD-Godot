@@ -119,7 +119,29 @@ public static class ActorParser
 		string? material = el.Element("material")?.Value.Trim();
 		if (string.IsNullOrEmpty(material)) material = null;
 
-		return new ActorVariant(name, freq, mesh, textures, props, anims, material, ParseColor(el));
+		return new ActorVariant(name, freq, mesh, textures, props, anims, material,
+			ParseColor(el), ParseDecal(el), ParseParticles(el));
+	}
+
+	/// <summary>Parses &lt;decal width depth angle offsetx offsetz/&gt; — 贴花变体
+	/// (无 mesh;原版 decal 渲染器的平铺贴图参数)。</summary>
+	private static DecalSpec? ParseDecal(XElement el)
+	{
+		var d = el.Element("decal");
+		if (d == null) return null;
+		float F(string n) => float.TryParse((string?)d.Attribute(n),
+			System.Globalization.NumberStyles.Float,
+			System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0f;
+		return new DecalSpec(F("width"), F("depth"), F("angle"), F("offsetx"), F("offsetz"));
+	}
+
+	/// <summary>Parses &lt;particles file="x"/&gt; — 粒子系统引用(不移植,仅记录存在性)。</summary>
+	private static string? ParseParticles(XElement el)
+	{
+		var p = el.Element("particles");
+		if (p == null) return null;
+		string? f = (string?)p.Attribute("file");
+		return string.IsNullOrEmpty(f) ? "" : f;
 	}
 
 	/// <summary>Parses &lt;color&gt;r g b&lt;/color&gt; — authored as 0-255 ints
@@ -176,7 +198,9 @@ public static class ActorParser
 			mergedTex, mergedProps,
 			mergedAnims.Values.ToList(),
 			material,
-			ParseColor(inline) ?? baseV.Color);
+			ParseColor(inline) ?? baseV.Color,
+			ParseDecal(inline) ?? baseV.Decal,
+			ParseParticles(inline) ?? baseV.Particles);
 	}
 
 	private static ActorVariant Rename(ActorVariant v, string name, int freq)

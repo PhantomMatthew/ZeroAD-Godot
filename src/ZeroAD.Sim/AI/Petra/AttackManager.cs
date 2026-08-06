@@ -116,6 +116,7 @@ public sealed class AttackPlan
                 {
                     ChooseTarget(gameState);
                     State = AttackState.Started;
+                    IssueAttackCommands(gameState);   // 首次推进即下攻击移动
                 }
                 else
                 {
@@ -178,9 +179,25 @@ public sealed class AttackPlan
                 // 目标摧毁 → 选新目标或完成
                 ChooseTarget(gameState);
                 if (!Target.HasValue) State = AttackState.Completed;
+                else IssueAttackCommands(gameState);   // 换目标后重下推进命令
             }
         }
-        // TODO: 下达 attack-move 命令到目标位置（需 NetCommand）
+    }
+
+    /// <summary>对参与单位下攻击移动(原版 attackPlan 的 comportment 简化版:
+    /// 全军 attack-walk 到目标位置——沿途自动交战、打完继续推进,
+    /// UnitAI WalkAndFight 状态机已承载该语义)。目标无位置(TargetPos 缺失)不下。</summary>
+    private void IssueAttackCommands(GameState gameState)
+    {
+        if (!TargetPos.HasValue) return;
+        foreach (var id in UnitCollection)
+        {
+            if (gameState.GetEntityById(id) == null) continue;   // 死单位跳过
+            gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.AttackWalk(
+                (uint)gameState.PlayerId, id,
+                ZeroAD.Sim.Maths.Fixed.FromFloat(TargetPos.Value.X.ToFloat()),
+                ZeroAD.Sim.Maths.Fixed.FromFloat(TargetPos.Value.Y.ToFloat())));
+        }
     }
 
     /// <summary>释放单位（进攻取消/完成时）。</summary>

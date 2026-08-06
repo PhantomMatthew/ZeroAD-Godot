@@ -21,6 +21,19 @@ public sealed class ActorComposer
         if (!string.IsNullOrEmpty(spec.MeshGlbPath))
             root.SetMeta(LayerMeta.MeshGlbPath, spec.MeshGlbPath!);
 
+        // 粒子系统 actor(cloud/sparkle_*):不可移植——原版渲染器不存在于本端,
+        // 渲染为"无"远好于亮兜底盒(与原版"无粒子则空"语义一致,不记兜底)。
+        if (spec.Particles != null && string.IsNullOrEmpty(spec.MeshGlbPath))
+            return root;
+
+        // 贴花 actor(<decal/> 无 mesh):平躺 quad + baseTex(AlphaScissor)——
+        // 替代原版的贴花渲染器,而不是喂兜底盒。
+        if (spec.Decal != null && string.IsNullOrEmpty(spec.MeshGlbPath))
+        {
+            root.AddChild(MakeDecalQuad(spec));
+            return root;
+        }
+
         Node3D? instance = null;
         if (!string.IsNullOrEmpty(spec.MeshGlbPath))
             instance = LoadAndInstantiateGlb(spec.MeshGlbPath!);
@@ -271,6 +284,43 @@ public sealed class ActorComposer
         var mat = new StandardMaterial3D { AlbedoColor = color };
         mi.MaterialOverride = mat;
         mi.Position = new Vector3(0, 1f, 0);
+        return mi;
+    }
+
+    private static readonly Dictionary<string, ImageTexture?> _decalTexCache = new();
+
+    /// <summary>贴花 quad(原版 decal 渲染器的最小替代):平躺 QuadMesh(width×depth),
+    /// baseTex AlphaScissor、双面、离地 5cm 防 z-fighting,angle/offset 按 XML 参数。</summary>
+    private static MeshInstance3D MakeDecalQuad(ResolvedActorSpec spec)
+    {
+        var d = spec.Decal!;
+        var mesh = new QuadMesh { Size = new Vector2(d.Width > 0 ? d.Width : 4f, d.Depth > 0 ? d.Depth : 4f) };
+        var mi = new MeshInstance3D { Mesh = mesh };
+
+        ImageTexture? tex = null;
+        if (spec.Textures.TryGetValue("baseTex", out var rel))
+        {
+            if (!_decalTexCache.TryGetValue(rel, out tex))
+            {
+                string abs = ProjectSettings.GlobalizePath("res://assets/textures/") + rel.Replace('\\', '/');
+                var img = File.Exists(abs) ? Image.LoadFromFile(abs) : null;
+                tex = img != null ? ImageTexture.CreateFromImage(img) : null;
+                _decalTexCache[rel] = tex;
+            }
+        }
+        var mat = new StandardMaterial3D
+        {
+            Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor,
+            AlphaScissorThreshold = 0.4f,
+            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+        };
+        if (tex != null) mat.AlbedoTexture = tex;
+        else mat.AlbedoColor = new Color(0.4f, 0.35f, 0.25f);   // 贴图缺失时泥色,绝不白盒
+        mi.MaterialOverride = mat;
+
+        // QuadMesh 面朝 +Z;绕 X 旋转 -90° 平躺到地面(Y 朝上),angle 为偏航,offset 平移。
+        mi.Rotation = new Vector3(-Mathf.Pi / 2f, d.Angle, 0f);
+        mi.Position = new Vector3(d.OffsetX, 0.05f, d.OffsetZ);
         return mi;
     }
 

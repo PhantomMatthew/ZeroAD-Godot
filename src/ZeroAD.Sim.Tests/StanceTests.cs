@@ -229,10 +229,21 @@ public sealed class StanceTests
 
         ai.OnAttacked(attacker, cm);
 
-        Assert.Equal("Walk", ai.CurrentOrder?.Type);
+        // 真 Flee 订单(FLEEING 状态):Target=威胁,Force=false;奔跑目的地方向在
+        // 订单派发时算(背离攻击者)。
+        Assert.Equal("Flee", ai.CurrentOrder?.Type);
         Assert.False(ai.CurrentOrder!.Force);
-        // Flee destination must move AWAY from the attacker (attacker at x=45, unit at x=50).
-        Assert.True(ai.CurrentOrder!.Position.X.ToFloat() > 50f);
+        Assert.Equal(attacker, ai.CurrentOrder!.Target);
+
+        // 派发 + 奔跑:单位须远离攻击者(攻击者 x=45,单位 x=50 → 逃向 +x)。
+        float x0 = cm.QueryInterface<PositionComponent>(u)!.Position.X.ToFloat();
+        for (int i = 0; i < 100 && !ai.IsIdle; i++)
+        {
+            cm.QueryInterface<UnitMotion>(u)?.Tick(0.1f);
+            ai.Tick(0.1f, cm);
+        }
+        float x1 = cm.QueryInterface<PositionComponent>(u)!.Position.X.ToFloat();
+        Assert.True(x1 > x0, $"fled unit should move away from attacker (x {x0} → {x1})");
     }
 
     [Fact]

@@ -26,6 +26,18 @@ public sealed partial class HUD : CanvasLayer
     private string _garrisonSignature = "";
     private Label _stanceLabel = null!;
     private HBoxContainer _stanceRow = null!;
+    private HBoxContainer _formationRow = null!;
+    private string _formationSignature = "";
+    private Button _alertBtn = null!;
+    private float _alertX, _alertZ, _alertElapsed;
+    private double _alertFlash;
+    private HBoxContainer _groupRow = null!;
+    private string _groupSignature = "";
+    private HBoxContainer _researchPanel = null!;
+    private TextureRect _researchIcon = null!;
+    private Label _researchLabel = null!;
+    private ProgressBar _researchBar = null!;
+    private string _researchTech = "";
     private readonly System.Collections.Generic.Dictionary<string, Button> _stanceButtons = new();
     private const int QueueSlotCount = 8;     // 训练队列池大小(选中面板最多显示的槽数)
     private HBoxContainer _queueRow = null!;
@@ -105,6 +117,38 @@ public sealed partial class HUD : CanvasLayer
         _resourceCounters.Add(popCounter);
         hbox.AddChild(popCounter.Root);
 
+        // 研究进度条(原版 session_objects research progress):顶栏中部,
+        // 任一己方建筑在研时显示 科技图标+名+进度条;完成/无在研隐藏。
+        _researchPanel = new HBoxContainer();
+        _researchPanel.AnchorLeft = 0.5f; _researchPanel.AnchorRight = 0.5f;
+        _researchPanel.AnchorTop = 0f; _researchPanel.AnchorBottom = 0f;
+        _researchPanel.OffsetLeft = -150; _researchPanel.OffsetRight = 150;
+        _researchPanel.OffsetTop = 4; _researchPanel.OffsetBottom = 34;
+        _researchPanel.AddThemeConstantOverride("separation", 6);
+        _researchPanel.Visible = false;
+        _researchIcon = new TextureRect
+        {
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+            CustomMinimumSize = new Vector2(26, 26),
+        };
+        _researchPanel.AddChild(_researchIcon);
+        _researchLabel = new Label { VerticalAlignment = VerticalAlignment.Center };
+        _researchLabel.AddThemeFontSizeOverride("font_size", 12);
+        _researchLabel.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
+        _researchLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _researchLabel.AddThemeConstantOverride("outline_size", 2);
+        _researchPanel.AddChild(_researchLabel);
+        _researchBar = new ProgressBar
+        {
+            MinValue = 0, MaxValue = 100,
+            CustomMinimumSize = new Vector2(90, 12),
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            ShowPercentage = false,
+        };
+        _researchPanel.AddChild(_researchBar);
+        _topBar.AddChild(_researchPanel);
+
         // 对齐 C++ TopPanel 右侧(top_panel/MenuButton.xml + IconButtons/*):
         // 从左到右 GameSpeed(100%−284) / Diplomacy / Trade / MatchSettings(28×28 图标,
         // 间距 2) / **Menu 在最右**(100%−164..100%−8,156×28 文字按钮,StoneButtonFancy)。
@@ -119,6 +163,41 @@ public sealed partial class HUD : CanvasLayer
         AddMenuButton(menuBox, "diplomacy", "Diplomacy", () => _main.OpenDiplomacyPanel());
         AddMenuButton(menuBox, "economics", "Trade", () => _main.OpenTradePanel());
         AddMenuButton(menuBox, "match-settings", "Settings", () => _main.OpenMatchSettingsPanel());
+
+        // 暂停键(原版 PauseControl 顶栏按钮:直接切 sim 冻结,不开菜单叠层;
+        // 菜单叠层仍由 Menu/Esc 开)。
+        var pauseBtn = new Button
+        {
+            Text = "❚❚",
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(34, 28),
+            TooltipText = "Pause",
+        };
+        StoneButtonStyle.Apply(pauseBtn, FindBinariesDir());
+        pauseBtn.Pressed += () => _main.TogglePause();
+        menuBox.AddChild(pauseBtn);
+
+        // 速度 +/-(原版 GameSpeedControl 顶栏步进键):当前档 ±1 档。
+        var slowerBtn = new Button
+        {
+            Text = "−",
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(30, 28),
+            TooltipText = "Slower",
+        };
+        StoneButtonStyle.Apply(slowerBtn, FindBinariesDir());
+        slowerBtn.Pressed += () => _main.AdjustGameSpeed(-1);
+        menuBox.AddChild(slowerBtn);
+        var fasterBtn = new Button
+        {
+            Text = "+",
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(30, 28),
+            TooltipText = "Faster",
+        };
+        StoneButtonStyle.Apply(fasterBtn, FindBinariesDir());
+        fasterBtn.Pressed += () => _main.AdjustGameSpeed(+1);
+        menuBox.AddChild(fasterBtn);
 
         var menuBtn = new Button
         {
@@ -212,26 +291,41 @@ public sealed partial class HUD : CanvasLayer
 
     private void SetupBottomPanel()
     {
+        // 原版 session.xml 底栏:总宽 1024 整体居中(50%±512),四个区固定坐标——
+        // minimap(0,0)200×204 / supplemental(196,38)206×166 / selection(398,0)228×204 /
+        // commands(622,31)402×173(短区底部对齐)。此前 BottomWide 全宽展开,与 C++ 不符。
         _bottomBar = new Panel();
-        _bottomBar.SetAnchorsPreset(Control.LayoutPreset.BottomWide);
-        _bottomBar.OffsetTop = -204;
-        _bottomBar.CustomMinimumSize = new Vector2(0, 204);
-        // Transparent base — C++ draws no full-bar background, each zone has its own frame.
+        _bottomBar.AnchorLeft = 0.5f; _bottomBar.AnchorRight = 0.5f;
+        _bottomBar.AnchorTop = 1f; _bottomBar.AnchorBottom = 1f;
+        _bottomBar.OffsetLeft = -512; _bottomBar.OffsetRight = 512;
+        _bottomBar.OffsetTop = -204; _bottomBar.OffsetBottom = 0;
+        // 透明底(各区自带贴图+边框,原版同)。
         _bottomBar.AddThemeStyleboxOverride("panel", new StyleBoxFlat { BgColor = new Color(0, 0, 0, 0) });
 
-        var hbox = new HBoxContainer();
-        hbox.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        hbox.OffsetLeft = 4; hbox.OffsetTop = 4;
-        hbox.OffsetRight = -4; hbox.OffsetBottom = -4;
-        hbox.AddThemeConstantOverride("separation", 4);
-        _bottomBar.AddChild(hbox);
-
-        SetupMinimapZone(hbox);
-        SetupSupplementalZone(hbox);
-        SetupSelectionZone(hbox);
-        SetupCommandZone(hbox);
+        SetupMinimapZone(_bottomBar, new Vector2(0, 0), new Vector2(200, 204));
+        SetupSupplementalZone(_bottomBar, new Vector2(196, 204 - 166), new Vector2(206, 166));
+        SetupSelectionZone(_bottomBar, new Vector2(398, 0), new Vector2(228, 204));
+        SetupCommandZone(_bottomBar, new Vector2(622, 204 - 173), new Vector2(402, 173));
 
         AddChild(_bottomBar);
+    }
+
+    /// <summary>hud_panels.png 的区底图(原版 sprite 的 real_texture_placement 裁剪)。
+    /// inset=4(sprite size="4 4 100%-4 100%-4" 语义:边框内缩 4px)。</summary>
+    private static void AddPanelBackground(Control zone, Rect2 region)
+    {
+        var hudPanels = LoadTex("hud_panels.png");
+        if (hudPanels == null) return;
+        var bg = new TextureRect
+        {
+            Texture = new AtlasTexture { Atlas = hudPanels, Region = region },
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.Scale,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        bg.OffsetLeft = 4; bg.OffsetTop = 4; bg.OffsetRight = -4; bg.OffsetBottom = -4;
+        zone.AddChild(bg);
     }
 
     /// <summary>Wraps a zone Control with a C++-style border frame: 4 edge lines
@@ -281,12 +375,10 @@ public sealed partial class HUD : CanvasLayer
         AddCorner(cbr, -bw, -bw);
     }
 
-    private void SetupMinimapZone(HBoxContainer parent)
+    private void SetupMinimapZone(Control parent, Vector2 pos, Vector2 size)
     {
-        var frame = new Control { CustomMinimumSize = new Vector2(200, 200) };
-        frame.SizeFlagsHorizontal = Control.SizeFlags.Fill;
+        var frame = new Control { Position = pos, Size = size };
         AddBorderFrame(frame);
-
         var ring = new TextureRect
         {
             Texture = LoadTex("minimap_circle_modern.png"),
@@ -304,18 +396,33 @@ public sealed partial class HUD : CanvasLayer
         };
         frame.AddChild(_minimap);
 
+        // 空闲村民按钮(原版 MiniMapIdleWorkerButton:小地图区角落;点击循环聚焦
+        // 下一个空闲采集者并选中)。
+        var idleBtn = new Button
+        {
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(30, 30),
+            TooltipText = "Find idle worker",
+            ExpandIcon = true,
+            IconAlignment = HorizontalAlignment.Center,
+            VerticalIconAlignment = VerticalAlignment.Center,
+        };
+        var idleTex = LoadIcon("back-to-work");
+        if (idleTex != null) idleBtn.Icon = idleTex;
+        idleBtn.Pressed += () => _main.CycleIdleWorker();
+        idleBtn.SetAnchorsPreset(Control.LayoutPreset.BottomRight);
+        frame.AddChild(idleBtn);
+
         parent.AddChild(frame);
     }
 
     /// <summary>Supplemental panel (C++ "selection_panels_left"): stance buttons,
     /// garrison count, and formation placeholder.</summary>
-    private void SetupSupplementalZone(HBoxContainer parent)
+    private void SetupSupplementalZone(Control parent, Vector2 pos, Vector2 size)
     {
-        var panel = new Control
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.Fill,
-            CustomMinimumSize = new Vector2(180, 0),
-        };
+        var panel = new Control { Position = pos, Size = size };
+        // 原版 supplementalDetailsPanel 底图:hud_panels.png 裁 (314,98)-(512,256)=198×158
+        AddPanelBackground(panel, new Rect2(314, 98, 198, 158));
         AddBorderFrame(panel);
 
         var vbox = new VBoxContainer();
@@ -323,6 +430,12 @@ public sealed partial class HUD : CanvasLayer
         vbox.OffsetLeft = 8; vbox.OffsetTop = 8;
         vbox.OffsetRight = -8; vbox.OffsetBottom = -8;
         panel.AddChild(vbox);
+
+        // 编队组图标条(原版 PanelEntityManager 的紧凑版):已编入的组 0-9 小图标,
+        // 数字+成员数;点击选中该组(与 Ctrl+数字编入/数字选中热键同路)。
+        _groupRow = new HBoxContainer();
+        _groupRow.AddThemeConstantOverride("separation", 2);
+        vbox.AddChild(_groupRow);
 
         // Stance row: 5 stance icons (violent/aggressive/defensive/passive/standground).
         // 接 sim:点击经 NetCommand.SetUnitStance 改全部选中己方单位;当前站姿高亮。
@@ -336,6 +449,14 @@ public sealed partial class HUD : CanvasLayer
         _stanceRow = new HBoxContainer();
         _stanceRow.AddThemeConstantOverride("separation", 2);
         vbox.AddChild(_stanceRow);
+
+        // 阵型行(原版 formation_panel):选中 ≥2 同主可编队单位时按模板
+        // UnitAI/Formations 显示可用阵型;选中编队控制器时只显 null(解散)。
+        // 点击经 NetCommand.FormationCmd 锁步创建/解散。
+        _formationRow = new HBoxContainer();
+        _formationRow.AddThemeConstantOverride("separation", 2);
+        _formationRow.Visible = false;
+        vbox.AddChild(_formationRow);
         foreach (var stance in UnitAIComponent.SelectableStances)
         {
             var btn = new Button
@@ -373,18 +494,63 @@ public sealed partial class HUD : CanvasLayer
         _garrisonRow.Visible = false;
         vbox.AddChild(_garrisonRow);
 
+        // 遇袭警报按钮(原版 alert_panel v1):己方实体被命中后闪现(10s 有效),
+        // 点击跳相机到被袭位置并清除。
+        _alertBtn = new Button
+        {
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(30, 30),
+            TooltipText = "Under attack! Click to jump",
+            ExpandIcon = true,
+            IconAlignment = HorizontalAlignment.Center,
+            VerticalIconAlignment = VerticalAlignment.Center,
+            Visible = false,
+        };
+        var alertTex = LoadIcon("die");
+        if (alertTex != null) _alertBtn.Icon = alertTex;
+        _alertBtn.Modulate = new Color(1f, 0.35f, 0.3f);
+        _alertBtn.Pressed += () =>
+        {
+            _main.FocusWorldPosition(_alertX, _alertZ);
+            _alertBtn.Visible = false;
+        };
+        vbox.AddChild(_alertBtn);
+
+        // 快捷易物行(原版 barter_panel 左栏的紧凑版):选资源 + Buy/Sell 100。
+        // 原版以物易物仅 town+(market),校验在 BarterSystem 服务端,拒绝会 toast。
+        var barterRow = new HBoxContainer();
+        barterRow.AddThemeConstantOverride("separation", 4);
+        _barterResource = new OptionButton { Theme = UITheme.GetTheme(), CustomMinimumSize = new Vector2(80, 0) };
+        foreach (var r in new[] { "wood", "food", "stone", "metal" })
+            _barterResource.AddItem(r);
+        barterRow.AddChild(_barterResource);
+        var buyBtn = new Button { Text = "Buy", Theme = UITheme.GetTheme(), TooltipText = "Buy 100 (barter)" };
+        buyBtn.Pressed += () => Barter(buy: true);
+        barterRow.AddChild(buyBtn);
+        var sellBtn = new Button { Text = "Sell", Theme = UITheme.GetTheme(), TooltipText = "Sell 100 (barter)" };
+        sellBtn.Pressed += () => Barter(buy: false);
+        barterRow.AddChild(sellBtn);
+        vbox.AddChild(barterRow);
+
         parent.AddChild(panel);
     }
 
-    private void SetupSelectionZone(HBoxContainer parent)
+    private OptionButton _barterResource = null!;
+
+    /// <summary>快捷易物(原版 barter_panel):卖所选资源买食物(默认配对;
+    /// 完整配比在 Trade 面板)。amount=100(原版快捷档)。</summary>
+    private void Barter(bool buy)
     {
-        // C++ selectionDetailsPanel is a fixed ~228px wide panel. Fill (not Expand)
-        // so the Commands zone gets the remaining horizontal space.
-        var panel = new Control
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.Fill,
-            CustomMinimumSize = new Vector2(228, 0),
-        };
+        var type = (ZeroAD.Sim.Components.ResourceType)_barterResource.Selected;
+        if (buy)
+            _main.CommandBarter(ZeroAD.Sim.Components.ResourceType.Food, type, 100);
+        else
+            _main.CommandBarter(type, ZeroAD.Sim.Components.ResourceType.Food, 100);
+    }
+
+    private void SetupSelectionZone(Control parent, Vector2 pos, Vector2 size)
+    {
+        var panel = new Control { Position = pos, Size = size };
 
         // C++ selectionDetailsPanel uses session/hud_panels.png with
         // real_texture_placement="0 0 220 192" — only the top-left 220×192 region
@@ -499,16 +665,11 @@ public sealed partial class HUD : CanvasLayer
         parent.AddChild(panel);
     }
 
-    private void SetupCommandZone(HBoxContainer parent)
+    private void SetupCommandZone(Control parent, Vector2 pos, Vector2 size)
     {
-        // C++ unitCommandsPanel is the widest zone (~402px). ExpandFill so it
-        // claims remaining horizontal space after the minimap/supplemental/selection
-        // fixed-width zones are laid out.
-        var panel = new Control
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            CustomMinimumSize = new Vector2(300, 0),
-        };
+        var panel = new Control { Position = pos, Size = size };
+        // 原版 unitCommandsPanel 底图:hud_panels.png 裁 (75,64)-(469,222)=394×158
+        AddPanelBackground(panel, new Rect2(75, 64, 394, 158));
         AddBorderFrame(panel);
 
         var scroll = new ScrollContainer();
@@ -558,6 +719,102 @@ public sealed partial class HUD : CanvasLayer
         if (hasOwnEntity)
             AddCmdButton("delete", "Delete", () => _main.DeleteSelectedEntities());
 
+        // 命令键行(原版 unit_actions 按钮):Garrison(可驻防单位)/Repair(建造者)/
+        // Guard(任意己方单位)/Patrol——进目标模式,下击选目标(与右键分流/热键同路)。
+        if (hasOwnUnit)
+        {
+            bool anyGarrisonable = false, anyBuilder = false;
+            foreach (var eid in _main.SelectedEntities)
+            {
+                if (_sim.Sim.QueryInterface<GarrisonableComponent>(eid) != null) anyGarrisonable = true;
+                if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) anyBuilder = true;
+            }
+            if (anyGarrisonable)
+                AddCmdButton(LoadIcon("garrison"), "Garrison", () => _main.EnterCommandTargetMode("garrison"));
+            if (anyBuilder)
+                AddCmdButton(LoadIcon("repair"), "Repair", () => _main.EnterCommandTargetMode("repair"));
+            AddCmdButton(LoadIcon("add-guard"), "Guard", () => _main.EnterCommandTargetMode("guard"));
+            AddCmdButton(LoadIcon("patrol"), "Patrol", () => _main.EnterCommandTargetMode("patrol"));
+
+            // 打包栏(原版 pack_panel):选中含可打包/解包攻城器时显示对应按钮。
+            bool anyCanPack = false, anyCanUnpack = false;
+            foreach (var eid in _main.SelectedEntities)
+            {
+                var pack = _sim.Sim.QueryInterface<PackComponent>(eid);
+                if (pack == null) continue;
+                if (pack.CanPack()) anyCanPack = true;
+                if (pack.CanUnpack()) anyCanUnpack = true;
+            }
+            if (anyCanPack)
+                AddCmdButton(LoadIcon("pack"), "Pack", () => _main.PackSelectedUnits(false));
+            if (anyCanUnpack)
+                AddCmdButton(LoadIcon("unpack"), "Unpack", () => _main.PackSelectedUnits(true));
+        }
+
+        // 升级栏(原版 upgrade_panel):选中己方"有升级路径"建筑(哨塔→防御塔等)
+        // 且选中列表含建造者时显示;点击扣费升级(内核拆旧+原位地基续建)。
+        if (hasOwnEntity)
+        {
+            EntityId? upBuilding = null;
+            ZeroAD.Sim.Content.TemplateStats? upStats = null;
+            foreach (var eid in _main.SelectedEntities)
+            {
+                if (!_main.IsOwn(eid)) continue;
+                var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
+                if (id == null) continue;
+                var s = _sim.Sim.Templates?.ExtractStats(id.TemplateName);
+                if (s != null && s.UpgradeToTemplate.Length > 0)
+                {
+                    upBuilding = eid;
+                    upStats = s;
+                    break;
+                }
+            }
+            if (upBuilding.HasValue && upStats != null)
+            {
+                EntityId? upBuilder = null;
+                foreach (var eid in _main.SelectedEntities)
+                    if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) { upBuilder = eid; break; }
+
+                string targetName = upStats.UpgradeToTemplate;
+                var tstats = _sim.Sim.Templates?.ExtractStats(
+                    targetName.Replace("{civ}", _sim.Sim.GetPlayerEntity((int)_sim.LocalPlayerId)?.Civ ?? ""));
+                string label = tstats?.GenericName.Length > 0 == true ? tstats.GenericName : targetName;
+                var costs = new List<string>();
+                if (upStats.UpgradeCostWood > 0) costs.Add($"{upStats.UpgradeCostWood}W");
+                if (upStats.UpgradeCostFood > 0) costs.Add($"{upStats.UpgradeCostFood}F");
+                if (upStats.UpgradeCostStone > 0) costs.Add($"{upStats.UpgradeCostStone}S");
+                if (upStats.UpgradeCostMetal > 0) costs.Add($"{upStats.UpgradeCostMetal}M");
+                string text = costs.Count > 0 ? $"Upgrade: {label}\n{string.Join(' ', costs)}" : $"Upgrade: {label}";
+                var tex = tstats != null ? LoadPortraitFromIcon(tstats.Icon) : null;
+                var ub = upBuilding.Value;
+                AddCmdButton(tex, text, () => _main.CommandUpgrade(ub, upBuilder));
+            }
+        }
+
+        // 门栏(原版 gate_panel):选中己方城门 → 显示当前锁态切换键
+        // (locked=阻挡/unlocked=通行;GateComponent 联动阻挡+寻路网格)。
+        if (hasOwnEntity)
+        {
+            EntityId? gate = null;
+            bool gateLocked = false;
+            foreach (var eid in _main.SelectedEntities)
+            {
+                if (!_main.IsOwn(eid)) continue;
+                var g = _sim.Sim.QueryInterface<GateComponent>(eid);
+                if (g != null) { gate = eid; gateLocked = g.Locked; break; }
+            }
+            if (gate.HasValue)
+            {
+                var tex = LoadIcon("garrison-out");
+                var g = gate.Value;
+                if (gateLocked)
+                    AddCmdButton(tex, "Unlock Gate", () => _main.CommandToggleGate(g, false));
+                else
+                    AddCmdButton(tex, "Lock Gate", () => _main.CommandToggleGate(g, true));
+            }
+        }
+
         if (hasProducer)
         {
             // 数据驱动训练列表(原版 selection_panels 训练面板):取首个选中生产建筑的
@@ -576,33 +833,73 @@ public sealed partial class HUD : CanvasLayer
 
         if (hasBuilder)
         {
-            AddCmdButton("house", "House\n30W", () => _main.EnterBuildMode("House"));
-            AddCmdButton("storehouse", "Storehouse\n80W", () => _main.EnterBuildMode("Storehouse"));
-            AddCmdButton("farmstead", "Farmstead\n80W", () => _main.EnterBuildMode("Farmstead"));
-            AddCmdButton("field", "Field\n60W", () => _main.EnterBuildMode("Field"));
-            AddCmdButton("barracks", "Barracks\n100W", () => _main.EnterBuildMode("Barracks"));
-
-            if (_main.IsTutorial)
+            // 数据驱动建造列表(原版 construction_panel,与训练面板同款):首个选中建造者的
+            // Builder/Entities,{native}=模板原生文明/{civ}=属主文明实时解析,
+            // TemplateExists 过滤。硬编码 5 项 + 教程限定项的写法废弃——
+            // CC/码头/畜栏/图书馆/奇迹/城墙系/哨塔等全部按模板数据出现。
+            EntityId? builder = null;
+            foreach (var eid in _main.SelectedEntities)
+                if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) { builder = eid; break; }
+            if (builder.HasValue)
             {
-                AddCmdButton("outpost", "Outpost\n80W", () => _main.EnterBuildMode("Outpost"));
-                AddCmdButton("defense_tower", "Tower\n100W\n50S", () => _main.EnterBuildMode("Tower"));
-                AddCmdButton("blacksmith", "Forge\n120W\n30M", () => _main.EnterBuildMode("Forge"));
-                AddCmdButton("market", "Market\n100W", () => _main.EnterBuildMode("Market"));
-                AddCmdButton("temple", "Temple\n150W\n50S", () => _main.EnterBuildMode("Temple"));
-                AddCmdButton("arsenal", "Arsenal\n150W\n50M", () => _main.EnterBuildMode("Arsenal"));
+                var bIdentity = _sim.Sim.QueryInterface<IdentityComponent>(builder.Value);
+                var bstats = bIdentity != null
+                    ? _sim.Sim.Templates?.ExtractStats(bIdentity.TemplateName) : null;
+                if (bstats != null && bstats.BuildableEntities.Length > 0)
+                {
+                    string ownerCiv = "";
+                    var owner = _sim.Sim.QueryInterface<OwnershipComponent>(builder.Value);
+                    if (owner != null)
+                    {
+                        var player = _sim.Sim.GetPlayerEntity(owner.PlayerId);
+                        if (player != null) ownerCiv = player.Civ;
+                    }
+                    foreach (var raw in bstats.BuildableEntities.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        string token = raw;
+                        if (bstats.Civ.Length > 0) token = token.Replace("{native}", bstats.Civ);
+                        if (ownerCiv.Length > 0) token = token.Replace("{civ}", ownerCiv);
+                        if (token.Contains('{')) continue;
+                        if (_sim.Sim.Templates == null || !_sim.Sim.Templates.TemplateExists(token)) continue;
+                        AddBuildButton(token);
+                    }
+                }
             }
         }
 
-        foreach (var template in researcherTemplates)
+        if (researcherTemplates.Count > 0)
         {
-            if (template.Contains("civil_centre") || template.Contains("civic_centre"))
+            // 数据驱动研究列表(原版 research_panel,与训练/建造面板同款):首个选中研究者的
+            // Researcher/Technologies,{civ}/{native} 实时解析;TechnologyManager 过滤
+            // 已研究/不存在项,前置未满足的置灰(CanResearch 同款判定)。
+            EntityId? researcher = null;
+            foreach (var eid in _main.SelectedEntities)
+                if (_sim.Sim.QueryInterface<ResearcherComponent>(eid) != null) { researcher = eid; break; }
+            if (researcher.HasValue)
             {
-                AddCmdButton("phase_town", "Town Phase\n150W\n100M", () => _main.ResearchTech("phase_town_generic"));
-                AddCmdButton("phase_city", "City Phase\n300W\n200M", () => _main.ResearchTech("phase_city_generic"));
-            }
-            else if (template.Contains("forge") || template.Contains("blacksmith"))
-            {
-                AddCmdButton("infantry_attack", "Infantry\nTraining", () => _main.ResearchTech("infantry_attack"));
+                var rIdentity = _sim.Sim.QueryInterface<IdentityComponent>(researcher.Value);
+                var rstats = rIdentity != null
+                    ? _sim.Sim.Templates?.ExtractStats(rIdentity.TemplateName) : null;
+                var tm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.TechnologyManager>(
+                    _sim.Sim.GetPlayerEntityId((int)_sim.LocalPlayerId) ?? default);
+                if (rstats != null && rstats.ResearchableTechnologies.Length > 0 && tm != null)
+                {
+                    string ownerCiv = "";
+                    var owner = _sim.Sim.QueryInterface<OwnershipComponent>(researcher.Value);
+                    if (owner != null)
+                    {
+                        var player = _sim.Sim.GetPlayerEntity(owner.PlayerId);
+                        if (player != null) ownerCiv = player.Civ;
+                    }
+                    foreach (var raw in rstats.ResearchableTechnologies.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        string tech = raw;
+                        if (rstats.Civ.Length > 0) tech = tech.Replace("{native}", rstats.Civ);
+                        if (ownerCiv.Length > 0) tech = tech.Replace("{civ}", ownerCiv);
+                        if (tech.Contains('{')) continue;
+                        AddResearchButton(tech, tm);
+                    }
+                }
             }
         }
 
@@ -637,6 +934,61 @@ public sealed partial class HUD : CanvasLayer
                   ?? LoadPortraitForTemplate(template);
         string t = template; // 闭包捕获迭代变量
         AddCmdButton(tex, text, () => _main.TrainUnit(t, Input.IsKeyPressed(Key.Shift)));
+    }
+
+    /// <summary>研究按钮(数据驱动,research_panel):图标=JSON icon 字段的原版立绘
+    /// (portraits/technologies/),标签=GenericName+资源费;已研究跳过,前置未满足置灰禁用
+    /// (与服务端 CanResearch 同判定)。</summary>
+    private void AddResearchButton(string tech, ZeroAD.Sim.Components.TechnologyManager tm)
+    {
+        // phase 归一(与 GameState.ResolveTechName 同款):无特制文件的文明回落 *_generic。
+        if (!tech.Contains("phase_") || tm.GetDefinition(tech) == null)
+        {
+            if (tech.StartsWith("phase_town_", System.StringComparison.Ordinal))
+                tech = "phase_town_generic";
+            else if (tech.StartsWith("phase_city_", System.StringComparison.Ordinal))
+                tech = "phase_city_generic";
+        }
+        if (tm.IsResearched(tech)) return;
+        var def = tm.GetDefinition(tech);
+        if (def == null) return;
+
+        string label = def.GenericName;
+        var costs = new List<string>();
+        if (def.Food > 0) costs.Add($"{def.Food}F");
+        if (def.Wood > 0) costs.Add($"{def.Wood}W");
+        if (def.Stone > 0) costs.Add($"{def.Stone}S");
+        if (def.Metal > 0) costs.Add($"{def.Metal}M");
+        string text = costs.Count > 0 ? $"{label}\n{string.Join(' ', costs)}" : label;
+
+        var tex = def.Icon.Length > 0 ? LoadPortraitFromIcon("technologies/" + def.Icon) : null;
+        bool canResearch = tm.CanResearch(tech);
+        string t = tech;
+        var btn = AddCmdButton(tex, text, () => _main.ResearchTech(t), canResearch);
+        if (!canResearch) btn.Modulate = new Color(1f, 1f, 1f, 0.45f);
+    }
+
+    /// <summary>建造按钮(数据驱动,construction_panel):头像取模板 Identity/Icon 原版立绘,
+    /// 标签=GenericName+资源费;点击进入建造放置模式(完整模板名,文明已解析)。</summary>
+    private void AddBuildButton(string template)
+    {
+        var stats = _sim.Sim.Templates?.ExtractStats(template);
+        string label = stats != null && stats.GenericName.Length > 0
+            ? stats.GenericName
+            : template[(template.LastIndexOf('/') + 1)..];
+        var costs = new List<string>();
+        if (stats != null)
+        {
+            if (stats.WoodCost > 0) costs.Add($"{stats.WoodCost}W");
+            if (stats.FoodCost > 0) costs.Add($"{stats.FoodCost}F");
+            if (stats.StoneCost > 0) costs.Add($"{stats.StoneCost}S");
+            if (stats.MetalCost > 0) costs.Add($"{stats.MetalCost}M");
+        }
+        string text = costs.Count > 0 ? $"{label}\n{string.Join(' ', costs)}" : label;
+        var tex = (stats != null ? LoadPortraitFromIcon(stats.Icon) : null)
+                  ?? LoadPortraitForTemplate(template);
+        string t = template;
+        AddCmdButton(tex, text, () => _main.EnterBuildMode(t));
     }
 
     /// <summary>从原版 art 树加载立绘(Identity/Icon 相对路径,如
@@ -685,13 +1037,17 @@ public sealed partial class HUD : CanvasLayer
     private void AddCmdButton(string iconKey, string text, System.Action onPressed) =>
         AddCmdButton(PortraitMap.TryGetValue(iconKey, out var p) ? LoadTex(p) : null, text, onPressed);
 
-    private void AddCmdButton(Texture2D? tex, string text, System.Action onPressed)
+    private void AddCmdButton(Texture2D? tex, string text, System.Action onPressed) =>
+        AddCmdButton(tex, text, onPressed, enabled: true);
+
+    private Button AddCmdButton(Texture2D? tex, string text, System.Action onPressed, bool enabled)
     {
         var btn = new Button
         {
             Text = "",
             Theme = UITheme.GetTheme(),
             CustomMinimumSize = new Vector2(46, 46),
+            Disabled = !enabled,
         };
 
         if (tex != null)
@@ -727,14 +1083,42 @@ public sealed partial class HUD : CanvasLayer
         vbox.AddChild(label);
 
         _commandBox.AddChild(btn);
+        return btn;
     }
 
     private record struct ResourceCounter(Control Root, Label Count, Label Stats);
 
     private IReadOnlySet<EntityId> _lastSelection = new HashSet<EntityId>();
 
+    /// <summary>遇袭警报记录(由 Main 在 AttackLanded 且己方目标时调):图标闪现 10s。</summary>
+    public void SetAlert(float x, float z)
+    {
+        _alertX = x; _alertZ = z;
+        _alertElapsed = 0;
+        _alertBtn.Visible = true;
+    }
+
     public override void _Process(double delta)
     {
+        // 警报闪烁(0.6s 周期)与 10s 过期(原版警报按钮同款)。
+        if (_alertBtn.Visible)
+        {
+            _alertElapsed += (float)delta;
+            _alertFlash += delta;
+            if (_alertElapsed > 10f)
+                _alertBtn.Visible = false;
+            else
+            {
+                bool on = (int)(_alertFlash / 0.3) % 2 == 0;
+                _alertBtn.Modulate = on ? new Color(1f, 0.35f, 0.3f) : new Color(1f, 1f, 1f);
+            }
+        }
+
+        // 编队组图标条刷新(签名防抖:组集+各组成员数不变不重建)。
+        RefreshGroupRow();
+        // 研究进度条刷新(任一己方在研建筑 → 图标+名+进度)。
+        RefreshResearchProgress();
+
         var player = _sim.GetPlayer();
         if (player != null)
         {
@@ -928,6 +1312,162 @@ public sealed partial class HUD : CanvasLayer
 
         _selIcon.Texture = LoadPortraitForIdentity(identity);
         RefreshStanceHighlight();
+        RefreshFormationRow();
+    }
+
+    /// <summary>阵型行(原版 formation_panel):编队控制器选中 → 只显 null(解散);
+    /// ≥2 同主可编队单位 → 按首个单位模板 UnitAI/Formations 列出阵型图标。
+    /// 签名防抖(成员集+阵型集不变不重建,与驻军行同款)。</summary>
+    private void RefreshFormationRow()
+    {
+        var sel = _main.SelectedEntities;
+        bool hasController = false;
+        var ownUnits = new List<EntityId>();
+        foreach (var eid in sel)
+        {
+            var ai = _sim.Sim.QueryInterface<UnitAIComponent>(eid);
+            if (ai == null) continue;
+            if (ai.IsFormationController) { hasController = true; continue; }
+            if (_main.IsOwn(eid) && !ai.IsGarrisoned && !ai.IsTurret)
+                ownUnits.Add(eid);
+        }
+
+        string sig = hasController ? "ctrl" : string.Join(',', ownUnits.Select(u => u.Value));
+        if (sig == _formationSignature) return;
+        _formationSignature = sig;
+
+        foreach (var child in _formationRow.GetChildren())
+            child.QueueFree();
+
+        if (hasController)
+        {
+            var btn = MakeSmallIconButton(LoadIcon("formations/null"), "Disband formation");
+            btn.Pressed += () => _main.FormSelectedUnits("null");
+            _formationRow.AddChild(btn);
+            _formationRow.Visible = true;
+            return;
+        }
+
+        if (ownUnits.Count < 2)
+        {
+            _formationRow.Visible = false;
+            return;
+        }
+
+        // 首个单位的可编队形列表(模板 UnitAI/Formations;strip special/formations/ 前缀)
+        var identity = _sim.Sim.QueryInterface<IdentityComponent>(ownUnits[0]);
+        var stats = identity != null ? _sim.Sim.Templates?.ExtractStats(identity.TemplateName) : null;
+        if (stats == null || stats.FormationShapes.Length == 0)
+        {
+            _formationRow.Visible = false;
+            return;
+        }
+
+        foreach (var raw in stats.FormationShapes.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+        {
+            string shape = raw.Replace("special/formations/", "");
+            var btn = MakeSmallIconButton(LoadIcon($"formations/{shape}"), $"Formation: {shape}");
+            string s = shape;
+            btn.Pressed += () => _main.FormSelectedUnits(s);
+            _formationRow.AddChild(btn);
+        }
+        _formationRow.Visible = true;
+    }
+
+    /// <summary>研究进度条(原版 session_objects research progress):首个己方在研建筑
+    /// 的科技名+进度;图标取科技 JSON icon 的原版立绘。完成/无在研自动隐藏。</summary>
+    private void RefreshResearchProgress()
+    {
+        string? tech = null;
+        float progress = 0f, total = 1f;
+        foreach (var eid in _sim.Sim.AllEntities)
+        {
+            var owner = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
+            if (owner == null || owner.PlayerId != (int)_sim.LocalPlayerId) continue;
+            var r = _sim.Sim.QueryInterface<ResearcherComponent>(eid);
+            if (r == null || !r.IsResearching || r.CurrentTech == null) continue;
+            tech = r.CurrentTech;
+            progress = r.Progress;
+            var tm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.TechnologyManager>(
+                _sim.Sim.GetPlayerEntityId((int)_sim.LocalPlayerId) ?? default);
+            var def = tm?.GetDefinition(tech);
+            if (def != null && def.ResearchTime > 0) total = def.ResearchTime;
+            break;
+        }
+
+        if (tech == null)
+        {
+            if (_researchPanel.Visible) _researchPanel.Visible = false;
+            _researchTech = "";
+            return;
+        }
+
+        _researchPanel.Visible = true;
+        _researchBar.Value = 100f * progress / total;
+        if (tech != _researchTech)
+        {
+            _researchTech = tech;
+            var tm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.TechnologyManager>(
+                _sim.Sim.GetPlayerEntityId((int)_sim.LocalPlayerId) ?? default);
+            var def = tm?.GetDefinition(tech);
+            _researchLabel.Text = def?.GenericName ?? tech;
+            _researchIcon.Texture = def != null && def.Icon.Length > 0
+                ? LoadPortraitFromIcon("technologies/" + def.Icon) : null;
+        }
+    }
+
+    /// <summary>编队组图标条(原版 PanelEntityManager 紧凑版):已编入的组按号升序显示
+    /// 小图标(数字+成员数),点击选中该组。签名防抖。</summary>
+    private void RefreshGroupRow()
+    {
+        var info = _main.GetControlGroupInfo();
+        string sig = string.Join(',', info.Select(i => $"{i.group}:{i.alive}"));
+        if (sig == _groupSignature) return;
+        _groupSignature = sig;
+
+        foreach (var child in _groupRow.GetChildren())
+            child.QueueFree();
+
+        foreach (var (g, alive) in info)
+        {
+            var btn = new Button
+            {
+                Text = $"{g}",
+                Theme = UITheme.GetTheme(),
+                CustomMinimumSize = new Vector2(24, 24),
+                TooltipText = $"Group {g} ({alive} entities)",
+            };
+            btn.AddThemeFontSizeOverride("font_size", 11);
+            int captured = g;
+            btn.Pressed += () => _main.SelectControlGroupPublic(captured);
+            var count = new Label
+            {
+                Text = $"{alive}",
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            count.AddThemeFontSizeOverride("font_size", 8);
+            count.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
+            count.AddThemeColorOverride("font_outline_color", Colors.Black);
+            count.AddThemeConstantOverride("outline_size", 2);
+            count.SetAnchorsPreset(Control.LayoutPreset.BottomRight);
+            btn.AddChild(count);
+            _groupRow.AddChild(btn);
+        }
+    }
+
+    private static Button MakeSmallIconButton(Texture2D? tex, string tooltip)
+    {
+        var btn = new Button
+        {
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(28, 28),
+            TooltipText = tooltip,
+            ExpandIcon = true,
+            IconAlignment = HorizontalAlignment.Center,
+            VerticalIconAlignment = VerticalAlignment.Center,
+        };
+        if (tex != null) btn.Icon = tex;
+        return btn;
     }
 
     /// <summary>站姿行:仅当选中含"有站姿的己方单位"时可见(对齐原版 stance 按钮条

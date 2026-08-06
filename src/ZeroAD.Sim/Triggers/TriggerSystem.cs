@@ -1,236 +1,247 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using ZeroAD.Sim.Components;
 
 namespace ZeroAD.Sim.Triggers
 {
-    public enum TriggerEventType
+    /// <summary>触发器条件(数据驱动;一个触发器的全部条件为 AND 关系)。
+    /// 内置类型:
+    ///   TimeElapsed          Seconds=浮点秒(触发器启用期间累计)
+    ///   PlayerDefeated       PlayerId
+    ///   PlayerWon            PlayerId
+    ///   AreaContainsEntities X,Z,Radius(米),MinCount;可选 PlayerId(缺省任意非 gaia)、Class
+    ///   EntityCountAtMost    PlayerId,Count;可选 Class(该玩家场上实体数 ≤ Count 时成立)</summary>
+    public sealed class TriggerCondition
     {
-        OnTimer,
-        OnUnitDied,
-        OnEntityEnteredArea,
-        OnPlayerDefeated,
-        OnBuildingConstructed,
-        OnTurn,
+        public string Type = "";
+        public Dictionary<string, string> Params = new(StringComparer.Ordinal);
     }
 
-    public readonly struct TriggerCondition
+    /// <summary>触发器动作。内置类型:
+    ///   ShowMessage     Text(经 ITriggerSink 送往表现层)
+    ///   SpawnEntities   Template,PlayerId,X,Z;可选 Count(默认 1),Spread(默认 0,半径米)
+    ///   VictoryPlayer   PlayerId(判胜)
+    ///   DefeatPlayer    PlayerId(判负)
+    ///   EnableTrigger   Name(启用另一触发器)
+    ///   DisableTrigger  Name(禁用另一触发器;可自指实现 Once)</summary>
+    public sealed class TriggerAction
     {
-        public readonly TriggerEventType Type;
-        public readonly uint? EntityId;
-        public readonly float? X;
-        public readonly float? Z;
-        public readonly float? Radius;
-        public readonly int? TurnNumber;
-        public readonly float? TimerSeconds;
-
-        public TriggerCondition(TriggerEventType type,
-            uint? entityId = null, float? x = null, float? z = null,
-            float? radius = null, int? turnNumber = null, float? timerSeconds = null)
-        {
-            Type = type; EntityId = entityId; X = x; Z = z;
-            Radius = radius; TurnNumber = turnNumber; TimerSeconds = timerSeconds;
-        }
+        public string Type = "";
+        public Dictionary<string, string> Params = new(StringComparer.Ordinal);
     }
 
-    public sealed class Trigger
+    public sealed class TriggerDefinition
     {
-        public string Name { get; }
-        public TriggerCondition Condition { get; }
-        public Action<TriggerSystem> Action { get; }
-        public bool IsOneShot { get; }
-        public bool HasFired { get; internal set; }
-
-        public Trigger(string name, TriggerCondition condition, Action<TriggerSystem> action, bool oneShot = true)
-        {
-            Name = name; Condition = condition; Action = action; IsOneShot = oneShot;
-        }
+        public string Name = "";
+        public bool Enabled = true;
+        /// <summary>true = 触发一次后自动禁用(原版一次性触发器语义)。</summary>
+        public bool Once;
+        public List<TriggerCondition> Conditions = new();
+        public List<TriggerAction> Actions = new();
+        /// <summary>TimeElapsed 条件用:启用期间累计秒数。</summary>
+        internal float Elapsed;
     }
 
+    /// <summary>表现层/生成层挂钩——sim 内核不直接解析模板生成实体(模板解析在 SimBridge),
+    /// 也不直接显示消息。由 SimBridge 实现注入。</summary>
+    public interface ITriggerSink
+    {
+        void ShowMessage(string text);
+        /// <summary>在 (x,z) 附近生成 count 个 template 实体,属主 playerId(0=gaia)。</summary>
+        void SpawnEntities(string template, int playerId, float x, float z, int count, float spread);
+    }
+
+    /// <summary>触发器系统(原版 Trigger.js 的 C# 数据驱动移植框架)。
+    /// 原版由地图 JS 脚本向 Trigger 组件注册 事件→动作;C# 内核无法执行地图 JS,
+    /// 改为数据驱动:条件/动作内置实现,地图(或教程/战役)以 TriggerDefinition 表达。
+    /// 由 ComponentManager.TickVictory 按回合驱动。确定性:全部条件为世界状态轮询,
+    /// 无 RNG;动作为同步执行,顺序 = 注册顺序。</summary>
     public sealed class TriggerSystem
     {
-        private readonly List<Trigger> _triggers = new();
-        private readonly ComponentManager _cm;
-        private float _elapsedTime;
-        private int _currentTurn;
-        private readonly Dictionary<uint, bool> _entityDeathChecked = new();
-        private readonly List<(float x, float z, float radius, HashSet<uint> inside)> _areaTrackers = new();
+        private readonly List<TriggerDefinition> _triggers = new();
 
-        public string VictoryMessage { get; private set; } = "";
-        public string DefeatMessage { get; private set; } = "";
-        public bool IsGameOver { get; private set; }
+        /// <summary>可选效果出口(消息/生成)。null 时 ShowMessage/SpawnEntities 静默跳过。</summary>
+        public ITriggerSink? Sink;
 
-        public IReadOnlyList<Trigger> Triggers => _triggers;
+        public IReadOnlyList<TriggerDefinition> Triggers => _triggers;
 
-        public TriggerSystem(ComponentManager cm) => _cm = cm;
+        public void Add(TriggerDefinition trigger) => _triggers.Add(trigger);
 
-        public void AddTrigger(Trigger trigger) => _triggers.Add(trigger);
+        public void Clear() => _triggers.Clear();
 
-        public Trigger AddTimer(string name, float seconds, Action<TriggerSystem> action, bool oneShot = true)
+        public TriggerDefinition? Find(string name)
         {
-            var t = new Trigger(name,
-                new TriggerCondition(TriggerEventType.OnTimer, timerSeconds: seconds),
-                action, oneShot);
-            _triggers.Add(t);
-            return t;
+            foreach (var t in _triggers)
+                if (t.Name == name) return t;
+            return null;
         }
 
-        public Trigger AddOnTurn(string name, int turn, Action<TriggerSystem> action)
+        /// <summary>每回合推进。dt 为本回合秒数(0.1)。返回本回合触发次数(测试观察用)。</summary>
+        public int Tick(ComponentManager cm, float dt)
         {
-            var t = new Trigger(name,
-                new TriggerCondition(TriggerEventType.OnTurn, turnNumber: turn),
-                action);
-            _triggers.Add(t);
-            return t;
-        }
-
-        public Trigger AddOnUnitDied(string name, uint entityId, Action<TriggerSystem> action)
-        {
-            var t = new Trigger(name,
-                new TriggerCondition(TriggerEventType.OnUnitDied, entityId: entityId),
-                action);
-            _triggers.Add(t);
-            return t;
-        }
-
-        public Trigger AddOnAreaEnter(string name, float x, float z, float radius, Action<TriggerSystem> action)
-        {
-            var t = new Trigger(name,
-                new TriggerCondition(TriggerEventType.OnEntityEnteredArea, x: x, z: z, radius: radius),
-                action, false);
-            _triggers.Add(t);
-            _areaTrackers.Add((x, z, radius, new HashSet<uint>()));
-            return t;
-        }
-
-        public void SetVictory(string message)
-        {
-            VictoryMessage = message;
-            IsGameOver = true;
-        }
-
-        public void SetDefeat(string message)
-        {
-            DefeatMessage = message;
-            IsGameOver = true;
-        }
-
-        public void Tick(float dt, int turn)
-        {
-            if (IsGameOver) return;
-
-            _elapsedTime += dt;
-            _currentTurn = turn;
-
-            CheckTimerTriggers();
-            CheckTurnTriggers();
-            CheckUnitDeath();
-            CheckAreaEnters();
-            CheckVictoryDefeat();
-        }
-
-        private void CheckTimerTriggers()
-        {
-            foreach (var trigger in _triggers)
+            int fired = 0;
+            // 按索引遍历:动作可启用/禁用触发器(含自禁用),不修改集合本身。
+            for (int i = 0; i < _triggers.Count; i++)
             {
-                if (trigger.HasFired && trigger.IsOneShot) continue;
-                if (trigger.Condition.Type != TriggerEventType.OnTimer) continue;
+                var t = _triggers[i];
+                if (!t.Enabled) continue;
+                t.Elapsed += dt;
 
-                if (_elapsedTime >= trigger.Condition.TimerSeconds)
+                bool all = true;
+                foreach (var cond in t.Conditions)
                 {
-                    trigger.Action(this);
-                    if (trigger.IsOneShot) trigger.HasFired = true;
+                    if (!Evaluate(cm, t, cond)) { all = false; break; }
+                }
+                if (!all) continue;
+
+                fired++;
+                foreach (var action in t.Actions)
+                    Execute(cm, action);
+                if (t.Once) t.Enabled = false;
+            }
+            return fired;
+        }
+
+        private static bool Evaluate(ComponentManager cm, TriggerDefinition owner, TriggerCondition cond)
+        {
+            switch (cond.Type)
+            {
+                case "TimeElapsed":
+                    return owner.Elapsed >= GetFloat(cond, "Seconds", 0f);
+                case "PlayerDefeated":
+                {
+                    var p = cm.Players.GetPlayerEntity(GetInt(cond, "PlayerId", -1));
+                    return p != null && p.IsDefeated();
+                }
+                case "PlayerWon":
+                {
+                    var p = cm.Players.GetPlayerEntity(GetInt(cond, "PlayerId", -1));
+                    return p != null && p.HasWon();
+                }
+                case "AreaContainsEntities":
+                    return CountInArea(cm, cond) >= GetInt(cond, "MinCount", 1);
+                case "EntityCountAtMost":
+                    return CountByPlayer(cm, cond) <= GetInt(cond, "Count", 0);
+                default:
+                    return false;   // 未知条件类型不成立(保守,不触发)
+            }
+        }
+
+        private void Execute(ComponentManager cm, TriggerAction action)
+        {
+            switch (action.Type)
+            {
+                case "ShowMessage":
+                    Sink?.ShowMessage(GetStr(action, "Text", ""));
+                    break;
+                case "SpawnEntities":
+                    Sink?.SpawnEntities(
+                        GetStr(action, "Template", ""),
+                        GetInt(action, "PlayerId", 0),
+                        GetFloat(action, "X", 0f), GetFloat(action, "Z", 0f),
+                        GetInt(action, "Count", 1), GetFloat(action, "Spread", 0f));
+                    break;
+                case "VictoryPlayer":
+                {
+                    int pid = GetInt(action, "PlayerId", -1);
+                    var p = cm.Players.GetPlayerEntity(pid);
+                    if (p != null && p.SetWon())
+                        cm.Events.RaisePlayerWon(new Events.PlayerWonEvent { PlayerId = pid });
+                    break;
+                }
+                case "DefeatPlayer":
+                {
+                    int pid = GetInt(action, "PlayerId", -1);
+                    var p = cm.Players.GetPlayerEntity(pid);
+                    if (p != null && p.SetDefeated())
+                        cm.Events.RaisePlayerDefeated(new Events.PlayerDefeatedEvent
+                        {
+                            PlayerId = pid,
+                            Reason = "Defeated by scenario trigger."
+                        });
+                    break;
+                }
+                case "EnableTrigger":
+                {
+                    var t = Find(GetStr(action, "Name", ""));
+                    if (t != null) t.Enabled = true;
+                    break;
+                }
+                case "DisableTrigger":
+                {
+                    var t = Find(GetStr(action, "Name", ""));
+                    if (t != null) t.Enabled = false;
+                    break;
                 }
             }
         }
 
-        private void CheckTurnTriggers()
+        private static int CountInArea(ComponentManager cm, TriggerCondition cond)
         {
-            foreach (var trigger in _triggers)
+            var range = SimSystem.Range;
+            if (range == null) return 0;
+            float x = GetFloat(cond, "X", 0f), z = GetFloat(cond, "Z", 0f);
+            float radius = GetFloat(cond, "Radius", 0f);
+            int playerId = GetInt(cond, "PlayerId", -1);    // -1 = 任意非 gaia
+            string cls = GetStr(cond, "Class", "");
+            float r2 = radius * radius;
+            int count = 0;
+            foreach (var ent in range.GetNonGaiaEntities())
             {
-                if (trigger.HasFired && trigger.IsOneShot) continue;
-                if (trigger.Condition.Type != TriggerEventType.OnTurn) continue;
-
-                if (_currentTurn >= trigger.Condition.TurnNumber)
+                var pos = cm.QueryInterface<PositionComponent>(ent);
+                if (pos == null || !pos.InWorld) continue;
+                float dx = pos.Position.X.ToFloat() - x, dz = pos.Position.Z.ToFloat() - z;
+                if (dx * dx + dz * dz > r2) continue;
+                if (playerId >= 0)
                 {
-                    trigger.Action(this);
-                    if (trigger.IsOneShot) trigger.HasFired = true;
+                    var own = cm.QueryInterface<OwnershipComponent>(ent);
+                    if (own == null || own.PlayerId != playerId) continue;
                 }
+                if (cls.Length > 0)
+                {
+                    var id = cm.QueryInterface<IdentityComponent>(ent);
+                    if (id == null || !id.HasClass(cls)) continue;
+                }
+                count++;
             }
+            return count;
         }
 
-        private void CheckUnitDeath()
+        private static int CountByPlayer(ComponentManager cm, TriggerCondition cond)
         {
-            foreach (var trigger in _triggers)
+            var range = SimSystem.Range;
+            if (range == null) return 0;
+            int playerId = GetInt(cond, "PlayerId", -1);
+            string cls = GetStr(cond, "Class", "");
+            int count = 0;
+            foreach (var ent in range.GetEntitiesByPlayer(playerId))
             {
-                if (trigger.HasFired && trigger.IsOneShot) continue;
-                if (trigger.Condition.Type != TriggerEventType.OnUnitDied) continue;
-                if (trigger.Condition.EntityId == null) continue;
-
-                uint eid = trigger.Condition.EntityId.Value;
-                if (_entityDeathChecked.ContainsKey(eid)) continue;
-
-                var health = _cm.QueryInterface<Components.HealthComponent>(new EntityId(eid));
-                if (health != null && health.IsDead)
+                if (cls.Length > 0)
                 {
-                    trigger.Action(this);
-                    if (trigger.IsOneShot) trigger.HasFired = true;
-                    _entityDeathChecked[eid] = true;
+                    var id = cm.QueryInterface<IdentityComponent>(ent);
+                    if (id == null || !id.HasClass(cls)) continue;
                 }
+                count++;
             }
+            return count;
         }
 
-        private void CheckAreaEnters()
-        {
-            foreach (var trigger in _triggers)
-            {
-                if (trigger.HasFired && trigger.IsOneShot) continue;
-                if (trigger.Condition.Type != TriggerEventType.OnEntityEnteredArea) continue;
-                if (trigger.Condition.X == null || trigger.Condition.Z == null || trigger.Condition.Radius == null)
-                    continue;
-
-                float cx = trigger.Condition.X.Value;
-                float cz = trigger.Condition.Z.Value;
-                float r = trigger.Condition.Radius.Value;
-
-                foreach (var eid in _cm.AllEntities)
-                {
-                    var pos = _cm.QueryInterface<Components.PositionComponent>(eid);
-                    if (pos == null) continue;
-
-                    float dx = pos.Position.X.ToFloat() - cx;
-                    float dz = pos.Position.Z.ToFloat() - cz;
-                    if (dx * dx + dz * dz < r * r)
-                    {
-                        trigger.Action(this);
-                        if (trigger.IsOneShot) trigger.HasFired = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        private void CheckVictoryDefeat()
-        {
-            int alivePlayers = 0;
-            foreach (var eid in _cm.AllEntities)
-            {
-                if (_cm.QueryInterface<Components.PlayerComponent>(eid) != null)
-                {
-                    bool hasBuildings = false;
-                    foreach (var eid2 in _cm.AllEntities)
-                    {
-                        var identity = _cm.QueryInterface<Components.IdentityComponent>(eid2);
-                        if (identity != null && identity.IsBuilding)
-                        { hasBuildings = true; break; }
-                    }
-                    if (hasBuildings) alivePlayers++;
-                }
-            }
-
-            if (alivePlayers <= 1)
-            {
-                SetVictory("Conquest Victory!");
-            }
-        }
+        private static string GetStr(TriggerCondition c, string key, string fallback) =>
+            c.Params.TryGetValue(key, out var v) ? v : fallback;
+        private static string GetStr(TriggerAction a, string key, string fallback) =>
+            a.Params.TryGetValue(key, out var v) ? v : fallback;
+        private static int GetInt(TriggerCondition c, string key, int fallback) =>
+            c.Params.TryGetValue(key, out var v) &&
+            int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? i : fallback;
+        private static int GetInt(TriggerAction a, string key, int fallback) =>
+            a.Params.TryGetValue(key, out var v) &&
+            int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? i : fallback;
+        private static float GetFloat(TriggerCondition c, string key, float fallback) =>
+            c.Params.TryGetValue(key, out var v) &&
+            float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : fallback;
+        private static float GetFloat(TriggerAction a, string key, float fallback) =>
+            a.Params.TryGetValue(key, out var v) &&
+            float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : fallback;
     }
 }

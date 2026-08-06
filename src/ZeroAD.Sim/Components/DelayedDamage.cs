@@ -101,7 +101,12 @@ public sealed class DelayedDamage
         // attacker 和 target 且能检测死亡的位置（镜像 Health.js:221 的 KilledEntity/LostEntity）。
         // StatisticsTracker 订阅此事件更新 enemyUnitsKilled / unitsLost / *Value 计数器。
         if (health != null && health.IsDead)
+        {
             cm.Events.RaiseEntityKilled(new EntityKilledEvent { Victim = target, Killer = attacker });
+            // 战利品收集(原版 Looter.js Collect,由 Health.js KilledEntity 触发):
+            // 击杀者的 Looter 组件收走目标 Loot + 携带资源。
+            cm.QueryInterface<Components.LooterComponent>(attacker)?.Collect(cm, target);
+        }
 
         // 受击响应钩子(原版 MT_Attacked → UnitAI):物理伤害 >0 才触发;捕获通道
         // (Capture)不触发(对齐原版攻击效果接收序,捕获自身不引起反击)。

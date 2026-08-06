@@ -56,6 +56,10 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
     public int MinColumns, MaxColumns, MaxRows;           // 0 = 不限
     public float CenterGap;
     public float FormationSeparation;                     // 双编队合并距离(合并逻辑未移植,仅存)
+    /// <summary>模板 FormationAttack/CanAttackAsFormation:编队可否整体作战
+    /// (phalanx/syntagma 类 true——成员原地作战、控制器留场计时;false——接敌即
+    /// 成员散开各自为战,控制器移出世界等待)。</summary>
+    public bool CanAttackAsFormation;
 
     // --- 运行态 ---
     public readonly List<EntityId> Members = new();
@@ -577,6 +581,57 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
     }
 
     // =========================================================================
+    // 编队作战(原版 FormationAttack.js:GetRange 聚合 + GetClosestMemberToEntity)
+    // =========================================================================
+
+    /// <summary>Port of FormationAttack.GetRange:跨成员聚合对 target 的射程。
+    /// CanAttackAsFormation → 取成员最小 max(保证全员够得着);否则取最大 max
+    /// (散开接敌的触发半径);min 恒取最小;最后加 Depth/2(队深折算前排距离)。
+    /// 无任何可战成员 → max = CanAttackAsFormation ? -1 : 0(+Depth/2 仅 max≥0 时)。</summary>
+    public (float Min, float Max) GetAttackRange(ComponentManager cm, EntityId target)
+    {
+        float min = 0f;
+        float max = CanAttackAsFormation ? -1f : 0f;
+        foreach (var ent in Members)
+        {
+            var atk = cm.QueryInterface<AttackComponent>(ent);
+            if (atk == null) continue;
+            var choice = atk.GetBestAttackAgainst(cm, target, allowCapture: false);
+            if (choice == null) continue;
+            float rmax = choice == AttackComponent.AttackChoice.Capture ? atk.CaptureRange : atk.Range;
+            const float rmin = 0f;   // 我们的 AttackComponent 无 MinRange(原版模板多为 0)
+            if (CanAttackAsFormation)
+            {
+                if (rmax < max || max < 0) max = rmax;
+            }
+            else if (rmax > max || max < 0) max = rmax;
+            if (rmin < min) min = rmin;
+        }
+        if (max >= 0) max += Depth / 2f;
+        return (min, max);
+    }
+
+    /// <summary>Port of GetClosestMemberToEntity:距 ent 最近的在世成员(无 → null)。
+    /// 原版有 filter 参数(本移植的调用点都不用)。</summary>
+    public EntityId? GetClosestMemberToEntity(ComponentManager cm, EntityId ent)
+    {
+        var pos = cm.QueryInterface<PositionComponent>(ent);
+        if (pos == null || !pos.InWorld) return null;
+        float px = pos.Position.X.ToFloat(), pz = pos.Position.Z.ToFloat();
+        EntityId? best = null;
+        float bestD2 = float.MaxValue;
+        foreach (var member in Members)
+        {
+            var mp = cm.QueryInterface<PositionComponent>(member);
+            if (mp == null || !mp.InWorld) continue;
+            float dx = mp.Position.X.ToFloat() - px, dz = mp.Position.Z.ToFloat() - pz;
+            float d2 = dx * dx + dz * dz;
+            if (d2 < bestD2) { bestD2 = d2; best = member; }
+        }
+        return best;
+    }
+
+    // =========================================================================
     // 序列化。桩阶段没有任何实体挂过本组件 → 无存档兼容包袱,字段顺序按新布局定义。
     // =========================================================================
 
@@ -608,6 +663,7 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
         s.NumberI32("maxColsCfg", MaxColumns);
         s.NumberI32("maxRowsCfg", MaxRows);
         s.NumberFixed("centerGap", Fixed.FromFloat(CenterGap));
+        s.Bool("canAtkFormation", CanAttackAsFormation);
         // 偏移(原版同样序列化 offsets;读档后无需重算,RNG 流不偏移)。
         s.Bool("hasOffsets", Offsets != null);
         if (Offsets != null)
@@ -653,6 +709,7 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
         MaxColumns = d.NumberI32("maxColsCfg");
         MaxRows = d.NumberI32("maxRowsCfg");
         CenterGap = d.NumberFixed("centerGap").ToFloat();
+        CanAttackAsFormation = d.Bool("canAtkFormation");
         if (d.Bool("hasOffsets"))
         {
             int n = d.NumberI32("offsets_n");

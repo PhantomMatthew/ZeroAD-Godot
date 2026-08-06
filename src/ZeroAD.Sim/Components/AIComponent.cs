@@ -125,6 +125,7 @@ public sealed class AIComponent : ComponentBase
             var gameState = _sharedState.CreateGameState(_cm, (int)playerId, Metadata, Events);
             if (gameState != null)
             {
+                gameState.Net = _net;   // AI 命令通道(Plans 经此 SubmitAiCommand)
                 // 第一回合：初始化 Petra
                 if (!_hq.FirstBaseConfig)
                 {

@@ -161,11 +161,19 @@ namespace ZeroAD.Sim
         /// on this so it doesn't re-fire GameEnded every turn.</summary>
         public bool IsGameOver { get; private set; }
 
+        /// <summary>终局管理器(胜利条件体系,EndGameManager.js 移植;TickVictory 驱动)。
+        /// 地图加载时经 SetVictoryConditions 注入;沙盒/默认局保持默认征服。</summary>
+        public Components.EndGameManager EndGame { get; } = new();
+
+        /// <summary>数据驱动触发器系统(Trigger.js 移植框架)。每回合随 TickVictory 推进;
+        /// 效果出口(消息/生成)由 SimBridge 经 Sink 注入。</summary>
+        public Triggers.TriggerSystem Triggers { get; } = new();
+
         /// <summary>
-        /// Per-turn conquest victory check. Called by the presentation layer once per sim tick
-        /// (after RemoveDeadEntities, so the dead are gone from the RangeManager index). A player
-        /// is defeated when they own zero units or buildings (resources/animals don't count);
-        /// when only one active player remains, that player wins and the match ends.
+        /// Per-turn victory check. Defeat rules follow the map's VictoryConditions
+        /// (conquest/conquest_units/conquest_civic_centers); wonder/capture_the_relic/
+        /// ceasefire run through <see cref="EndGame"/>. A player is defeated when their
+        /// condition-relevant entity count hits zero; last active player wins.
         ///
         /// Deterministic: uses the RangeManager's sorted entity index (no RNG, no float). Idempotent
         /// via PlayerComponent's Active-only transition guard. Ported from ConquestCommon.js +
@@ -173,6 +181,9 @@ namespace ZeroAD.Sim
         /// </summary>
         public void TickVictory()
         {
+            // 触发器始终推进(原版 Trigger 组件不受终局状态影响;动作自身可判胜/判负)。
+            Triggers.Tick(this, 0.1f);
+
             if (IsGameOver) return;
 
             var range = Components.SimSystem.Range;
@@ -186,19 +197,19 @@ namespace ZeroAD.Sim
             foreach (var _ in Players.GetNonGaiaPlayerIds()) nonGaia++;
             if (nonGaia < 2) return;
 
-            // 1. Mark any active player with zero units/buildings as defeated.
+            // 1. Mark any active player with zero condition-relevant entities as defeated.
             foreach (int pid in Players.GetNonGaiaPlayerIds())
             {
                 var player = Players.GetPlayerEntity(pid);
                 if (player == null || !player.IsActive()) continue;
 
-                if (CountConquestEntities(pid, range) == 0)
+                if (CountDefeatEntities(pid, range) == 0)
                 {
                     if (player.SetDefeated())
                         Events.RaisePlayerDefeated(new PlayerDefeatedEvent
                         {
                             PlayerId = pid,
-                            Reason = "Lost all units and structures."
+                            Reason = DefeatReason()
                         });
                 }
             }
@@ -225,19 +236,41 @@ namespace ZeroAD.Sim
                     IsGameOver = true;
                     Events.RaisePlayerWon(new PlayerWonEvent { PlayerId = winnerId });
                     Events.RaiseGameEnded(new GameEndedEvent { WinnerPlayerId = winnerId });
+                    return;
                 }
             }
+
+            // 3. 奇观/圣物/停战胜利(EndGameManager 计时推进)。
+            if (EndGame.Tick(this, 0.1f))
+                IsGameOver = true;
         }
 
-        /// <summary>Count a player's entities that count for survival: units + buildings only
-        /// (not resources/animals/decals). Mirrors the conquest "ConquestCritical" filter.</summary>
-        private int CountConquestEntities(int playerId, Components.RangeManager range)
+        private string DefeatReason() =>
+            EndGame.HasCondition("conquest_units") ? "Lost all units."
+            : EndGame.HasCondition("conquest_civic_centers") ? "Lost all civic centres."
+            : "Lost all units and structures.";
+
+        /// <summary>Count a player's defeat-relevant entities per the active victory condition:
+        /// conquest(default) → units+buildings;conquest_units → units only;
+        /// conquest_civic_centers → civic-centre-class structures only.</summary>
+        private int CountDefeatEntities(int playerId, Components.RangeManager range)
         {
+            bool unitsOnly = EndGame.HasCondition("conquest_units") && !EndGame.HasCondition("conquest");
+            bool ccOnly = EndGame.HasCondition("conquest_civic_centers");
             int count = 0;
             foreach (var entity in range.GetEntitiesByPlayer(playerId))
             {
                 var id = QueryInterface<IdentityComponent>(entity);
-                if (id != null && (id.IsUnit || id.IsBuilding)) count++;
+                if (id == null) continue;
+                if (ccOnly)
+                {
+                    if (id.IsBuilding && id.HasClass("CivCentre")) count++;
+                }
+                else if (unitsOnly)
+                {
+                    if (id.IsUnit) count++;
+                }
+                else if (id.IsUnit || id.IsBuilding) count++;
             }
             return count;
         }

@@ -5,8 +5,7 @@ namespace ZeroAD.Godot;
 
 public static class SelectionRing
 {
-    private static StandardMaterial3D _ringMat = null!;
-    private static StandardMaterial3D _ringMatEnemy = null!;
+    private static readonly Dictionary<Color, StandardMaterial3D> _mats = new();
 
     private static StandardMaterial3D CreateRingMat(Color color)
     {
@@ -19,10 +18,16 @@ public static class SelectionRing
         return mat;
     }
 
-    private static void EnsureMaterials(Color friendlyColor, Color enemyColor)
+    /// <summary>按颜色缓存材质——修复"首个被选实体的颜色污染全会话"
+    /// (原 _ringMat ??= 一次性缓存,先选敌方后己方也全红)。</summary>
+    private static StandardMaterial3D MatFor(Color color)
     {
-        _ringMat ??= CreateRingMat(friendlyColor);
-        _ringMatEnemy ??= CreateRingMat(enemyColor);
+        if (!_mats.TryGetValue(color, out var m))
+        {
+            m = CreateRingMat(color);
+            _mats[color] = m;
+        }
+        return m;
     }
 
     public enum Shape { Circle, Square }
@@ -36,7 +41,7 @@ public static class SelectionRing
     public static MeshInstance3D Create(float radius, Color friendlyColor, Color enemyColor,
         Shape shape = Shape.Circle)
     {
-        EnsureMaterials(friendlyColor, enemyColor);
+        
 
         var points = shape == Shape.Square ? SquarePoints(radius) : CirclePoints(radius);
         float lineWidth = shape == Shape.Square ? 0.5f : 0.35f;
@@ -46,14 +51,14 @@ public static class SelectionRing
         AppendOutlineBand(st, points, lineWidth);
         var mesh = st.Commit();
         var instance = new MeshInstance3D { Mesh = mesh };
-        mesh.SurfaceSetMaterial(0, _ringMat);
+        mesh.SurfaceSetMaterial(0, MatFor(friendlyColor));
         return instance;
     }
 
     /// <summary>按建筑实际 footprint 画矩形选择框(半宽/半深 + 带宽),替代固定半径正方形。</summary>
     public static MeshInstance3D CreateRect(float halfX, float halfZ, Color color, float lineWidth = 0.5f)
     {
-        EnsureMaterials(color, color);
+        
         var points = new Vector3[]
         {
             new(-halfX, 0.1f, -halfZ),
@@ -67,7 +72,7 @@ public static class SelectionRing
         AppendOutlineBand(st, points, lineWidth);
         var mesh = st.Commit();
         var instance = new MeshInstance3D { Mesh = mesh };
-        mesh.SurfaceSetMaterial(0, _ringMat);
+        mesh.SurfaceSetMaterial(0, MatFor(color));
         return instance;
     }
 

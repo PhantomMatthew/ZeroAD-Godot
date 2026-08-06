@@ -24,16 +24,15 @@ public sealed class Headquarters
 
     // 子管理器（2.7 逐步填充）
     public BasesManager BasesManager;
-    // public AttackManager AttackManager;  // Phase 3
+    public ResearchManager ResearchManager;
+    public AttackManager AttackManager;
+    public TradeManager TradeManager;
+    public EmergencyManager EmergencyManager;
+    // public NavalManager NavalManager;  // 海图未启用,保持骨架(见 Update 注释)
     // public DefenseManager DefenseManager;  // Phase 3
-    // public BuildManager BuildManager;  // 2.7
-    // public TradeManager TradeManager;  // Phase 3
-    // public NavalManager NavalManager;  // Phase 3
-    // public ResearchManager ResearchManager;  // 2.7
-    // public DiplomacyManager DiplomacyManager;  // Phase 3
     // public GarrisonManager GarrisonManager;  // 2.7
+    // public DiplomacyManager DiplomacyManager;  // Phase 3
     // public VictoryManager VictoryManager;  // Phase 3
-    // public EmergencyManager EmergencyManager;  // 2.7
 
     public int Phasing;  // 0=无，>0=正在升级到 phase i
     public int CurrentPhase;
@@ -69,6 +68,10 @@ public sealed class Headquarters
         Config = config;
         Queues = new QueueManager(config);
         BasesManager = new BasesManager(config);
+        ResearchManager = new ResearchManager(config);
+        AttackManager = new AttackManager(config);
+        TradeManager = new TradeManager(config);
+        EmergencyManager = new EmergencyManager(config);
         TargetNumWorkers = config.Economy.TargetNumWorkers;
         SupportRatio = config.Economy.SupportRatio;
         TowerLapseTime = config.Military.TowerLapseTime;
@@ -92,11 +95,13 @@ public sealed class Headquarters
             CheckPhaseRequirements(gameState);
         // else ResearchManager.CheckPhase(gameState);  // TODO: 2.7
 
-        // 核心经济循环（每4回合轮替）
+        // 核心经济循环（每4回合轮替）——回合号取 NetTurnManager.CurrentTurn(原版
+        // playedTurn);Net 缺失的测试环境回落事件计数。
         bool hasActive = HasActiveBase(gameState);
+        uint turn = gameState.Net?.CurrentTurn ?? (uint)gameState.Events.Events.Count;
         if (hasActive)
         {
-            int turnMod = gameState.Events.Events.Count % 4;  // 简化：用事件数模4（原版用 playedTurn）
+            int turnMod = (int)(turn % 4);
             if (turnMod == 0) TrainMoreWorkers(gameState);
             if (turnMod == 1) BuildMoreHouses(gameState);
             if (turnMod == 2 && (!SaveResources || CanBarter)) BuildFarmstead(gameState);
@@ -116,20 +121,27 @@ public sealed class Headquarters
         }
 
         // 训练建筑 + 防御（每3回合）
-        if (gameState.Events.Events.Count % 3 == 0)
+        if (turn % 3 == 0)
         {
             ConstructTrainingBuildings(gameState);
             if (Config.Difficulty > DifficultyLevel.Sandbox) BuildDefenses(gameState);
         }
 
         // 子管理器更新
+        EmergencyManager.Update(gameState);
         BasesManager.Update(gameState, events);
+        // 科技管理(原版 researchManager:CheckPhase 在 Phasing==0 时,Update 每 think)。
+        if (Phasing == 0)
+            ResearchManager.CheckPhase(gameState, Queues);
+        ResearchManager.Update(gameState, Queues);
+        TradeManager.Update(gameState, events, Queues);
+        // 进攻管理(原版门控:难度 > Sandbox 且(有活基地或不可造兵))
+        if (Config.Difficulty > DifficultyLevel.Sandbox && (hasActive || !CanBuildUnits))
+            AttackManager.Update(gameState, Queues, events);
         // DefenseManager.Update(gameState, events);  // Phase 3
         // GarrisonManager.Update(gameState, events);  // 2.7
-        // TradeManager.Update(gameState, events);  // Phase 3
-        // NavalManager.Update(gameState, events);  // Phase 3
-        // if (Config.Difficulty > Sandbox && (hasActive || !CanBuildUnits))
-        //     AttackManager.Update(gameState, events);  // Phase 3
+        // NavalManager: 海图未启用,不挂(骨架在 NavalManager.cs,启用时
+        // 需 Accessibility.getTrajectTo 跨海判定先落地)。
         // DiplomacyManager.Update(gameState, events);  // Phase 3
         // VictoryManager.Update(gameState, events);  // Phase 3
 
@@ -169,55 +181,126 @@ public sealed class Headquarters
         }
     }
 
-    // ── 建造/训练决策（骨架——完整逻辑逐步填充）──
+    // ── 建造/训练决策（原版 headquarters.js 同名方法,简化选址/门控版）──
+
+    /// <summary>队列是否已有未启动计划(防每回合重复加单;原版查 queue 计数)。</summary>
+    private bool HasPendingPlan(string queueName)
+        => Queues.GetQueue(queueName)?.HasQueuedUnits == true;
+
+    /// <summary>自有建筑按 class 计数。</summary>
+    private static int CountOwnStructuresByClass(GameState gameState, string className)
+        => gameState.GetOwnStructures().Filter(e => e.HasClass(className)).Length;
 
     private void TrainMoreWorkers(GameState gameState)
     {
-        // 原版 trainMoreWorkers：检查 worker 数 vs targetNumWorkers，按 supportRatio
-        // 决定训练 villager 还是 citizenSoldier，加入 villager/citizenSoldier 队列。
+        // 原版 trainMoreWorkers:worker 数未达 targetNumWorkers 时补训练;
+        // 已排队的计入(防超训),villager 队列挂 support_civilian。
         int numWorkers = gameState.CountOwnEntitiesByRole("worker");
         if (numWorkers >= TargetNumWorkers) return;
-        // 简化：加入 villager 训练计划
-        var civ = gameState.GetPlayerCiv();
-        // TODO: 精确版需检查 trainer 可用性 + pop cap + supportRatio 分配
-        // Queues.AddPlan("villager", new TrainingPlan(gameState, $"units/{civ}/support_civilian", ...));
+        if (HasPendingPlan("villager")) return;
+        var plan = new TrainingPlan(gameState, "units/{civ}/support_civilian",
+            number: System.Math.Min(2, TargetNumWorkers - numWorkers));
+        Queues.AddPlan("villager", plan);
     }
 
     private void BuildMoreHouses(GameState gameState)
     {
-        // 原版 buildMoreHouses：pop 接近上限时加入 house 建设计划
-        int pop = gameState.GetPopulation();
-        int popLimit = gameState.GetPopulationLimit();
-        if (popLimit - pop > 5) return;  // 还有空间
-        // TODO: Queues.AddPlan("house", new ConstructionPlan(gameState, $"structures/{civ}/house"));
+        // 原版 buildMoreHouses:剩余床位逼近缓冲(原版按 pop 规模 5-20)即建房;
+        // house 队列非空时不重复加。
+        int freeBeds = gameState.GetPopulationLimit() - gameState.GetPopulation();
+        if (freeBeds > 8) return;
+        if (HasPendingPlan("house")) return;
+        Queues.AddPlan("house", new ConstructionPlan(gameState, "structures/{civ}/house"));
     }
 
     private void BuildFarmstead(GameState gameState)
     {
-        // 原版 buildFarmstead：食物不足时建农场
-        // TODO: 完整选址逻辑
+        // 原版 buildFarmstead:食物产能不足时建农场。简化门控:农场数 <
+        // max(1, workers/5) 且(首农场必建或食物库存 < 400),队列不重复。
+        int numWorkers = gameState.CountOwnEntitiesByRole("worker");
+        int farms = CountOwnStructuresByClass(gameState, "Farmstead");
+        int farmsWanted = System.Math.Max(1, numWorkers / 5);
+        if (farms >= farmsWanted) return;
+        if (farms >= 1 && gameState.GetResources().Food > 400) return;
+        if (HasPendingPlan("field")) return;
+        Queues.AddPlan("field", new ConstructionPlan(gameState, "structures/{civ}/farmstead"));
     }
 
-    private void ManageCorral(GameState gameState) { /* TODO */ }
+    private void ManageCorral(GameState gameState)
+    {
+        // 原版 manageCorral:需要畜牧时建畜栏。门控:无畜栏且队列不重复。
+        if (CountOwnStructuresByClass(gameState, "Corral") >= 1) return;
+        if (HasPendingPlan("corral")) return;
+        Queues.AddPlan("corral", new ConstructionPlan(gameState, "structures/{civ}/corral"));
+    }
 
     private void CheckBaseExpansion(GameState gameState)
     {
-        // 原版 checkBaseExpansion：资源充足 + 人口达阈值时建新 CC
-        // TODO: findCCLocation（依赖 territory map + obstruction map 的完整版）
+        // 原版 checkBaseExpansion:town+ 且 CanExpand 时扩建新 CC(完整版用
+        // findCCLocation 沿领土边界选址;简化版复用通用选址)。
+        if (!CanExpand || CurrentPhase < 2) return;
+        if (HasPendingPlan("economicBuilding")) return;
+        int ccs = CountOwnStructuresByClass(gameState, "CivCentre");
+        int ccsWanted = Config.Difficulty >= DifficultyLevel.Hard ? 3 : 2;
+        if (ccs >= ccsWanted) return;
+        Queues.AddPlan("economicBuilding",
+            new ConstructionPlan(gameState, "structures/{civ}/civil_centre"));
     }
 
     private void CheckPhaseRequirements(GameState gameState)
     {
-        // 正在升级时检查是否完成
+        // 正在升级时检查是否完成(科技研究本体由 ResearchManager(2.7)负责)
         if (gameState.IsResearched(gameState.GetPhaseName(Phasing)))
             Phasing = 0;
     }
 
-    private void BuildMarket(GameState gameState) { /* TODO */ }
-    private void BuildForge(GameState gameState) { /* TODO */ }
-    private void BuildTemple(GameState gameState) { /* TODO */ }
-    private void BuildDefenses(GameState gameState) { /* TODO */ }
-    private void ConstructTrainingBuildings(GameState gameState) { /* TODO */ }
+    private void BuildMarket(GameState gameState)
+    {
+        // 原版:不能以物易物(CanBarter=false)时建市场换汇。
+        if (CountOwnStructuresByClass(gameState, "Market") >= 1) return;
+        if (HasPendingPlan("economicBuilding")) return;
+        Queues.AddPlan("economicBuilding",
+            new ConstructionPlan(gameState, "structures/{civ}/market"));
+    }
+
+    private void BuildForge(GameState gameState)
+    {
+        // 原版:建铁匠铺解锁攻防科技。
+        if (CountOwnStructuresByClass(gameState, "Forge") >= 1) return;
+        if (HasPendingPlan("economicBuilding")) return;
+        Queues.AddPlan("economicBuilding",
+            new ConstructionPlan(gameState, "structures/{civ}/forge"));
+    }
+
+    private void BuildTemple(GameState gameState)
+    {
+        // 原版:建神庙(治疗/宗教科技)。
+        if (CountOwnStructuresByClass(gameState, "Temple") >= 1) return;
+        if (HasPendingPlan("economicBuilding")) return;
+        Queues.AddPlan("economicBuilding",
+            new ConstructionPlan(gameState, "structures/{civ}/temple"));
+    }
+
+    private void BuildDefenses(GameState gameState)
+    {
+        // 原版:按 ExtraTowers(难度×防御性格)补防御塔。
+        int towers = CountOwnStructuresByClass(gameState, "DefenseTower");
+        if (towers >= 2 + ExtraTowers) return;
+        if (HasPendingPlan("defenseBuilding")) return;
+        Queues.AddPlan("defenseBuilding",
+            new ConstructionPlan(gameState, "structures/{civ}/defense_tower"));
+    }
+
+    private void ConstructTrainingBuildings(GameState gameState)
+    {
+        // 原版:保证每基地至少 1 兵营。
+        int barracks = CountOwnStructuresByClass(gameState, "Barracks");
+        int bases = System.Math.Max(1, CountOwnStructuresByClass(gameState, "CivCentre"));
+        if (barracks >= bases) return;
+        if (HasPendingPlan("militaryBuilding")) return;
+        Queues.AddPlan("militaryBuilding",
+            new ConstructionPlan(gameState, "structures/{civ}/barracks"));
+    }
 
     /// <summary>占领目标信息（capturableTargets 缓存项）。</summary>
     public sealed class CapturableTarget

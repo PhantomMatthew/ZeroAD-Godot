@@ -169,6 +169,48 @@ namespace ZeroAD.Sim
                 });
             }
 
+            // Loot + Looter + StatusEffectsReceiver(原版 template_unit 默认件):
+            // 战利品定义按模板挂载;收集器/接收器全体单位恒挂(空架/框架件)。
+            if (stats != null && stats.HasLoot && cm.QueryInterface<LootComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new LootComponent
+                {
+                    Xp = stats.LootXp,
+                    Food = stats.LootFood,
+                    Wood = stats.LootWood,
+                    Stone = stats.LootStone,
+                    Metal = stats.LootMetal,
+                });
+            }
+            if (cm.QueryInterface<LooterComponent>(entity) == null)
+                cm.AddComponent(entity, new LooterComponent());
+            if (cm.QueryInterface<StatusEffectsReceiverComponent>(entity) == null)
+                cm.AddComponent(entity, new StatusEffectsReceiverComponent());
+
+            // Repairable(攻城器/船;template_unit_siege/template_unit_ship):修理行为件。
+            if (stats != null && stats.HasRepairable
+                && cm.QueryInterface<RepairableComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new RepairableComponent
+                {
+                    RepairTimeRatio = stats.RepairTimeRatio,
+                });
+            }
+
+            // ResourceTrickle(资源涓流单位——罕见;建筑走 RegisterForLos)。
+            if (stats != null && stats.HasResourceTrickle
+                && cm.QueryInterface<ResourceTrickleComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new ResourceTrickleComponent
+                {
+                    IntervalMs = stats.TrickleIntervalMs,
+                    FoodRate = stats.TrickleFood,
+                    WoodRate = stats.TrickleWood,
+                    StoneRate = stats.TrickleStone,
+                    MetalRate = stats.TrickleMetal,
+                });
+            }
+
             // Garrisonable(可驻防;template_unit 默认 Size=1):Garrisonable.js 行为件。
             if (stats != null && stats.GarrisonableSize > 0
                 && cm.QueryInterface<GarrisonableComponent>(entity) == null)
@@ -400,6 +442,47 @@ namespace ZeroAD.Sim
                 capturable.InitForOwner(cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId ?? -1);
             }
 
+            // Loot + Looter + StatusEffectsReceiver(原版 template_structure 默认件)。
+            if (stats != null && stats.HasLoot && cm.QueryInterface<LootComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new LootComponent
+                {
+                    Xp = stats.LootXp,
+                    Food = stats.LootFood,
+                    Wood = stats.LootWood,
+                    Stone = stats.LootStone,
+                    Metal = stats.LootMetal,
+                });
+            }
+            if (cm.QueryInterface<LooterComponent>(entity) == null)
+                cm.AddComponent(entity, new LooterComponent());
+            if (cm.QueryInterface<StatusEffectsReceiverComponent>(entity) == null)
+                cm.AddComponent(entity, new StatusEffectsReceiverComponent());
+
+            // Repairable(可修理建筑;template_structure 默认 RepairTimeRatio=2.0)。
+            if (stats != null && stats.HasRepairable
+                && cm.QueryInterface<RepairableComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new RepairableComponent
+                {
+                    RepairTimeRatio = stats.RepairTimeRatio,
+                });
+            }
+
+            // ResourceTrickle(奇观/牲口棚等资源涓流建筑)。
+            if (stats != null && stats.HasResourceTrickle
+                && cm.QueryInterface<ResourceTrickleComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new ResourceTrickleComponent
+                {
+                    IntervalMs = stats.TrickleIntervalMs,
+                    FoodRate = stats.TrickleFood,
+                    WoodRate = stats.TrickleWood,
+                    StoneRate = stats.TrickleStone,
+                    MetalRate = stats.TrickleMetal,
+                });
+            }
+
             cm.NotifyEntityCreated(entity); // RangeManager subscribes → indexes + Refresh
             int owner = cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId ?? -1;
             if (owner > 0)
@@ -444,6 +527,7 @@ namespace ZeroAD.Sim
                 MaxColumns = stats.FormationMaxColumns,
                 MaxRows = stats.FormationMaxRows,
                 CenterGap = stats.FormationCenterGap,
+                CanAttackAsFormation = stats.FormationCanAttackAsFormation,
             };
             cm.AddComponent(entity, formation);
             formation.SortingClasses.AddRange(stats.FormationSortingClasses);

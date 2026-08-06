@@ -62,16 +62,51 @@ namespace ZeroAD.Sim.Content
 
         public event Action<string>? OnScenarioMessage;
 
+        /// <summary>把 ScenarioTrigger 数据转换为数据驱动 TriggerDefinition 注册进系统。
+        /// 教程的 OnTimer 消息 → TimeElapsed 条件 + ShowMessage 动作(一次性)。
+        /// 消息出口经 TriggerSystem.Sink(ITriggerSink);同时保留 OnScenarioMessage 事件:
+        /// 若订阅存在,包一层 sink 透传。</summary>
         public void ApplyTriggers(TriggerSystem system)
         {
+            if (OnScenarioMessage != null)
+            {
+                var prev = system.Sink;
+                system.Sink = new MessageRelaySink(prev, msg => OnScenarioMessage(msg));
+            }
             foreach (var t in Triggers)
             {
                 if (t.Type == "OnTimer" && t.TimerSeconds.HasValue)
                 {
-                    system.AddTimer(t.Name, t.TimerSeconds.Value, _ =>
-                        OnScenarioMessage?.Invoke(t.Message));
+                    system.Add(new TriggerDefinition
+                    {
+                        Name = t.Name,
+                        Once = true,
+                        Conditions =
+                        {
+                            new TriggerCondition { Type = "TimeElapsed",
+                                Params = { ["Seconds"] = t.TimerSeconds.Value.ToString(
+                                    System.Globalization.CultureInfo.InvariantCulture) } }
+                        },
+                        Actions =
+                        {
+                            new TriggerAction { Type = "ShowMessage",
+                                Params = { ["Text"] = t.Message } }
+                        }
+                    });
                 }
             }
+        }
+
+        private sealed class MessageRelaySink : ITriggerSink
+        {
+            private readonly ITriggerSink? _inner;
+            private readonly Action<string> _onMessage;
+            public MessageRelaySink(ITriggerSink? inner, Action<string> onMessage)
+            { _inner = inner; _onMessage = onMessage; }
+            public void ShowMessage(string text)
+            { _inner?.ShowMessage(text); _onMessage(text); }
+            public void SpawnEntities(string template, int playerId, float x, float z, int count, float spread)
+                => _inner?.SpawnEntities(template, playerId, x, z, count, spread);
         }
     }
 

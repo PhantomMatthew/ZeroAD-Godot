@@ -19,7 +19,9 @@ public sealed record TechnologyDefinition(
     IReadOnlyList<Modification> Modifications,
     bool AutoResearch,
     string? Supersedes,
-    IReadOnlyList<string> Replaces);
+    IReadOnlyList<string> Replaces,
+    /// <summary>JSON icon 字段(如 "town_phase.png";HUD 取 portraits/technologies/ 下同名立绘)。</summary>
+    string Icon = "");
 
 public sealed record TechCatalog(
     IReadOnlyDictionary<string, TechnologyDefinition> Technologies,
@@ -81,7 +83,8 @@ public static class TechnologyLoader
             root.TryGetProperty("supersedes", out var su) && su.ValueKind == JsonValueKind.String ? su.GetString() : null,
             root.TryGetProperty("replaces", out var re) && re.ValueKind == JsonValueKind.Array
                 ? re.EnumerateArray().Select(e => e.GetString()!).ToList()
-                : (IReadOnlyList<string>)Array.Empty<string>());
+                : (IReadOnlyList<string>)Array.Empty<string>(),
+            root.TryGetProperty("icon", out var ic) && ic.ValueKind == JsonValueKind.String ? ic.GetString()! : "");
     }
 
     /// <summary>requirements 对象的每个键 = 一个条件;多键 AND。</summary>

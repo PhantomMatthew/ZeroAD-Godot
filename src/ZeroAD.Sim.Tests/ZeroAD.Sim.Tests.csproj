@@ -18,4 +18,10 @@
     <ProjectReference Include="../ZeroAD.Sim/ZeroAD.Sim.csproj" />
   </ItemGroup>
 
+  <!-- PmpMap.cs 为纯 C#(零 Godot 依赖),include 进测试程序集供地图加载回归
+       (AllMapsGenerationTests.AllPmpMaps_Load_AndXmlParses)。 -->
+  <ItemGroup>
+    <Compile Include="../../godot/Scripts/PmpMap.cs" />
+  </ItemGroup>
+
 </Project>

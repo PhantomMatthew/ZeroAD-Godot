@@ -70,12 +70,10 @@ public sealed class TrainingPlan : QueuePlan
     public override void Start(GameState gameState)
     {
         if (_trainers.Count == 0) return;
-        // 通过 SubmitAiCommand 发训练命令
-        var net = gameState.Cm;  // ComponentManager 持有 NetTurnManager 引用
-        // AI 命令走 SubmitAiCommand（Phase 0 的通道）
-        // 简化版：选第一个训练设施，发 Train 命令
-        // 完整版需要 NetTurnManager 引用——经 gameState 或 AIComponent 传入
-        // TODO: Phase 2 后续接入 NetTurnManager.SubmitAiCommand
+        // 经 AI 本地通道发训练命令(与玩家 Train 命令同路径同延迟;
+        // 原版 queueplanTraining.start 的 PostCommand 等价)。
+        gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Train(
+            (uint)gameState.PlayerId, _trainers[0], Type, Number));
     }
 }
 
@@ -84,7 +82,8 @@ public sealed class ResearchPlan : QueuePlan
 {
     public ResearchPlan(GameState gameState, string type, Dictionary<string, object>? metadata = null)
     {
-        Type = gameState.ApplyCiv(type);
+        // {civ} 展开后再归一(phase 无特制文件文明 → *_generic,gaul 等)。
+        Type = gameState.ResolveTechName(gameState.ApplyCiv(type));
         Category = "technology";
         Number = 1;
         Metadata = metadata ?? new();
@@ -107,6 +106,10 @@ public sealed class ResearchPlan : QueuePlan
     {
         var researchers = gameState.FindResearchers(Type);
         if (!researchers.HasEntities()) return;
-        // TODO: SubmitAiCommand(Research)
+        // 经 AI 本地通道发研究命令(与玩家 Research 同路径;原版 ResearchPlan.start
+        // 的 PostCommand 等价)。取首个研究建筑。
+        uint researcher = researchers.ToIdArray()[0];
+        gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Research(
+            (uint)gameState.PlayerId, researcher, Type));
     }
 }

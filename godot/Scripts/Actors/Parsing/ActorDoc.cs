@@ -20,7 +20,9 @@ public sealed record ActorVariant(
     IReadOnlyDictionary<string, PropRef> Props,    // attachpoint -> prop
     IReadOnlyList<AnimRef> Animations,
     string? Material,
-    ColorVec? Color = null)            // <color>r g b</color> object-color tint (hair etc.)
+    ColorVec? Color = null,            // <color>r g b</color> object-color tint (hair etc.)
+    DecalSpec? Decal = null,           // <decal/> 贴花(无 mesh 的地面贴图变体)
+    string? Particles = null)          // <particles file="x"/> 粒子系统(不可移植,跳过渲染)
 {
     public static ActorVariant Empty(string name, int freq) =>
         new(
@@ -32,6 +34,10 @@ public sealed record ActorVariant(
             Animations: EmptyList<AnimRef>.Value,
             Material: null);
 }
+
+/// <summary>0 A.D. &lt;decal&gt; 贴花定义(原版走贴花渲染器,非 mesh)——平躺 quad + baseTex。
+/// angle 单位为弧度;offsetx/z 为地面偏移(米)。</summary>
+public sealed record DecalSpec(float Width, float Depth, float Angle, float OffsetX, float OffsetZ);
 
 /// <summary>0 A.D. &lt;color&gt; variant field: an 0-255 RGB tint multiplied into
 /// objectcolor-material regions where baseTex alpha is 0 (male hair on props heads).</summary>

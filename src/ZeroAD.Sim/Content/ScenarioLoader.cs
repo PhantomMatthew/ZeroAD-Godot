@@ -42,6 +42,14 @@ namespace ZeroAD.Sim.Content
         public float CameraX;
         public float CameraY;
         public float CameraZ;
+        /// <summary>胜利条件列表(EndGameManager;空 = 默认征服)。来自 ScriptSettings.VictoryConditions。</summary>
+        public List<string> VictoryConditions = new();
+        /// <summary>奇观胜利所需保有秒数(ScriptSettings.WonderVictoryDuration,分钟 → 秒;原版默认 10 分钟)。</summary>
+        public float WonderVictoryDuration = 600f;
+        /// <summary>圣物胜利所需保有秒数(ScriptSettings.RelicVictoryDuration,分钟 → 秒)。</summary>
+        public float RelicVictoryDuration = 600f;
+        /// <summary>停战秒数(ScriptSettings.Ceasefire,分钟 → 秒;0 = 无停战)。</summary>
+        public float CeasefireDuration;
     }
 
     public static class ScenarioLoader
@@ -88,6 +96,23 @@ namespace ZeroAD.Sim.Content
                 data.Name = name.GetString() ?? "";
             if (root.TryGetProperty("Description", out var desc))
                 data.Description = desc.GetString() ?? "";
+
+            // 胜利条件体系(EndGameManager 的 GameTypeSettings)。
+            if (root.TryGetProperty("VictoryConditions", out var vc) && vc.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var cond in vc.EnumerateArray())
+                {
+                    var s = cond.GetString();
+                    if (!string.IsNullOrEmpty(s)) data.VictoryConditions.Add(s!);
+                }
+            }
+            // 时长在 ScriptSettings 中以分钟存储(见 gamesetup 的 GameTypeSettings)。
+            if (root.TryGetProperty("WonderVictoryDuration", out var wvd) && wvd.TryGetDouble(out var wmin))
+                data.WonderVictoryDuration = (float)(wmin * 60.0);
+            if (root.TryGetProperty("RelicVictoryDuration", out var rvd) && rvd.TryGetDouble(out var rmin))
+                data.RelicVictoryDuration = (float)(rmin * 60.0);
+            if (root.TryGetProperty("Ceasefire", out var cf) && cf.TryGetDouble(out var cmin))
+                data.CeasefireDuration = (float)(cmin * 60.0);
 
             if (!root.TryGetProperty("PlayerData", out var players))
                 return;

@@ -38,6 +38,35 @@ public sealed partial class SimBridge : Node
     private EntityId _terrainEntity;
     private readonly Dictionary<uint, EntityId> _scenarioUidMap = new();
     private readonly List<Node3D> _decorativeNodes = new();
+
+    /// <summary>触发器 ShowMessage 动作出口(数据驱动触发器 → HUD toast)。</summary>
+    public event System.Action<string>? TriggerMessage;
+
+    /// <summary>触发器效果出口实现:消息转事件(订阅在 Main → HUD),
+    /// 生成走 SpawnFromTemplate。散布为黄金角圆周——确定性(无 RNG),lockstep 各端一致。</summary>
+    private sealed class BridgeTriggerSink : ZeroAD.Sim.Triggers.ITriggerSink
+    {
+        private readonly SimBridge _bridge;
+        public BridgeTriggerSink(SimBridge bridge) => _bridge = bridge;
+
+        public void ShowMessage(string text) => _bridge.TriggerMessage?.Invoke(text);
+
+        public void SpawnEntities(string template, int playerId, float x, float z, int count, float spread)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                float ox = 0f, oz = 0f;
+                if (spread > 0f && count > 1)
+                {
+                    float angle = i * 2.399963f;   // 黄金角(弧度)
+                    float r = spread * (float)System.Math.Sqrt((double)i / count);
+                    ox = r * (float)System.Math.Cos(angle);
+                    oz = r * (float)System.Math.Sin(angle);
+                }
+                _bridge.SpawnFromTemplate(template, x + ox, z + oz, playerId);
+            }
+        }
+    }
     /// <summary>InitWorld 传入的模板根路径(simulation/templates)——SkirmishReplacer 由它
     /// 推导 civs 数据目录(../data/civs)。</summary>
     private string? _templatesPath;
@@ -164,6 +193,7 @@ public sealed partial class SimBridge : Node
         _sim = new ComponentManager(seed, registry, templates);
         if (auraCatalog != null) _sim.Auras = auraCatalog;
         SimSystem.Init(_sim);
+        _sim.Triggers.Sink = new BridgeTriggerSink(this);
         Templates = templates;
         _templatesPath = templatesPath;
         LocalPlayerId = localPlayerId;
@@ -364,21 +394,58 @@ public sealed partial class SimBridge : Node
         }
     }
 
+    /// <summary>加载地图 XML 实体并生成（scenario/skirmish 通用）。XML 存在且含 sim 实体
+    /// 时:skirmish 占位先经 SkirmishReplacer 替换,全部实体走 scenario 生成路径,
+    /// XML PlayerData 的 civ 覆盖玩家文明(原版 scenario 行为:地图作者定文明),
+    /// 返回 ScenarioData 供调用方做外交播种;否则返回 null(走调用方默认生成)。</summary>
+    public ScenarioData? LoadMapScenario(string dataRoot, string mapRelPathNoExt)
+    {
+        string? xmlPath = ScenarioLoader.FindScenarioPath(dataRoot, mapRelPathNoExt);
+        if (xmlPath == null) return null;
+        var scenario = ScenarioLoader.Load(xmlPath);
+        if (!scenario.Entities.Any(e => e.IsSimulationEntity)) return null;
+        ApplyScenarioCivs(scenario);
+        ApplyVictoryConditions(scenario);
+        SpawnScenarioEntities(scenario);
+        GD.Print($"[Map] loaded map entities: {scenario.Entities.Count} ({scenario.Name})");
+        return scenario;
+    }
+
+    /// <summary>地图 ScriptSettings 的胜利条件注入 EndGameManager(原版 InitGame.js →
+    /// EndGameManager.InitGame 读取 GameTypeSettings)。空列表 = 默认征服,时长分钟→秒已在
+    /// ScenarioLoader 转换。</summary>
+    private void ApplyVictoryConditions(ScenarioData scenario)
+    {
+        var endGame = _sim?.EndGame;
+        if (endGame == null) return;
+        if (scenario.VictoryConditions.Count > 0)
+            endGame.SetVictoryConditions(scenario.VictoryConditions);
+        endGame.WonderVictoryDuration = scenario.WonderVictoryDuration;
+        endGame.RelicVictoryDuration = scenario.RelicVictoryDuration;
+        endGame.CeasefireDuration = scenario.CeasefireDuration;
+        if (scenario.VictoryConditions.Count > 0)
+            GD.Print($"[Map] victory conditions: {string.Join(",", scenario.VictoryConditions)}");
+    }
+
+    /// <summary>XML PlayerData 的 civ 写入玩家实体(原版 scenario:文明由地图定义,
+    /// gamesetup 下拉对 scenario 图实为展示)。空 civ 不动(skirmish 图 PlayerData 无 civ,
+    /// 用槽位表)。</summary>
+    private void ApplyScenarioCivs(ScenarioData scenario)
+    {
+        foreach (var pd in scenario.Players)
+        {
+            if (string.IsNullOrEmpty(pd.Civ) || pd.PlayerId <= 0) continue;
+            var player = _sim?.GetPlayerEntity(pd.PlayerId);
+            if (player != null) player.Civ = pd.Civ;
+        }
+    }
+
     /// <summary>加载 skirmish 地图的 XML 实体并生成（占位模板经 SkirmishReplacer 按槽位文明
     /// 替换后走正常 scenario 生成路径）。仅当地图 XML 存在且含 skirmish/ 占位实体时返回 true——
     /// 普通 scenario 地图（实体全是确定模板）不走路径，保持既有沙盒生成不变。
     /// mapRelPathNoExt 例 "maps/skirmishes/acropolis_bay_2p"。</summary>
     public bool LoadSkirmishScenario(string dataRoot, string mapRelPathNoExt)
-    {
-        string? xmlPath = ScenarioLoader.FindScenarioPath(dataRoot, mapRelPathNoExt);
-        if (xmlPath == null) return false;
-        var scenario = ScenarioLoader.Load(xmlPath);
-        if (!scenario.Entities.Any(e => e.Template.StartsWith("skirmish/", StringComparison.Ordinal)))
-            return false;
-        SpawnScenarioEntities(scenario);
-        GD.Print($"[Skirmish] loaded map entities: {scenario.Entities.Count} ({scenario.Name})");
-        return true;
-    }
+        => LoadMapScenario(dataRoot, mapRelPathNoExt) != null;
 
     /// <summary>skirmish/ 占位实体的文明替换——原版 InitGame.js 广播 MT_SkirmishReplace 的移植：
     /// 世界构建完成、首回合开始前，对全部 skirmish/ 占位实体按属主文明改写模板名（查 civ JSON
@@ -536,6 +603,12 @@ public sealed partial class SimBridge : Node
             Territory = stats?.BuildRestrictionsTerritory ?? "",
         });
         obstruction.EnsureRegistered();
+        // 城门(原版 Gate.js):GateComponent + 默认未锁(可通行 → 阻挡失活)。
+        if (stats != null && stats.HasGate)
+        {
+            _sim.AddComponent(entity, new GateComponent());
+            obstruction.SetActive(false);
+        }
 
         // Fog-of-war registration: Vision/Fogging/Visibility from the template + entry
         // into the RangeManager index (without this the entity is permanently HIDDEN).
@@ -870,6 +943,11 @@ public sealed partial class SimBridge : Node
         // 炮塔跟拍(原版 Position.SetTurretParent 的引擎联动):在点单位锁到持有者
         // 位置+旋转偏移。放 UpdateVisibilityData 前:随行位移本周期即被 LOS 重算吃到。
         TickTurrets(dt);
+        // 资源涓流(原版 ResourceTrickle 定时器的回合制近似:奇观/牲口棚等按间隔发资源)。
+        TickResourceTrickles(dt);
+        // 状态效果(原版 StatusEffectsReceiver 定时器):周期伤害/捕获经 DelayedDamage
+        // 本回合结算(排在其 TickPending 前),时限到撤修饰。
+        TickStatusEffects(dt);
         // Vision range through the modifiers pipeline: tech/aura changes re-cover seer
         // circles in the LOS grid. Runs every turn (after research completes) so all
         // players' ranges stay fresh without a research-completion hook per player.
@@ -944,6 +1022,10 @@ public sealed partial class SimBridge : Node
 
     private void OnSimEntityDestroyed(EntityId entity)
     {
+        // 死亡音效(原版 Sound.js:实体销毁时播模板 death 组;模板查询须在节点释放前)。
+        var identity = _sim?.QueryInterface<IdentityComponent>(entity);
+        if (identity != null && !string.IsNullOrEmpty(identity.TemplateName))
+            AudioManager.PlayUnitEvent(Templates, identity.TemplateName, "death");
         if (_entityNodes.TryGetValue(entity, out var node))
         {
             node.QueueFree();
@@ -1106,6 +1188,24 @@ public sealed partial class SimBridge : Node
         {
             var builder = _sim.QueryInterface<BuilderComponent>(entity);
             builder?.Tick(_sim);
+        }
+    }
+
+    private void TickResourceTrickles(float dt)
+    {
+        foreach (var entity in GetAllEntitiesSnapshot())
+        {
+            var trickle = _sim.QueryInterface<ResourceTrickleComponent>(entity);
+            trickle?.Tick(_sim, dt);
+        }
+    }
+
+    private void TickStatusEffects(float dt)
+    {
+        foreach (var entity in GetAllEntitiesSnapshot())
+        {
+            var receiver = _sim.QueryInterface<StatusEffectsReceiverComponent>(entity);
+            receiver?.Tick(_sim, dt);
         }
     }
 
@@ -1660,6 +1760,54 @@ public sealed partial class SimBridge : Node
 
     public void CommandAttack(EntityId attacker, EntityId target, bool allowCapture = false) =>
         SubmitCommand(NetCommand.Attack(LocalPlayerId, attacker.Value, target.Value, allowCapture));
+
+    /// <summary>攻击移动到坐标(原版 Ctrl+点击;UnitAI WalkAndFight 订单)。</summary>
+    public void CommandAttackWalk(EntityId unit, float x, float z) =>
+        SubmitCommand(NetCommand.AttackWalk(LocalPlayerId, unit.Value,
+            Fixed.FromFloat(x), Fixed.FromFloat(z)));
+
+    /// <summary>巡逻到坐标(原版 P+点击;起点=下单位置,自动往返)。</summary>
+    public void CommandPatrol(EntityId unit, float x, float z) =>
+        SubmitCommand(NetCommand.Patrol(LocalPlayerId, unit.Value,
+            Fixed.FromFloat(x), Fixed.FromFloat(z)));
+
+    /// <summary>护卫友方单位(原版 Guard 订单)。</summary>
+    public void CommandGuard(EntityId guard, EntityId target) =>
+        SubmitCommand(NetCommand.Guard(LocalPlayerId, guard.Value, target.Value));
+
+    /// <summary>编队成员脱队(原版 RemoveFromFormation;部分选中个体命令前用)。
+    /// 经 Formation 命令的 "remove" 负载,锁步安全。</summary>
+    public void CommandFormationRemove(IReadOnlyList<EntityId> members)
+    {
+        if (members.Count == 0) return;
+        SubmitCommand(NetCommand.FormationCmd(LocalPlayerId, "remove",
+            members.Select(m => m.Value).ToList()));
+    }
+
+    /// <summary>修复建筑(原版 repair 命令:builder 修复/续建地基)。</summary>
+    public void CommandRepair(EntityId builder, EntityId target) =>
+        SubmitCommand(NetCommand.Repair(LocalPlayerId, builder.Value, target.Value));
+
+    /// <summary>攻城器打包/解包(原版 pack/unpack 命令)。</summary>
+    public void CommandPack(EntityId unit, bool unpack) =>
+        SubmitCommand(NetCommand.Pack(LocalPlayerId, unit.Value, unpack));
+
+    /// <summary>建筑升级(原版 upgrade 命令:哨塔→防御塔等;拆旧+原位放目标地基续建)。</summary>
+    public void CommandUpgrade(EntityId building, EntityId? builder) =>
+        SubmitCommand(NetCommand.Upgrade(LocalPlayerId, building.Value, builder?.Value ?? 0));
+
+    /// <summary>城门锁切换(原版 gate 面板的 lock/unlock;阻挡活性+寻路网格联动)。</summary>
+    public void CommandToggleGate(EntityId gate, bool locked) =>
+        SubmitCommand(NetCommand.Gate(LocalPlayerId, gate.Value, locked));
+
+    /// <summary>编队命令(原版 formation 面板):shape=null 解散,否则按阵型创建控制器。
+    /// 实体列表经 TemplateName 载荷进锁步(原版 cmd entities 数组的 C# 形)。</summary>
+    public void CommandFormation(IReadOnlyList<EntityId> entities, string shape)
+    {
+        var ids = new List<uint>();
+        foreach (var e in entities) ids.Add(e.Value);
+        SubmitCommand(NetCommand.FormationCmd(LocalPlayerId, shape, ids));
+    }
 
     /// <summary>Issue a build order: cost charge + foundation spawn happen in the sim
     /// at the execution turn (SimCommandExecutor). `template` is the FULL template name.</summary>

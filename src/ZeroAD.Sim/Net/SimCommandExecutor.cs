@@ -66,6 +66,11 @@ namespace ZeroAD.Sim.Net
                 case NetCommandType.SetupTradeRoute: ApplySetupTradeRoute(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.CollectTreasure: ApplyCollectTreasure(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.Guard: ApplyGuard(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Patrol: ApplyPatrol(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Formation: ApplyFormation(cmd); break;
+                case NetCommandType.Pack: ApplyPack(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Upgrade: ApplyUpgrade(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.Gate: ApplyGate(new EntityId(cmd.EntityId), cmd); break;
             }
         }
 
@@ -448,10 +453,75 @@ namespace ZeroAD.Sim.Net
         {
             var x = Fixed.Zero.WithInternalValue(cmd.FixedParam1);
             var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
-            // AttackWalk = 移动到坐标 + 沿途遇敌自动攻击。当前简化为 Walk（UnitAI 的 COMBAT 会自动处理遇敌）。
+            // AttackWalk = UnitAI WalkAndFight 订单:移动到坐标 + 沿途遇敌自动攻击、打完续行。
             var ai = _cm.QueryInterface<UnitAIComponent>(entity);
-            if (ai != null) ai.Walk(new Maths.FixedVector2D(x, z));
+            if (ai != null) ai.WalkAndFight(new Maths.FixedVector2D(x, z));
             else _cm.QueryInterface<UnitMotion>(entity)?.MoveToPoint(new Maths.FixedVector2D(x, z));
+        }
+
+        private void ApplyPatrol(EntityId entity, NetCommand cmd)
+        {
+            var x = Fixed.Zero.WithInternalValue(cmd.FixedParam1);
+            var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
+            // Patrol = UnitAI 巡逻订单:起点⇄目标点往返 + 沿途索敌。
+            var ai = _cm.QueryInterface<UnitAIComponent>(entity);
+            if (ai != null) ai.Patrol(new Maths.FixedVector2D(x, z));
+        }
+
+        /// <summary>Pack 命令(原版 cmd type:"pack"/"unpack"):攻城器打包/解包订单,
+        /// UnitAI PACKING/UNPACKING 状态机驱动(PackComponent 校验自含)。</summary>
+        private void ApplyPack(EntityId entity, NetCommand cmd)
+        {
+            var ai = _cm.QueryInterface<UnitAIComponent>(entity);
+            if (ai == null) return;
+            if (cmd.IntParam1 == 1) ai.Unpack();
+            else ai.Pack();
+        }
+
+        /// <summary>Gate 命令(原版 cmd lock-gate/unlock-gate):城门锁切换,
+        /// GateComponent 联动阻挡活性+重建寻路网格。仅属主可操作。</summary>
+        private void ApplyGate(EntityId gate, NetCommand cmd)
+        {
+            var owner = _cm.QueryInterface<OwnershipComponent>(gate);
+            if (owner == null || owner.PlayerId != (int)cmd.Player) return;
+            _cm.QueryInterface<GateComponent>(gate)?.SetLocked(_cm, cmd.IntParam1 == 1);
+        }
+
+        private void ApplyUpgrade(EntityId building, NetCommand cmd)
+        {
+            var identity = _cm.QueryInterface<IdentityComponent>(building);
+            var owner = _cm.QueryInterface<OwnershipComponent>(building);
+            var pos = _cm.QueryInterface<PositionComponent>(building);
+            if (identity == null || owner == null || pos == null) return;
+            if (owner.PlayerId != (int)cmd.Player) return;
+
+            var stats = _cm.Templates?.ExtractStats(identity.TemplateName);
+            if (stats == null || stats.UpgradeToTemplate.Length == 0) return;
+            string target = stats.UpgradeToTemplate.Replace("{civ}",
+                _cm.GetPlayerEntity(owner.PlayerId)?.Civ ?? "");
+            if (target.Contains('{') || _cm.Templates?.TemplateExists(target) != true) return;
+
+            var player = _cm.GetPlayerEntity(owner.PlayerId);
+            if (player == null) return;
+            if (!player.CanAfford(stats.UpgradeCostWood, stats.UpgradeCostFood,
+                stats.UpgradeCostStone, stats.UpgradeCostMetal)) return;
+            player.Spend(stats.UpgradeCostWood, stats.UpgradeCostFood,
+                stats.UpgradeCostStone, stats.UpgradeCostMetal);
+
+            float x = pos.Position.X.ToFloat();
+            float z = pos.Position.Z.ToFloat();
+            _cm.DestroyEntity(building);
+            var foundation = SpawnFoundation(target,
+                Maths.Fixed.FromFloat(x), Maths.Fixed.FromFloat(z),
+                stats.UpgradeTime > 0 ? stats.UpgradeTime : 10f, owner.PlayerId);
+
+            // 指派的建造者续建(与玩家放置地基后的 Repair 同路)。
+            if (cmd.IntParam1 > 0)
+            {
+                var builder = new EntityId((uint)cmd.IntParam1);
+                var ai = _cm.QueryInterface<UnitAIComponent>(builder);
+                if (ai != null) ai.Repair(foundation);
+            }
         }
 
         private void ApplyWalkToRange(EntityId entity, NetCommand cmd)
@@ -466,9 +536,11 @@ namespace ZeroAD.Sim.Net
 
         private void ApplySetupTradeRoute(EntityId trader, NetCommand cmd)
         {
+            // SetupTradeRoute = TraderComponent.SetTargetMarket(原版 setup-trade-route 命令):
+            // 目标市场(IntParam1),源市场=cmd.EntityId 路线上另一端(由 Trader 组件自洽)。
             var target = new EntityId((uint)cmd.IntParam1);
-            var ai = _cm.QueryInterface<UnitAIComponent>(trader);
-            if (ai != null) ai.Gather(target);  // 简化：走 Gather order（Trader 的 trade 接到 dropsite/market）
+            var tc = _cm.QueryInterface<TraderComponent>(trader);
+            tc?.SetTargetMarket(_cm, target);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "setup-trade-route", Target = target });
         }
 
@@ -482,12 +554,97 @@ namespace ZeroAD.Sim.Net
 
         private void ApplyGuard(EntityId guard, NetCommand cmd)
         {
-            // Guard：护卫目标。当前简化为跟随（移动到目标位置）。
+            // Guard = UnitAI 护卫订单:跟随目标 + 响应周边战斗 + 可治疗时自动治疗。
             var target = new EntityId((uint)cmd.IntParam1);
-            var targetPos = _cm.QueryInterface<PositionComponent>(target);
-            if (targetPos == null) return;
             var ai = _cm.QueryInterface<UnitAIComponent>(guard);
-            if (ai != null) ai.Walk(new Maths.FixedVector2D(targetPos.Position.X, targetPos.Position.Z));
+            if (ai != null) ai.Guard(target);
+        }
+
+        /// <summary>Formation 命令(原版 cmd type:"formation"):TemplateName = "shape|id1,id2,..."。
+        /// shape=null → 解散成员控制器;否则过滤合格成员(同主、可编队、非驻防/炮塔),
+        /// 达 RequiredMemberCount 时在成员质心生 special/formations/{shape} 控制器并 SetMembers
+        /// (内核确定性路径,锁步安全;控制器 spawn 在模拟内不在表现层)。</summary>
+        private void ApplyFormation(NetCommand cmd)
+        {
+            string payload = cmd.TemplateName;
+            int sep = payload.IndexOf('|');
+            if (sep <= 0) return;
+            string shape = payload[..sep];
+            var ids = payload[(sep + 1)..].Split(',',
+                System.StringSplitOptions.RemoveEmptyEntries);
+
+            // shape=remove:成员脱队(原版 RemoveFromFormation;部分选中个体命令前用)。
+            if (shape == "remove")
+            {
+                foreach (var s in ids)
+                {
+                    if (!uint.TryParse(s, out uint raw)) continue;
+                    var e = new EntityId(raw);
+                    var ai = _cm.QueryInterface<UnitAIComponent>(e);
+                    if (ai?.FormationController is { } fc)
+                        _cm.QueryInterface<FormationComponent>(fc)
+                            ?.RemoveMembers(_cm, new System.Collections.Generic.List<EntityId> { e });
+                }
+                return;
+            }
+
+            // 成员过滤:同主(命令玩家)、有 UnitAI、非驻防/炮塔/已在编队。
+            var members = new System.Collections.Generic.List<EntityId>();
+            int owner = (int)cmd.Player;
+            foreach (var s in ids)
+            {
+                if (!uint.TryParse(s, out uint raw)) continue;
+                var e = new EntityId(raw);
+                var ai = _cm.QueryInterface<UnitAIComponent>(e);
+                if (ai == null || ai.IsGarrisoned || ai.IsTurret
+                    || ai.FormationController != null || ai.IsFormationController)
+                    continue;
+                if ((_cm.QueryInterface<OwnershipComponent>(e)?.PlayerId ?? -1) != owner) continue;
+                members.Add(e);
+            }
+
+            if (shape == "null")
+            {
+                // 解散(原版 formation null):找出成员所在控制器并 Disband。
+                var controllers = new System.Collections.Generic.HashSet<EntityId>();
+                foreach (var m in members)
+                {
+                    var ai = _cm.QueryInterface<UnitAIComponent>(m);
+                    if (ai?.FormationController is { } fc) controllers.Add(fc);
+                }
+                // 上面过滤掉了已在编队的成员 —— null 语义须查全部传入 id。
+                foreach (var s in ids)
+                {
+                    if (!uint.TryParse(s, out uint raw)) continue;
+                    var ai = _cm.QueryInterface<UnitAIComponent>(new EntityId(raw));
+                    if (ai?.FormationController is { } fc) controllers.Add(fc);
+                }
+                foreach (var fc in controllers)
+                    _cm.QueryInterface<FormationComponent>(fc)?.Disband(_cm);
+                return;
+            }
+
+            if (members.Count == 0) return;
+            string template = "special/formations/" + shape;
+            Content.TemplateStats? stats = null;
+            try { stats = _cm.Templates?.ExtractStats(template); } catch { }
+            int required = stats?.FormationRequiredMemberCount ?? int.MaxValue;
+            if (stats == null || members.Count < required) return;
+
+            float ax = 0, az = 0;
+            foreach (var m in members)
+            {
+                var p = _cm.QueryInterface<PositionComponent>(m);
+                if (p == null) continue;
+                ax += p.Position.X.ToFloat();
+                az += p.Position.Z.ToFloat();
+            }
+            ax /= members.Count;
+            az /= members.Count;
+            var controller = _cm.SpawnEntity(template, ax, az, owner);
+            var formation = _cm.QueryInterface<FormationComponent>(controller);
+            if (formation == null) return;
+            formation.SetMembers(_cm, members);
         }
     }
 }

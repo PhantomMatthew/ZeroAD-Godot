@@ -3,6 +3,7 @@ using System.Linq;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Maths;
+using ZeroAD.Sim.Net;
 
 namespace ZeroAD.Sim.AI.CommonApi;
 
@@ -19,6 +20,13 @@ public sealed class GameState
     public readonly EntityMetadata Metadata;
     public readonly Accessibility? Accessibility;
     public readonly AIEventBuffer Events;
+
+    /// <summary>AI 命令通道（AIComponent 构造后注入）。null = 测试/无网环境,
+    /// SubmitCommand 静默 no-op——与原版"AI 命令不落盘"语义一致的可测替代。</summary>
+    public NetTurnManager? Net { get; set; }
+
+    /// <summary>经 AI 专用本地通道下发命令（与玩家命令同路径同延迟;永不进网络 outbox）。</summary>
+    public void SubmitCommand(NetCommand cmd) => Net?.SubmitAiCommand(cmd);
 
     private readonly List<string> _phases;
 
@@ -45,6 +53,35 @@ public sealed class GameState
         => Templates.Cache.TryGetValue(type, out var node) ? new AITemplate(type, node) : null;
 
     public string ApplyCiv(string str) => str.Replace("{civ}", GetPlayerCiv());
+
+    /// <summary>科技名归一(原版 phase 文件分 civ 特制/通用两类的处理):
+    /// phase_town_{civ}/phase_city_{civ} 按文明展开后,目录无此特制文件时回落
+    /// *_generic(gaul 等无特制 phase 的文明 → phase_town_generic)。
+    /// 非 phase 名原样返回。</summary>
+    public string ResolveTechName(string name)
+    {
+        if (TechCatalog.Technologies.ContainsKey(name)) return name;
+        const string townPrefix = "phase_town_";
+        const string cityPrefix = "phase_city_";
+        if (name.StartsWith(townPrefix, System.StringComparison.Ordinal)
+            && TechCatalog.Technologies.ContainsKey("phase_town_generic"))
+            return "phase_town_generic";
+        if (name.StartsWith(cityPrefix, System.StringComparison.Ordinal)
+            && TechCatalog.Technologies.ContainsKey("phase_city_generic"))
+            return "phase_city_generic";
+        return name;
+    }
+
+    /// <summary>可研究列表逐 token 归一(FindResearchers 匹配用:模板 phase_town_{civ}
+    /// 展开为 phase_town_gaul 后,gaul 的研究者匹配归一后的 phase_town_generic)。</summary>
+    private string ResolveTechList(string tokens)
+    {
+        if (tokens.Length == 0) return tokens;
+        var parts = tokens.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i < parts.Length; i++)
+            parts[i] = ResolveTechName(parts[i]);
+        return string.Join(' ', parts);
+    }
 
     // ── 阶段（phase_village/town/city）──
 
@@ -176,18 +213,24 @@ public sealed class GameState
 
     // ── 训练/建造查询 ──
 
+    /// <summary>可训练/可建造 tokens 的占位替换({native}/{civ} → 属主文明)。
+    /// 模板原样存占位符,裸 Contains 永远匹配不到文明具体模板名;
+    /// 实体已被 Owner==PlayerId 过滤,属主文明即玩家文明。</summary>
+    private string ResolveTokens(string? tokens)
+        => (tokens ?? "").Replace("{native}", GetPlayerCiv()).Replace("{civ}", GetPlayerCiv());
+
     public EntityCollection FindTrainers(string template)
         => new(AllEntities().Where(e => e.Owner == PlayerId && e.Template.CanTrain
-            && (e.Template.TrainableEntities ?? "").Contains(template)));
+            && ResolveTokens(e.Template.TrainableEntities).Contains(template)));
     public bool HasTrainer(string template) => FindTrainers(template).HasEntities();
     public EntityCollection FindResearchers(string templateName, bool noRequirementCheck = false)
         => new(AllEntities().Where(e => e.Owner == PlayerId && e.Template.CanResearch
-            && (e.Template.ResearchableTechnologies ?? "").Contains(templateName)));
+            && ResolveTechList(ResolveTokens(e.Template.ResearchableTechnologies)).Contains(templateName)));
     public bool HasResearchers(string templateName, bool noRequirementCheck = false)
         => FindResearchers(templateName, noRequirementCheck).HasEntities();
     public EntityCollection FindBuilder(string template)
         => new(AllEntities().Where(e => e.Owner == PlayerId && e.Template.CanBuild
-            && (e.Template.BuildableEntities ?? "").Contains(template)));
+            && ResolveTokens(e.Template.BuildableEntities).Contains(template)));
 
     /// <summary>查找可训练的单位（按类匹配）。简化版：遍历可训练模板，过滤类。</summary>
     public List<(string template, AITemplate def)> FindTrainableUnits(string classes, string anticlasses = "")

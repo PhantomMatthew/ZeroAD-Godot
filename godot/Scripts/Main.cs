@@ -57,6 +57,13 @@ public sealed partial class Main : Node3D
 		AddChild(_bandBoxLayer);
 	}
 	private bool _placeBuildingMode;
+	private string? _commandTargetMode;   // 命令键目标模式:"garrison"/"repair"/"guard" —— 下次左键选目标
+	/// <summary>进入命令目标模式(原版 unit_actions 按钮 → 光标选目标)。Escape/再次点击后清除。</summary>
+	public void EnterCommandTargetMode(string mode)
+	{
+		_commandTargetMode = mode;
+		_placeBuildingMode = false;
+	}
 	private string _buildTemplate = "";
 	private bool _gameStarted;
 	/// <summary>BeginGameplayInit 的生效槽位表(rmgen 玩家 civ 列表用;教程/冷加载为 null)。</summary>
@@ -157,6 +164,10 @@ public sealed partial class Main : Node3D
 		};
 
 		_camera.SetFocus(new Vector3(128, 0, 128));
+
+		// 音频初始化(数据根 = binaries/data/mods/public;null 静默)。音乐播放列表在
+		// 开局时启动(BeginGameplayScenario 末尾 peace 列表)。
+		AudioManager.Init(this, FindDataRoot());
 
 		// 启动模式由 MainMenu 写入 GameLaunchConfig(进程级 env 仅 dev fallback,已由 MainMenu
 		// 首次读取后清空——修 ChangeScene 回主菜单重触发自动开局的 bug)。SP/Tutorial 直接开局;
@@ -401,6 +412,8 @@ public sealed partial class Main : Node3D
 		// 之间让帧,此间回合必须冻结,否则 TickVictory 在空世界判全员 0 实体→进场即 Defeat。
 		_sim.StartRecording();  // 自动录像：开局后立即开始录制（回放模式不录，见 AutoReplay）
 		_sim.SimulationRunning = true;
+		AudioManager.StartPlaylist("peace");   // 局内音乐(原版 PEACE 列表 shuffle)
+		AudioManager.StartAmbient("ambient/dayscape/day_temperate.xml", this);   // 环境音景循环
 
 		GD.Print(_isTutorial
 			? "[Tutorial] Introductory Tutorial started"
@@ -445,6 +458,19 @@ public sealed partial class Main : Node3D
 		// 游戏事件 → 系统聊天消息（"Player N was defeated"）。
 		_sim.Sim.Events.PlayerDefeated += OnPlayerDefeatedChat;
 
+		// 音频钩子:训练完成警报(单位模板 trained 组)+ 胜/败 jingle(原版 music.js
+		// VICTORY/DEFEAT 单曲)。均为表现层;具名方法以便 _ExitTree 退订。
+		_sessionPlayerId = (int)playerId;
+		_sim.Sim.Events.TrainingFinished += OnTrainingFinishedSound;
+		_sim.Sim.Events.PlayerWon += OnPlayerWonSound;
+		_sim.Sim.Events.PlayerDefeated += OnPlayerDefeatedSound;
+		// 武器音效(发射时刻,近战/远程按事件分流)+ 战斗计时(切 BATTLE 音乐用)。
+		_sim.Sim.Events.AttackLaunched += OnAttackLaunchedSound;
+		// 遇袭警报(原版 alert_panel):己方实体被命中 → 警报图标闪烁,点击跳相机。
+		_sim.Sim.Events.AttackLanded += OnAttackAlert;
+		// 数据驱动触发器消息(ShowMessage 动作)→ HUD toast。
+		_sim.TriggerMessage += OnTriggerMessage;
+
 		// Pause menu (Menu 按钮 → 暂停叠层):冻结 sim + 存档/读档/离开。事件解耦同 LobbyUI:
 		// 存档/读档复用 QuickSave/QuickLoad(含视觉重建),离开回主菜单。
 		_pauseMenu = new PauseMenu(_sim);
@@ -488,6 +514,9 @@ public sealed partial class Main : Node3D
 	{
 		if (keys.Contains("overlay.fps"))
 			UpdateFpsOverlayVisibility();
+		// 音量滑杆即时生效(原版 options 的 gain 项实时应用到 SoundManager)
+		if (keys.Any(k => k.StartsWith("sound.", System.StringComparison.Ordinal)))
+			AudioManager.RefreshVolumes(this);
 	}
 
 	private void UpdateFpsOverlayVisibility()
@@ -1191,11 +1220,12 @@ public sealed partial class Main : Node3D
 		SetupTerrain(mapPath);
 		bool useRealTemplates = _sim.Templates != null;
 
-		// skirmish 地图:XML 内含 skirmish/ 占位实体 → 全部实体由地图提供(占位经
-		// SkirmishReplacer 按槽位文明替换为各玩家 CC/单位/墙),跳过沙盒出生基地/树簇/中立兵。
+		// XML 实体地图(scenario/skirmish 通用):XML 含 sim 实体 → 全部实体由地图提供
+		// (skirmish 占位经 SkirmishReplacer 按槽位文明替换;scenario 作者实体原样生成,
+		// XML civ 覆盖玩家文明),跳过沙盒出生基地/树簇/中立兵。
 		// random 地图:rmgen 自带玩家基地(CC+起始单位)与全部资源,同样跳过沙盒生成,
 		// 否则玩家会拿到双基地( rmgen 环形位 + 沙盒固定角落 )。
-		// 普通 scenario / 默认图走既有沙盒生成,行为不变。
+		// 无 XML 实体 / 默认图走既有沙盒生成,行为不变。
 		bool spawnedFromMap = false;
 		bool isRandomMap = mapPath != null && mapPath.StartsWith("random/", System.StringComparison.Ordinal);
 		if (mapPath != null && !isRandomMap
@@ -1206,7 +1236,16 @@ public sealed partial class Main : Node3D
 			{
 				string relNoExt = mapPath.EndsWith(".pmp", System.StringComparison.OrdinalIgnoreCase)
 					? mapPath[..^4] : mapPath;
-				spawnedFromMap = _sim.LoadSkirmishScenario(dataRoot, relNoExt);
+				var scenario = _sim.LoadMapScenario(dataRoot, relNoExt);
+				if (scenario != null)
+				{
+					spawnedFromMap = true;
+					// 队伍外交播种(同教程路径:同队互盟,否则敌对)
+					var teams = new Dictionary<int, int>();
+					foreach (var pd in scenario.Players)
+						teams[pd.PlayerId] = pd.Team;
+					_sim.Sim.Players.SeedDiplomacyFromTeams(teams);
+				}
 			}
 		}
 
@@ -1290,6 +1329,7 @@ public sealed partial class Main : Node3D
 		// force here.
 
 		TryDebugCapture();
+		UpdateBattleMusic(delta);
 	}
 
 	// pauseonfocusloss 配置项(原版 PauseOnFocusLoss,仅 SP):窗口失焦自动暂停并显示暂停菜单。
@@ -1317,6 +1357,12 @@ public sealed partial class Main : Node3D
 		{
 			_sim.Sim.Events.PlayerCommand -= OnPlayerCommandEvent;
 			_sim.Sim.Events.PlayerDefeated -= OnPlayerDefeatedChat;
+			_sim.Sim.Events.TrainingFinished -= OnTrainingFinishedSound;
+			_sim.Sim.Events.PlayerWon -= OnPlayerWonSound;
+			_sim.Sim.Events.PlayerDefeated -= OnPlayerDefeatedSound;
+			_sim.Sim.Events.AttackLaunched -= OnAttackLaunchedSound;
+			_sim.Sim.Events.AttackLanded -= OnAttackAlert;
+			_sim.TriggerMessage -= OnTriggerMessage;
 		}
 		if (_mp != null)
 			_mp.OnChatReceived -= OnMpChatReceived;
@@ -1331,6 +1377,71 @@ public sealed partial class Main : Node3D
 	private void OnPlayerDefeatedChat(PlayerDefeatedEvent e)
 		=> _sim.Events.RaiseChatMessage(new ZeroAD.Sim.Events.ChatMessageEvent
 		{ Kind = ZeroAD.Sim.Events.ChatMessageEvent.KindType.System, Text = $"Player {e.PlayerId} was defeated: {e.Reason}" });
+
+	// ── 音频钩子(具名方法,_ExitTree 退订防悬垂)──
+
+	private int _sessionPlayerId = 1;
+
+	private void OnTrainingFinishedSound(ZeroAD.Sim.Events.TrainingFinishedEvent e)
+		=> AudioManager.PlayUnitEvent(_sim.Templates, e.UnitTemplate, "trained");
+
+	private void OnPlayerWonSound(ZeroAD.Sim.Events.PlayerWonEvent e)
+	{
+		if (e.PlayerId == _sessionPlayerId) AudioManager.PlayJingle(AudioManager.VictoryTrack);
+	}
+
+	private void OnPlayerDefeatedSound(ZeroAD.Sim.Events.PlayerDefeatedEvent e)
+	{
+		if (e.PlayerId == _sessionPlayerId) AudioManager.PlayJingle(AudioManager.DefeatTrack);
+	}
+
+	/// <summary>武器音效(发射时刻,模板 attack_melee/attack_ranged 组)+ 战斗计时
+	/// (驱动 BATTLE/PEACE 音乐切换,原版 music.js battle state 语义:10s 无战斗回 PEACE)。</summary>
+	private double _lastCombatSec = -100;
+	private double _musicCheckAccum;
+
+	private void OnAttackLaunchedSound(ZeroAD.Sim.Events.AttackLaunchedEvent e)
+	{
+		var id = _sim.Sim.QueryInterface<IdentityComponent>(e.Attacker);
+		if (id != null && !string.IsNullOrEmpty(id.TemplateName))
+			AudioManager.PlayUnitEvent(_sim.Templates, id.TemplateName,
+				e.IsRanged ? "attack_ranged" : "attack_melee");
+		_lastCombatSec = Time.GetTicksMsec() / 1000.0;
+	}
+
+	/// <summary>遇袭警报:己方实体被命中(AttackLanded 含 Target)→ 记录位置,
+	/// HUD 警报图标开始闪烁(点击跳转后清除)。原版 alert_panel 的 v1。</summary>
+	private void OnAttackAlert(ZeroAD.Sim.Events.AttackLandedEvent e)
+	{
+		var owner = _sim.Sim.QueryInterface<OwnershipComponent>(e.Target);
+		if (owner == null || owner.PlayerId != _sessionPlayerId) return;
+		var pos = _sim.Sim.QueryInterface<PositionComponent>(e.Target);
+		if (pos == null) return;
+		_hud?.SetAlert(pos.Position.X.ToFloat(), pos.Position.Z.ToFloat());
+	}
+
+	/// <summary>触发器 ShowMessage → HUD toast(经本地化表,缺译回退原文)。</summary>
+	private void OnTriggerMessage(string text) => _hud?.ShowToast(Localization.Tr(text));
+
+	private void UpdateBattleMusic(double delta)
+	{
+		_musicCheckAccum += delta;
+		if (_musicCheckAccum < 1.0) return;   // 1s 节流
+		_musicCheckAccum = 0;
+		bool inBattle = Time.GetTicksMsec() / 1000.0 - _lastCombatSec < 10.0;
+		AudioManager.SetBattleMode(inBattle);
+	}
+
+	/// <summary>选中/命令语音:取首个选中实体的模板事件(select/order_*;无该事件的
+	/// 模板静默)。</summary>
+	private void PlaySelectionSound(string eventName)
+	{
+		if (_selectedEntities.Count == 0) return;
+		var first = System.Linq.Enumerable.First(_selectedEntities);
+		var id = _sim.Sim.QueryInterface<IdentityComponent>(first);
+		if (id == null || string.IsNullOrEmpty(id.TemplateName)) return;
+		AudioManager.PlayUnitEvent(_sim.Templates, id.TemplateName, eventName);
+	}
 
 	/// <summary>建造拒绝 toast(执行端 PlayerCommandEvent "build-rejected" → 顶部红字;
 	/// 只显本地玩家的拒绝)。</summary>
@@ -1575,15 +1686,24 @@ public sealed partial class Main : Node3D
 				: new Color(0.72f, 0.06f, 0.06f);
 			Color enemyColor = new Color(0.72f, 0.06f, 0.06f);
 
-			// 建筑选择框 = footprint 精确半宽/半深(原版 SelectionShape=<Footprint/>,
-			// 无边距;CC = 32×32 → 半 16),无 footprint 组件才回退 10。
+			// 建筑选择框 = footprint 精确形状/尺寸(原版 SelectionShape=<Footprint/>):
+			// 方形 → 半宽/半深矩形;圆形 → 半径圆环(如 tholos 圆形神庙)。
+			// 无 footprint 组件才回退 10。
 			MeshInstance3D ring;
 			if (isBuilding)
 			{
 				var fp = _sim.Sim.QueryInterface<FootprintComponent>(eid);
-				float halfX = fp != null ? fp.Size0.ToFloat() * 0.5f : 10f;
-				float halfZ = fp != null ? fp.Size1.ToFloat() * 0.5f : 10f;
-				ring = SelectionRing.CreateRect(halfX, halfZ, friendlyColor);
+				if (fp != null && fp.Shape == FootprintShape.Circle)
+				{
+					ring = SelectionRing.Create(fp.Size0.ToFloat(), friendlyColor, enemyColor,
+						SelectionRing.Shape.Circle);
+				}
+				else
+				{
+					float halfX = fp != null ? fp.Size0.ToFloat() * 0.5f : 10f;
+					float halfZ = fp != null ? fp.Size1.ToFloat() * 0.5f : 10f;
+					ring = SelectionRing.CreateRect(halfX, halfZ, friendlyColor);
+				}
 			}
 			else
 			{
@@ -1734,9 +1854,16 @@ public sealed partial class Main : Node3D
 			if (key.Keycode == Key.Enter) _chatPanel.OpenInput();
 			if (key.Keycode == Key.H && _isTutorial) _tutorialPanel.Toggle();
 			if (key.Keycode == Key.B) EnterBuildMode("House");
+			// 编队组(原版 control groups):Ctrl+数字=编入,数字=选中(存留过滤死亡实体)。
+			if (key.Keycode >= Key.Key0 && key.Keycode <= Key.Key9)
+			{
+				int g = (int)(key.Keycode - Key.Key0);
+				if (key.CtrlPressed) AssignControlGroup(g);
+				else SelectControlGroup(g);
+			}
 			if (key.Keycode == Key.T) TrainVillager(Input.IsKeyPressed(Key.Shift));
 			if (key.Keycode == Key.S) TrainSoldier(Input.IsKeyPressed(Key.Shift));
-			if (key.Keycode == Key.Escape) { _placeBuildingMode = false; _selectedEntities.Clear(); }
+			if (key.Keycode == Key.Escape) { _placeBuildingMode = false; _commandTargetMode = null; _selectedEntities.Clear(); }
 			if (key.Keycode == Key.F5) QuickSave();
 			if (key.Keycode == Key.F9) QuickLoad();
 		}
@@ -1746,6 +1873,7 @@ public sealed partial class Main : Node3D
 			if (mb.ButtonIndex == MouseButton.Left)
 			{
 				if (_placeBuildingMode) { PlaceBuilding(mb.Position); return; }
+				if (_commandTargetMode != null) { HandleCommandTargetClick(mb.Position); return; }
 				_dragStart = mb.Position;
 				_dragSelecting = true;
 				_isDragging = false;
@@ -1775,6 +1903,58 @@ public sealed partial class Main : Node3D
 		}
 	}
 
+	/// <summary>命令目标模式下的左键点击(原版 unit_actions 按钮 → 光标选目标):
+	/// garrison=己方驻军建筑 / repair=己方受损建筑或地基 / guard=己方单位;
+	/// 执行后清模式(原版同:一次性目标选择)。</summary>
+	private void HandleCommandTargetClick(Vector2 screenPos)
+	{
+		string mode = _commandTargetMode!;
+		_commandTargetMode = null;
+		var worldPos = ScreenToWorld(screenPos);
+		if (worldPos == null) return;
+		var targets = _sim.GetEntitiesAtPosition(worldPos.Value, 5f);
+		EntityId? target = targets.Count > 0 ? targets[0] : null;
+
+		switch (mode)
+		{
+			case "garrison":
+			{
+				if (target == null) return;
+				var holder = _sim.Sim.QueryInterface<GarrisonHolderComponent>(target.Value);
+				var owner = _sim.Sim.QueryInterface<OwnershipComponent>(target.Value);
+				if (holder == null || owner == null || owner.PlayerId != (int)_sim.LocalPlayerId) return;
+				foreach (var unit in _selectedEntities)
+					if (_sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
+						_sim.CommandGarrison(unit, target.Value);
+				break;
+			}
+			case "repair":
+			{
+				if (target == null || !IsOwn(target.Value)) return;
+				foreach (var unit in _selectedEntities)
+					if (_sim.Sim.QueryInterface<BuilderComponent>(unit) != null)
+						_sim.CommandRepair(unit, target.Value);
+				break;
+			}
+			case "guard":
+			{
+				if (target == null || !IsOwn(target.Value)) return;
+				if (_sim.Sim.QueryInterface<UnitAIComponent>(target.Value) == null) return;
+				foreach (var unit in _selectedEntities)
+					if (unit != target.Value && _sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
+						_sim.CommandGuard(unit, target.Value);
+				break;
+			}
+			case "patrol":
+			{
+				foreach (var unit in _selectedEntities)
+					if (_sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
+						_sim.CommandPatrol(unit, worldPos.Value.X, worldPos.Value.Z);
+				break;
+			}
+		}
+	}
+
 	private void HandleLeftClick(Vector2 screenPos)
 	{
 		var worldPos = ScreenToWorld(screenPos);
@@ -1782,6 +1962,10 @@ public sealed partial class Main : Node3D
 		var entities = _sim.GetEntitiesAtPosition(worldPos.Value, 3f);
 		_selectedEntities.Clear();
 		if (entities.Count > 0) _selectedEntities.Add(entities[0]);
+
+		// 选中语音(原版 Sound.js select 事件:单位语音/资源/建筑选择声)
+		if (_selectedEntities.Count > 0)
+			PlaySelectionSound("select");
 
 		if (_selectedEntities.Count == 0)
 		{
@@ -1809,6 +1993,9 @@ public sealed partial class Main : Node3D
 			var identity = _sim.Sim.QueryInterface<IdentityComponent>(eid);
 			if (identity != null && identity.IsUnit) _selectedEntities.Add(eid);
 		}
+		// 框选语音同点选(原版:选中即播 select 组)
+		if (_selectedEntities.Count > 0)
+			PlaySelectionSound("select");
 	}
 
 	// ── 动作光标(原版 input.js updateCursorAndTooltip 的 v1 子集)─────────────────
@@ -1961,14 +2148,21 @@ public sealed partial class Main : Node3D
 		}
 
 		bool issuedMove = false;
-		foreach (var unit in _selectedEntities)
+		string? orderSound = null;   // 原版:命令语音每点击播一次(首个命中分支)
+		// 编队命令路由(原版 Commands.js GetFormationUnitAIs 的选择侧):整队全选 →
+		// 一条命令发给控制器(FORMATIONCONTROLLER 树:整体走位/编队作战);部分选中 →
+		// 成员先脱队(remove 命令,锁步安全)再个体命令。
+		var orderTargets = ExpandFormationOrderTargets();
+		foreach (var unit in orderTargets)
 		{
 			if (isGarrisonTarget && targetEntity.HasValue
-				&& _sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
+				&& _sim.Sim.QueryInterface<UnitAIComponent>(unit) != null
+				&& !IsFormationController(unit))
 			{
 				// 右键己方驻军建筑 → 载入(原版 unit_actions garrison;
 				// 宿主是否接受由 sim 侧 Garrisonable.CanGarrison 判)。
 				_sim.CommandGarrison(unit, targetEntity.Value);
+				orderSound ??= "order_garrison";
 			}
 			else if (isResource && targetEntity.HasValue
 				&& _sim.Sim.QueryInterface<ResourceGatherer>(unit) != null)
@@ -1976,19 +2170,40 @@ public sealed partial class Main : Node3D
 				// 采集者优先采集(鹿=enemy+resource 双身份:村民猎鹿=采集,
 				// 女兵有弱攻击也不能去杀食材)。
 				_sim.CommandGather(unit, targetEntity.Value);
+				orderSound ??= "order_gather";
 			}
-			else if (isEnemy && targetEntity.HasValue && _sim.Sim.QueryInterface<AttackComponent>(unit) != null)
+			else if (isEnemy && targetEntity.HasValue
+				&& (_sim.Sim.QueryInterface<AttackComponent>(unit) != null || IsFormationController(unit)))
 			{
 				// Ctrl+右键 = 捕获(原版 Ctrl+click → attack allowCapture=true);
 				// 无捕获能力的单位自动退化普通攻击(GetBestAttackAgainst 选型)。
 				_sim.CommandAttack(unit, targetEntity.Value, allowCapture);
+				orderSound ??= "order_attack";
 			}
 			else
 			{
-				_sim.MoveEntity(unit, worldPos.Value.X, worldPos.Value.Z);
+				// 地面点击修饰键(原版 default.cfg:attackmove=Ctrl / patrol=P):
+				// Ctrl+点地 = 攻击移动(沿途遇敌自动交战);P+点地 = 巡逻(往返)。
+				if (allowCapture && _sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
+				{
+					_sim.CommandAttackWalk(unit, worldPos.Value.X, worldPos.Value.Z);
+					orderSound ??= "order_attack_move";
+				}
+				else if (Input.IsKeyPressed(Key.P) && _sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
+				{
+					_sim.CommandPatrol(unit, worldPos.Value.X, worldPos.Value.Z);
+					orderSound ??= "order_walk";
+				}
+				else
+				{
+					_sim.MoveEntity(unit, worldPos.Value.X, worldPos.Value.Z);
+					orderSound ??= "order_walk";
+				}
 				issuedMove = true;
 			}
 		}
+		if (orderSound != null)
+			PlaySelectionSound(orderSound);
 
 		// 移动指令的"目标标记"(原版 unit_actions.js 的 move 动作 → DrawTargetMarker →
 		// GuiInterface.AddTargetMarker("special/target_marker")):在点击处放红金动画标记,
@@ -1997,6 +2212,50 @@ public sealed partial class Main : Node3D
 		if (issuedMove)
 			SpawnTargetMarker(worldPos.Value);
 	}
+
+	/// <summary>编队命令路由(原版 Commands.js GetFormationUnitAIs 的选择侧近似):
+	/// 整队全选 → 返回控制器(一条命令,走 FORMATIONCONTROLLER 树);部分选中 →
+	/// 发 remove 脱队命令(锁步安全)后按个体返回;非编队成员原样通过。
+	/// 顺序确定:无编队者先行(选择序),编队组按控制器 id 升序。</summary>
+	private List<EntityId> ExpandFormationOrderTargets()
+	{
+		var result = new List<EntityId>();
+		var byController = new Dictionary<EntityId, List<EntityId>>();
+		foreach (var unit in _selectedEntities)
+		{
+			var ai = _sim.Sim.QueryInterface<UnitAIComponent>(unit);
+			if (ai != null && ai.FormationController is { } fc && !ai.IsFormationController)
+			{
+				if (!byController.TryGetValue(fc, out var l))
+					byController[fc] = l = new List<EntityId>();
+				l.Add(unit);
+			}
+			else
+			{
+				result.Add(unit);
+			}
+		}
+		foreach (var kv in byController.OrderBy(k => k.Key.Value))
+		{
+			var formation = _sim.Sim.QueryInterface<FormationComponent>(kv.Key);
+			if (formation != null && kv.Value.Count == formation.GetMemberCount())
+			{
+				result.Add(kv.Key);   // 整队全选 → 控制器单令
+			}
+			else
+			{
+				// 部分选中 → 脱队个体令(原版单选 RemoveFromFormation;
+				// 多选 regroup 未移植,近似为脱队)。
+				_sim.CommandFormationRemove(kv.Value);
+				result.AddRange(kv.Value);
+			}
+		}
+		return result;
+	}
+
+	/// <summary>实体是否为编队控制器(虚拟实体;命令路由时按整队对待)。</summary>
+	private bool IsFormationController(EntityId ent) =>
+		_sim.Sim.QueryInterface<UnitAIComponent>(ent)?.IsFormationController == true;
 
 	/// <summary>Spawn the 0 A.D. move-order target marker (<c>special/target_marker</c>) at the
 	/// clicked ground point — the red-and-gold animated standard that confirms "units ordered here".
@@ -2104,6 +2363,135 @@ public sealed partial class Main : Node3D
 	/// 执行端另有归属校验兜底)。</summary>
 	public bool IsOwn(EntityId eid) =>
 		_sim.Sim.QueryInterface<OwnershipComponent>(eid)?.PlayerId == (int)_sim.LocalPlayerId;
+
+	/// <summary>编队命令(原版 formation 面板按钮):shape=null 解散所选成员的控制器,
+	/// 否则按阵型创建控制器(成员过滤/RequiredMemberCount 判定在执行器内核侧)。</summary>
+	public void FormSelectedUnits(string shape)
+	{
+		if (_selectedEntities.Count == 0) return;
+		_sim.CommandFormation(_selectedEntities.ToList(), shape);
+	}
+
+	/// <summary>暂停切换(原版 PauseControl:冻结/解冻 sim,不开菜单叠层)。</summary>
+	public void TogglePause() => _sim.Paused = !_sim.Paused;
+
+	/// <summary>游戏速度档位(原版 GameSpeeds 9 档;顶栏 +/- 步进)。</summary>
+	private static readonly double[] GameSpeedSteps = { 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 5.0, 10.0, 20.0 };
+
+	/// <summary>顶栏速度 +/-(原版 GameSpeedControl 的步进按钮):取最近档 ±1。</summary>
+	public void AdjustGameSpeed(int direction)
+	{
+		double cur = _sim.SpeedMultiplier;
+		int best = 2;
+		double bestDiff = double.MaxValue;
+		for (int i = 0; i < GameSpeedSteps.Length; i++)
+		{
+			double d = System.Math.Abs(GameSpeedSteps[i] - cur);
+			if (d < bestDiff) { bestDiff = d; best = i; }
+		}
+		int next = System.Math.Clamp(best + direction, 0, GameSpeedSteps.Length - 1);
+		_sim.SpeedMultiplier = GameSpeedSteps[next];
+		_hud?.ShowToast($"Game speed: {GameSpeedSteps[next]}×");
+	}
+
+	/// <summary>相机聚焦世界坐标(警报跳转/空闲村民等共用)。</summary>
+	public void FocusWorldPosition(float x, float z)
+		=> _camera.SetFocus(new Vector3(x, TerrainHeightService.Sample(x, z), z));
+
+	/// <summary>空闲村民循环(原版 MiniMapIdleWorkerButton):实体 id 升序取下一个
+	/// 空闲采集者(无订单+有采集组件+非驻防),聚焦相机并选中。</summary>
+	private int _idleWorkerIndex = -1;
+
+	public void CycleIdleWorker()
+	{
+		var idle = new List<(EntityId e, float x, float z)>();
+		foreach (var eid in _sim.Sim.AllEntities)
+		{
+			var own = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
+			if (own == null || own.PlayerId != (int)_sim.LocalPlayerId) continue;
+			var gatherer = _sim.Sim.QueryInterface<ResourceGatherer>(eid);
+			var ai = _sim.Sim.QueryInterface<UnitAIComponent>(eid);
+			if (gatherer == null || ai == null || !ai.IsIdle || ai.IsGarrisoned) continue;
+			var pos = _sim.Sim.QueryInterface<PositionComponent>(eid);
+			if (pos == null) continue;
+			idle.Add((eid, pos.Position.X.ToFloat(), pos.Position.Z.ToFloat()));
+		}
+		if (idle.Count == 0)
+		{
+			_hud?.ShowToast("No idle workers");
+			return;
+		}
+		idle.Sort((a, b) => a.e.Value.CompareTo(b.e.Value));
+		_idleWorkerIndex = (_idleWorkerIndex + 1) % idle.Count;
+		var (e, x, z) = idle[_idleWorkerIndex];
+		_selectedEntities.Clear();
+		_selectedEntities.Add(e);
+		_camera.SetFocus(new Vector3(x, TerrainHeightService.Sample(x, z), z));
+	}
+
+	/// <summary>打包/解包所选攻城器(原版 pack_panel 按钮;PackComponent 自校验)。</summary>
+	public void PackSelectedUnits(bool unpack)
+	{
+		foreach (var unit in _selectedEntities)
+			if (_sim.Sim.QueryInterface<PackComponent>(unit) != null)
+				_sim.CommandPack(unit, unpack);
+	}
+
+	// ── 编队组(原版 control groups,纯表现层)──
+
+	private readonly Dictionary<int, List<EntityId>> _controlGroups = new();
+
+	private void AssignControlGroup(int group)
+	{
+		_controlGroups[group] = _selectedEntities.ToList();
+		_hud?.ShowToast($"Group {group} assigned ({_selectedEntities.Count})");
+	}
+
+	private void SelectControlGroup(int group)
+	{
+		if (!_controlGroups.TryGetValue(group, out var members) || members.Count == 0) return;
+		// 死亡实体过滤(身份件缺失/实体不在世界=已毁;原版图省事存活滤)。
+		var alive = members.Where(e =>
+			_sim.Sim.QueryInterface<IdentityComponent>(e) != null
+			&& _sim.Sim.QueryInterface<PositionComponent>(e) != null).ToList();
+		_controlGroups[group] = alive;
+		if (alive.Count == 0) return;
+		_selectedEntities.Clear();
+		foreach (var e in alive) _selectedEntities.Add(e);
+		// 聚焦组内首个(原版双击才跳相机,单击组=选中——此实现单击即选中+聚焦首个)。
+		var pos = _sim.Sim.QueryInterface<PositionComponent>(alive[0]);
+		if (pos != null)
+			_camera.SetFocus(new Vector3(pos.Position.X.ToFloat(), 0, pos.Position.Z.ToFloat()));
+	}
+
+	/// <summary>编队组概览(图标条用):(组号, 存活成员数),升序;空组不列。</summary>
+	public List<(int group, int alive)> GetControlGroupInfo()
+	{
+		var result = new List<(int, int)>();
+		foreach (var (g, members) in _controlGroups.OrderBy(kv => kv.Key))
+		{
+			int alive = members.Count(e =>
+				_sim.Sim.QueryInterface<IdentityComponent>(e) != null
+				&& _sim.Sim.QueryInterface<PositionComponent>(e) != null);
+			if (alive > 0) result.Add((g, alive));
+		}
+		return result;
+	}
+
+	/// <summary>选中编队组(图标条点击与数字热键同路)。</summary>
+	public void SelectControlGroupPublic(int group) => SelectControlGroup(group);
+
+	/// <summary>建筑升级命令(原版 upgrade 按钮:哨塔→防御塔等)。</summary>
+	public void CommandUpgrade(EntityId building, EntityId? builder)
+		=> _sim.CommandUpgrade(building, builder);
+
+	/// <summary>城门锁切换(原版 gate 面板按钮)。</summary>
+	public void CommandToggleGate(EntityId gate, bool locked)
+		=> _sim.CommandToggleGate(gate, locked);
+
+	/// <summary>易物命令(原版 barter;服务端 BarterSystem 校验汇率/town 门槛)。</summary>
+	public void CommandBarter(ZeroAD.Sim.Components.ResourceType sell, ZeroAD.Sim.Components.ResourceType buy, int amount)
+		=> _sim.CommandBarter(sell, buy, amount);
 
 	/// <summary>改站姿:选中且有 UnitAI 的己方单位全部切到指定站姿(原版 stance 命令
 	/// 对全部选中单位生效;站姿行为语义见 UnitAIComponent.s_stances)。</summary>
@@ -2303,21 +2691,27 @@ public sealed partial class Main : Node3D
 	private static bool CanAfford(PlayerComponent player, int wood, int stone, int metal, int food) =>
 		player.Wood >= wood && player.Stone >= stone && player.Metal >= metal && player.Food >= food;
 
-	private static string MapBuildTemplateName(string name) => name switch
+	private static string MapBuildTemplateName(string name)
 	{
-		"House" => "structures/spart/house",
-		"Storehouse" => "structures/spart/storehouse",
-		"Farmstead" => "structures/spart/farmstead",
-		"Field" => "structures/spart/field",
-		"Barracks" => "structures/spart/barracks",
-		"Outpost" => "structures/spart/outpost",
-		"Tower" => "structures/spart/defense_tower",
-		"Forge" => "structures/spart/forge",
-		"Market" => "structures/spart/market",
-		"Temple" => "structures/spart/temple",
-		"Arsenal" => "structures/spart/arsenal",
-		_ => $"structures/spart/{name.ToLowerInvariant()}"
-	};
+		// 完整模板名直接透传(数据驱动建造面板给的就是 structures/{civ}/x);
+		// 短名是热键 B 的老路径(教程默认 spart)。
+		if (name.StartsWith("structures/", System.StringComparison.Ordinal)) return name;
+		return name switch
+		{
+			"House" => "structures/spart/house",
+			"Storehouse" => "structures/spart/storehouse",
+			"Farmstead" => "structures/spart/farmstead",
+			"Field" => "structures/spart/field",
+			"Barracks" => "structures/spart/barracks",
+			"Outpost" => "structures/spart/outpost",
+			"Tower" => "structures/spart/defense_tower",
+			"Forge" => "structures/spart/forge",
+			"Market" => "structures/spart/market",
+			"Temple" => "structures/spart/temple",
+			"Arsenal" => "structures/spart/arsenal",
+			_ => $"structures/spart/{name.ToLowerInvariant()}"
+		};
+	}
 
 	private static (int wood, int stone, int metal, int food) FallbackBuildCost(string name) => name switch
 	{
