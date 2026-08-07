@@ -71,8 +71,8 @@ public sealed class PmpMap
     /// TerrainRenderer 必抛 InvalidDataException)。
     /// 两个坑都在此封装:VerticesPerSide = Size+1(Height 恰为 (Size+1)²,漏赋默认 0 →
     /// 0 顶点空 mesh);TileTex2 显式填满 NoTexture(rmgen 单层贴图无 blend 第二层,
-    /// 空数组会让 SplatBaker 越界)。TilePriority 留空——与运行时 rmgen 路径现状一致
-    /// (SplatBaker 容忍空 priority)。</summary>
+    /// 空数组会让 SplatBaker 越界)。TilePriority 带上 rmgen 的逐 tile 优先级
+    /// (地形混合的叠放顺序;长度不符时 SplatBaker 自动按全 0 处理)。</summary>
     public static PmpMap FromExport(ZeroAD.Sim.Rmgen.MapExport export)
     {
         return new PmpMap
@@ -84,6 +84,9 @@ public sealed class PmpMap
             TextureNames = new List<string>(export.TextureNames),
             TileTex1 = export.TileIndex,
             TileTex2 = Enumerable.Repeat(NoTexture, export.TileIndex.Length).ToArray(),
+            TilePriority = export.TilePriority != null && export.TilePriority.Length == export.TileIndex.Length
+                ? Array.ConvertAll(export.TilePriority, v => (uint)v)
+                : Array.Empty<uint>(),
         };
     }
 

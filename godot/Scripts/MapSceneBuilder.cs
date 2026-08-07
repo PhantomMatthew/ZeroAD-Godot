@@ -36,8 +36,9 @@ public static class MapSceneBuilder
         return null;
     }
 
-    /// <summary>PMP+XML 路径:mapRel 如 "maps/tutorials/introductory_tutorial"(不含扩展名)。</summary>
-    public static Result? Build(string dataRoot, string mapRel)
+    /// <summary>PMP+XML 路径:mapRel 如 "maps/tutorials/introductory_tutorial"(不含扩展名)。
+    /// setOwners=false 用于编辑器内活预览(生成物不进 Pack/存档)。</summary>
+    public static Result? Build(string dataRoot, string mapRel, bool setOwners = true)
     {
         string? pmpPath = ScenarioLoader.FindPmpPath(dataRoot, mapRel);
         if (pmpPath == null)
@@ -46,23 +47,25 @@ public static class MapSceneBuilder
             return null;
         }
         return BuildFromFiles(pmpPath, ScenarioLoader.FindScenarioPath(dataRoot, mapRel),
-            System.IO.Path.GetFileName(mapRel));
+            System.IO.Path.GetFileName(mapRel), setOwners);
     }
 
     /// <summary>任意文件路径入口(编辑器 FileDialog 导入用):PMP 必给,XML 可空
     /// (无 XML → 无实体、默认天光、无水面)。</summary>
-    public static Result BuildFromFiles(string pmpPath, string? xmlPath, string mapName)
+    public static Result BuildFromFiles(string pmpPath, string? xmlPath, string mapName,
+        bool setOwners = true)
     {
         var pmp = PmpMap.Load(pmpPath);
         var entities = new List<ScenarioEntityDef>();
         if (xmlPath != null && System.IO.File.Exists(xmlPath))
             entities.AddRange(ScenarioLoader.Load(xmlPath).Entities);
-        return BuildCore(pmp, xmlPath, entities, mapName);
+        return BuildCore(pmp, xmlPath, entities, mapName, setOwners);
     }
 
     /// <summary>rmgen 路径:MapExport → 预览场景(无场景 XML;天光用默认环境,
     /// 水面按 export.SeaLevel 近似)。</summary>
-    public static Result BuildFromExport(ZeroAD.Sim.Rmgen.MapExport export, string mapName)
+    public static Result BuildFromExport(ZeroAD.Sim.Rmgen.MapExport export, string mapName,
+        bool setOwners = true)
     {
         var pmp = PmpMap.FromExport(export);
         var entities = new List<ScenarioEntityDef>();
@@ -77,10 +80,11 @@ public static class MapSceneBuilder
                 OrientationY = (float)ent.Orientation,
             });
         }
-        return BuildCore(pmp, xmlPath: null, entities, mapName);
+        return BuildCore(pmp, xmlPath: null, entities, mapName, setOwners);
     }
 
-    private static Result BuildCore(PmpMap pmp, string? xmlPath, List<ScenarioEntityDef> entities, string mapName)
+    private static Result BuildCore(PmpMap pmp, string? xmlPath, List<ScenarioEntityDef> entities,
+        string mapName, bool setOwners)
     {
         // 实体 Y 贴地的数据源(ModelLibrary 内部采样;未设置时退化 y=0)。
         TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
@@ -174,8 +178,10 @@ public static class MapSceneBuilder
             placed++;
         }
 
-        // PackedScene.Pack 只收 Owner 链上的节点——统一把全部子孙挂到根名下。
-        SetOwnerRecursive(root, root);
+        // PackedScene.Pack 只收 Owner 链上的节点——打包存档路径才把全部子孙挂到根名下;
+        // 编辑器活预览(MapPreview [Tool] 即时重建)不设 Owner,生成物不进档。
+        if (setOwners)
+            SetOwnerRecursive(root, root);
 
         GD.Print($"[MapSceneBuilder] {mapName}: {placed} entities ({modelCount} real models), " +
                  $"{pmp.MapSizeMeters}m, water={hasWater}");

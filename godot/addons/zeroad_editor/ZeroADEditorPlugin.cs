@@ -17,6 +17,7 @@ namespace ZeroAD.Godot.Editor;
 public partial class ZeroADEditorPlugin : EditorPlugin
 {
     private const string PreviewArgPrefix = "--zeroad-build-preview=";
+    private const string BakeArgPrefix = "--zeroad-bake-terrain=";
 
     public override void _EnterTree()
     {
@@ -32,6 +33,12 @@ public partial class ZeroADEditorPlugin : EditorPlugin
             {
                 string mapRel = arg[PreviewArgPrefix.Length..];
                 RunHeadlessPreview(mapRel);   // async:等一帧后构建并退出
+                break;
+            }
+            if (arg.StartsWith(BakeArgPrefix, StringComparison.Ordinal))
+            {
+                string mapRel = arg[BakeArgPrefix.Length..];
+                RunHeadlessBakeTerrain(mapRel);   // async:只烘地形 albedo PNG
                 break;
             }
         }
@@ -59,9 +66,15 @@ public partial class ZeroADEditorPlugin : EditorPlugin
             }
             else
             {
-                var result = MapSceneBuilder.Build(dataRoot, mapRel);
-                if (result != null && SavePreview(result, openInEditor: false))
-                    rc = 0;
+                // 全量构建做验证(实体/模型计数),落盘的是轻量活预览场景。
+                var result = MapSceneBuilder.Build(dataRoot, mapRel, setOwners: false);
+                if (result != null)
+                {
+                    GD.Print($"[ZeroAD Editor] validated: {result.EntityCount} entities, " +
+                             $"{result.ModelCount} models, {result.MapSizeMeters}m, water={result.HasWater}");
+                    if (WritePreviewScene(result.MapName, $"MapRel = \"{mapRel}\""))
+                        rc = 0;
+                }
             }
         }
         catch (Exception ex)
@@ -69,6 +82,43 @@ public partial class ZeroADEditorPlugin : EditorPlugin
             GD.PrintErr($"[ZeroAD Editor] headless preview failed: {ex.GetType().Name}: {ex.Message}");
         }
         GD.Print($"[ZeroAD Editor] headless preview rc={rc}");
+        GetTree().Quit();
+    }
+
+    // ── 无头地形烘焙(--zeroad-bake-terrain=maps/tutorials/introductory_tutorial)──
+    // 只烘 splat albedo 存 PNG(不建场景)——地形混合的快速视觉验证通道(124MB
+    // 预览场景在 GUI 编辑器里重载要 2 分钟+,不适合迭代对照)。
+
+    private async void RunHeadlessBakeTerrain(string mapRel)
+    {
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        int rc = 1;
+        try
+        {
+            var dataRoot = MapSceneBuilder.FindDataRoot();
+            string? pmpPath = dataRoot != null
+                ? ZeroAD.Sim.Content.ScenarioLoader.FindPmpPath(dataRoot, mapRel) : null;
+            if (pmpPath == null)
+            {
+                GD.PrintErr($"[ZeroAD Editor] bake: PMP not found: {mapRel}");
+            }
+            else
+            {
+                var img = SplatBaker.BakeAlbedo(PmpMap.Load(pmpPath));
+                if (img != null)
+                {
+                    string outPath = ProjectSettings.GlobalizePath("user://terrain_bake.png");
+                    img.SavePng(outPath);
+                    GD.Print($"[ZeroAD Editor] terrain bake saved: {outPath}");
+                    rc = 0;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[ZeroAD Editor] bake failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        GD.Print($"[ZeroAD Editor] headless bake rc={rc}");
         GetTree().Quit();
     }
 
@@ -91,12 +141,24 @@ public partial class ZeroADEditorPlugin : EditorPlugin
     private void DoImport(string pmpPath)
     {
         GD.Print($"[ZeroAD Editor] Importing {pmpPath}");
-        string? xmlPath = Path.ChangeExtension(pmpPath, ".xml");
-        if (!File.Exists(xmlPath)) xmlPath = null;
-
-        var result = MapSceneBuilder.BuildFromFiles(
-            pmpPath, xmlPath, Path.GetFileNameWithoutExtension(pmpPath));
-        SavePreview(result, openInEditor: true);
+        // 预览场景只存地图引用(活预览 MapPreview 打开即重建)——需要数据根相对路径。
+        var dataRoot = MapSceneBuilder.FindDataRoot();
+        if (dataRoot == null)
+        {
+            GD.PrintErr("[ZeroAD Editor] data root (binaries junction) not found");
+            return;
+        }
+        string full = Path.GetFullPath(pmpPath);
+        string rootWithSep = Path.GetFullPath(dataRoot) + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
+        {
+            GD.PrintErr($"[ZeroAD Editor] PMP must be under {rootWithSep} for live preview");
+            return;
+        }
+        string mapRel = full[rootWithSep.Length..];
+        mapRel = Path.ChangeExtension(mapRel, null)!.Replace(Path.DirectorySeparatorChar, '/');
+        WritePreviewScene(Path.GetFileName(mapRel),
+            $"MapRel = \"{mapRel}\"");
     }
 
     // ── Generate rmgen ──
@@ -116,53 +178,37 @@ public partial class ZeroADEditorPlugin : EditorPlugin
     private void DoGenerate(string mapName, uint seed, int size)
     {
         GD.Print($"[ZeroAD Editor] Generating {mapName} (seed={seed}, size={size})");
-
-        var rng = new ZeroAD.Sim.RmgenMath.RmgenRng(seed);
-        var settings = new ZeroAD.Sim.Rmgen.Common.MapSettings
-        {
-            Size = size,
-            Seed = seed,
-            DataRoot = MapSceneBuilder.FindDataRoot(),
-            PlayerData = new() { new() { Civ = "gaia" }, new() { Civ = "athen" }, new() { Civ = "spart" } },
-        };
-
-        var mapExport = ZeroAD.Sim.Rmgen.Maps.MapRegistry.Generate(mapName, rng, settings);
-        if (mapExport == null)
+        if (!ZeroAD.Sim.Rmgen.Maps.MapRegistry.AvailableMaps.Contains(mapName))
         {
             GD.PrintErr($"[ZeroAD Editor] Unknown map type: {mapName}");
             return;
         }
-
-        // MapExport → PmpMap 走共享适配器(PmpMap.FromExport;旧内联版漏赋
-        // VerticesPerSide,TerrainRenderer 必抛 InvalidDataException)。
-        var result = MapSceneBuilder.BuildFromExport(mapExport, mapName);
-        SavePreview(result, openInEditor: true);
+        WritePreviewScene(mapName,
+            $"RmgenMap = \"{mapName}\"\nRmgenSeed = {seed}\nRmgenSize = {size}");
     }
 
-    // ── 预览场景保存 ──
+    // ── 预览场景写出(轻量 .tscn:Node3D + MapPreview 脚本 + 地图引用)──
 
-    /// <summary>打包存 res://Scenes/Previews/&lt;Map&gt;Preview.scn(二进制);可选立即打开。</summary>
-    private static bool SavePreview(MapSceneBuilder.Result result, bool openInEditor)
+    /// <summary>写 res://Scenes/Previews/&lt;name&gt;Preview.tscn 并打开。场景本身不含
+    /// 任何世界内容——MapPreview [Tool] 在打开时即时重建(MapSceneBuilder),因此
+    /// 文件恒定几 KB 且永远反映当前代码/素材。</summary>
+    private static bool WritePreviewScene(string mapName, string propsBlock)
     {
         string dirAbs = ProjectSettings.GlobalizePath("res://Scenes/Previews");
         DirAccess.MakeDirRecursiveAbsolute(dirAbs);
-        string safeName = string.Concat(result.MapName.Replace('/', '_').Replace('\\', '_'), "Preview");
-        string resPath = $"res://Scenes/Previews/{safeName}.scn";
+        string safeName = string.Concat(mapName.Replace('/', '_').Replace('\\', '_'), "Preview");
+        string resPath = $"res://Scenes/Previews/{safeName}.tscn";
 
-        var packed = new PackedScene();
-        var err = packed.Pack(result.Root);
-        if (err == Error.Ok)
-            err = ResourceSaver.Save(packed, resPath);
-        if (err != Error.Ok)
-        {
-            GD.PrintErr($"[ZeroAD Editor] save preview failed: {err} → {resPath}");
-            return false;
-        }
+        string text = "[gd_scene load_steps=2 format=3]\n\n"
+            + "[ext_resource type=\"Script\" path=\"res://Scripts/MapPreview.cs\" id=\"1_mp\"]\n\n"
+            + $"[node name=\"{safeName}\" type=\"Node3D\"]\n"
+            + "script = ExtResource(\"1_mp\")\n"
+            + propsBlock + "\n";
+        string abs = ProjectSettings.GlobalizePath(resPath);
+        File.WriteAllText(abs, text);
 
-        GD.Print($"[ZeroAD Editor] preview saved: {resPath} " +
-                 $"({result.EntityCount} entities, {result.ModelCount} models, {result.MapSizeMeters}m)");
-        if (openInEditor)
-            EditorInterface.Singleton.OpenSceneFromPath(resPath);
+        GD.Print($"[ZeroAD Editor] preview scene written: {resPath}");
+        EditorInterface.Singleton.OpenSceneFromPath(resPath);
         return true;
     }
 
