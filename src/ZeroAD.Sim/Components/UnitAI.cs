@@ -161,6 +161,23 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         s_fsm.ProcessMessage(this, new FsmMessage { Type = "FormationLeave", Cm = SimSystem.Sim }, "FormationLeave");
     }
 
+    /// <summary>Port of UnitAI.CanUseFormation:模板 UnitAI/Formations 列表含该阵型
+    /// (shape 为短名如 "box";列表 token 是全名 special/formations/{shape})。
+    /// <![CDATA[<Formations disable=""/>]]> 的 support 系、无列表的攻城器/船 → false:
+    /// 这些单位不进编队成员表、也不计 RequiredMemberCount(阵型面板同规则置灰)。</summary>
+    public bool CanUseFormation(ComponentManager cm, string shape)
+    {
+        var identity = cm.QueryInterface<IdentityComponent>(Entity);
+        if (identity == null) return false;
+        Content.TemplateStats? stats = null;
+        try { stats = cm.Templates?.ExtractStats(identity.TemplateName); } catch { }
+        if (stats == null || stats.FormationShapes.Length == 0) return false;
+        string full = "special/formations/" + shape;
+        foreach (var tok in stats.FormationShapes.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            if (string.Equals(tok, full, StringComparison.Ordinal)) return true;
+        return false;
+    }
+
     /// <summary>编队控制器初始化(模板 UnitAI/FormationController=true):初始态切到
     /// FORMATIONCONTROLLER.IDLE。由装配路径(AddComponent 之后)调用。</summary>
     public void InitAsFormationController()
@@ -278,6 +295,18 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     public void FormationWalk(EntityId controller, float offsetX, float offsetZ, bool queued = false) =>
         PushOrder(new UnitOrder { Type = "FormationWalk", Target = controller, OffsetX = offsetX, OffsetZ = offsetZ, Queued = queued });
 
+    /// <summary>返回资源到指定投放站(原版 ReturnResource;右键投放站/控制器广播用)。</summary>
+    public void ReturnResource(EntityId target, bool queued = false) =>
+        PushOrder(new UnitOrder { Type = "ReturnResource", Target = target, Queued = queued, Force = !queued });
+
+    /// <summary>就近交付(原版 DropAtNearestDropSite):找最近接收所携类型的投放站交付。</summary>
+    public void DropAtNearestDropSite(bool queued = false) =>
+        PushOrder(new UnitOrder { Type = "DropAtNearestDropSite", Queued = queued, Force = !queued });
+
+    /// <summary>退出编队(原版 LeaveFormation):成员脱离所属编队控制器。</summary>
+    public void LeaveFormation() =>
+        PushOrder(new UnitOrder { Type = "LeaveFormation", Force = true });
+
     // =========================================================================
     // Order queue mechanics — port of UnitAI PushOrder / PushOrderFront / FinishOrder.
     // =========================================================================
@@ -348,7 +377,12 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         if (_orderQueue.First is not { } node) return;
         var order = node.Value;
         s_fsm.ProcessMessage(this, new FsmMessage { Type = order.Type, Order = order, Cm = cm }, "Order." + order.Type);
-        _dispatchPending = false;
+        // 处理器内可能 FinishOrder+PushOrderFront(如 DropAtNearestDropSite 前插
+        // ReturnResource):队首已换 → 保持派发标记,下拍续派新首;无条件 false 会把
+        // 新单闷在 IDLE(随后 Timer 打进无 handler 的 IDLE 抛异常)。
+        // 必须引用比较:UnitOrder 是 record(值相等),两条内容相同的相邻订单
+        // (连点同一棵树/同一集合点连发)用 != 会误判"队首未变"把新单闷死。
+        _dispatchPending = _orderQueue.Count > 0 && !ReferenceEquals(_orderQueue.First!.Value, order);
     }
 
     /// <summary>Current order (front of queue), or null if idle.</summary>
@@ -560,6 +594,41 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             u.FsmNextState = "IDLE";
         });
 
+        // 返回资源(原版 Order.ReturnResource):携货才成立;在交付半径内就地交付,
+        // 否则 RETURNRESOURCE.APPROACHING 接近。
+        ind.On("Order.ReturnResource", (u, m) =>
+        {
+            var gatherer = m.Cm!.QueryInterface<ResourceGatherer>(u.Entity);
+            if (gatherer == null || m.Order!.Target == null || gatherer.CarryAmount <= 0)
+            {
+                u.FinishOrder();
+                return;
+            }
+            var target = m.Order.Target.Value;
+            gatherer.TargetDropsite = target;
+            if (WithinRange(u.Entity, target, m.Cm, GatherRange))
+            {
+                StopMoving(u);
+                DepositResources(u.Entity, gatherer, m.Cm!);
+                u.FinishOrder();
+                return;
+            }
+            MoveToTargetEdge(u, target, m.Cm!, Fixed.FromInt(1));
+            gatherer.State = ResourceGatherer.GatherState.MovingToDropsite;
+            u.FsmNextState = "RETURNRESOURCE.APPROACHING";
+        });
+
+        // 就近交付(原版 Order.DropAtNearestDropSite):找最近投放站 → 前插 ReturnResource。
+        ind.On("Order.DropAtNearestDropSite", (u, m) =>
+        {
+            var gatherer = m.Cm!.QueryInterface<ResourceGatherer>(u.Entity);
+            if (gatherer == null) { u.FinishOrder(); return; }
+            var dropsite = FindNearestDropsite(u.Entity, m.Cm!);
+            if (!dropsite.HasValue) { u.FinishOrder(); return; }
+            u.FinishOrder();   // 先出本单(再前插会误弹新单)
+            u.PushOrderFront(new UnitOrder { Type = "ReturnResource", Target = dropsite, Force = true });
+        });
+
         // P1 orders — accepted, transition to stub states.
         ind.On("Order.Garrison", (u, m) =>
         {
@@ -675,10 +744,19 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             if (u.FormationController == null || u.IsGarrisoned) { u.FinishOrder(); return; }
             u.FsmNextState = "FORMATIONMEMBER.WALKING";
         });
-        // FormationLeave(原版根处理器):仅收尾 LeaveFormation 指令——该指令未移植
-        // (原版 GUI 选中出队路径),此处为空操作;真正的脱队逻辑在 FORMATIONMEMBER 树。
+        // FormationLeave(原版根处理器):仅收尾 LeaveFormation 指令。
         ind.On("FormationLeave", (u, _) =>
         {
+            if (u.CurrentOrder?.Type == "LeaveFormation") u.FinishOrder();
+        });
+        // Order.LeaveFormation(原版根级指令,任何状态可用):脱离编队控制器。
+        // RemoveMembers 内部会派 FormationLeave(上条 handler 已收尾本单)——此处
+        // 仅在其未触发时兜底 FinishOrder,避免双弹出队。
+        ind.On("Order.LeaveFormation", (u, m) =>
+        {
+            if (u.FormationController is { } fc)
+                m.Cm!.QueryInterface<FormationComponent>(fc)
+                    ?.RemoveMembers(m.Cm, new List<EntityId> { u.Entity });
             if (u.CurrentOrder?.Type == "LeaveFormation") u.FinishOrder();
         });
 
@@ -930,7 +1008,25 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 if (motion != null && !motion.HasMoveTarget)
                     u.FinishOrder();
             });
-        spec.State("INDIVIDUAL").State("RETURNRESOURCE");
+        // RETURNRESOURCE 子树(原版同名):APPROACHING 接近投放站 → 交付 + FinishOrder;
+        // 目标失效(投放站被毁)→ FinishOrder。
+        spec.State("INDIVIDUAL").State("RETURNRESOURCE").State("APPROACHING")
+            .On("Timer", (u, m) =>
+            {
+                var gatherer = m.Cm!.QueryInterface<ResourceGatherer>(u.Entity);
+                if (gatherer == null || gatherer.TargetDropsite is not { } ds) { u.FinishOrder(); return; }
+                if (m.Cm.QueryInterface<PositionComponent>(ds) == null) { u.FinishOrder(); return; }
+                if (WithinRange(u.Entity, ds, m.Cm, GatherRange))
+                {
+                    StopMoving(u);
+                    DepositResources(u.Entity, gatherer, m.Cm);
+                    u.FinishOrder();
+                    return;
+                }
+                var motion = m.Cm.QueryInterface<UnitMotion>(u.Entity);
+                if (motion != null && !motion.HasMoveTarget)
+                    MoveToTargetEdge(u, ds, m.Cm, Fixed.FromInt(1));
+            });
 
         // COLLECTTREASURE 子树(原版同名):APPROACHING 接近 → COLLECTING 计时结算;
         // 结算完成/目标失效 → FinishOrder(原版 FINDINGNEWTARGET 自动找附近宝物,P1 不移植);
@@ -1247,6 +1343,13 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         fc.On("Order.Gather", (u, m) => FormationCallMemberOrder(u, m, 10f));
         fc.On("Order.Heal", (u, m) => FormationCallMemberOrder(u, m, 10f));
         fc.On("Order.Repair", (u, m) => FormationCallMemberOrder(u, m, 10f));
+        fc.On("Order.ReturnResource", (u, m) => FormationCallMemberOrder(u, m, 10f));
+        fc.On("Order.DropAtNearestDropSite", (u, m) =>
+        {
+            // 无目标广播(原版控制器同名 handler:直接 CallMemberFunction + MEMBER)。
+            CallMemberOrderFor(u, m.Cm!, m.Order!);
+            u.FsmNextState = "MEMBER";
+        });
         fc.On("Order.CollectTreasure", (u, m) => FormationCallMemberOrder(u, m, 20f));
         fc.On("Order.GatherNearPosition", (u, m) =>
         {
@@ -1698,6 +1801,12 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 case "GatherNearPosition":
                     ai.GatherNearPosition(order.Position);
                     break;
+                case "ReturnResource":
+                    if (order.Target is { } returnTarget) ai.ReturnResource(returnTarget);
+                    break;
+                case "DropAtNearestDropSite":
+                    ai.DropAtNearestDropSite();
+                    break;
             }
         }
     }
@@ -1764,6 +1873,15 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         {
             StopMoving(u);
             u.FsmNextState = "IDLE";
+        });
+        // LeaveFormation(原版根处理器):成员脱离编队控制器(RemoveMembers 会
+        // 顺带清链接;低于 RequiredMemberCount 时编队解散由 Formation 组件自理)。
+        fm.On("Order.LeaveFormation", (u, m) =>
+        {
+            if (u.FormationController is { } fc)
+                m.Cm!.QueryInterface<FormationComponent>(fc)
+                    ?.RemoveMembers(m.Cm, new List<EntityId> { u.Entity });
+            if (u.CurrentOrder?.Type == "LeaveFormation") u.FinishOrder();
         });
 
         // 原版 "IDLE": "INDIVIDUAL.IDLE" 别名——成员无订单时按个体空闲处理。

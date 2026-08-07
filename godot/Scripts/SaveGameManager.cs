@@ -57,7 +57,8 @@ public static class SaveGameManager
     // v8(2026-08-02):ProductionQueue 增 TrainableTokens+NativeCiv(训练列表数据驱动,
     // 原版 Trainer/Entities)——组件流 count/progress 后多 2 个 ASCII 字符串;旧 v7 档
     // 位置流错位,按版本号拒收。
-    private const uint Version = 8;
+    // v9(2026-08-03):DamageBlock 增 Fire 通道(状态效果燃烧)——capture 后多 1 个 I32。
+    private const uint Version = 10; // v10: Foundation/Builder 工人表序列化(多工人递减 n^0.7/n)
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Events;
@@ -26,6 +27,7 @@ public sealed class DelayedDamage
         public EntityId Attacker;
         public EntityId Target;
         public DamageBlock Damage;
+        public Components.StatusEffectSpec? Status;   // 攻击附带状态(原版 ApplyStatus)
     }
 
     private readonly List<PendingHit> _pending = new();
@@ -36,13 +38,13 @@ public sealed class DelayedDamage
 
     /// <summary>Queue a damage event to settle after a number of turns (0 = same turn, next Tick).</summary>
     public static void ScheduleHit(ComponentManager cm, EntityId attacker, EntityId target,
-        DamageBlock damage, int delayTurns)
+        DamageBlock damage, int delayTurns, Components.StatusEffectSpec? status = null)
     {
         var dd = cm.DelayedDamage;
         if (dd == null)
         {
             // No delay system wired (pure determinism tests): apply instantly through Resistance.
-            ApplyDirect(cm, attacker, target, damage);
+            ApplyDirect(cm, attacker, target, damage, status);
             return;
         }
         dd._pending.Add(new PendingHit
@@ -50,7 +52,8 @@ public sealed class DelayedDamage
             TriggerTurn = dd._currentTurn + delayTurns,
             Attacker = attacker,
             Target = target,
-            Damage = damage
+            Damage = damage,
+            Status = status
         });
     }
 
@@ -64,7 +67,7 @@ public sealed class DelayedDamage
             if (_pending[read].TriggerTurn <= _currentTurn)
             {
                 var hit = _pending[read];
-                ApplyDirect(cm, hit.Attacker, hit.Target, hit.Damage);
+                ApplyDirect(cm, hit.Attacker, hit.Target, hit.Damage, hit.Status);
             }
             else
             {
@@ -77,7 +80,8 @@ public sealed class DelayedDamage
     // Central settlement: apply Resistance → Health, then route the Capture channel.
     // Mirrors AttackHelper.HandleAttackEffects (invulnerability check, resistance reduction,
     // then receivers in registry order: Damage(order 1) → Capture(order 2)).
-    private static void ApplyDirect(ComponentManager cm, EntityId attacker, EntityId target, DamageBlock raw)
+    private static void ApplyDirect(ComponentManager cm, EntityId attacker, EntityId target,
+        DamageBlock raw, Components.StatusEffectSpec? status)
     {
         var health = cm.QueryInterface<HealthComponent>(target);
         if (health != null && health.IsDead) return;
@@ -95,7 +99,9 @@ public sealed class DelayedDamage
             final = raw;
         }
 
+        int hpBefore = health?.Current ?? 0;
         health?.TakeDamage(final);
+        int dealt = health != null ? hpBefore - health.Current : 0;   // 实际扣血(封顶后)
 
         // 击杀归属：命中结算后若目标死亡，raise EntityKilledEvent。这是唯一同时知道
         // attacker 和 target 且能检测死亡的位置（镜像 Health.js:221 的 KilledEntity/LostEntity）。
@@ -131,9 +137,31 @@ public sealed class DelayedDamage
         }
 
         // Award XP to the attacker's Promotion component if it has one.
+        // 原版 Health.js:xp = 受害者 Loot/xp × 本次实际扣血占 maxHp 的比例
+        // (按比例计入晋升经验;无 Loot/xp 的目标不给经验——此前按伤害量平给)。
         var promotion = cm.QueryInterface<PromotionComponent>(attacker);
-        if (promotion != null && final.TotalPhysical > 0)
-            promotion.AddXP(final.TotalPhysical);
+        if (promotion != null && dealt > 0 && health != null && health.Max > 0)
+        {
+            var loot = cm.QueryInterface<Components.LootComponent>(target);
+            int lootXp = loot?.GetXp(cm) ?? 0;
+            if (lootXp > 0)
+            {
+                int xp = (int)MathF.Floor(lootXp * (float)dealt / health.Max);
+                if (xp > 0) promotion.AddXP(xp);
+            }
+        }
+
+        // 攻击附带状态效果(原版 ApplyStatus → StatusEffectsReceiver.ApplyStatus):
+        // 命中即挂;叠放规则由接收器自理。
+        if (status != null && final.TotalPhysical > 0)
+        {
+            var receiver = cm.QueryInterface<Components.StatusEffectsReceiverComponent>(target);
+            if (receiver != null)
+            {
+                int attackerOwner = cm.QueryInterface<OwnershipComponent>(attacker)?.PlayerId ?? -1;
+                receiver.AddStatus(cm, status.Name, status.ToStatusEffect(), attacker, attackerOwner);
+            }
+        }
 
         // Notify the sim event bus so the presentation layer can play hit feedback.
         cm.Events.RaiseAttackLanded(new AttackLandedEvent

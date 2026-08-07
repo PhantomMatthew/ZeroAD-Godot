@@ -31,9 +31,33 @@ public sealed class ActiveStatusEffect
     internal bool FirstTime = true;
 }
 
+/// <summary>攻击附带状态效果的载荷(模板 Attack/{型}/ApplyStatus 的解析结果;
+/// 经 DelayedDamage 随命中传递)。</summary>
+public sealed record StatusEffectSpec(
+    string Name, float DurationMs, float IntervalMs, string Stackability,
+    int DmgHack, int DmgPierce, int DmgCrush, int DmgFire)
+{
+    /// <summary>转成接收器条目(伤害块在此组装)。</summary>
+    public ActiveStatusEffect ToStatusEffect()
+    {
+        var fx = new ActiveStatusEffect
+        {
+            DurationMs = DurationMs,
+            IntervalMs = IntervalMs,
+            Stackability = Stackability,
+        };
+        if (DmgHack > 0) fx.Damage.Amounts[DamageType.Hack] = DmgHack;
+        if (DmgPierce > 0) fx.Damage.Amounts[DamageType.Pierce] = DmgPierce;
+        if (DmgCrush > 0) fx.Damage.Amounts[DamageType.Crush] = DmgCrush;
+        if (DmgFire > 0) fx.Damage.Amounts[DamageType.Fire] = DmgFire;
+        return fx;
+    }
+}
+
 /// <summary>状态效果接收器(原版 StatusEffectsReceiver.js 移植;template_unit 默认空件)。
-/// 原版由攻击效果(带 StatusEffects 的攻击)调 ApplyStatus 施加;本上游数据尚无施加源,
-/// 本组件作为框架先行:叠放四规则、修饰进出、周期伤害/捕获、时限移除全实现。
+/// 施加源已接通:模板 Attack/{型}/ApplyStatus 块解析进 AttackComponent,命中时经
+/// DelayedDamage.ApplyDirect 调 AddStatus(对齐原版攻击效果链)。叠放四规则、修饰进出、
+/// 周期伤害/捕获、时限移除全实现。
 /// 回合制近似:原版用 Timer 精确定时;本组件每 sim 回合(0.1s)累加,跨间隔即执行。</summary>
 [Component("StatusEffectsReceiver", "StatusEffectsReceiver")]
 public sealed class StatusEffectsReceiverComponent : ComponentBase, IComponentMessageHandler

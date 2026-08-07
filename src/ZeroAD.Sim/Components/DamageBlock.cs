@@ -15,12 +15,14 @@ namespace ZeroAD.Sim.Components;
 // This file holds the shared value types (DamageType enum, DamageBlock) so Attack,
 // Resistance, Health, and DelayedDamage all speak the same shape.
 
-/// <summary>Damage type codes from the original AttackEffects schema (globalscripts/AttackEffects.js).</summary>
+/// <summary>Damage type codes from the original AttackEffects schema (globalscripts/AttackEffects.js
+/// + data/damage_types/*;order 字段:hack1/pierce2/crush3/fire4)。</summary>
 public enum DamageType : byte
 {
     Hack = 0,
     Pierce = 1,
     Crush = 2,
+    Fire = 3,
 }
 
 /// <summary>
@@ -48,7 +50,8 @@ public sealed class DamageBlock
     public int Get(DamageType t) => Amounts.TryGetValue(t, out var v) ? v : 0;
 
     /// <summary>Total physical damage (sum across types). Used for HUD/summary display.</summary>
-    public int TotalPhysical => Get(DamageType.Hack) + Get(DamageType.Pierce) + Get(DamageType.Crush);
+    public int TotalPhysical => Get(DamageType.Hack) + Get(DamageType.Pierce) + Get(DamageType.Crush)
+        + Get(DamageType.Fire);
 
     public bool IsEmpty => TotalPhysical == 0 && Capture <= Maths.Fixed.Zero;
 
@@ -106,17 +109,19 @@ public sealed class DamageBlock
         s.NumberI32(prefix + "_pierce", Get(DamageType.Pierce));
         s.NumberI32(prefix + "_crush", Get(DamageType.Crush));
         s.NumberFixed(prefix + "_capture", Capture);
+        s.NumberI32(prefix + "_fire", Get(DamageType.Fire));   // 追加在尾(读序同款)
     }
 
     public static DamageBlock Deserialize(IDeserializer d, string prefix)
     {
-        // 读取顺序必须与 Serialize 写入顺序逐位一致(hack/pierce/crush/capture)——
+        // 读取顺序必须与 Serialize 写入顺序逐位一致(hack/pierce/crush/capture/fire)——
         // BinaryDeserializer 是位置流,对象初始化器会先跑 capture 造成整体错位。
         var block = new DamageBlock();
         block.Amounts[DamageType.Hack] = d.NumberI32(prefix + "_hack");
         block.Amounts[DamageType.Pierce] = d.NumberI32(prefix + "_pierce");
         block.Amounts[DamageType.Crush] = d.NumberI32(prefix + "_crush");
         block.Capture = d.NumberFixed(prefix + "_capture");
+        block.Amounts[DamageType.Fire] = d.NumberI32(prefix + "_fire");
         return block;
     }
 }

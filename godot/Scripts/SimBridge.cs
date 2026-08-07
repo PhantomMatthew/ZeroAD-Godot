@@ -229,6 +229,7 @@ public sealed partial class SimBridge : Node
         _terrain.Configure(gridSize, cellSize);
         _pathfinder = new PathfinderComponent(_sim);
         _pathfinder.SetTerrain(_terrain);
+        SimSystem.SetTerrainComponent(_terrain);   // 高度网格/Attack 高度差用
         _range = new RangeManager(_sim, Fixed.FromFloat(worldSize), Fixed.FromFloat(worldSize));
         SimSystem.SetRangeManager(_range);
         _territory = new TerritoryManager(_sim, (int)worldSize);

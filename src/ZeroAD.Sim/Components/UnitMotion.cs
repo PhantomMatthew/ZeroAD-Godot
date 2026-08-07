@@ -225,9 +225,11 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         Fixed dz = dir.Y.Multiply(stepDist);
 
         var oldPos2D = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
+        // Y 贴地(原版 GetHeightOffset 语义:单位随地形起伏;Attack 高度差判定依赖此)。
+        Fixed newY = SimSystem.TerrainHeight(posComp.Position.X + dx, posComp.Position.Z + dz);
         posComp.Position = new FixedVector3D(
             posComp.Position.X + dx,
-            posComp.Position.Y,
+            newY,
             posComp.Position.Z + dz);
         var newPos2D = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
 
@@ -337,6 +339,7 @@ public static class SimSystem
     private static WaterManager? _water;
     private static TerritoryManager? _territory;
     private static Net.NetTurnManager? _net;
+    private static TerrainComponent? _terrain;
     public static void Init(ComponentManager cm)
     {
         _cm = cm;
@@ -350,6 +353,7 @@ public static class SimSystem
         _water = null;
         _territory = null;
         _net = null;
+        _terrain = null;
     }
     public static ComponentManager? Sim => _cm;
     public static ObstructionManager? Obstructions => _obstructions;
@@ -359,12 +363,17 @@ public static class SimSystem
     public static TerritoryManager? Territory => _territory;
     /// <summary>回合管理器(地图脚本下 gaia 命令等内核侧命令通道;InitWorld 注入)。</summary>
     public static Net.NetTurnManager? Net => _net;
+    /// <summary>地形组件(高度网格;Attack 高度差/单位 Y 贴地用)。</summary>
+    public static TerrainComponent? Terrain => _terrain;
+    /// <summary>地形高度查询的静态便捷口(无地形组件 → 0)。</summary>
+    public static Fixed TerrainHeight(Fixed x, Fixed z) => _terrain?.GetHeight(x, z) ?? Fixed.Zero;
     public static void SetObstructionManager(ObstructionManager mgr) => _obstructions = mgr;
     public static void SetRangeManager(RangeManager mgr) => _range = mgr;
     public static void SetPathfinder(PathfinderComponent mgr) => _pathfinder = mgr;
     public static void SetWaterManager(WaterManager mgr) => _water = mgr;
     public static void SetTerritoryManager(TerritoryManager mgr) => _territory = mgr;
     public static void SetNet(Net.NetTurnManager net) => _net = net;
+    public static void SetTerrainComponent(TerrainComponent terrain) => _terrain = terrain;
     public static T? GetComponent<T>(EntityId entity) where T : class, IComponent =>
         _cm?.QueryInterface<T>(entity);
 

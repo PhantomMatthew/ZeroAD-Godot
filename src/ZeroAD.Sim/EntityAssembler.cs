@@ -100,6 +100,7 @@ namespace ZeroAD.Sim
                     if (stats.AttackHack > 0) dmg.Amounts[Components.DamageType.Hack] = stats.AttackHack;
                     if (stats.AttackPierce > 0) dmg.Amounts[Components.DamageType.Pierce] = stats.AttackPierce;
                     if (stats.AttackCrush > 0) dmg.Amounts[Components.DamageType.Crush] = stats.AttackCrush;
+                    if (stats.AttackFire > 0) dmg.Amounts[Components.DamageType.Fire] = stats.AttackFire;
                 }
                 else
                 {
@@ -121,6 +122,15 @@ namespace ZeroAD.Sim
                     atk.CaptureRestrictedClasses = stats.AttackCaptureRestrictedClasses;
                     atk.PreferredClasses = stats.AttackPreferredClasses;
                     atk.PhysicalRestrictedClasses = stats.AttackPhysicalRestrictedClasses;
+                    // ApplyStatus(攻击附带状态效果;火攻船 Burning 等)。
+                    atk.StatusEffectName = stats.StatusEffectName;
+                    atk.StatusEffectDurationMs = stats.StatusEffectDurationMs;
+                    atk.StatusEffectIntervalMs = stats.StatusEffectIntervalMs;
+                    atk.StatusEffectStackability = stats.StatusEffectStackability;
+                    atk.StatusEffectDmgHack = stats.StatusEffectDamageHack;
+                    atk.StatusEffectDmgPierce = stats.StatusEffectDamagePierce;
+                    atk.StatusEffectDmgCrush = stats.StatusEffectDamageCrush;
+                    atk.StatusEffectDmgFire = stats.StatusEffectDamageFire;
                 }
             }
 
@@ -254,12 +264,13 @@ namespace ZeroAD.Sim
             // units so the DamageBlock→Resistance→Health pipeline has a component to consult.
             if (stats != null &&
                 (stats.ResistanceHack != 0 || stats.ResistancePierce != 0 ||
-                 stats.ResistanceCrush != 0 || stats.ResistanceCapture != 0))
+                 stats.ResistanceCrush != 0 || stats.ResistanceCapture != 0 || stats.ResistanceFire != 0))
             {
                 var res = new ResistanceComponent();
                 if (stats.ResistanceHack != 0) res.Resistances[Components.DamageType.Hack] = stats.ResistanceHack;
                 if (stats.ResistancePierce != 0) res.Resistances[Components.DamageType.Pierce] = stats.ResistancePierce;
                 if (stats.ResistanceCrush != 0) res.Resistances[Components.DamageType.Crush] = stats.ResistanceCrush;
+                if (stats.ResistanceFire != 0) res.Resistances[Components.DamageType.Fire] = stats.ResistanceFire;
                 res.CaptureResistance = stats.ResistanceCapture;
                 cm.AddComponent(entity, res);
             }

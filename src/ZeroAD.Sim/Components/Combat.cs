@@ -104,6 +104,17 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
     /// (Order.Attack 时 GetBestAttackAgainst 选一次);我们挂组件,AttackTarget 重选,等价。</summary>
     public bool CurrentAttackIsCapture;
 
+    // --- ApplyStatus(原版攻击附带状态效果;空名 = 无)---
+    /// <summary>效果名(Burning/Poisoned;对应 data/status_effects/*.json code)。</summary>
+    public string StatusEffectName = "";
+    public float StatusEffectDurationMs;
+    public float StatusEffectIntervalMs;
+    public string StatusEffectStackability = "Ignore";
+    public int StatusEffectDmgHack;
+    public int StatusEffectDmgPierce;
+    public int StatusEffectDmgCrush;
+    public int StatusEffectDmgFire;
+
     public enum AttackState { Idle, Approaching, Attacking }
 
     /// <summary>攻击类型选择结果(原版 GetBestAttackAgainst 返回类型字符串;
@@ -160,8 +171,7 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
     /// <summary>原版 CanAttack 的非捕获型分支:外交敌对 + 目标有 Health 且 hp&gt;0
     /// + RestrictedClasses 不命中 + 本组件确有物理伤害(原版该型不存在即跳过;
     /// 我们的 AttackComponent 恒代表物理型,零伤害=型不存在)。
-    /// 记录在案:无 OwnershipComponent 的目标不拦(P0 旧语义,gaia 资源可打);
-    /// 高度差检查未移植(无 HeightOffset)。</summary>
+    /// 记录在案:无 OwnershipComponent 的目标不拦(P0 旧语义,gaia 资源可打)。</summary>
     private bool CanAttackPhysical(ComponentManager cm, EntityId target)
     {
         if (Damage.TotalPhysical <= 0) return false;
@@ -179,6 +189,9 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
                 && Content.EntityClassHelper.MatchesClassList(identity.Classes, PhysicalRestrictedClasses))
                 return false;
         }
+        // 高度差门(原版 Attack.js CanAttack:|Δh| > 该型射程上限 → 永不可达,
+        // 近战够不着悬崖上的单位;远程射程大通常不受影响)。
+        if (!InHeightRange(cm, target, Range)) return false;
         return true;
     }
 
@@ -198,8 +211,28 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
                 && Content.EntityClassHelper.MatchesClassList(identity.Classes, CaptureRestrictedClasses))
                 return false;
         }
+        if (!InHeightRange(cm, target, CaptureRange)) return false;
         return true;
     }
+
+    /// <summary>原版高度差判定:|双方 Y 差| ≤ range。无位置件/平地图(Y 恒 0)恒真。</summary>
+    private bool InHeightRange(ComponentManager cm, EntityId target, float range)
+    {
+        var myPos = cm.QueryInterface<PositionComponent>(Entity);
+        var targetPos = cm.QueryInterface<PositionComponent>(target);
+        if (myPos == null || targetPos == null) return true;
+        var dh = myPos.Position.Y - targetPos.Position.Y;
+        if (dh < Maths.Fixed.Zero) dh = -dh;
+        return dh <= Maths.Fixed.FromFloat(range);
+    }
+
+    /// <summary>攻击附带状态效果(原版 Attack/*.xml 的 ApplyStatus 块):无配置返回 null。</summary>
+    private StatusEffectSpec? BuildStatusSpec() =>
+        StatusEffectName.Length > 0
+            ? new StatusEffectSpec(StatusEffectName, StatusEffectDurationMs, StatusEffectIntervalMs,
+                StatusEffectStackability, StatusEffectDmgHack, StatusEffectDmgPierce,
+                StatusEffectDmgCrush, StatusEffectDmgFire)
+            : null;
 
     /// <summary>Perform one attack hit against the current target. Routes through DelayedDamage
     /// so resistance is applied and (for ranged) travel latency is honoured. Called by UnitAI's
@@ -223,7 +256,8 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         foreach (var kv in Damage.Amounts.OrderBy(k => (int)k.Key)) // 排序保确定
             mod.Amounts[kv.Key] = (int)MathF.Round(
                 cm.Modifiers.Apply(prefix + kv.Key, kv.Value, Entity), MidpointRounding.AwayFromZero);
-        DelayedDamage.ScheduleHit(cm, Entity, Target.Value, mod, delayTurns: 0);
+        DelayedDamage.ScheduleHit(cm, Entity, Target.Value, mod, delayTurns: 0,
+            status: BuildStatusSpec());
         // 攻击发射事件（表现层生成飞行投射物）。纯视觉——伤害已瞬间结算（原版 CCmpProjectileManager 同架构）。
         cm.Events.RaiseAttackLaunched(new Events.AttackLaunchedEvent
         { Attacker = Entity, Target = Target.Value, IsRanged = IsRanged });

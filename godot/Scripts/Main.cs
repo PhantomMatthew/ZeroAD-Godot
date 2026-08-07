@@ -982,8 +982,8 @@ public sealed partial class Main : Node3D
 		_sim.TerritoryWorld.Attach(fogOverlay, pmp.MapSizeMeters);
 		TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
 
-		// 可通行性（全陆地——rmgen 的水面处理 TODO）
-		FillPassabilityAllLand();
+		// 可通行性(rmgen 陆水:超过水面高度=Land,否则 Water)+ 顶点高度网格。
+		FillPassabilityAllLand(pmp);
 
 		// 放置实体（从 MapExport.Entities）。rmgen 实体坐标单位是 TILES——上游
 		// MapReader::ParseEntities ×TERRAIN_TILE_SIZE 转米;不乘 4 会把全部实体挤进
@@ -1050,6 +1050,13 @@ public sealed partial class Main : Node3D
 			}
 		terrain.SetPassabilityGrid(grid);
 
+		// 顶点高度网格(PMP heightmap 逐点;Attack 高度差/单位 Y 贴地的数据源)。
+		var heights = new ZeroAD.Sim.Maths.Fixed[tilesPerSide + 1, tilesPerSide + 1];
+		for (int tz = 0; tz <= tilesPerSide; tz++)
+			for (int tx = 0; tx <= tilesPerSide; tx++)
+				heights[tx, tz] = ZeroAD.Sim.Maths.Fixed.FromFloat(pmp.GetHeight(tx, tz));
+		terrain.SetHeightGrid(heights);
+
 		// Match the obstruction + range spatial-index world bounds to the real map so queries
 		// don't clamp to the old 256m limit. SetBounds re-indexes existing shapes.
 			float worldM = pmp.MapSizeMeters;
@@ -1066,7 +1073,7 @@ public sealed partial class Main : Node3D
 			_sim.Pathfinder.RebuildGrid();
 		}
 
-	private void FillPassabilityAllLand()
+	private void FillPassabilityAllLand(PmpMap? pmp = null)
 	{
 		var terrain = _sim.Terrain;
 		if (terrain == null) return;
@@ -1074,6 +1081,16 @@ public sealed partial class Main : Node3D
 		var grid = new ZeroAD.Sim.Components.TerrainClass[n, n];
 		// Default Land (0) is already the zero value, so no need to fill explicitly.
 		terrain.SetPassabilityGrid(grid);
+
+		// rmgen 适配 PMP 带高度图 → 填顶点高度网格(Attack 高度差/Y 贴地)。
+		if (pmp != null)
+		{
+			var heights = new ZeroAD.Sim.Maths.Fixed[n + 1, n + 1];
+			for (int tz = 0; tz <= n; tz++)
+				for (int tx = 0; tx <= n; tx++)
+					heights[tx, tz] = ZeroAD.Sim.Maths.Fixed.FromFloat(pmp.GetHeight(tx, tz));
+			terrain.SetHeightGrid(heights);
+		}
 
 		// Match the obstruction bounds to the generated map, then build the pathfinding grid
 		// (the PMP path does the same in FillPassabilityFromPmp). Without this, the pathfinder's

@@ -268,15 +268,22 @@ namespace ZeroAD.Sim.Content
                     var dmg = melee.GetChild("Damage");
                     if (dmg.IsOk)
                     {
-                        // Read all three physical damage types (any subset may be present).
+                        // Read all physical damage types (any subset may be present;
+                        // Fire = 火焰/燃烧系,火攻船等)。
                         stats.AttackHack = dmg.GetChild("Hack").IsOk ? dmg.GetChild("Hack").ToInt() : 0;
                         stats.AttackPierce = dmg.GetChild("Pierce").IsOk ? dmg.GetChild("Pierce").ToInt() : 0;
                         stats.AttackCrush = dmg.GetChild("Crush").IsOk ? dmg.GetChild("Crush").ToInt() : 0;
+                        stats.AttackFire = dmg.GetChild("Fire").IsOk ? dmg.GetChild("Fire").ToInt() : 0;
                     }
                     stats.AttackRange = 3.0f;
                     stats.AttackRate = melee.GetChild("RepeatTime").IsOk
                         ? 1000f / melee.GetChild("RepeatTime").ToInt() : 1.0f;
+                    // ApplyStatus(攻击附带状态效果;原版 schema:Melee/Ranged 下
+                    // <ApplyStatus><效果名><Duration/Interval/Damage/Stackability></>)。
+                    ReadApplyStatus(melee, stats);
                 }
+                var rangedNode = attack.GetChild("Ranged");
+                if (rangedNode.IsOk) ReadApplyStatus(rangedNode, stats);
 
                 // 物理型 PreferredClasses(GetBestAttackAgainst 偏好 +2;Melee 优先,
                 // 无 Melee 取 Ranged——原版逐型各有一份,我们物理合一取存在的那型)。
@@ -320,6 +327,7 @@ namespace ZeroAD.Sim.Content
                         stats.ResistanceHack = rDmg.GetChild("Hack").IsOk ? rDmg.GetChild("Hack").ToInt() : 0;
                         stats.ResistancePierce = rDmg.GetChild("Pierce").IsOk ? rDmg.GetChild("Pierce").ToInt() : 0;
                         stats.ResistanceCrush = rDmg.GetChild("Crush").IsOk ? rDmg.GetChild("Crush").ToInt() : 0;
+                        stats.ResistanceFire = rDmg.GetChild("Fire").IsOk ? rDmg.GetChild("Fire").ToInt() : 0;
                     }
                     var rCap = entityForm.GetChild("Capture");
                     if (rCap.IsOk)
@@ -471,6 +479,8 @@ namespace ZeroAD.Sim.Content
                 stats.HasFormation = true;
                 var fReq = formation.GetChild("RequiredMemberCount");
                 if (fReq.IsOk) stats.FormationRequiredMemberCount = fReq.ToInt();
+                var fDisTip = formation.GetChild("DisabledTooltip");
+                if (fDisTip.IsOk) stats.FormationDisabledTooltip = fDisTip.ToString().Trim();
                 var fSpeed = formation.GetChild("SpeedMultiplier");
                 if (fSpeed.IsOk) stats.FormationSpeedMultiplier = fSpeed.ToFixed().ToFloat();
                 var fShape = formation.GetChild("FormationShape");
@@ -754,6 +764,35 @@ namespace ZeroAD.Sim.Content
                 : "Entity";
         }
 
+        /// <summary>读攻击型的 ApplyStatus(原版 helpers/Attack.js 的 StatusEffectsSchema):
+        /// 首个子元素=效果名(Burning/Poisoned),子级 Duration(ms)/Interval(ms)/
+        /// Damage/{Hack|Pierce|Crush|Fire}/Stackability(Ignore|Extend|Replace|Stack)。</summary>
+        private static void ReadApplyStatus(ParamNode attackTypeNode, TemplateStats stats)
+        {
+            var applyStatus = attackTypeNode.GetChild("ApplyStatus");
+            if (!applyStatus.IsOk) return;
+            foreach (var (effectName, effectNode) in applyStatus.Children)
+            {
+                if (effectName.StartsWith('@')) continue;   // 属性子节点不算
+                stats.StatusEffectName = effectName;
+                var dur = effectNode.GetChild("Duration");
+                if (dur.IsOk) stats.StatusEffectDurationMs = dur.ToFixed().ToFloat();
+                var interval = effectNode.GetChild("Interval");
+                if (interval.IsOk) stats.StatusEffectIntervalMs = interval.ToFixed().ToFloat();
+                var stack = effectNode.GetChild("Stackability");
+                if (stack.IsOk) stats.StatusEffectStackability = stack.ToString().Trim();
+                var dmg = effectNode.GetChild("Damage");
+                if (dmg.IsOk)
+                {
+                    if (dmg.GetChild("Hack").IsOk) stats.StatusEffectDamageHack = dmg.GetChild("Hack").ToInt();
+                    if (dmg.GetChild("Pierce").IsOk) stats.StatusEffectDamagePierce = dmg.GetChild("Pierce").ToInt();
+                    if (dmg.GetChild("Crush").IsOk) stats.StatusEffectDamageCrush = dmg.GetChild("Crush").ToInt();
+                    if (dmg.GetChild("Fire").IsOk) stats.StatusEffectDamageFire = dmg.GetChild("Fire").ToInt();
+                }
+                return;   // 原版 oneOrMore,单效果够用(现有数据均单效果)
+            }
+        }
+
         public IReadOnlyDictionary<string, ParamNode> Cache => _cache;
     }
 
@@ -792,6 +831,8 @@ namespace ZeroAD.Sim.Content
         public int AttackHack;
         public int AttackPierce;
         public int AttackCrush;
+        /// <summary>Fire 伤害(火焰/燃烧;data/damage_types/fire.json,order 4)。</summary>
+        public int AttackFire;
         /// <summary>模板含 Attack/Ranged 节点 = 远程单位(修正值路径前缀用)。</summary>
         public bool AttackIsRanged;
 
@@ -807,7 +848,17 @@ namespace ZeroAD.Sim.Content
 
         /// <summary>Total physical attack damage (Hack+Pierce+Crush). Derived; 0 means civilian.
         /// Kept as a field so existing `stats.AttackDamage > 0` checks keep working.</summary>
-        public int AttackDamage => AttackHack + AttackPierce + AttackCrush;
+        public int AttackDamage => AttackHack + AttackPierce + AttackCrush + AttackFire;
+
+        // ApplyStatus(攻击附带状态;空名 = 无)。
+        public string StatusEffectName = "";
+        public float StatusEffectDurationMs;
+        public float StatusEffectIntervalMs;
+        public string StatusEffectStackability = "Ignore";
+        public int StatusEffectDamageHack;
+        public int StatusEffectDamagePierce;
+        public int StatusEffectDamageCrush;
+        public int StatusEffectDamageFire;
 
         public float AttackRange = 3f;
         public float AttackRate = 1f;
@@ -846,6 +897,9 @@ namespace ZeroAD.Sim.Content
         /// 为真时 EntityAssembler 走 AssembleFormationController 分支(非普通单位)。</summary>
         public bool HasFormation;
         public int FormationRequiredMemberCount = 2;
+        /// <summary>Formation/DisabledTooltip(人数不足置灰时的提示,如
+        /// "Requires at least 2 Soldiers or Siege Engines.")。</summary>
+        public string FormationDisabledTooltip = "";
         public float FormationSpeedMultiplier = 1f;
         public string FormationShape = "square";
         public float FormationMaxTurningAngle = 1f;
@@ -913,6 +967,8 @@ namespace ZeroAD.Sim.Content
         public int ResistanceHack;
         public int ResistancePierce;
         public int ResistanceCrush;
+        /// <summary>Fire 抗性(燃烧/火攻)。</summary>
+        public int ResistanceFire;
         public int ResistanceCapture;
 
         /// <summary>BuildRestrictions/Territory tokens(空格分隔 own/ally/neutral/enemy)。

@@ -1837,7 +1837,10 @@ public sealed partial class HUD : CanvasLayer
 
 
     /// <summary>阵型行(原版 formation_panel):编队控制器选中 → 只显 null(解散);
-    /// ≥2 同主可编队单位 → 按首个单位模板 UnitAI/Formations 列出阵型图标。
+    /// 否则:任一选中实体非 Unit 类 → 整行隐藏(原版 getItems 首门);有可编队单位 →
+    /// 列出其模板 UnitAI/Formations 并集(原版:玩家可用阵型按"任一选中单位拥有"过滤,
+    /// 与并集同效);每按钮按原版 CanMoveEntsIntoFormation 置灰——支持该阵型的选中单位数
+    /// ≥ RequiredMemberCount 才可点,否则禁用+disabledTooltip。
     /// 签名防抖(成员集+阵型集不变不重建,与驻军行同款)。</summary>
     private void RefreshFormationRow()
     {
@@ -1853,7 +1856,8 @@ public sealed partial class HUD : CanvasLayer
                 ownUnits.Add(eid);
         }
 
-        string sig = hasController ? "ctrl" : string.Join(',', ownUnits.Select(u => u.Value));
+        // 签名含全部选中 id:非 Unit 混选(首门)也要触发重建,不能只看可编队成员。
+        string sig = hasController ? "ctrl" : string.Join(',', sel.Select(u => u.Value));
         if (sig == _formationSignature) return;
         _formationSignature = sig;
 
@@ -1869,8 +1873,21 @@ public sealed partial class HUD : CanvasLayer
             return;
         }
 
+        // 原版 getItems 首门:任一选中实体非 Unit 类 → 整行不显示(建筑/资源混选)。
+        foreach (var eid in sel)
+        {
+            var identity = _sim.Sim.QueryInterface<IdentityComponent>(eid);
+            if (identity == null
+                || !ZeroAD.Sim.Content.EntityClassHelper.MatchesClassList(identity.Classes, "Unit"))
+            {
+                _formationRow.Visible = false;
+                return;
+            }
+        }
+
         // 只数"可编队"单位(模板 FormationShapes 非空):support 系(村民)原版即
-        // <Formations disable=""/>——混选时不能让它们打头把整行判没(原版:≥2 可编队即显示)。
+        // <Formations disable=""/>——不可编队单位不计数、不出现在成员表(原版
+        // unitAI.formations 为空 → CanUseFormation 恒 false)。
         var formable = new List<(EntityId Id, ZeroAD.Sim.Content.TemplateStats Stats)>();
         foreach (var eid in ownUnits)
         {
@@ -1879,21 +1896,51 @@ public sealed partial class HUD : CanvasLayer
             if (st != null && st.FormationShapes.Length > 0)
                 formable.Add((eid, st));
         }
-        if (formable.Count < 2)
+        // 原版:全部选中单位都无 formations 才隐藏;仅 1 个可编队单位也显示(按钮全置灰)。
+        if (formable.Count == 0)
         {
             _formationRow.Visible = false;
             return;
         }
 
-        // 阵型列表取首个可编队单位的模板(原版同款:同列表所有可编队单位共用)。
-        var stats = formable[0].Stats;
+        // 阵型列表 = 可编队单位模板 FormationShapes 并集(去重保序;原版:玩家可用阵型
+        // 列表按"任一选中单位拥有"过滤,单位 token ⊆ 玩家列表,故与并集同效)。
+        var shapes = new List<string>();
+        foreach (var (_, st) in formable)
+            foreach (var tok in st.FormationShapes.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+                if (!shapes.Contains(tok)) shapes.Add(tok);
 
-        foreach (var raw in stats.FormationShapes.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+        foreach (var tok in shapes)
         {
-            string shape = raw.Replace("special/formations/", "");
+            string shape = tok.Replace("special/formations/", "");
+            // 原版 CanMoveEntsIntoFormation:支持该阵型的选中单位数 ≥ RequiredMemberCount
+            // 才可点(否则置灰+disabledTooltip);null(解散)恒可点。
+            bool ok = tok == "special/formations/null";
+            string disabledTip = "";
+            if (!ok)
+            {
+                int capable = 0;
+                foreach (var (_, st) in formable)
+                {
+                    foreach (var t in st.FormationShapes.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+                        if (t == tok) { capable++; break; }
+                }
+                int required = 1;
+                ZeroAD.Sim.Content.TemplateStats? fst = null;
+                try { fst = _sim.Sim.Templates?.ExtractStats(tok); } catch { }
+                if (fst != null && fst.HasFormation)
+                {
+                    required = System.Math.Max(1, fst.FormationRequiredMemberCount);
+                    disabledTip = fst.FormationDisabledTooltip;
+                }
+                ok = capable >= required;
+            }
             var tex = LoadIcon($"formations/{shape}");
-            var btn = MakeSmallIconButton(tex, $"Formation: {shape}");
+            string tip = $"Formation: {shape}";
+            if (!ok && disabledTip.Length > 0) tip += $"\n{disabledTip}";
+            var btn = MakeSmallIconButton(tex, tip);
             if (tex == null) btn.Text = shape;   // 贴图缺失时保底显示名(不致"空按钮看不见")
+            btn.Disabled = !ok;
             string s = shape;
             btn.Pressed += () => _main.FormSelectedUnits(s);
             _formationRow.AddChild(btn);

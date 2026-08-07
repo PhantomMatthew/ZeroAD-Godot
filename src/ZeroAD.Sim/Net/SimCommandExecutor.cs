@@ -433,19 +433,11 @@ namespace ZeroAD.Sim.Net
 
         private void ApplyReturnResource(EntityId gatherer, NetCommand cmd)
         {
-            // ReturnResource 在 UnitAI 的 GATHER 状态树内自动处理。
-            // 这里设 dropsite 目标到 ResourceGatherer + 切 UnitAI 到相应状态。
+            // 走 UnitAI 的 ReturnResource 订单(RETURNRESOURCE 子树:接近→交付);
+            // 此前直写 gatherer 状态+裸移动,绕开 FSM(蹲点/被打断语义不对)。
             var dropsite = new EntityId((uint)cmd.IntParam1);
-            var g = _cm.QueryInterface<ResourceGatherer>(gatherer);
-            if (g != null)
-            {
-                g.TargetDropsite = dropsite;
-                g.State = ResourceGatherer.GatherState.MovingToDropsite;
-            }
-            var motion = _cm.QueryInterface<UnitMotion>(gatherer);
-            var posComp = _cm.QueryInterface<PositionComponent>(dropsite);
-            if (motion != null && posComp != null)
-                motion.MoveToPoint(new Maths.FixedVector2D(posComp.Position.X, posComp.Position.Z));
+            var ai = _cm.QueryInterface<UnitAIComponent>(gatherer);
+            if (ai != null) ai.ReturnResource(dropsite);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "returnresource", Target = dropsite });
         }
 
@@ -588,7 +580,11 @@ namespace ZeroAD.Sim.Net
                 return;
             }
 
-            // 成员过滤:同主(命令玩家)、有 UnitAI、非驻防/炮塔/已在编队。
+            // 成员过滤:同主(命令玩家)、有 UnitAI、非驻防/炮塔/已在编队,
+            // 且模板可编该阵型(原版 GetFormationUnitAIs → UnitAI.CanUseFormation:
+            // <Formations disable=""/> 的村民/无列表的攻城器与船 不计数也不入队,
+            // 它们在原版改收个体令——本命令仅编队,个体令由表现层另发,天然兼容)。
+            // shape=null(解散)不走此过滤:下方按全量 id 找控制器 Disband。
             var members = new System.Collections.Generic.List<EntityId>();
             int owner = (int)cmd.Player;
             foreach (var s in ids)
@@ -600,6 +596,7 @@ namespace ZeroAD.Sim.Net
                     || ai.FormationController != null || ai.IsFormationController)
                     continue;
                 if ((_cm.QueryInterface<OwnershipComponent>(e)?.PlayerId ?? -1) != owner) continue;
+                if (shape != "null" && !ai.CanUseFormation(_cm, shape)) continue;
                 members.Add(e);
             }
 

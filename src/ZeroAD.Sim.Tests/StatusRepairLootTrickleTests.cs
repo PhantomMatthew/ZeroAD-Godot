@@ -338,4 +338,201 @@ public sealed class StatusRepairLootTrickleTests
         Assert.Empty(receiver.ActiveStatuses);
         Assert.Equal(100f, cm.Modifiers.Apply("Health/Max", 100f, victim));
     }
+
+    // --- 攻击施加源(Attack/ApplyStatus → DelayedDamage → AddStatus) ---
+
+    [Fact]
+    public void PerformAttack_AppliesStatusEffect_OnHit()
+    {
+        var cm = SetupWorld();
+        var attacker = MakeEntity(cm, 1);
+        var atk = new AttackComponent();
+        cm.AddComponent(attacker, atk);
+        atk.Damage.Amounts[DamageType.Hack] = 5;
+        atk.StatusEffectName = "Burning";
+        atk.StatusEffectDurationMs = 2000;
+        atk.StatusEffectIntervalMs = 1000;
+        atk.StatusEffectStackability = "Replace";
+        atk.StatusEffectDmgFire = 2;
+
+        var victim = MakeEntity(cm, 2);
+        cm.AddComponent(victim, new HealthComponent { Current = 100, Max = 100 });
+        var receiver = new StatusEffectsReceiverComponent();
+        cm.AddComponent(victim, receiver);
+
+        atk.Target = victim;
+        atk.PerformAttack(cm);
+        cm.DelayedDamage.TickPending(cm);
+
+        Assert.True(receiver.ActiveStatuses.ContainsKey("Burning"));
+        var fx = receiver.ActiveStatuses["Burning"];
+        Assert.Equal(attacker, fx.SourceEntity);
+        Assert.Equal(1, fx.SourceOwner);
+        Assert.Equal(2, fx.Damage.Get(DamageType.Fire));
+        Assert.Equal(2000f, fx.DurationMs);
+    }
+
+    [Fact]
+    public void PerformAttack_NoStatusConfigured_NothingApplied()
+    {
+        var cm = SetupWorld();
+        var attacker = MakeEntity(cm, 1);
+        var atk = new AttackComponent();
+        cm.AddComponent(attacker, atk);
+        atk.Damage.Amounts[DamageType.Hack] = 5;
+
+        var victim = MakeEntity(cm, 2);
+        cm.AddComponent(victim, new HealthComponent { Current = 100, Max = 100 });
+        var receiver = new StatusEffectsReceiverComponent();
+        cm.AddComponent(victim, receiver);
+
+        atk.Target = victim;
+        atk.PerformAttack(cm);
+        cm.DelayedDamage.TickPending(cm);
+
+        Assert.Empty(receiver.ActiveStatuses);
+        Assert.Equal(95, cm.QueryInterface<HealthComponent>(victim)!.Current);
+    }
+
+    // --- Loot/xp 按比例(原版 Health.js:xp = Loot/xp × 实际扣血 / maxHp) ---
+
+    [Fact]
+    public void KillXp_ProportionalToDealtOverMaxHp()
+    {
+        var cm = SetupWorld();
+        var attacker = MakeEntity(cm, 1);
+        var promo = new PromotionComponent();
+        cm.AddComponent(attacker, promo);
+
+        var victim = MakeEntity(cm, 2);
+        cm.AddComponent(victim, new HealthComponent { Current = 50, Max = 100 });
+        cm.AddComponent(victim, new LootComponent { Xp = 40 });
+
+        // 打 25(实际扣 25/100):xp = floor(40 × 25/100) = 10。
+        var dmg = new DamageBlock();
+        dmg.Amounts[DamageType.Hack] = 25;
+        DelayedDamage.ScheduleHit(cm, attacker, victim, dmg, 0);
+        cm.DelayedDamage.TickPending(cm);
+        Assert.Equal(10, promo.XP);
+        Assert.Equal(1, promo.Level);
+
+        // 补 50(只剩 25 可扣,目标死):xp = floor(40 × 25/100) = 10 → 累计 20 → 升级。
+        var dmg2 = new DamageBlock();
+        dmg2.Amounts[DamageType.Hack] = 50;
+        DelayedDamage.ScheduleHit(cm, attacker, victim, dmg2, 0);
+        cm.DelayedDamage.TickPending(cm);
+        Assert.True(cm.QueryInterface<HealthComponent>(victim)!.IsDead);
+        Assert.Equal(2, promo.Level);
+        Assert.Equal(0, promo.XP);
+    }
+
+    [Fact]
+    public void KillXp_NoLootComponent_NoXp()
+    {
+        var cm = SetupWorld();
+        var attacker = MakeEntity(cm, 1);
+        var promo = new PromotionComponent();
+        cm.AddComponent(attacker, promo);
+        var victim = MakeEntity(cm, 2);
+        cm.AddComponent(victim, new HealthComponent { Current = 100, Max = 100 });
+
+        var dmg = new DamageBlock();
+        dmg.Amounts[DamageType.Hack] = 30;
+        DelayedDamage.ScheduleHit(cm, attacker, victim, dmg, 0);
+        cm.DelayedDamage.TickPending(cm);
+
+        Assert.Equal(0, promo.XP);
+        Assert.Equal(1, promo.Level);
+    }
+
+    // --- Foundation 多工人递减(n^0.7/n,与 Repairable 同源) ---
+
+    [Fact]
+    public void Foundation_BuildMultiplier_DiminishingReturns_MatchesUpstream()
+    {
+        Assert.Equal(1f, FoundationComponent.CalculateBuildMultiplier(0));
+        Assert.Equal(1f, FoundationComponent.CalculateBuildMultiplier(1));
+        // 原版:2^0.7 / 2 ≈ 0.8123;10^0.7 / 10 ≈ 0.5012
+        Assert.Equal(0.8123f, FoundationComponent.CalculateBuildMultiplier(2), 3);
+        Assert.Equal(0.5012f, FoundationComponent.CalculateBuildMultiplier(10), 3);
+    }
+
+    [Fact]
+    public void Foundation_TwoBuilders_ProgressScalesByMultiplier()
+    {
+        var cm = SetupWorld();
+        var site = MakeEntity(cm, 1);
+        var fdn = new FoundationComponent();
+        cm.AddComponent(site, fdn);
+        fdn.Configure("structures/test", 10f);
+        var w1 = MakeEntity(cm, 1);
+        var w2 = MakeEntity(cm, 1);
+
+        fdn.AddBuilder(w1, 1f);
+        Assert.True(fdn.Build(w1, 1f, 1f) == false);
+        Assert.Equal(1f, fdn.Progress, 3);   // 单人:mult=1 → +1
+
+        fdn.AddBuilder(w2, 1f);
+        Assert.Equal(2, fdn.NumBuilders);
+        fdn.Build(w1, 1f, 1f);
+        fdn.Build(w2, 1f, 1f);               // 双人:各 +0.8123
+        Assert.Equal(1f + 2f * 0.8123f, fdn.Progress, 3);
+
+        fdn.RemoveBuilder(w1);
+        Assert.Equal(1f, fdn.BuildMultiplier);
+        Assert.Equal(1, fdn.NumBuilders);
+    }
+
+    [Fact]
+    public void BuilderTick_FoundationRegistersAndUnregistersOnCompletion()
+    {
+        var cm = SetupWorld();
+        var site = MakeEntity(cm, 1, 5, 0);   // 距工人 5m(< 8m 工位半径)
+        var fdn = new FoundationComponent();
+        cm.AddComponent(site, fdn);
+        fdn.Configure("structures/test", 100f);
+
+        var worker = MakeEntity(cm, 1, 0, 0);
+        cm.AddComponent(worker, new UnitMotion());
+        var b = new BuilderComponent { BuildSpeed = 1f };
+        cm.AddComponent(worker, b);
+        b.Build(site);
+
+        b.Tick(cm);   // 进工位 → 入表
+        Assert.Equal(1, fdn.NumBuilders);
+        Assert.True(fdn.Progress > 0);
+
+        // 直接 Build 到满 → 下一 tick 清登记 + 清目标。
+        while (!fdn.IsBuilt) fdn.Build(worker, 50f, 1f);
+        b.Tick(cm);
+        Assert.Null(b.Target);
+        Assert.Equal(0, fdn.NumBuilders);
+    }
+
+    [Fact]
+    public void BuilderTick_FoundationUnregisteredWhenWalkingAway()
+    {
+        var cm = SetupWorld();
+        var site = MakeEntity(cm, 1, 5, 0);
+        var fdn = new FoundationComponent();
+        cm.AddComponent(site, fdn);
+        fdn.Configure("structures/test", 100f);
+
+        var worker = MakeEntity(cm, 1, 0, 0);
+        cm.AddComponent(worker, new UnitMotion());
+        var b = new BuilderComponent { BuildSpeed = 1f };
+        cm.AddComponent(worker, b);
+        b.Build(site);
+
+        b.Tick(cm);   // 进工位 → 入表
+        Assert.Equal(1, fdn.NumBuilders);
+
+        // 把工人搬走 → 下一 tick 出工人表。
+        var pos = cm.QueryInterface<PositionComponent>(worker)!;
+        pos.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+            ZeroAD.Sim.Maths.Fixed.FromInt(100), ZeroAD.Sim.Maths.Fixed.Zero, ZeroAD.Sim.Maths.Fixed.Zero);
+        b.Tick(cm);
+        Assert.Equal(0, fdn.NumBuilders);
+        Assert.Equal(1f, fdn.BuildMultiplier);
+    }
 }

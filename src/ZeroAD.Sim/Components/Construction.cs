@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Sim.Components;
@@ -10,6 +11,18 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
     public float TotalTime;
     public string ResultTemplate = "";
     public bool IsBuilt;
+
+    /// <summary>多工人递减指数(原版 buildTimePenalty = 0.7,与 Repairable 同源):
+    /// 10 人合力 = 10^0.7 ≈ 5.01 倍,而非线性 10 倍。</summary>
+    public const float BuildTimePenalty = 0.7f;
+
+    // 工人表(EntityId → 最近上报的 rate;原版 Foundation.js this.builders Map)。
+    // 键序按 EntityId 排序遍历保确定。
+    private readonly Dictionary<EntityId, float> _builders = new();
+    /// <summary>工人速率合计(原版 totalBuilderRate)。</summary>
+    public float TotalBuilderRate;
+    /// <summary>当前递减系数(原版 buildMultiplier;n&lt;2 → 1)。</summary>
+    public float BuildMultiplier = 1f;
 
     protected override void OnInit()
     {
@@ -25,6 +38,50 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
     }
 
     public float BuildFraction => TotalTime > 0 ? Progress / TotalTime : 1f;
+    public int NumBuilders => _builders.Count;
+
+    /// <summary>工人列表(EntityId 升序,确定性;原版 GetBuilders)。</summary>
+    public List<EntityId> GetBuilders()
+    {
+        var list = new List<EntityId>(_builders.Keys);
+        list.Sort((a, b) => a.Value.CompareTo(b.Value));
+        return list;
+    }
+
+    /// <summary>原版 CalculateBuildMultiplier:num &lt; 2 → 1,否则 num^0.7 / num。</summary>
+    public static float CalculateBuildMultiplier(int num) =>
+        num < 2 ? 1f : MathF.Pow(num, BuildTimePenalty) / num;
+
+    public void AddBuilder(EntityId builder, float rate)
+    {
+        if (_builders.ContainsKey(builder)) return;
+        _builders.Add(builder, rate);
+        TotalBuilderRate += rate;
+        BuildMultiplier = CalculateBuildMultiplier(_builders.Count);
+    }
+
+    public void RemoveBuilder(EntityId builder)
+    {
+        if (!_builders.TryGetValue(builder, out float rate)) return;
+        TotalBuilderRate -= rate;
+        _builders.Remove(builder);
+        BuildMultiplier = CalculateBuildMultiplier(_builders.Count);
+    }
+
+    /// <summary>一次建造推进(原版 Foundation.Build;由 BuilderComponent 每 tick 驱动,
+    /// dt=回合秒数)。work = rate × buildMultiplier × dt;同步该工人最新 rate 进
+    /// TotalBuilderRate。返回 true = 本次建成(调用方通知工人收工)。</summary>
+    public bool Build(EntityId builderEnt, float rate, float dt)
+    {
+        if (IsBuilt) return true;
+        AddProgress(rate * BuildMultiplier * dt);
+        if (_builders.TryGetValue(builderEnt, out float old))
+        {
+            TotalBuilderRate += rate - old;
+            _builders[builderEnt] = rate;
+        }
+        return IsBuilt;
+    }
 
     public void AddProgress(float dt)
     {
@@ -43,6 +100,16 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
         s.NumberFixed("total", Maths.Fixed.FromFloat(TotalTime));
         s.StringASCII("tmpl", ResultTemplate);
         s.Bool("built", IsBuilt);
+        s.NumberFixed("totrate", Maths.Fixed.FromFloat(TotalBuilderRate));
+        s.NumberFixed("mult", Maths.Fixed.FromFloat(BuildMultiplier));
+        // 工人表:数量 + 升序 (id, rate) 对。
+        var builders = GetBuilders();
+        s.NumberI32("nb", builders.Count);
+        foreach (var b in builders)
+        {
+            s.NumberU32("bid", b.Value);
+            s.NumberFixed("brate", Maths.Fixed.FromFloat(_builders[b]));
+        }
     }
 
     public override void Deserialize(IDeserializer d)
@@ -51,6 +118,16 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
         TotalTime = d.NumberFixed("total").ToFloat();
         ResultTemplate = d.StringASCII("tmpl");
         IsBuilt = d.Bool("built");
+        TotalBuilderRate = d.NumberFixed("totrate").ToFloat();
+        BuildMultiplier = d.NumberFixed("mult").ToFloat();
+        _builders.Clear();
+        int n = d.NumberI32("nb");
+        for (int i = 0; i < n; i++)
+        {
+            uint id = d.NumberU32("bid");
+            float rate = d.NumberFixed("brate").ToFloat();
+            _builders[new EntityId(id)] = rate;
+        }
     }
 
     public void HandleMessage(IMessage message) { }
@@ -63,6 +140,8 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
     public EntityId? Target;
     // 修理登记:当前是否已在目标的 Repairable 工人表中(递减乘数按在表人数算)。
     private bool _repairRegistered;
+    // 建造登记:当前是否已在目标的 Foundation 工人表中(同上,n^0.7/n 递减)。
+    private bool _foundationRegistered;
 
     protected override void OnInit()
     {
@@ -83,7 +162,7 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         if (owner != null)
         {
             var player = cm.GetPlayerEntity(owner.PlayerId);
-            if (player != null && player.IsDefeated()) { ClearRepairRegistration(cm); Target = null; return; }
+            if (player != null && player.IsDefeated()) { ClearRegistrations(cm); Target = null; return; }
         }
 
         var foundation = cm.QueryInterface<FoundationComponent>(Target.Value);
@@ -91,6 +170,7 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         {
             if (foundation.IsBuilt)
             {
+                ClearRegistrations(cm);
                 Target = null;
                 return;
             }
@@ -103,7 +183,7 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         var health = cm.QueryInterface<HealthComponent>(Target.Value);
         if (repairable == null || !repairable.IsRepairable || health == null || !health.IsInjured)
         {
-            ClearRepairRegistration(cm);
+            ClearRegistrations(cm);
             Target = null;
             return;
         }
@@ -123,6 +203,8 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         var motion = cm.QueryInterface<UnitMotion>(Entity);
         if (dist > 8.0f)
         {
+            // 离开工位即出工人表(与修理分支同规则:不在岗不算人头)。
+            ClearRegistrations(cm);
             if (motion != null && !motion.HasMoveTarget)
                 motion.MoveToPoint(new Maths.FixedVector2D(
                     foundationPos.Position.X, foundationPos.Position.Z));
@@ -130,8 +212,19 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         else
         {
             if (motion != null) motion.Stop();
+            // 进工位:入工人表(Foundation 按人头算 n^0.7/n 递减)。
             // 建造速度过修正值管线(科技如 "Builder/Rate" ×1.15)
-            foundation.AddProgress(cm.Modifiers.Apply("Builder/Rate", BuildSpeed, Entity) * 0.1f);
+            float rate = cm.Modifiers.Apply("Builder/Rate", BuildSpeed, Entity);
+            if (!_foundationRegistered)
+            {
+                foundation.AddBuilder(Entity, rate);
+                _foundationRegistered = true;
+            }
+            if (foundation.Build(Entity, rate, 0.1f))
+            {
+                ClearRegistrations(cm);
+                Target = null;
+            }
         }
     }
 
@@ -149,7 +242,7 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         if (dist > 8.0f)
         {
             // 离开工位即出工人表(原版 Repair 定时器停了就不再算人头)。
-            ClearRepairRegistration(cm);
+            ClearRegistrations(cm);
             if (motion != null && !motion.HasMoveTarget)
                 motion.MoveToPoint(new Maths.FixedVector2D(
                     targetPos.Position.X, targetPos.Position.Z));
@@ -167,17 +260,22 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         bool done = repairable.Repair(cm, Entity, rate, 0.1f);
         if (done)
         {
-            ClearRepairRegistration(cm);
+            ClearRegistrations(cm);
             Target = null;
         }
     }
 
-    private void ClearRepairRegistration(ComponentManager cm)
+    private void ClearRegistrations(ComponentManager cm)
     {
-        if (!_repairRegistered) return;
         if (Target != null)
-            cm.QueryInterface<RepairableComponent>(Target.Value)?.RemoveBuilder(Entity);
+        {
+            if (_repairRegistered)
+                cm.QueryInterface<RepairableComponent>(Target.Value)?.RemoveBuilder(Entity);
+            if (_foundationRegistered)
+                cm.QueryInterface<FoundationComponent>(Target.Value)?.RemoveBuilder(Entity);
+        }
         _repairRegistered = false;
+        _foundationRegistered = false;
     }
 
     public override void Serialize(ISerializer s)
@@ -185,6 +283,7 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         s.NumberFixed("speed", Maths.Fixed.FromFloat(BuildSpeed));
         s.NumberU32("target", Target?.Value ?? 0);
         s.Bool("repreg", _repairRegistered);
+        s.Bool("fdnreg", _foundationRegistered);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -193,6 +292,7 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         uint tid = d.NumberU32("target");
         Target = tid != 0 ? new EntityId(tid) : null;
         _repairRegistered = d.Bool("repreg");
+        _foundationRegistered = d.Bool("fdnreg");
     }
 
     public void HandleMessage(IMessage message) { }

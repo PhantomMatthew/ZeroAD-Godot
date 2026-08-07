@@ -483,11 +483,8 @@ public sealed class FormationTests
     {
         // 真实模板(special/formations/box.xml,parent=template_formation):解析 +
         // SpawnEntity 装配出控制器(UnitAI 控制器态 + Formation 配置,无 Health/Cost)。
-        const string templatesRoot = "../../../binaries/data/mods/public/simulation/templates";
-        if (!System.IO.Directory.Exists(templatesRoot)) return;   // 数据树未拉取则跳过
-        var cm = new ComponentManager(rngSeed: 1,
-            templates: new Content.TemplateLoader(templatesRoot));
-        SimSystem.Init(cm);
+        var cm = SetupRealWorld();
+        if (cm == null) return;   // 数据树未拉取则跳过
 
         var stats = cm.Templates!.ExtractStats("special/formations/box");
         Assert.True(stats.HasFormation);
@@ -521,5 +518,110 @@ public sealed class FormationTests
         var arr = new uint[list.Count];
         for (int i = 0; i < list.Count; i++) arr[i] = list[i].Value;
         return arr;
+    }
+
+    // --- formation 命令成员过滤(原版 GetFormationUnitAIs → UnitAI.CanUseFormation) ---
+
+    private static ComponentManager? SetupRealWorld()
+    {
+        // 从测试程序集向上找数据树(binaries 是指向上游的 junction;相对路径在 bin/
+        // 下解析不到——RealTemplate_Box_ParsesAndAssembles 的旧相对路径因此静默跳过)。
+        const string rel = "binaries/data/mods/public/simulation/templates";
+        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
+        while (dir != null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, rel)))
+            dir = dir.Parent;
+        if (dir == null) return null;   // 数据树未拉取则跳过
+        var cm = new ComponentManager(rngSeed: 1,
+            templates: new Content.TemplateLoader(System.IO.Path.Combine(dir.FullName, rel)));
+        SimSystem.Init(cm);
+        return cm;
+    }
+
+    private static List<EntityId> Controllers(ComponentManager cm) =>
+        cm.AllEntities.Where(e =>
+            cm.QueryInterface<UnitAIComponent>(e)?.IsFormationController == true).ToList();
+
+    [Fact]
+    public void CanUseFormation_TemplateDriven()
+    {
+        var cm = SetupRealWorld();
+        if (cm == null) return;
+        // template_unit 基表含 special/formations/box → 长矛兵可编队 box。
+        var hoplite = cm!.SpawnEntity("units/spart/infantry_spearman_b", 0, 0, ownerPlayerId: 1);
+        var hopAi = cm.QueryInterface<UnitAIComponent>(hoplite)!;
+        Assert.True(hopAi.CanUseFormation(cm, "box"));
+        Assert.True(hopAi.CanUseFormation(cm, "line_closed"));
+        // 船队阵型不在步兵列表 → false。
+        Assert.False(hopAi.CanUseFormation(cm, "ships/line_staggered"));
+        // template_unit_support_civilian 的 <Formations disable=""/> → 村民任何阵型都不可。
+        var villager = cm.SpawnEntity("units/spart/support_civilian", 5, 0, ownerPlayerId: 1);
+        var vilAi = cm.QueryInterface<UnitAIComponent>(villager)!;
+        Assert.False(vilAi.CanUseFormation(cm, "box"));
+        Assert.False(vilAi.CanUseFormation(cm, "null"));
+    }
+
+    [Fact]
+    public void FormationCommand_UnformableUnits_NotCountedNotEnlisted()
+    {
+        var cm = SetupRealWorld();
+        if (cm == null) return;
+        // 4 长矛 + 2 村民 组 box(RequiredMemberCount=4):村民不计数也不入队。
+        var h = new EntityId[4];
+        for (int i = 0; i < 4; i++)
+            h[i] = cm!.SpawnEntity("units/spart/infantry_spearman_b", i * 3f, 0, ownerPlayerId: 1);
+        var v1 = cm!.SpawnEntity("units/spart/support_civilian", 1, 2, ownerPlayerId: 1);
+        var v2 = cm.SpawnEntity("units/spart/support_civilian", 4, 2, ownerPlayerId: 1);
+
+        string payload = "box|" + string.Join(',', h.Select(e => e.Value)) + $",{v1.Value},{v2.Value}";
+        new Net.SimCommandExecutor(cm!).Apply(
+            new Net.NetCommand(1, Net.NetCommandType.Formation, templateName: payload));
+
+        var ctrls = Controllers(cm!);
+        Assert.Single(ctrls);
+        var f = cm!.QueryInterface<FormationComponent>(ctrls[0])!;
+        Assert.Equal(4, f.GetMemberCount());
+        foreach (var e in h)
+            Assert.Equal(ctrls[0], cm.QueryInterface<UnitAIComponent>(e)!.FormationController);
+        // 村民未入队。
+        Assert.Null(cm.QueryInterface<UnitAIComponent>(v1)!.FormationController);
+        Assert.Null(cm.QueryInterface<UnitAIComponent>(v2)!.FormationController);
+    }
+
+    [Fact]
+    public void FormationCommand_RequiredMemberCount_CountsOnlyCapable()
+    {
+        var cm = SetupRealWorld();
+        if (cm == null) return;
+        // 3 长矛 + 3 村民 组 box(需 4):合格者仅 3 → 不建队(旧逻辑 6≥4 会误建)。
+        var ids = new List<EntityId>();
+        for (int i = 0; i < 3; i++)
+            ids.Add(cm!.SpawnEntity("units/spart/infantry_spearman_b", i * 3f, 0, ownerPlayerId: 1));
+        for (int i = 0; i < 3; i++)
+            ids.Add(cm!.SpawnEntity("units/spart/support_civilian", i * 3f, 2, ownerPlayerId: 1));
+
+        string payload = "box|" + string.Join(',', ids.Select(e => e.Value));
+        new Net.SimCommandExecutor(cm!).Apply(
+            new Net.NetCommand(1, Net.NetCommandType.Formation, templateName: payload));
+
+        Assert.Empty(Controllers(cm!));
+        foreach (var e in ids)
+            Assert.Null(cm!.QueryInterface<UnitAIComponent>(e)!.FormationController);
+    }
+
+    [Fact]
+    public void FormationCommand_SingleCapableBelowMinimum_NoController()
+    {
+        var cm = SetupRealWorld();
+        if (cm == null) return;
+        // 1 长矛 + 2 村民 组 line_closed(需 2)→ 不建队。
+        var h = cm!.SpawnEntity("units/spart/infantry_spearman_b", 0, 0, ownerPlayerId: 1);
+        var v1 = cm.SpawnEntity("units/spart/support_civilian", 2, 0, ownerPlayerId: 1);
+        var v2 = cm.SpawnEntity("units/spart/support_civilian", 4, 0, ownerPlayerId: 1);
+
+        new Net.SimCommandExecutor(cm).Apply(
+            new Net.NetCommand(1, Net.NetCommandType.Formation,
+                templateName: $"line_closed|{h.Value},{v1.Value},{v2.Value}"));
+
+        Assert.Empty(Controllers(cm));
     }
 }

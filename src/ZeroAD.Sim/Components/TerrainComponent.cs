@@ -23,6 +23,9 @@ public sealed class TerrainComponent : ComponentBase, IComponentMessageHandler
     // Per-tile terrain class grid, [tileX, tileZ]. Null until the presentation layer fills it via
     // SetPassabilityGrid; queries treat null as "all land" so unconfigured maps still work.
     private TerrainClass[,]? _passability;
+    // 顶点高度网格 [MapSize+1, MapSize+1](PMP heightmap 逐点,米;定点)。
+    // 供 Attack 高度差/单位 Y 贴地;null = 平地(查询返 0,行为同旧)。
+    private Fixed[,]? _heights;
 
     protected override void OnInit()
     {
@@ -45,6 +48,39 @@ public sealed class TerrainComponent : ComponentBase, IComponentMessageHandler
             throw new ArgumentException(
                 $"passability grid must be [{MapSize},{MapSize}], got [{grid.GetLength(0)},{grid.GetLength(1)}]");
         _passability = grid;
+    }
+
+    /// <summary>填入顶点高度网格([MapSize+1, MapSize+1],米)。与 passability 同约:
+    /// 引用存储不拷贝,调用方不得再改。</summary>
+    public void SetHeightGrid(Fixed[,] grid)
+    {
+        if (grid.GetLength(0) != MapSize + 1 || grid.GetLength(1) != MapSize + 1)
+            throw new ArgumentException(
+                $"height grid must be [{MapSize + 1},{MapSize + 1}], got [{grid.GetLength(0)},{grid.GetLength(1)}]");
+        _heights = grid;
+    }
+
+    /// <summary>世界坐标处地形高度(双线性插值,定点;无网格 → 0)。</summary>
+    public Fixed GetHeight(Fixed x, Fixed z)
+    {
+        if (_heights == null) return Fixed.Zero;
+        float fx = x.ToFloat() / TileSize;
+        float fz = z.ToFloat() / TileSize;
+        int x0 = (int)System.MathF.Floor(fx);
+        int z0 = (int)System.MathF.Floor(fz);
+        if (x0 < 0) x0 = 0; if (x0 >= MapSize) x0 = MapSize - 1;
+        if (z0 < 0) z0 = 0; if (z0 >= MapSize) z0 = MapSize - 1;
+        float tx = fx - x0, tz = fz - z0;
+        if (tx < 0) tx = 0; if (tx > 1) tx = 1;
+        if (tz < 0) tz = 0; if (tz > 1) tz = 1;
+        // 双线性(全程浮点→定点一次换算;同一数据各端同值,确定性成立)。
+        float h00 = _heights[x0, z0].ToFloat();
+        float h10 = _heights[x0 + 1, z0].ToFloat();
+        float h01 = _heights[x0, z0 + 1].ToFloat();
+        float h11 = _heights[x0 + 1, z0 + 1].ToFloat();
+        float h0 = h00 + (h10 - h00) * tx;
+        float h1 = h01 + (h11 - h01) * tx;
+        return Fixed.FromFloat(h0 + (h1 - h0) * tz);
     }
 
     public float GetWorldSize() => MapSize * TileSize;
