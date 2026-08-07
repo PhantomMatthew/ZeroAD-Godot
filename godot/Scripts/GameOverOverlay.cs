@@ -86,7 +86,7 @@ public sealed partial class GameOverOverlay : CanvasLayer
         _messageLabel.AddThemeFontSizeOverride("font_size", 15);
         vbox.AddChild(_messageLabel);
 
-        // 按钮行：查看统计 + 离开。
+        // 按钮行:查看统计 + 离开(石头贴图按钮,与顶栏/结算页同族皮肤)。
         var buttonRow = new HBoxContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,
@@ -100,6 +100,7 @@ public sealed partial class GameOverOverlay : CanvasLayer
             Theme = UITheme.GetTheme(),
             CustomMinimumSize = new Vector2(130, 36),
         };
+        StoneButtonStyle.Apply(statsButton, StoneButtonStyle.FindBinariesDir());
         statsButton.Pressed += OnShowStats;
         buttonRow.AddChild(statsButton);
 
@@ -109,15 +110,16 @@ public sealed partial class GameOverOverlay : CanvasLayer
             Theme = UITheme.GetTheme(),
             CustomMinimumSize = new Vector2(130, 36),
         };
+        StoneButtonStyle.Apply(_leaveButton, StoneButtonStyle.FindBinariesDir());
         _leaveButton.Pressed += OnLeavePressed;
         buttonRow.AddChild(_leaveButton);
     }
 
     private void OnShowStats()
     {
-        // 收集结算数据并打开 SummaryPanel（全屏统计页）。
+        // 收集结算数据并打开 SummaryPanel(全屏统计页)。
         var summary = MatchSummaryExporter.Collect(_sim);
-        var panel = new SummaryPanel(summary);
+        var panel = new SummaryPanel(summary, _localPlayerId);
         AddChild(panel);
         panel.Open();
     }

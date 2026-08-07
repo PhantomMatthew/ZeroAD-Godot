@@ -195,7 +195,7 @@ public sealed partial class HUD : CanvasLayer
         menuBox.AddThemeConstantOverride("separation", 2);
         _topBar.AddChild(menuBox);
 
-        AddMenuButton(menuBox, "time_small", "Game Speed", () => _main.OpenGameSpeedPanel());
+        AddMenuButton(menuBox, "time_small", "Game Speed", () => ToggleGameSpeedPopover());
         AddMenuButton(menuBox, "diplomacy", "Diplomacy", () => _main.OpenDiplomacyPanel());
         AddMenuButton(menuBox, "economics", "Trade", () => _main.OpenTradePanel());
         AddMenuButton(menuBox, "match-settings", "Settings", () => _main.OpenMatchSettingsPanel());
@@ -213,27 +213,10 @@ public sealed partial class HUD : CanvasLayer
         pauseBtn.Pressed += () => _main.TogglePause();
         menuBox.AddChild(pauseBtn);
 
-        // 速度 +/-(原版 GameSpeedControl 顶栏步进键):当前档 ±1 档。
-        var slowerBtn = new Button
-        {
-            Text = "−",
-            Theme = UITheme.GetTheme(),
-            CustomMinimumSize = new Vector2(30, 28),
-            TooltipText = "Slower",
-        };
-        StoneButtonStyle.Apply(slowerBtn, FindBinariesDir());
-        slowerBtn.Pressed += () => _main.AdjustGameSpeed(-1);
-        menuBox.AddChild(slowerBtn);
-        var fasterBtn = new Button
-        {
-            Text = "+",
-            Theme = UITheme.GetTheme(),
-            CustomMinimumSize = new Vector2(30, 28),
-            TooltipText = "Faster",
-        };
-        StoneButtonStyle.Apply(fasterBtn, FindBinariesDir());
-        fasterBtn.Pressed += () => _main.AdjustGameSpeed(+1);
-        menuBox.AddChild(fasterBtn);
+        // 速度控制弹出条(原版 GameSpeedControl.xml:gameSpeed 下拉位于顶栏下方
+        // 100%-390 40 100%-230 65,由时间按钮开合,默认隐藏)。顶栏不内联 +/-——
+        // 步进键与档位下拉都收进这个弹出条。
+        BuildGameSpeedPopover();
 
         var menuBtn = new Button
         {
@@ -245,6 +228,119 @@ public sealed partial class HUD : CanvasLayer
         StoneButtonStyle.Apply(menuBtn, FindBinariesDir());
         menuBtn.Pressed += () => _main.OpenPauseMenu();
         menuBox.AddChild(menuBtn);
+    }
+
+    // ── 游戏速度控制(原版 GameSpeedControl:顶栏时间按钮 → 开合下方控制条)──
+
+    private PanelContainer _speedPopover = null!;
+    private Label _speedLabel = null!;
+    private OptionButton _speedOptions = null!;
+    private bool _speedSyncing;
+
+    /// <summary>速度弹出条开着?(Main 失焦自动暂停豁免用:弹出条的下拉 Popup 会抢焦,
+    /// 与模态面板同款问题)。</summary>
+    public bool GameSpeedPopoverOpen => _speedPopover.Visible;
+
+    // 原版 GameSpeedControl 的 9 档(与 Main.AdjustGameSpeed 的步进表同集)。
+    private static readonly (double rate, string label)[] SpeedSteps =
+    {
+        (0.5, "0.5×"), (0.75, "0.75×"), (1.0, "Normal"), (1.25, "1.25×"),
+        (1.5, "1.5×"), (2.0, "2×"), (5.0, "Fast (5×)"),
+        (10.0, "Very Fast (10×)"), (20.0, "Extremely Fast (20×)"),
+    };
+
+    /// <summary>速度控制条(原版 gameSpeed 下拉位于顶栏正下方:100%-390 40 100%-230 65,
+    /// 默认隐藏,时间按钮开合)。内容 = 步进排(− 当前倍率 +)+ 9 档下拉,双向同步。</summary>
+    private void BuildGameSpeedPopover()
+    {
+        _speedPopover = new PanelContainer { Visible = false, Theme = UITheme.GetTheme() };
+        _speedPopover.SetAnchorsPreset(Control.LayoutPreset.TopRight);
+        _speedPopover.OffsetLeft = -390; _speedPopover.OffsetTop = 40;
+        _speedPopover.OffsetRight = -170; _speedPopover.OffsetBottom = 100;
+        AddChild(_speedPopover);
+
+        var vbox = new VBoxContainer();
+        vbox.AddThemeConstantOverride("separation", 4);
+        _speedPopover.AddChild(vbox);
+
+        var row = new HBoxContainer
+        {
+            Alignment = BoxContainer.AlignmentMode.Center,
+        };
+        row.AddThemeConstantOverride("separation", 4);
+        vbox.AddChild(row);
+
+        var slowerBtn = new Button
+        {
+            Text = "−",
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(30, 26),
+            TooltipText = "Slower",
+        };
+        StoneButtonStyle.Apply(slowerBtn, FindBinariesDir());
+        slowerBtn.Pressed += () => { _main.AdjustGameSpeed(-1); SyncSpeedControls(); };
+        row.AddChild(slowerBtn);
+
+        _speedLabel = new Label
+        {
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(72, 26),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        row.AddChild(_speedLabel);
+
+        var fasterBtn = new Button
+        {
+            Text = "+",
+            Theme = UITheme.GetTheme(),
+            CustomMinimumSize = new Vector2(30, 26),
+            TooltipText = "Faster",
+        };
+        StoneButtonStyle.Apply(fasterBtn, FindBinariesDir());
+        fasterBtn.Pressed += () => { _main.AdjustGameSpeed(+1); SyncSpeedControls(); };
+        row.AddChild(fasterBtn);
+
+        _speedOptions = new OptionButton
+        {
+            Theme = UITheme.GetTheme(),
+            SizeFlagsHorizontal = Control.SizeFlags.Fill,
+            TooltipText = "Choose game speed",
+        };
+        foreach (var (_, label) in SpeedSteps)
+            _speedOptions.AddItem(label);
+        _speedOptions.ItemSelected += (idx) =>
+        {
+            if (_speedSyncing || idx < 0 || idx >= SpeedSteps.Length) return;
+            _sim.SpeedMultiplier = SpeedSteps[(int)idx].rate;
+            SyncSpeedControls();
+        };
+        vbox.AddChild(_speedOptions);
+
+        SyncSpeedControls();
+    }
+
+    private void ToggleGameSpeedPopover()
+    {
+        _speedPopover.Visible = !_speedPopover.Visible;
+        if (_speedPopover.Visible) SyncSpeedControls();
+    }
+
+    /// <summary>当前倍率 → 步进排文本 + 下拉选中项(取最近档,原版 rebuild 同逻辑)。</summary>
+    private void SyncSpeedControls()
+    {
+        double cur = _sim.SpeedMultiplier;
+        _speedLabel.Text = $"{cur:0.##}×";
+        int best = 2;   // 默认 Normal
+        double bestDiff = double.MaxValue;
+        for (int i = 0; i < SpeedSteps.Length; i++)
+        {
+            double d = System.Math.Abs(SpeedSteps[i].rate - cur);
+            if (d < bestDiff) { bestDiff = d; best = i; }
+        }
+        _speedSyncing = true;
+        _speedOptions.Selected = best;
+        _speedSyncing = false;
     }
 
     /// <summary>binaries/ 目录定位(与 MainMenu.FindBinariesDir 同款 ../、../../ 回退)。</summary>

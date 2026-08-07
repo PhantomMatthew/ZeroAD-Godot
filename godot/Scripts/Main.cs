@@ -75,8 +75,9 @@ public sealed partial class Main : Node3D
 	// FPS 叠层(overlay.fps 配置项驱动,原版 Display 类):右上角实时帧率。
 	private CanvasLayer? _fpsOverlay;
 	private Label? _fpsLabel;
-	// 第二梯队菜单面板(Game Speed/Diplomacy/Trade/Match Settings):模态叠层,不暂停 sim。
-	private GameSpeedPanel? _gameSpeedPanel;
+	// 第二梯队菜单面板(Diplomacy/Trade/Match Settings):模态叠层,不暂停 sim。
+	// (Game Speed 已改为顶栏时间按钮下方的非模态弹出条,见 HUD.BuildGameSpeedPopover,
+	// 对齐原版 GameSpeedControl 下拉位置。)
 	private DiplomacyPanel? _diplomacyPanel;
 	private TradePanel? _tradePanel;
 	private StructreePanel? _structreePanel;
@@ -490,12 +491,10 @@ public sealed partial class Main : Node3D
 		pm.OnLeave += () => GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 		AddChild(pm);
 
-		// 第二梯队菜单面板(Game Speed/Diplomacy/Trade/Match Settings):模态叠层,挡鼠标不暂停。
-		_gameSpeedPanel = new GameSpeedPanel(_sim);
+		// 第二梯队菜单面板(Diplomacy/Trade/Match Settings):模态叠层,挡鼠标不暂停。
 		_diplomacyPanel = new DiplomacyPanel(_sim);
 		_tradePanel = new TradePanel(_sim);
 		_matchSettingsPanel = new MatchSettingsPanel(_sim);
-		AddChild(_gameSpeedPanel);
 		AddChild(_diplomacyPanel);
 		AddChild(_tradePanel);
 		AddChild(_matchSettingsPanel);
@@ -944,22 +943,8 @@ public sealed partial class Main : Node3D
 			return;
 		}
 
-		// MapExport → PmpMap 适配
-		int pps = export.Size / 16;
-		var pmp = new PmpMap
-		{
-			Version = 7,
-			PatchesPerSide = pps,
-			// 顶点数 = Size+1(export.Height 恰为 (Size+1)²)。漏赋默认 0 →
-			// TerrainRenderer 建出 0 顶点空 mesh → 地形不可见(只剩天空色)。
-			VerticesPerSide = export.Size + 1,
-			Heightmap = export.Height,
-			TextureNames = new List<string>(export.TextureNames),
-			TileTex1 = export.TileIndex,
-			// rmgen 每 tile 只有单层贴图索引(无 blend 第二层)——TileTex2 必须显式填满
-			// NoTexture 与 TileTex1 等长;留空数组会让 SplatBaker 越界(PMP 加载路径恒双数组)。
-			TileTex2 = System.Linq.Enumerable.Repeat(PmpMap.NoTexture, export.TileIndex.Length).ToArray(),
-		};
+		// MapExport → PmpMap 适配(共享实现,封装 VerticesPerSide/TileTex2 两个坑)
+		var pmp = PmpMap.FromExport(export);
 
 		// 地形渲染（复用 PMP 路径）
 		var terrainNode = TerrainRenderer.CreateFromHeightmap(pmp);
@@ -1387,10 +1372,10 @@ public sealed partial class Main : Node3D
 	}
 
 	/// <summary>任一模态面板开着?(失焦自动暂停的豁免:面板的下拉 Popup 会抢焦,
-	/// 不应因此弹暂停菜单盖住面板)。</summary>
+	/// 不应因此弹暂停菜单盖住面板)。速度弹出条非模态但含下拉,同样豁免。</summary>
 	private bool AnyModalPanelOpen()
 		=> _structreePanel is { Visible: true }
-		|| _gameSpeedPanel is { Visible: true }
+		|| (_hud != null && _hud.GameSpeedPopoverOpen)
 		|| _diplomacyPanel is { Visible: true }
 		|| _tradePanel is { Visible: true }
 		|| _matchSettingsPanel is { Visible: true };
@@ -2756,9 +2741,6 @@ public sealed partial class Main : Node3D
 
 	/// <summary>顶栏 Menu 按钮回调:打开暂停菜单(冻结 sim)。HUD 持 _main 引用直接调。</summary>
 	public void OpenPauseMenu() => _pauseMenu?.Open();
-
-	/// <summary>顶栏 Game Speed 按钮回调:打开倍率面板(本地表现层节奏,不暂停 sim)。</summary>
-	public void OpenGameSpeedPanel() => _gameSpeedPanel?.Open();
 
 	/// <summary>顶栏 Diplomacy 按钮回调:打开外交面板(立场/进贡,不暂停 sim)。</summary>
 	public void OpenDiplomacyPanel() => _diplomacyPanel?.Open();
