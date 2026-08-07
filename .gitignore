@@ -55,3 +55,6 @@ godot/addons/godot_mcp/
 
 # Local MCP client config (machine-specific paths/ports). Copy from .mcp.json.example.
 .mcp.json
+
+# Generated map preview scenes (Project→Tools→Import/Generate; regenerable, ~100MB each)
+godot/Scenes/Previews/
