@@ -66,6 +66,27 @@ public sealed class PmpMap
         return Load(reader);
     }
 
+    /// <summary>MapExport → PmpMap 共享适配器(rmgen 生成图 → 地形渲染/编辑器预览共用;
+    /// 此前 Main.cs 与 zeroad_editor 插件各有一份内联拷贝且插件版漏赋 VerticesPerSide,
+    /// TerrainRenderer 必抛 InvalidDataException)。
+    /// 两个坑都在此封装:VerticesPerSide = Size+1(Height 恰为 (Size+1)²,漏赋默认 0 →
+    /// 0 顶点空 mesh);TileTex2 显式填满 NoTexture(rmgen 单层贴图无 blend 第二层,
+    /// 空数组会让 SplatBaker 越界)。TilePriority 留空——与运行时 rmgen 路径现状一致
+    /// (SplatBaker 容忍空 priority)。</summary>
+    public static PmpMap FromExport(ZeroAD.Sim.Rmgen.MapExport export)
+    {
+        return new PmpMap
+        {
+            Version = 7,
+            PatchesPerSide = export.Size / PatchSize,
+            VerticesPerSide = export.Size + 1,
+            Heightmap = export.Height,
+            TextureNames = new List<string>(export.TextureNames),
+            TileTex1 = export.TileIndex,
+            TileTex2 = Enumerable.Repeat(NoTexture, export.TileIndex.Length).ToArray(),
+        };
+    }
+
     public static PmpMap Load(BinaryReader reader)
     {
         uint magic = reader.ReadUInt32();
