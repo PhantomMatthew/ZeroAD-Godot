@@ -13,6 +13,15 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     public FixedVector2D TargetPos;
     public bool HasMoveTarget;
 
+    /// <summary>原版 UnitMotion/PassabilityClass("default"/"ship";plane 的 unrestricted
+    /// 未移植)。决定寻路/阻挡缓释用哪套通行网格:船走水路,陆军走陆地(此前一律
+    /// Default 陆地类——船在陆网格上无解,永远卡岸)。装配时由模板写入,随存档序列化。</summary>
+    public string PassClassName = "default";
+
+    /// <summary>当前单位的通行类掩码(ship → Ship 水类;其余 → Default 陆地类)。</summary>
+    private Pathfinding.PassClass ResolvePassClass(PathfinderComponent pf) =>
+        PassClassName == "ship" ? pf.ShipClass.Mask : pf.DefaultClass.Mask;
+
     private readonly List<(float x, float z)> _waypoints = new();
     private int _currentWaypoint;
 
@@ -110,7 +119,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         {
             var start = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
             var goal = Pathfinding.PathGoal.Point(target.X, target.Y);
-            var path = pathfinder.ComputePath(start, goal);
+            var path = pathfinder.ComputePath(start, goal, ResolvePassClass(pathfinder));
             // WaypointPath.Waypoints is stored start→goal; consume front-to-back (matching the
             // existing _waypoints contract). Each waypoint is world-space Fixed → float.
             foreach (var wp in path.Waypoints)
@@ -126,7 +135,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
                     _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
                     return;
                 }
-                if (TryClampToReachable(pathfinder, start, target, out var clamped))
+                if (TryClampToReachable(pathfinder, start, target, ResolvePassClass(pathfinder), out var clamped))
                 {
                     _waypoints.Add((clamped.X.ToFloat(), clamped.Y.ToFloat()));
                     TargetPos = clamped;   // 到点判定按可达点(原目标不可达)
@@ -212,8 +221,21 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
             _currentWaypoint++;
             if (_currentWaypoint >= _waypoints.Count)
             {
-                posComp.Position = new FixedVector3D(
-                    TargetPos.X, posComp.Position.Y, TargetPos.Y);
+                // 侧绕点到站:不收官,交给下一拍顶部的 _sidestepping 续程分支重解原目标
+                // (此前靠"瞬移到 TargetPos"的 bug 掩盖了这一步)。
+                if (_sidestepping) return;
+                // 到达判定:路径末端≈原始目标(可达;末端路标即目标 navcell 中心,
+                // 差 ≤0.71m)→ 精确到点;否则(不可达目标的"最近可达点"路径)→ 停在
+                // 路径末端。此前无条件瞬移到原始目标:最近可达路径走完后单位穿水/穿墙
+                // 瞬移(陆军直接渡过水带)。
+                var lastWp = _waypoints[_waypoints.Count - 1];
+                float gdx = TargetPos.X.ToFloat() - lastWp.x;
+                float gdz = TargetPos.Y.ToFloat() - lastWp.z;
+                bool reachedGoal = gdx * gdx + gdz * gdz <= 1.5f * 1.5f;
+                posComp.Position = reachedGoal
+                    ? new FixedVector3D(TargetPos.X, posComp.Position.Y, TargetPos.Y)
+                    : new FixedVector3D(Fixed.FromFloat(lastWp.x), posComp.Position.Y,
+                        Fixed.FromFloat(lastWp.z));
                 HasMoveTarget = false;
                 CurrentSpeed = Fixed.Zero;
             }
@@ -252,13 +274,13 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     }
 
     /// <summary>缓释 A:直线受阻时,从远到近采样 12 档取首个 CheckMovement 可达点
-    /// (走到即停,不再穿墙)。直线本就可走 → 原目标;无寻路(纯测试)→ 原目标。</summary>
+    /// (走到即停,不再穿墙)。直线本就可走 → 原目标;无寻路(纯测试)→ 原目标。
+    /// 通行类随单位(船按水类钳到岸线,陆军按陆类钳到水线)。</summary>
     private static bool TryClampToReachable(PathfinderComponent? pf, FixedVector2D from,
-        FixedVector2D to, out FixedVector2D result)
+        FixedVector2D to, Pathfinding.PassClass pc, out FixedVector2D result)
     {
         result = to;
         if (pf == null) return true;
-        var pc = pf.DefaultClass.Mask;
         if (pf.CheckMovement(from, to, pc)) return true;
         for (int i = 11; i >= 1; i--)
         {
@@ -289,7 +311,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         float len = MathF.Sqrt(dx * dx + dz * dz);
         if (len < 0.01f) return;
         float px = -dz / len, pz = dx / len;   // 垂直单位向量
-        var pc = pf.DefaultClass.Mask;
+        var pc = ResolvePassClass(pf);
         foreach (float side in new[] { 3f, -3f, 6f, -6f })
         {
             var c = new FixedVector2D(
@@ -318,6 +340,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         s.Bool("moving", HasMoveTarget);
         s.NumberFixed("tx", TargetPos.X);
         s.NumberFixed("tz", TargetPos.Y);
+        s.StringASCII("passclass", PassClassName);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -325,6 +348,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         Speed = d.NumberFixed("speed");
         HasMoveTarget = d.Bool("moving");
         TargetPos = new FixedVector2D(d.NumberFixed("tx"), d.NumberFixed("tz"));
+        PassClassName = d.StringASCII("passclass");
     }
 
     public void HandleMessage(IMessage message) { }

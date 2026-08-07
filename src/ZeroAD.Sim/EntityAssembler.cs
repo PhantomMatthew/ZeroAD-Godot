@@ -59,7 +59,11 @@ namespace ZeroAD.Sim
 
             var motion = cm.QueryInterface<UnitMotion>(entity);
             if (motion != null && stats != null)
+            {
                 motion.Speed = Fixed.FromFloat(stats.WalkSpeed);
+                // PassabilityClass(船="ship" → 水路寻路/水面出生)。
+                motion.PassClassName = stats.PassabilityClass;
+            }
 
             // Vision: seers get a Fixed-range VisionComponent (RangeManager counts their
             // circles in the LOS grid). Set AFTER AddComponent — OnInit resets the default.

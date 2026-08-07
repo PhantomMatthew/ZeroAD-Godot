@@ -58,7 +58,8 @@ public static class SaveGameManager
     // 原版 Trainer/Entities)——组件流 count/progress 后多 2 个 ASCII 字符串;旧 v7 档
     // 位置流错位,按版本号拒收。
     // v9(2026-08-03):DamageBlock 增 Fire 通道(状态效果燃烧)——capture 后多 1 个 I32。
-    private const uint Version = 10; // v10: Foundation/Builder 工人表序列化(多工人递减 n^0.7/n)
+    // v10(2026-08-07):Foundation/Builder 工人表序列化(多工人递减 n^0.7/n)。
+    private const uint Version = 11; // v11: UnitMotion 增 PassClassName(船走水路)
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 

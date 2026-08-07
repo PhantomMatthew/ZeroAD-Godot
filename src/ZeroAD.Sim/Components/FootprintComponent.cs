@@ -39,7 +39,7 @@ namespace ZeroAD.Sim.Components
         /// ordering and square-perimeter coordinate walk are flattened to a simpler radial sweep —
         /// good enough for the common "train a villager outside the TC" case.
         /// </summary>
-        public FixedVector3D PickSpawnPoint(Fixed spawnedRadius)
+        public FixedVector3D PickSpawnPoint(Fixed spawnedRadius, string passClass = "default")
         {
             var pos = SimSystem.GetComponent<PositionComponent>(Entity);
             var pf = SimSystem.Pathfinder;
@@ -78,7 +78,7 @@ namespace ZeroAD.Sim.Components
                     Fixed sx = cx + Fixed.FromFloat((float)Math.Cos(a)).Multiply(ringDist);
                     Fixed sz = cz + Fixed.FromFloat((float)Math.Sin(a)).Multiply(ringDist);
 
-                    var pr = pf.CheckUnitPlacement(sx, sz, spawnedRadius, skipTag);
+                    var pr = pf.CheckUnitPlacement(sx, sz, spawnedRadius, skipTag, passClass);
                     if (pr == PlacementResult.Success)
                         return new FixedVector3D(sx, Fixed.Zero, sz);
                 }

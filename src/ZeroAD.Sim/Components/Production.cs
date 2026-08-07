@@ -243,11 +243,20 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         // another building. Falls back to a simple ring if no Footprint or no free slot is found.
         var footprint = cm.QueryInterface<FootprintComponent>(Entity);
         Fixed spawnedRadius = Fixed.FromFloat(1.0f);
+        // 被训单位的通行类(船="ship" → 出生点必须在水面;原版 CheckUnitPlacement 按
+        // passClass 判地形)。解析失败回退陆地类(旧行为)。
+        string spawnPassClass = "default";
+        try
+        {
+            spawnPassClass = cm.Templates?.ExtractStats(current.TemplateName)?.PassabilityClass
+                ?? "default";
+        }
+        catch { }
 
         for (int i = 0; i < current.Count; i++)
         {
             float sx, sz;
-            var spawn = footprint?.PickSpawnPoint(spawnedRadius);
+            var spawn = footprint?.PickSpawnPoint(spawnedRadius, spawnPassClass);
             if (spawn != null && spawn.Value.X.ToFloat() >= 0)
             {
                 sx = spawn.Value.X.ToFloat();

@@ -364,6 +364,10 @@ namespace ZeroAD.Sim.Content
                 var walkSpeed = unitMotion.GetChild("WalkSpeed");
                 if (walkSpeed.IsOk)
                     stats.WalkSpeed = walkSpeed.ToFixed().ToFloat();
+                // PassabilityClass(原版:default/ship;plane 的 unrestricted 未移植)——
+                // 船走水路寻路、水面出生;陆军走陆地。
+                var passClass = unitMotion.GetChild("PassabilityClass");
+                if (passClass.IsOk) stats.PassabilityClass = passClass.ToString().Trim();
             }
 
             var vision = node.GetChild("Vision");
@@ -866,6 +870,9 @@ namespace ZeroAD.Sim.Content
         public ResourceType ResourceType = ResourceType.Wood;
         public string ResourceTypeString = "";
         public float WalkSpeed = 8f;
+        /// <summary>UnitMotion/PassabilityClass("default"/"ship";原版 plane 另有
+        /// unrestricted,未移植)。船 = "ship" → 水路寻路 + 水面出生。</summary>
+        public string PassabilityClass = "default";
         public int VisionRange = 20;
         /// <summary>&lt;Fogging/&gt; 模板(建筑/gaia):雾中由 mirage 顶替。对齐 Fogging.js。</summary>
         public bool HasFogging;

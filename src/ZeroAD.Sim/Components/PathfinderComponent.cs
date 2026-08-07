@@ -54,13 +54,20 @@ namespace ZeroAD.Sim.Components
         /// obstructions. <paramref name="skipTag"/> optionally excludes one shape (e.g. the entity's
         /// own when it's relocating). Mirrors <c>CCmpPathfinder::CheckUnitPlacement</c> minus the
         /// per-passability-class grid (we use one Land/Water grid).
+        /// <paramref name="passClass"/>:原版按通行类判地形——陆军(default)需陆地,
+        /// 船(ship)需水面(此前恒按陆地判,船在任何水面出生点都被 FailTerrain 拒掉)。
         /// </summary>
-        public PlacementResult CheckUnitPlacement(Fixed x, Fixed z, Fixed clearance, ObstructionTag? skipTag = null)
+        public PlacementResult CheckUnitPlacement(Fixed x, Fixed z, Fixed clearance, ObstructionTag? skipTag = null,
+            string passClass = "default")
         {
             if (Terrain != null && !Terrain.IsInBounds(new FixedVector2D(x, z)))
                 return PlacementResult.FailOutOfBounds;
-            if (Terrain != null && !Terrain.IsLand(x, z))
-                return PlacementResult.FailTerrain;
+            if (Terrain != null)
+            {
+                bool onLand = Terrain.IsLand(x, z);
+                if (passClass == "ship" ? onLand : !onLand)
+                    return PlacementResult.FailTerrain;
+            }
 
             var mgr = Obstructions;
             if (mgr != null)
