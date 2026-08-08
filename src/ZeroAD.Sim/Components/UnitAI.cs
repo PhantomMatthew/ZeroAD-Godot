@@ -1255,14 +1255,16 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         // REPAIR.APPROACHING — move to the foundation; BuilderComponent advances it on its own.
         // BuilderComponent.Tick(cm) (no dt — it applies a fixed per-call build increment) drives
         // both the approach and the building; when its target clears (foundation complete or
-        // invalid) the order is done.
+        // invalid) the order is done. 到岗(AtWorksite,原版 MoveCompleted)→ REPAIRING:
+        // 此前一直停在 APPROACHING,动画解析成 walk(工人"原地踏步盖房子")。
         spec.State("INDIVIDUAL").State("REPAIR").State("APPROACHING")
             .On("Timer", (u, m) =>
             {
                 var builder = m.Cm!.QueryInterface<BuilderComponent>(u.Entity);
                 if (builder == null) { u.FinishOrder(); return; }
                 builder.Tick(m.Cm!);
-                if (builder.Target == null) u.FinishOrder();
+                if (builder.Target == null) { u.FinishOrder(); return; }
+                if (builder.AtWorksite) u.FsmNextState = "REPAIR.REPAIRING";
             });
 
         spec.State("INDIVIDUAL").State("REPAIR").State("REPAIRING")
@@ -1271,7 +1273,9 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 var builder = m.Cm!.QueryInterface<BuilderComponent>(u.Entity);
                 if (builder == null) { u.FinishOrder(); return; }
                 builder.Tick(m.Cm!);
-                if (builder.Target == null) u.FinishOrder();
+                if (builder.Target == null) { u.FinishOrder(); return; }
+                // 目标移位/被挤离工位 → 回 APPROACHING 重新接近(原版同双向转移)。
+                if (!builder.AtWorksite) u.FsmNextState = "REPAIR.APPROACHING";
             });
     }
 

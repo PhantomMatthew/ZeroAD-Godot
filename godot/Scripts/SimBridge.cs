@@ -1639,15 +1639,12 @@ public sealed partial class SimBridge : Node
         float vz = pos?.Position.Z.ToFloat() ?? 0;
         float baseY = TerrainHeightService.Sample(vx, vz);
 
-        // 升起行程 = 模型包围盒高(取首个网格子节点的 AABB;无则回退 6m);
+        // 升起行程 = 整树网格包围盒高的并集(此前取首个子网格 AABB——组合场景
+        // 第一个网格可能是小道具,行程太小 → 建筑几乎全露,"一下显示整个形体");
         // 初始 8% 露出(原版地基起手有一小截脚手架,不是从零全埋)。
         float rise = 6f;
-        var meshNode = visual as MeshInstance3D ?? FindFirstMesh(visual);
-        if (meshNode?.Mesh != null)
-        {
-            var aabb = meshNode.Mesh.GetAabb();
-            if (aabb.Size.Y > 0.1f) rise = aabb.Size.Y;
-        }
+        var aabb = ComputeLocalAabb(visual, Transform3D.Identity, null);
+        if (aabb is { } bb && bb.Size.Y > 0.1f) rise = bb.Size.Y;
         visual.SetMeta("riseHeight", rise);
         visual.SetMeta("baseY", baseY);
         visual.Position = new Vector3(vx, baseY - rise * 0.92f, vz);   // 8% 露出
@@ -1662,6 +1659,21 @@ public sealed partial class SimBridge : Node
         UnitContainer.AddChild(visual);
         _entityNodes[entity] = visual;
         _entityCacheDirty = true;
+    }
+
+    /// <summary>整树网格 AABB 并集(节点未入树也能算:沿局部 Transform 累积)。
+    /// 地基升起行程用——必须覆盖组合场景的全部网格(主体+道具)。</summary>
+    private static Aabb? ComputeLocalAabb(Node node, Transform3D xf, Aabb? acc)
+    {
+        var local = node is Node3D n3 ? xf * n3.Transform : xf;
+        if (node is MeshInstance3D mi && mi.Mesh != null)
+        {
+            var box = local * mi.Mesh.GetAabb();
+            acc = acc?.Merge(box) ?? box;
+        }
+        foreach (var child in node.GetChildren())
+            acc = ComputeLocalAabb(child, local, acc);
+        return acc;
     }
 
     /// <summary>首个 MeshInstance3D 子节点(深度优先;建筑模型多为容器节点)。</summary>
@@ -2463,7 +2475,8 @@ public sealed partial class SimBridge : Node
             return string.IsNullOrEmpty(specific) ? "gather_tree" : "gather_" + specific;
         }
         if (fsm.Contains("REPAIR.REPAIRING"))
-            return "build";
+            return "Build";   // 动画变体名大写(variants/biped/build.xml name="Build");
+                              // 小写会 HasState 落空回退 idle——工人呆站盖房。
         if (fsm.Contains("COMBAT.ATTACKING"))
             return "attack_melee";
 

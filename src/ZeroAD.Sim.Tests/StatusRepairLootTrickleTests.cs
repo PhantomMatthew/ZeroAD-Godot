@@ -74,6 +74,31 @@ public sealed class StatusRepairLootTrickleTests
     }
 
     [Fact]
+    public void UnitAI_RepairOrder_EntersRepairingState_WhenAtWorksite()
+    {
+        // 到岗转移(原版 MoveCompleted → REPAIRING):工人在工位半径内时,
+        // FSM 必须从 REPAIR.APPROACHING 进 REPAIR.REPAIRING——否则动画停在
+        // walk(工人原地踏步盖房子)。
+        var cm = SetupWorld();
+        var site = MakeEntity(cm, 1, 5, 0);   // 距工人 5m(< 8m 工位半径)
+        var fdn = new FoundationComponent();
+        cm.AddComponent(site, fdn);
+        fdn.Configure("structures/test", 100f);
+
+        var worker = MakeEntity(cm, 1, 0, 0);
+        cm.AddComponent(worker, new UnitMotion());
+        cm.AddComponent(worker, new BuilderComponent { BuildSpeed = 1f });
+        var ai = new UnitAIComponent();
+        cm.AddComponent(worker, ai);
+
+        ai.Repair(site);
+        for (int i = 0; i < 6; i++) ai.Tick(0.1f, cm);
+
+        Assert.Equal("INDIVIDUAL.REPAIR.REPAIRING", ai.FsmStateName);
+        Assert.True(cm.QueryInterface<BuilderComponent>(worker)!.AtWorksite);
+    }
+
+    [Fact]
     public void BuilderTick_RepairsAdjacentDamagedBuilding_ThenClearsTarget()
     {
         var cm = SetupWorld();

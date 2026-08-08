@@ -142,6 +142,10 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
     private bool _repairRegistered;
     // 建造登记:当前是否已在目标的 Foundation 工人表中(同上,n^0.7/n 递减)。
     private bool _foundationRegistered;
+    /// <summary>已到工位(本 tick 与目标距离 ≤ 工作半径)。UnitAI 的 REPAIR.APPROACHING
+    /// → REPAIRING 转移判据(原版 MoveCompleted;建造动画由 REPAIRING 态承载)。
+    /// 每 tick 重算的瞬态,不序列化。</summary>
+    public bool AtWorksite;
 
     protected override void OnInit()
     {
@@ -155,6 +159,7 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
 
     public void Tick(ComponentManager cm)
     {
+        AtWorksite = false;
         if (Target == null) return;
 
         // A defeated player's builders stop working.
@@ -211,6 +216,7 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         }
         else
         {
+            AtWorksite = true;
             if (motion != null) motion.Stop();
             // 进工位:入工人表(Foundation 按人头算 n^0.7/n 递减)。
             // 建造速度过修正值管线(科技如 "Builder/Rate" ×1.15)
@@ -249,6 +255,7 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
             return;
         }
 
+        AtWorksite = true;
         if (motion != null) motion.Stop();
         // 进工位:入工人表(Repairable 按人头算 n^0.7/n 递减)。
         float rate = cm.Modifiers.Apply("Builder/Rate", BuildSpeed, Entity);
