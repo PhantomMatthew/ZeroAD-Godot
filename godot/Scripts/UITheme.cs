@@ -12,13 +12,22 @@ public static class UITheme
         _theme = new Theme();
 
         // 原版 StoneButton(gui/common/sprites.xml)= global/button/button_stone_unselected.png
-        // 整幅拉伸(size="0 0 100% 100%")——即 btn_normal.png(256×32 石条)。hover/pressed 用
-        // button_stone_selected(btn_hover.png)。之前错用 button_brown 的 center 散件,与 C++ 版
-        // 明显不一致(gamesetup/对话框按钮都应是深色石条)。
-        var btnNormal = MakeButtonStyle("res://assets/ui/btn_normal.png", new Color(1, 1, 1));
-        var btnHover = MakeButtonStyle("res://assets/ui/btn_hover.png", new Color(1, 1, 1));
-        var btnPressed = MakeButtonStyle("res://assets/ui/btn_hover.png", new Color(0.85f, 0.8f, 0.7f));
-        var btnDisabled = MakeButtonStyle("res://assets/ui/btn_normal.png", new Color(0.5f, 0.5f, 0.5f, 0.6f));
+        // 石纹按钮——直接走 StoneButtonStyle 的合成样式盒(junction 读上游贴图,
+        // 与顶栏/结算页同一实现)。本地 btn_normal.png 是深色占位条(全图均色≈(50,48,43)),
+        // 整幅拉伸就是"菜单按钮黑糊一片"的来源——仅作素材缺失时的回退。
+        StyleBox btnNormal, btnHover, btnPressed, btnDisabled;
+        if (StoneButtonStyle.TryGetStyleboxes(StoneButtonStyle.FindBinariesDir(),
+                out var sn, out var sh, out var sp, out var sd))
+        {
+            btnNormal = sn!; btnHover = sh!; btnPressed = sp!; btnDisabled = sd!;
+        }
+        else
+        {
+            btnNormal = MakeButtonStyle("res://assets/ui/btn_normal.png", new Color(1, 1, 1));
+            btnHover = MakeButtonStyle("res://assets/ui/btn_hover.png", new Color(1, 1, 1));
+            btnPressed = MakeButtonStyle("res://assets/ui/btn_hover.png", new Color(0.85f, 0.8f, 0.7f));
+            btnDisabled = MakeButtonStyle("res://assets/ui/btn_normal.png", new Color(0.5f, 0.5f, 0.5f, 0.6f));
+        }
 
         _theme.SetStylebox("normal", "Button", btnNormal);
         _theme.SetStylebox("hover", "Button", btnHover);

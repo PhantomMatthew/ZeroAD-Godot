@@ -15,6 +15,16 @@ public static class StoneButtonStyle
 	private static StyleBoxTexture? _normal, _hover, _pressed, _disabled;
 	private static bool _tried;
 
+	/// <summary>主题级取石纹按钮样式盒(四态);素材缺失返回 false,调用方回退。</summary>
+	public static bool TryGetStyleboxes(string? binariesDir,
+		out StyleBoxTexture? normal, out StyleBoxTexture? hover,
+		out StyleBoxTexture? pressed, out StyleBoxTexture? disabled)
+	{
+		Ensure(binariesDir);
+		normal = _normal; hover = _hover; pressed = _pressed; disabled = _disabled;
+		return normal != null && hover != null && pressed != null && disabled != null;
+	}
+
 	public static void Apply(Button btn, string? binariesDir)
 	{
 		Ensure(binariesDir);
