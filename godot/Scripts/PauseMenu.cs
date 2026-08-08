@@ -38,41 +38,36 @@ public sealed partial class PauseMenu : CanvasLayer
         Layer = 60;            // above the HUD and GameOverOverlay (Layer 50)
         Visible = false;
 
-        // Full-screen dim that eats all clicks → modal. MouseFilter.Stop blocks input passthrough
-        // so game clicks/hotkeys behind the overlay never land (Main._UnhandledInput is also gated
-        // on _sim.Paused as a second line of defense).
-        var dim = new ColorRect
+        // 原版 session/Menu.xml:菜单面板贴右缘、顶端对齐(menuButtonPanel
+        // size="100%-164 0 100% 0"),无标题、无全屏压暗——此前我们是居中模态+压暗,
+        // 位置与 C++ 版明显不一致。透明全屏捕捉层负责"点外面关闭"。
+        var catcher = new Control
         {
-            Color = new Color(0, 0, 0, 0.55f),
             AnchorsPreset = (int)Control.LayoutPreset.FullRect,
             MouseFilter = Control.MouseFilterEnum.Stop,
         };
-        AddChild(dim);
+        catcher.GuiInput += (ev) =>
+        {
+            if (ev is InputEventMouseButton { Pressed: true }) Close();
+        };
+        AddChild(catcher);
 
-        // 锚点居中(非 CenterContainer,理由见 ModalPanelBase):四锚 0.5 + 双向 Grow,
-        // gui.scale>1 缩小逻辑画布时仍对称居中,不被钳到左上角。
         var panel = new PanelContainer
         {
-            CustomMinimumSize = new Vector2(360, 0),
-            AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0.5f, AnchorBottom = 0.5f,
-            GrowHorizontal = Control.GrowDirection.Both,
-            GrowVertical = Control.GrowDirection.Both,
+            AnchorLeft = 1f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 0f,
+            OffsetLeft = -164, OffsetTop = 0, OffsetRight = 0,
+            CustomMinimumSize = new Vector2(164, 0),
+            GrowVertical = Control.GrowDirection.End,
             MouseFilter = Control.MouseFilterEnum.Stop,
         };
+        // 原版 StonePanelThinBorder:深色底 + 细金边。
         var bg = new StyleBoxFlat
         {
-            BgColor = new Color(0.06f, 0.05f, 0.04f, 0.94f),
-            BorderColor = new Color(0.55f, 0.45f, 0.30f),
-            BorderWidthBottom = 3,
-            BorderWidthTop = 3,
-            BorderWidthLeft = 3,
-            BorderWidthRight = 3,
-            CornerRadiusTopLeft = 6,
-            CornerRadiusTopRight = 6,
-            CornerRadiusBottomLeft = 6,
-            CornerRadiusBottomRight = 6,
+            BgColor = new Color(0.06f, 0.05f, 0.04f, 0.97f),
+            BorderColor = new Color(0.90f, 0.75f, 0.31f),
         };
-        bg.SetContentMarginAll(24);
+        bg.SetBorderWidthAll(2);
+        bg.SetContentMarginAll(4);
         panel.AddThemeStyleboxOverride("panel", bg);
         AddChild(panel);
 
@@ -80,17 +75,8 @@ public sealed partial class PauseMenu : CanvasLayer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
-        vbox.AddThemeConstantOverride("separation", 12);
+        vbox.AddThemeConstantOverride("separation", 0);
         panel.AddChild(vbox);
-
-        var title = new Label
-        {
-            Text = "Menu",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-        };
-        title.AddThemeFontSizeOverride("font_size", 26);
-        vbox.AddChild(title);
 
         _statusLabel = new Label
         {
@@ -98,7 +84,7 @@ public sealed partial class PauseMenu : CanvasLayer
             HorizontalAlignment = HorizontalAlignment.Center,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
-        _statusLabel.AddThemeFontSizeOverride("font_size", 14);
+        _statusLabel.AddThemeFontSizeOverride("font_size", 12);
         vbox.AddChild(_statusLabel);
 
         AddButton(vbox, "Resume", Close);
@@ -169,8 +155,9 @@ public sealed partial class PauseMenu : CanvasLayer
         {
             Text = Localization.Tr(label),
             Theme = UITheme.GetTheme(),
-            CustomMinimumSize = new Vector2(200, 34),
-            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,
+            // 原版:按钮满宽(4 4 100%-4 32,StoneButtonFancy)。
+            CustomMinimumSize = new Vector2(0, 32),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
         btn.Pressed += onPressed;
         parent.AddChild(btn);
