@@ -16,15 +16,11 @@ def target_dir(rel):
     if "skins/structural/" in rel: return os.path.join(DST_ROOT, "structural")
     if "skins/gaia/" in rel: return os.path.join(DST_ROOT, "gaia")
     if "skins/props/" in rel: return os.path.join(DST_ROOT, "props")
-    if "terrain/types/" in rel: return os.path.join(DST_ROOT, "terrain")
+    if "terrain/types/" in rel:
+        # 保留 types/<biome>/ 子结构:同名 basename 跨 biome 冲突(63 组,
+        # 如 cliff_01/grass_01),拍平会互相覆盖、地图拿到错 biome 的贴图。
+        return os.path.join(DST_ROOT, os.path.dirname(rel))
     return os.path.join(DST_ROOT, "misc")
-
-# Existing png basenames anywhere under DST_ROOT (skip those).
-existing = set()
-for root, _, files in os.walk(DST_ROOT):
-    for f in files:
-        if f.lower().endswith(".png"):
-            existing.add(f.lower())
 
 count, skipped, failed = 0, 0, []
 for root, _, files in os.walk(SRC):
@@ -32,13 +28,14 @@ for root, _, files in os.walk(SRC):
         if not f.lower().endswith(".dds"):
             continue
         png = os.path.splitext(f)[0] + ".png"
-        if png.lower() in existing:
-            skipped += 1
-            continue
         rel = os.path.relpath(os.path.join(root, f), SRC).replace(os.sep, "/")
         dstdir = target_dir(rel)
         os.makedirs(dstdir, exist_ok=True)
         dst = os.path.join(dstdir, png)
+        # 已转换判定按目标全路径(全局 basename 判重会误跳同名跨 biome 文件)。
+        if os.path.exists(dst):
+            skipped += 1
+            continue
         try:
             img = bpy.data.images.load(os.path.join(root, f))
             _ = img.pixels[0]
@@ -46,7 +43,6 @@ for root, _, files in os.walk(SRC):
             img.file_format = 'PNG'
             img.save()
             bpy.data.images.remove(img)
-            existing.add(png.lower())
             count += 1
         except Exception as e:
             failed.append(f"{rel}: {e}")

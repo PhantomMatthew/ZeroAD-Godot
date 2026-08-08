@@ -499,9 +499,12 @@ public static class SplatBaker
     private static readonly Dictionary<string, TerrainInfo> _infoCache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>PMP 贴图名(如 "medit_rocks_grass")解析为图层+平铺属性。
-    /// 名字=terrain XML basename:直取 terrain/<name>.png 几乎必中;否则扫
-    /// art/terrains/**/<name>.xml 拿 baseTex 文件名再找 PNG。props 只从 XML 读。
-    /// 缺失给中性草绿而非中止整张地形。</summary>
+    /// 名字=terrain XML basename。解析顺序(关键:types/ 下有 63 个跨 biome 同名
+    /// basename——cliff_01/grass_01 等;早期管线把 types/<biome>/ 拍平成 terrain/
+    /// 导致同名互相覆盖,山丘灰岩被换成努比亚红土):
+    /// 1) XML baseTex 相对路径(types/temperate/cliff_01.png → terrain/types/… 结构化副本);
+    /// 2) XML baseTex basename 平铺命中(DDS 转换物的旧平铺位置);
+    /// 3) 无 XML → terrain/<PMP名>.png 直取;4) 缺失给中性草绿而非中止整张地形。</summary>
     private static TerrainInfo LoadTerrainInfo(string name)
     {
         if (_infoCache.TryGetValue(name, out var cached)) return cached;
@@ -509,15 +512,22 @@ public static class SplatBaker
         var info = new TerrainInfo();
         string texRoot = ProjectSettings.GlobalizePath("res://assets/textures/");
         string? pngPath = null;
-        string direct = Path.Combine(texRoot, "terrain", name + ".png");
-        if (File.Exists(direct)) pngPath = direct;
 
         string? xmlPath = FindTerrainXml(name);
         if (xmlPath != null)
         {
-            ParseTerrainXml(xmlPath, out string? baseTexPng, out float? size, out float? angleDeg);
+            ParseTerrainXml(xmlPath, out string? baseTexPng, out float? size, out float? angleDeg,
+                out string? baseTexRel);
             if (size is > 0) info.SizeMeters = size.Value;
             if (angleDeg.HasValue) info.AngleRad = angleDeg.Value * MathF.PI / 180f;
+            // 1) 结构化副本(types/<biome>/<file>.png)
+            if (baseTexRel != null)
+            {
+                string structured = Path.Combine(texRoot, "terrain",
+                    baseTexRel.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(structured)) pngPath = structured;
+            }
+            // 2) 旧平铺位置(DDS 转换物尚未结构化前)
             if (pngPath == null && baseTexPng != null)
             {
                 foreach (var candidate in Directory.EnumerateFiles(texRoot, baseTexPng, SearchOption.AllDirectories))
@@ -526,6 +536,12 @@ public static class SplatBaker
                     break;
                 }
             }
+        }
+        // 3) 无 XML(或 XML 解析失败)→ 按 PMP 名直取
+        if (pngPath == null)
+        {
+            string direct = Path.Combine(texRoot, "terrain", name + ".png");
+            if (File.Exists(direct)) pngPath = direct;
         }
 
         if (pngPath != null)
@@ -562,11 +578,11 @@ public static class SplatBaker
         return null;
     }
 
-    /// <summary>读 terrain XML 的 baseTex PNG 名与 <props size angle/>。</summary>
+    /// <summary>读 terrain XML 的 baseTex(PNG 名 + types/ 相对路径)与 <props size angle/>。</summary>
     private static void ParseTerrainXml(string xmlPath, out string? baseTexPng,
-        out float? size, out float? angleDeg)
+        out float? size, out float? angleDeg, out string? baseTexRel)
     {
-        baseTexPng = null; size = null; angleDeg = null;
+        baseTexPng = null; size = null; angleDeg = null; baseTexRel = null;
         try
         {
             var doc = System.Xml.Linq.XDocument.Load(xmlPath);
@@ -575,7 +591,13 @@ public static class SplatBaker
                 if ((string?)tex.Attribute("name") != "baseTex") continue;
                 string? file = (string?)tex.Attribute("file");
                 if (!string.IsNullOrEmpty(file))
+                {
+                    baseTexRel = Path.GetDirectoryName(file)!.Length > 0
+                        ? Path.GetDirectoryName(file)!.Replace('\\', '/') + "/"
+                            + Path.GetFileNameWithoutExtension(file) + ".png"
+                        : Path.GetFileNameWithoutExtension(file) + ".png";
                     baseTexPng = Path.GetFileNameWithoutExtension(file) + ".png";
+                }
                 break;
             }
             var props = doc.Root?.Element("props");
