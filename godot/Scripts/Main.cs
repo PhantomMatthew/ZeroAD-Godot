@@ -424,9 +424,24 @@ public sealed partial class Main : Node3D
 		if (System.Environment.GetEnvironmentVariable("ZEROAD_AUTOBUILD") == "1")
 			AutobuildDeferred();
 
+		// dev 截图钩子:ZEROAD_SHOT_SESSION=<秒> 开局 N 秒后视口截图存
+		// user://session_shot.png(不退出;窗口无需前台,后台可截)。
+		if (int.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_SESSION"), out int shotSec))
+			SessionShotDeferred(shotSec);
+
 		GD.Print(_isTutorial
 			? "[Tutorial] Introductory Tutorial started"
 			: $"[Tutorial] MS6 Game started: player={playerId}");
+	}
+
+	/// <summary>dev 钩子:N 秒后视口截图(可多次:用 ZEROAD_SHOT_SESSION 逗号秒数)。</summary>
+	private async void SessionShotDeferred(int seconds)
+	{
+		await ToSignal(GetTree().CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
+		var img = GetViewport().GetTexture().GetImage();
+		string p = $"user://session_shot_{seconds}s.png";
+		img.SavePng(p);
+		GD.Print($"[Shot] saved {p}");
 	}
 
 	/// <summary>dev 钩子:找本地玩家的 CC + 一个工人,在 CC 旁下个住宅建造令。</summary>

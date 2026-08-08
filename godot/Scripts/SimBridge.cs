@@ -743,7 +743,7 @@ public sealed partial class SimBridge : Node
         // SyncVisuals only updates Position, never Rotation, so this persists for the life of
         // the entity. Matches C++ CmpPosition::SetYRotation at scenario load.
         if (_entityNodes.TryGetValue(entity, out var bldgNode) && def.OrientationY != 0f)
-            bldgNode.Rotation = new Vector3(0, def.OrientationY, 0);
+            bldgNode.Rotation = new Vector3(0, -def.OrientationY, 0);   // 镜像根(Scale.z=-1)下 yaw 取负,否则朝向镜面反转
         return entity;
     }
 
@@ -770,7 +770,7 @@ public sealed partial class SimBridge : Node
         // Authored yaw — overruled the first time the unit walks (UpdateUnitAnimation
         // yaws to travel direction), but until then the unit should face as placed.
         if (_entityNodes.TryGetValue(entity, out var unitNode) && def.OrientationY != 0f)
-            unitNode.Rotation = new Vector3(0, def.OrientationY, 0);
+            unitNode.Rotation = new Vector3(0, -def.OrientationY, 0);
 
         return entity;
     }
@@ -827,7 +827,7 @@ public sealed partial class SimBridge : Node
             isTree ? 2.5f : 1.5f);
         EntityAssembler.RegisterForLos(_sim, entity, def.Template, stats);
         if (_entityNodes.TryGetValue(entity, out var gaiaNode) && def.OrientationY != 0f)
-            gaiaNode.Rotation = new Vector3(0, def.OrientationY, 0);
+            gaiaNode.Rotation = new Vector3(0, -def.OrientationY, 0);
         return entity;
     }
 
@@ -845,7 +845,7 @@ public sealed partial class SimBridge : Node
 
         Node3D? node = ModelLibrary.InstantiateForTemplate(template, x, z, color);
         if (node != null)
-            node.Rotation = new Vector3(0, yaw, 0);
+            node.Rotation = new Vector3(0, -yaw, 0);
         else
             node = MakeFallbackBox(template, x, z, color);
 
@@ -862,7 +862,7 @@ public sealed partial class SimBridge : Node
         box.MaterialOverride = new StandardMaterial3D { AlbedoColor = color };
         float h = TerrainHeightService.Sample(x, z);
         box.Position = new Vector3(x, h, z);
-        box.Rotation = new Vector3(0, yaw, 0);
+        box.Rotation = new Vector3(0, -yaw, 0);
         return box;
     }
 
@@ -2447,10 +2447,10 @@ public sealed partial class SimBridge : Node
         string want = ResolveAnimationState(entity);
         if (!_animState.TryGetValue(entity, out var cur) || cur != want)
         {
-            // Fall back to walk/idle when the unit lacks the exact state clip, so a
+            // Fall back to Walk/Idle when the unit lacks the exact state clip, so a
             // gather/attack state never freezes a unit that has no matching clip.
             if (!animator.HasState(want))
-                want = ResolveAnimationState(entity).Contains("walk") ? "walk" : "idle";
+                want = ResolveAnimationState(entity).Contains("Walk") ? "Walk" : "Idle";
             if (animator.HasState(want))
             {
                 // SetAnimationState (not animator.Play) so per-state props switch too
@@ -2462,8 +2462,10 @@ public sealed partial class SimBridge : Node
     }
 
     /// <summary>
-    /// Maps the UnitAI FSM state to an animation state name (idle/walk/gather_*/build/
-    /// attack_melee). FSM state names are hierarchical paths produced by Fsm.cs
+    /// Maps the UnitAI FSM state to an animation state name. 变体数据的命名大小写混合:
+    /// 移动/闲置大写("Idle"/"Walk"/"Run"),行为小写(gather_*/attack_*/promotion),
+    /// 建造大写("Build")——HasState 是精确键匹配,写错大小写 = 永远不播。
+    /// FSM state names are hierarchical paths produced by Fsm.cs
     /// (e.g. "INDIVIDUAL.GATHER.GATHERING"), so we match by substring, not prefix.
     /// </summary>
     private string ResolveAnimationState(EntityId entity)
@@ -2480,8 +2482,7 @@ public sealed partial class SimBridge : Node
             return string.IsNullOrEmpty(specific) ? "gather_tree" : "gather_" + specific;
         }
         if (fsm.Contains("REPAIR.REPAIRING"))
-            return "Build";   // 动画变体名大写(variants/biped/build.xml name="Build");
-                              // 小写会 HasState 落空回退 idle——工人呆站盖房。
+            return "Build";   // 动画变体名大写(variants/biped/build.xml name="Build")
         if (fsm.Contains("COMBAT.ATTACKING"))
             return "attack_melee";
 
@@ -2490,9 +2491,9 @@ public sealed partial class SimBridge : Node
         if (fsm.EndsWith(".WALKING", StringComparison.Ordinal)
             || fsm.Contains("APPROACHING")
             || fsm.Contains("RETURNINGRESOURCE"))
-            return "walk";
+            return "Walk";
 
-        return "idle";
+        return "Idle";
     }
 
     public List<EntityId> GetEntitiesAtPosition(Vector3 worldPos, float radius = 3f)
