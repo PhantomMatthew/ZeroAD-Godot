@@ -27,18 +27,19 @@ The rewrite reads the original's data verbatim (entity templates XML, art assets
 
 The C++ engine trees (`binaries/`, `build/`, `libraries/`, `source/`) are **removed from this repo** and provided locally as directory junctions pointing at `<0ad upstream>`. This keeps the C# rewrite's relative-path resolvers (`../binaries`, walk-up-to-find-`binaries/`) working unchanged while reading upstream data/assets verbatim.
 
-**After a fresh clone**, create the junctions (one-time):
+**After a fresh clone**, create the links (one-time). Upstream path resolution order on both scripts: explicit argument > `ZEROAD_UPSTREAM` env var > platform default/probe (`C:\SourceCode\0ad` on Windows; `~/SourceCode/gitea/0ad` etc. on macOS/Linux):
 
 ```bash
-# Windows (PowerShell) — uses ZEROAD_UPSTREAM env var or defaults to C:\SourceCode\0ad
+# Windows (PowerShell) — directory junctions (no admin/Developer Mode needed)
 powershell -ExecutionPolicy Bypass -File tools/setup-upstream-junctions.ps1
 
-# macOS / Linux — manual ln -s equivalents (run from repo root, adjust upstream path)
-UPSTREAM=/Users/matthew/SourceCode/gitea/0ad
-for d in binaries build libraries source; do ln -s "$UPSTREAM/$d" "$d"; done
+# macOS / Linux — symlinks (custom upstream location: pass it as the argument)
+tools/setup-upstream-links.sh /Users/matthew/SourceCode/gitea/0ad
 ```
 
-The junctions are gitignored — they will never be tracked. If `<0ad upstream>` moves, just re-run the script.
+> Windows note: do NOT run the bash script under Git Bash/MSYS — its `ln -s` deep-copies the whole upstream tree (the script refuses). Use the PowerShell junction script there.
+
+The junctions/symlinks are gitignored — they will never be tracked. If `<0ad upstream>` moves, just re-run the script.
 
 **Master plan**: `godot-rewrite-plan.md` (modules M0–M10, milestones MS1–MS7, risk matrix). Read it before any non-trivial rewrite work.
 **System deep-dive notes**: `claude-analyze/*.md` (15 docs analyzing the original engine: ECS, network lockstep, pathfinding, rendering, audio, UnitAI, etc.). The fastest way to understand a subsystem you're porting.
