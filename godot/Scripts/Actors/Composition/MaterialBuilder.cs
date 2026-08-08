@@ -12,6 +12,66 @@ namespace ZeroAD.Godot.Actors.Composition;
 public static class MaterialBuilder
 {
     private static readonly Lazy<Shader> _playerColorShader = new(BuildPlayerColorShader);
+    private static readonly Lazy<Shader> _windShader = new(BuildWindShader);
+
+    /// <summary>0 A.D. 风摆着色器(shaders/glsl/model_common.vs 的 USE_WIND 移植):
+    /// 树/灌木/谷物(basic_trans_wind*.xml)的世界空间微风摆动。逐实例相位 =
+    /// fract(世界原点);摆幅按局部顶点位置加权(树冠大、树干小);fakeCos =
+    /// 平滑三角波。位移在世界空间算出后经 transpose(旋转) 落回局部。</summary>
+    private static Shader BuildWindShader()
+    {
+        var code = @"
+shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, cull_disabled, diffuse_lambert, specular_schlick_ggx;
+
+uniform sampler2D baseTex : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D normTex : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform sampler2D specTex : filter_linear_mipmap, repeat_enable;
+uniform bool useNormal = false;
+uniform bool useSpec = false;
+uniform vec2 windData = vec2(1.0, 1.0);
+
+vec4 fakeCos(vec4 x) {
+    vec4 tri = abs(fract(x + 0.5) * 2.0 - 1.0);
+    return tri * tri * (3.0 - 2.0 * tri);
+}
+
+void vertex() {
+    vec3 worldOrigin = MODEL_MATRIX[3].xyz;
+    vec3 modelPos = clamp(fract(worldOrigin), vec3(0.4), vec3(1.0));
+    float abswind = abs(windData.x) + abs(windData.y);
+
+    vec3 wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+    vec4 cosVec;
+    cosVec.x = TIME * modelPos.x + wpos.x;
+    cosVec.y = TIME * modelPos.z / 3.0 + worldOrigin.x;
+    cosVec.z = TIME * abswind / 4.0 + wpos.z;
+    cosVec = fakeCos(cosVec);
+
+    float limit = clamp((VERTEX.x * VERTEX.z * VERTEX.y) / 3000.0, 0.0, 0.2);
+    float diff = cosVec.x * limit;
+    float diff2 = cosVec.y * clamp(VERTEX.y / 60.0, 0.0, 0.25);
+
+    vec3 worldDisp = vec3(cosVec.z * limit * clamp(abswind, 1.2, 1.7));
+    worldDisp.xz += vec2(diff) + diff2 * windData;
+    VERTEX += transpose(mat3(MODEL_MATRIX)) * worldDisp;
+}
+
+void fragment() {
+    vec4 tex = texture(baseTex, UV);
+    ALBEDO = tex.rgb;
+    ALPHA = tex.a;
+    ALPHA_SCISSOR_THRESHOLD = 0.5;
+    if (useNormal) {
+        NORMAL_MAP = texture(normTex, UV).rgb;
+    }
+    if (useSpec) {
+        ROUGHNESS = 1.0 - texture(specTex, UV).r;
+    }
+}
+";
+        return new Shader { Code = code };
+    }
 
     private static Shader BuildPlayerColorShader()
     {
@@ -62,6 +122,14 @@ void fragment() {
         !string.IsNullOrEmpty(materialName) &&
         materialName!.Contains("objectcolor", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// True for 0 A.D. wind materials (basic_trans_wind*.xml — 树木/灌木/谷物;
+    /// basic_glow_wind、*_wind_grain 同族)。微风摆动着色器路径。
+    /// </summary>
+    public static bool IsWindMaterial(string? materialName) =>
+        !string.IsNullOrEmpty(materialName) &&
+        materialName!.Contains("wind", StringComparison.OrdinalIgnoreCase);
+
     public static Material Build(
         ImageTexture? baseTex,
         ImageTexture? normTex,
@@ -76,7 +144,31 @@ void fragment() {
             // Same mix formula as player color; white default = untinted when the
             // actor defines no <color> variants.
             return BuildPlayerColor(baseTex, normTex, specTex, objectColor ?? Colors.White);
+        if (IsWindMaterial(materialName))
+            return BuildWind(baseTex, normTex, specTex);
         return BuildStandard(baseTex, normTex, specTex, teamColor);
+    }
+
+    /// <summary>风摆材质:每实例一个 ShaderMaterial(贴图绑定不同),着色器共享。</summary>
+    private static Material BuildWind(
+        ImageTexture? baseTex,
+        ImageTexture? normTex,
+        ImageTexture? specTex)
+    {
+        var mat = new ShaderMaterial { Shader = _windShader.Value };
+        if (baseTex != null)
+            mat.SetShaderParameter("baseTex", baseTex);
+        if (normTex != null)
+        {
+            mat.SetShaderParameter("normTex", normTex);
+            mat.SetShaderParameter("useNormal", true);
+        }
+        if (specTex != null)
+        {
+            mat.SetShaderParameter("specTex", specTex);
+            mat.SetShaderParameter("useSpec", true);
+        }
+        return mat;
     }
 
     private static Material BuildPlayerColor(
