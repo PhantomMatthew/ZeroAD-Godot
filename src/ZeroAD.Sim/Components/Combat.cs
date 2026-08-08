@@ -78,6 +78,9 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
     // 默认值活在字段初始化器(OnInit 不覆写,同 HealthComponent 修复模式):
     // `new AttackComponent { Range = ... }` 调用方在 AddComponent 后保值。
     public float Range = 3.0f;
+    /// <summary>模板 Attack/Ranged/RangeOverlay 存在——选中时表现层画射程圈(对齐
+    /// 原版 RangeOverlayManager;CC/箭塔有,近战无)。装配时写入。</summary>
+    public bool HasRangeOverlay;
     public float Rate = 1.0f;
     public float Cooldown;
     public EntityId? Target;

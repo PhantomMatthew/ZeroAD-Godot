@@ -26,22 +26,17 @@ void fragment() {
 	vec3 tcol = vec3(0.0);
 	float a_terr = 0.0;
 	{
+		// R = owner id,G = blink,B = 边界微光(CPU 烘焙:C++ TerritoryTexture
+		// GenerateBitmap 语义——种子 192 + 32/格四向衰减,边界格留缝);
+		// 细描边线由 TerritoryBorders 网格补(C++ TerritoryBoundary)。
 		ivec2 tc = clamp(ivec2(floor(world_xz * 0.25)), ivec2(0), ivec2(int(territory_cells) - 1));
 		vec4 terr = texelFetch(territory_texture, tc, 0);
 		int towner = int(terr.r * 255.0 + 0.5);
-		if (towner > 0) {
-			ivec2 tmax = ivec2(int(territory_cells) - 1);
-			bool border =
-				int(texelFetch(territory_texture, clamp(tc + ivec2(1, 0), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner ||
-				int(texelFetch(territory_texture, clamp(tc - ivec2(1, 0), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner ||
-				int(texelFetch(territory_texture, clamp(tc + ivec2(0, 1), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner ||
-				int(texelFetch(territory_texture, clamp(tc - ivec2(0, 1), ivec2(0), tmax), 0).r * 255.0 + 0.5) != towner;
+		float glow = terr.b;
+		if (towner > 0 && glow > 0.001) {
 			float blink = terr.g > 0.5 ? 0.55 + 0.45 * sin(TIME * 4.0) : 1.0;
-			// 边界 0.55(对齐 C++ 短衰减边界线),雾区领土随之变暗(乘 bright)。
-			if (border) {
-				tcol = player_colors[towner].rgb;
-				a_terr = 0.55 * blink * bright;
-			}
+			tcol = player_colors[towner].rgb;
+			a_terr = glow * 0.55 * blink * bright;
 		}
 	}
 

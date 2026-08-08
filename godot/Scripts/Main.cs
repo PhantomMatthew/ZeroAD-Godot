@@ -1847,6 +1847,22 @@ public sealed partial class Main : Node3D
 			node.AddChild(ring);
 			_selectionMarkers.Add(ring);
 
+			// 攻击射程圈(原版 RangeOverlay:模板 Attack/Ranged/RangeOverlay 存在时,
+			// 选中即显示——CC/箭塔的防御半径;近战无此元素不显示)。
+			var attack = _sim.Sim.QueryInterface<AttackComponent>(eid);
+			if (attack is { HasRangeOverlay: true })
+			{
+				var posC = _sim.Sim.QueryInterface<PositionComponent>(eid);
+				if (posC != null)
+				{
+					var rangeRing = SelectionRing.CreateRangeRing(attack.Range,
+						posC.Position.X.ToFloat(), posC.Position.Z.ToFloat(),
+						new Color(1f, 1f, 1f, 0.55f));
+					node.AddChild(rangeRing);
+					_selectionMarkers.Add(rangeRing);
+				}
+			}
+
 			if (healthMax > 0)
 			{
 				// 头顶高度 = 模型 AABB 顶 + 0.3(原版状态条悬于实体顶;固定 2.5/6 对

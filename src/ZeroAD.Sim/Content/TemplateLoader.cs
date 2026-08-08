@@ -266,6 +266,10 @@ namespace ZeroAD.Sim.Content
             {
                 // 远程节点存在性决定修正值路径前缀(Attack/Ranged vs Attack/Melee)
                 stats.AttackIsRanged = attack.GetChild("Ranged").IsOk;
+                // Attack/Ranged/RangeOverlay:原版选中时画射程圈的开关(CC/箭塔等防御
+                // 建筑有;近战无 → 不显示)。范围圈纹理/厚度不在此提取。
+                if (stats.AttackIsRanged)
+                    stats.HasRangeOverlay = attack.GetChild("Ranged").GetChild("RangeOverlay").IsOk;
                 var melee = attack.GetChild("Melee");
                 if (melee.IsOk)
                 {
@@ -845,6 +849,9 @@ namespace ZeroAD.Sim.Content
         public int AttackFire;
         /// <summary>模板含 Attack/Ranged 节点 = 远程单位(修正值路径前缀用)。</summary>
         public bool AttackIsRanged;
+        /// <summary>模板含 Attack/Ranged/RangeOverlay——原版选中时画射程圈的开关
+        /// (防御建筑有,近战无)。</summary>
+        public bool HasRangeOverlay;
 
         // Capture 攻击类型(原版 Attack/Capture 顶层元素;Strength=0 = 无此类型)。
         public Maths.Fixed AttackCaptureStrength = Maths.Fixed.Zero;

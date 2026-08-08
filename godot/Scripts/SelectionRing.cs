@@ -76,6 +76,44 @@ public static class SelectionRing
         return instance;
     }
 
+    /// <summary>攻击射程圈(原版 RangeOverlay:选中带 RangeOverlay 的实体时显示;
+    /// CC/箭塔的防御半径)。贴地沿地形起伏(每段采样高度),浅色细环。
+    /// centerSimX/Z = 实体 sim 坐标;返回的节点挂在实体视觉下(局部坐标系=sim 系)。</summary>
+    public static MeshInstance3D CreateRangeRing(float radius, float centerSimX, float centerSimZ,
+        Color color)
+    {
+        const int segs = 96;
+        const float width = 0.45f;
+        float baseY = TerrainHeightService.Sample(centerSimX, centerSimZ);
+
+        var st = new SurfaceTool();
+        st.Begin(Mesh.PrimitiveType.Triangles);
+        for (int i = 0; i < segs; i++)
+        {
+            float a0 = i * Mathf.Tau / segs;
+            float a1 = (i + 1) * Mathf.Tau / segs;
+            // 内外圈各采样地形(局部 Y = 采样高 − 实体基底高 + 抬高)。
+            var v00 = RingPoint(centerSimX, centerSimZ, radius - width / 2, a0, baseY);
+            var v01 = RingPoint(centerSimX, centerSimZ, radius - width / 2, a1, baseY);
+            var v10 = RingPoint(centerSimX, centerSimZ, radius + width / 2, a0, baseY);
+            var v11 = RingPoint(centerSimX, centerSimZ, radius + width / 2, a1, baseY);
+            st.AddTriangleFan(new[] { v00, v10, v11 });
+            st.AddTriangleFan(new[] { v00, v11, v01 });
+        }
+        var mesh = st.Commit();
+        var instance = new MeshInstance3D { Mesh = mesh };
+        mesh.SurfaceSetMaterial(0, MatFor(color));
+        return instance;
+    }
+
+    private static Vector3 RingPoint(float cx, float cz, float r, float angle, float baseY)
+    {
+        float sx = cx + r * Mathf.Cos(angle);
+        float sz = cz + r * Mathf.Sin(angle);
+        float y = TerrainHeightService.Sample(sx, sz) - baseY + 0.08f;
+        return new Vector3(sx - cx, y, sz - cz);
+    }
+
     /// <summary>把闭合折线画成带宽度的贴地带条:每段一个四边形(内外各偏 width/2,
     /// 沿 XZ 平面法线),接缝处允许少量重叠(视觉无缝)。</summary>
     private static void AppendOutlineBand(SurfaceTool st, Vector3[] points, float width)

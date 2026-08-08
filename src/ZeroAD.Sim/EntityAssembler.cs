@@ -115,7 +115,8 @@ namespace ZeroAD.Sim
                     Damage = dmg,
                     Range = stats?.AttackRange ?? 3.0f,
                     Rate = stats?.AttackRate ?? 1.0f,
-                    IsRanged = stats?.AttackIsRanged ?? false
+                    IsRanged = stats?.AttackIsRanged ?? false,
+                    HasRangeOverlay = stats?.HasRangeOverlay ?? false
                 });
                 if (stats != null)
                 {
