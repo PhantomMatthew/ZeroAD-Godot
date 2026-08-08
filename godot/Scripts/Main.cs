@@ -932,12 +932,12 @@ public sealed partial class Main : Node3D
 				// 镜像世界后太阳必须随之镜像,否则面向相机的坡面整体背光发暗。
 				(MapEnvironment.LoadFromXml(xmlPath) ?? MapEnvironment.Default).Apply(_light, _env);
 				var water = WaterRenderer.LoadWaterFromXml(xmlPath);
-				float waterHeight = water?.height ?? -999f;
+				float waterHeight = water?.Height ?? -999f;
 				if (water != null)
 				{
-					var waterMesh = WaterRenderer.CreateWaterPlane(water.Value.height, water.Value.color, pmp.MapSizeMeters);
+					var waterMesh = WaterRenderer.CreateWaterPlane(water, pmp.MapSizeMeters);
 					_worldRoot.AddChild(waterMesh);
-					GD.Print($"Water: height={water.Value.height:F1}m color={water.Value.color}");
+					GD.Print($"Water: height={water.Height:F1}m color={water.Color}");
 				}
 
 				// Record the authoritative sim-side water height (matches CCmpWaterManager).

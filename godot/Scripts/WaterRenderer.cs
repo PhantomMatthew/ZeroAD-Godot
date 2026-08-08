@@ -6,7 +6,12 @@ namespace ZeroAD.Godot;
 
 public static class WaterRenderer
 {
-    public static (float height, Color color)? LoadWaterFromXml(string xmlPath)
+    /// <summary>地图 XML 的水体参数(Environment/Water/WaterBody;原版 WaterManager 字段)。</summary>
+    public sealed record WaterSpec(
+        float Height, Color Color, Color Tint,
+        float Waviness, float Murkiness, float WindAngle, string Type);
+
+    public static WaterSpec? LoadWaterFromXml(string xmlPath)
     {
         if (!File.Exists(xmlPath)) return null;
 
@@ -17,48 +22,86 @@ public static class WaterRenderer
             if (body == null) return null;
 
             var heightEl = body.Element("Height");
-            if (heightEl == null || !float.TryParse(heightEl.Value, out float height))
+            if (heightEl == null || !float.TryParse(heightEl.Value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float height))
                 return null;
 
-            var colorEl = body.Element("Color");
-            Color color = new(0.3f, 0.25f, 0.14f, 0.7f);
-            if (colorEl != null)
+            Color ParseColor(XElement? el, Color dflt)
             {
-                float r = float.TryParse(colorEl.Attribute("r")?.Value, out var rv) ? rv : 0.3f;
-                float g = float.TryParse(colorEl.Attribute("g")?.Value, out var gv) ? gv : 0.25f;
-                float b = float.TryParse(colorEl.Attribute("b")?.Value, out var bv) ? bv : 0.14f;
-                color = new Color(r, g, b, 0.75f);
+                if (el == null) return dflt;
+                float F(string n, float d) => float.TryParse(el.Attribute(n)?.Value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : d;
+                return new Color(F("r", dflt.R), F("g", dflt.G), F("b", dflt.B));
             }
+            float F2(string elName, float d) => float.TryParse(body.Element(elName)?.Value,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : d;
 
-            return (height, color);
+            var color = ParseColor(body.Element("Color"), new Color(0.3f, 0.25f, 0.14f));
+            var tint = ParseColor(body.Element("Tint"), color);
+            float waviness = F2("Waviness", 6f);
+            float murkiness = F2("Murkiness", 0.9f);
+            float windAngle = F2("WindAngle", 0f);
+            string type = body.Element("Type")?.Value.Trim() ?? "lake";
+            if (type.Length == 0) type = "lake";
+
+            return new WaterSpec(height, color, tint, waviness, murkiness, windAngle, type);
         }
         catch { return null; }
     }
 
-    public static MeshInstance3D CreateWaterPlane(float height, Color color, float mapSize)
+    public static MeshInstance3D CreateWaterPlane(float height, Color color, float mapSize) =>
+        CreateWaterPlane(new WaterSpec(height, color, color, 6f, 0.9f, 0f, "lake"), mapSize);
+
+    public static MeshInstance3D CreateWaterPlane(WaterSpec spec, float mapSize)
     {
         var plane = new PlaneMesh();
         plane.Size = new Vector2(mapSize * 1.5f, mapSize * 1.5f);
-        plane.Material = CreateWaterMaterial(color);
+        plane.Material = CreateWaterMaterial(spec);
 
         var instance = new MeshInstance3D
         {
             Mesh = plane,
-            Position = new Vector3(mapSize * 0.5f, height, mapSize * 0.5f),
+            Position = new Vector3(mapSize * 0.5f, spec.Height, mapSize * 0.5f),
         };
 
         return instance;
     }
 
-    private static StandardMaterial3D CreateWaterMaterial(Color color)
+    private static readonly System.Lazy<Shader> _waterShader =
+        new(() => GD.Load<Shader>("res://Shaders/water.gdshader"));
+
+    private static Material CreateWaterMaterial(WaterSpec spec)
     {
-        var mat = new StandardMaterial3D();
-        mat.AlbedoColor = color;
-        mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-        mat.Metallic = 0.3f;
-        mat.Roughness = 0.2f;
-        mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-        mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel;
+        var mat = new ShaderMaterial { Shader = _waterShader.Value };
+        mat.SetShaderParameter("water_color", spec.Color);
+        mat.SetShaderParameter("water_tint", spec.Tint);
+        mat.SetShaderParameter("murkiness", spec.Murkiness);
+        mat.SetShaderParameter("waviness", spec.Waviness);
+        mat.SetShaderParameter("wind_angle", spec.WindAngle);
+        // 水波法线序列帧(原版 art/textures/animated/water/<type>/normal00XX.png,
+        // 取两帧错相;junction 直读)。缺失则波纹退化为微闪。
+        var na = LoadWaterNormal(spec.Type, 1);
+        var nb = LoadWaterNormal(spec.Type, 2);
+        if (na != null) mat.SetShaderParameter("normal_a", na);
+        if (nb != null) mat.SetShaderParameter("normal_b", nb);
         return mat;
+    }
+
+    private static Texture2D? LoadWaterNormal(string type, int index)
+    {
+        string projRoot = ProjectSettings.GlobalizePath("res://");
+        foreach (var up in new[] { "..", "../.." })
+        {
+            string p = Path.GetFullPath(Path.Combine(projRoot, up,
+                "binaries", "data", "mods", "public", "art", "textures", "animated", "water",
+                type, $"normal{index:D4}.png"));
+            if (!File.Exists(p)) continue;
+            var img = Image.LoadFromFile(p);
+            if (img != null) return ImageTexture.CreateFromImage(img);
+        }
+        return null;
     }
 }

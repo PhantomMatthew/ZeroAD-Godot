@@ -138,8 +138,7 @@ public static class MapSceneBuilder
             var water = WaterRenderer.LoadWaterFromXml(xmlPath);
             if (water != null)
             {
-                var waterMesh = WaterRenderer.CreateWaterPlane(
-                    water.Value.height, water.Value.color, pmp.MapSizeMeters);
+                var waterMesh = WaterRenderer.CreateWaterPlane(water, pmp.MapSizeMeters);
                 waterMesh.Name = "Water";
                 mirror.AddChild(waterMesh);
                 hasWater = true;
