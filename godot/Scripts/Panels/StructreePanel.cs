@@ -7,54 +7,108 @@ using ZeroAD.Sim.Content;
 
 namespace ZeroAD.Godot;
 
-/// <summary>科技树页（structree）。按 phase（village/town/city）分栏展示文明建筑树。
-/// 镜像原版 gui/reference/structree 的布局，简化为流式排列（不做精确坐标）。
-/// 从 MainMenu → Learn to Play → Structure Tree 打开。</summary>
+/// <summary>科技树页(structree)。镜像原版 gui/reference/structree 的布局:
+/// ModernDialog 大窗 + 红绸标题 "Structure Tree";头部 = 文明徽标圆章 + 文明名 +
+/// 史述(滚动) + 右侧 Civilization 下拉;主体 = 三个相位段(金数徽块 I/II/III +
+/// 建筑列:专名标题 + 大立绘 + 生产小图标格);底部右置 Close。
+/// 从 MainMenu → Learn to Play → Structure Tree / 会话顶栏徽标打开。</summary>
 public sealed partial class StructreePanel : ModalPanelBase
 {
     private OptionButton _civSelector = null!;
-    private Label _civInfo = null!;
-    private HBoxContainer _columns = null!;
+    private TextureRect _emblem = null!;
+    private Label _civName = null!;
+    private Label _civHistory = null!;
+    private VBoxContainer _sections = null!;
 
     private Dictionary<string, CivData> _civs = new();
     private TemplateLoader? _templates;
     private TechCatalog? _techCatalog;
 
-    public StructreePanel(int layer = 58) => Layer = layer;  // 注：ModalPanelBase 默认 55
+    // 相位徽块贴图(原版 structree TreeSection 的 I/II/III 金数徽章)。
+    private static readonly string[] PhaseEmblems =
+    {
+        "panel_phase_emblems_village.png", "panel_phase_emblems_town.png", "panel_phase_emblems_city.png",
+    };
+
+    /// <summary>文明代码 → 徽标文件名(原版 civData.Emblem 命名约定;与 HUD 同表)。</summary>
+    private static readonly Dictionary<string, string> CivEmblemNames = new(System.StringComparer.Ordinal)
+    {
+        ["athen"] = "athenians", ["spart"] = "spartans", ["gaul"] = "celts",
+        ["brit"] = "britons", ["rome"] = "romans", ["kart"] = "carthaginians",
+        ["ptol"] = "ptolemies", ["sele"] = "seleucids", ["kush"] = "kushites",
+        ["maur"] = "mauryas", ["iber"] = "iberians", ["pers"] = "achaemenids",
+        ["theb"] = "thebans", ["mace"] = "macedonians",
+    };
+
+    public StructreePanel(int layer = 58) => Layer = layer;  // 注:ModalPanelBase 默认 55
 
     public override void _Ready()
     {
         LoadData();
-        var (content, _) = BuildShell("Structure Tree", 960);
+        var (content, _) = BuildShell("Structure Tree", 1000);
 
-        // 顶部：文明选择器 + 文明简介
+        // ── 头部:徽标圆章 + 文明名/史述 + 右侧 Civilization 下拉 ──
         var header = new HBoxContainer();
+        header.AddThemeConstantOverride("separation", 12);
         content.AddChild(header);
+
+        _emblem = new TextureRect
+        {
+            CustomMinimumSize = new Vector2(96, 96),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+        };
+        header.AddChild(_emblem);
+
+        var nameBox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        header.AddChild(nameBox);
+        _civName = new Label();
+        _civName.AddThemeFontSizeOverride("font_size", 20);
+        nameBox.AddChild(_civName);
+        var histScroll = new ScrollContainer
+        {
+            CustomMinimumSize = new Vector2(0, 76),
+            SizeFlagsVertical = Control.SizeFlags.ShrinkEnd,
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+        };
+        _civHistory = new Label
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+        };
+        _civHistory.AddThemeFontSizeOverride("font_size", 12);
+        histScroll.AddChild(_civHistory);
+        nameBox.AddChild(histScroll);
+
+        var civPick = new VBoxContainer();
+        header.AddChild(civPick);
+        var civLbl = new Label { Text = "Civilization:", HorizontalAlignment = HorizontalAlignment.Right };
+        civPick.AddChild(civLbl);
         _civSelector = new OptionButton { CustomMinimumSize = new Vector2(200, 0) };
         foreach (var civ in _civs.Values.OrderBy(c => c.Name))
-            _civSelector.AddItem($"{civ.Name} ({civ.Code})");
+            _civSelector.AddItem(civ.Name);
         _civSelector.ItemSelected += OnCivSelected;
-        header.AddChild(_civSelector);
-        _civInfo = new Label { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, AutowrapMode = TextServer.AutowrapMode.WordSmart };
-        header.AddChild(_civInfo);
+        civPick.AddChild(_civSelector);
 
-        // 中部：3 个 phase 列（ScrollContainer 包裹)。
+        // ── 主体:相位段滚动区(竖滚;横向内容超宽时横滚)──
         // 必须给定最小高宽:面板按内容自动撑高,ExpandFill 的滚动区在自动求高中
         // 最小高=0 → 列内容全被压没(此前"有数据无显示"的成因)。
         var scroll = new ScrollContainer
         {
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            CustomMinimumSize = new Vector2(920, 460),
+            CustomMinimumSize = new Vector2(940, 430),
         };
-        _columns = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        _columns.AddThemeConstantOverride("separation", 12);
-        scroll.AddChild(_columns);
+        _sections = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        _sections.AddThemeConstantOverride("separation", 10);
+        scroll.AddChild(_sections);
         content.AddChild(scroll);
 
-        // 底部：Close
-        var closeBtn = new Button { Text = "Close", SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter };
+        // ── 底部:Close(右置,原版 CivInfoButton 未移植——文明信息已在头部)──
+        var bottomRow = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.End };
+        content.AddChild(bottomRow);
+        var closeBtn = new Button { Text = "Close", CustomMinimumSize = new Vector2(150, 0) };
         closeBtn.Pressed += Close;
-        content.AddChild(closeBtn);
+        bottomRow.AddChild(closeBtn);
 
         // 默认选第一个文明
         if (_civSelector.ItemCount > 0)
@@ -80,87 +134,137 @@ public sealed partial class StructreePanel : ModalPanelBase
     private void ShowCiv(int index)
     {
         if (index < 0 || index >= _civSelector.ItemCount) return;
-        var code = _civs.Values.OrderBy(c => c.Name).ElementAt(index).Code;
-        if (!_civs.TryGetValue(code, out var civ)) return;
-        _civInfo.Text = civ.History;
+        var civ = _civs.Values.OrderBy(c => c.Name).ElementAt(index);
+        _civName.Text = civ.Name;
+        _civHistory.Text = civ.History;
 
-        // 清空列
-        foreach (var child in _columns.GetChildren())
+        // 徽标圆章(session/portraits/emblems/emblem_<名>.png)。
+        string emblemName = CivEmblemNames.GetValueOrDefault(civ.Code, "hellenes");
+        _emblem.Texture = PortraitLoader.Load($"emblems/emblem_{emblemName}.png");
+
+        foreach (var child in _sections.GetChildren())
             ((Node)child).QueueFree();
 
         if (_templates == null || _techCatalog == null)
         {
-            GD.PrintErr($"[Structree] ShowCiv({code}): templates={_templates != null} techCatalog={_techCatalog != null} — LoadData 未完成");
+            GD.PrintErr($"[Structree] ShowCiv({civ.Code}): LoadData 未完成");
             return;
         }
 
         var tree = TechTreeBuilder.Build(civ, _templates, _techCatalog);
-        foreach (var phase in tree.Phases)
-            _columns.AddChild(BuildPhaseColumn(phase));
+        for (int i = 0; i < tree.Phases.Count; i++)
+            _sections.AddChild(BuildPhaseSection(tree.Phases[i], i));
     }
 
-    private Control BuildPhaseColumn(PhaseColumn phase)
+    /// <summary>相位段:左 = 金数徽块(村/镇/城),右 = 建筑列横排。</summary>
+    private Control BuildPhaseSection(PhaseColumn phase, int phaseIndex)
     {
-        var col = new VBoxContainer { CustomMinimumSize = new Vector2(300, 0), SizeFlagsVertical = Control.SizeFlags.Fill };
-        var titleLabel = new Label { Text = TitleCasePhase(phase.PhaseName), HorizontalAlignment = HorizontalAlignment.Center };
-        titleLabel.AddThemeFontSizeOverride("font_size", 18);
-        col.AddChild(titleLabel);
+        var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        row.AddThemeConstantOverride("separation", 10);
+
+        var emblemTex = LoadSessionTex(phaseIndex < PhaseEmblems.Length ? PhaseEmblems[phaseIndex] : PhaseEmblems[0]);
+        var emblem = new TextureRect
+        {
+            Texture = emblemTex,
+            CustomMinimumSize = new Vector2(110, 110),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+            SizeFlagsVertical = Control.SizeFlags.ShrinkBegin,
+        };
+        row.AddChild(emblem);
+
+        var buildingsBox = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        buildingsBox.AddThemeConstantOverride("separation", 6);
+        row.AddChild(buildingsBox);
 
         if (phase.Buildings.Count == 0)
         {
-            col.AddChild(new Label { Text = "(无建筑)", HorizontalAlignment = HorizontalAlignment.Center });
-            return col;
+            buildingsBox.AddChild(new Label { Text = "(无建筑)" });
+            return row;
+        }
+        foreach (var bldg in phase.Buildings)
+            buildingsBox.AddChild(BuildBuildingColumn(bldg));
+        return row;
+    }
+
+    /// <summary>建筑列(原版 EntityBox):专名标题 + 大立绘 + 生产小图标格。</summary>
+    private Control BuildBuildingColumn(TreeEntry bldg)
+    {
+        var col = new VBoxContainer { CustomMinimumSize = new Vector2(132, 0) };
+        col.AddThemeConstantOverride("separation", 2);
+
+        var name = new Label
+        {
+            Text = bldg.DisplayName,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+        };
+        name.AddThemeFontSizeOverride("font_size", 13);
+        col.AddChild(name);
+
+        var tex = PortraitLoader.Load(bldg.Icon);
+        if (tex != null)
+        {
+            col.AddChild(new TextureRect
+            {
+                Texture = tex,
+                CustomMinimumSize = new Vector2(96, 96),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,
+            });
         }
 
-        foreach (var bldg in phase.Buildings)
-            col.AddChild(BuildBuildingBox(bldg));
+        // 生产图标格(单位+科技,小图标流式换行;原版 ProductionRow 图标阵列)。
+        var prod = new HFlowContainer();
+        prod.AddThemeConstantOverride("h_separation", 2);
+        prod.AddThemeConstantOverride("v_separation", 2);
+        foreach (var unit in bldg.TrainableUnits)
+        {
+            var uTex = PortraitLoader.Load(unit.Icon);
+            if (uTex == null) continue;
+            prod.AddChild(new TextureRect
+            {
+                Texture = uTex,
+                CustomMinimumSize = new Vector2(28, 28),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                TooltipText = unit.DisplayName,
+            });
+        }
+        foreach (var tech in bldg.ResearchableTechs)
+        {
+            var tTex = PortraitLoader.Load(tech.Icon);
+            if (tTex == null) continue;
+            prod.AddChild(new TextureRect
+            {
+                Texture = tTex,
+                CustomMinimumSize = new Vector2(28, 28),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                TooltipText = tech.DisplayName,
+            });
+        }
+        col.AddChild(prod);
         return col;
     }
 
-    private Control BuildBuildingBox(TreeEntry bldg)
+    /// <summary>ui/session/ 下的贴图(junction 直读,相位徽块用)。</summary>
+    private static Texture2D? LoadSessionTex(string file)
     {
-        var box = new PanelContainer { CustomMinimumSize = new Vector2(280, 0) };
-        var bg = new StyleBoxFlat { BgColor = new Color(0.1f, 0.09f, 0.08f, 0.9f), BorderColor = new Color(0.4f, 0.35f, 0.25f) };
-        bg.SetBorderWidthAll(1); bg.SetContentMarginAll(8);
-        box.AddThemeStyleboxOverride("panel", bg);
-
-        var vbox = new VBoxContainer();
-        box.AddChild(vbox);
-
-        // 建筑图标 + 名称
-        var iconRow = new HBoxContainer();
-        var tex = PortraitLoader.Load(bldg.Icon);
-        if (tex != null)
-            iconRow.AddChild(new TextureRect { Texture = tex, CustomMinimumSize = new Vector2(48, 48), ExpandMode = TextureRect.ExpandModeEnum.FitWidth });
-        iconRow.AddChild(new Label { Text = bldg.DisplayName, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-        vbox.AddChild(iconRow);
-
-        // 可训练单位
-        if (bldg.TrainableUnits.Count > 0)
+        string projRoot = ProjectSettings.GlobalizePath("res://");
+        foreach (var up in new[] { "..", "../.." })
         {
-            vbox.AddChild(new Label { Text = "单位:" });
-            foreach (var unit in bldg.TrainableUnits)
-            {
-                var row = new HBoxContainer();
-                var uTex = PortraitLoader.Load(unit.Icon);
-                if (uTex != null)
-                    row.AddChild(new TextureRect { Texture = uTex, CustomMinimumSize = new Vector2(32, 32), ExpandMode = TextureRect.ExpandModeEnum.FitWidth });
-                row.AddChild(new Label { Text = unit.DisplayName });
-                vbox.AddChild(row);
-            }
+            string p = Path.GetFullPath(Path.Combine(projRoot, up,
+                "binaries", "data", "mods", "public", "art", "textures", "ui", "session", file));
+            if (!File.Exists(p)) continue;
+            var img = Image.LoadFromFile(p);
+            if (img != null) return ImageTexture.CreateFromImage(img);
         }
-
-        // 可研究科技
-        if (bldg.ResearchableTechs.Count > 0)
-        {
-            vbox.AddChild(new Label { Text = "科技:" });
-            foreach (var tech in bldg.ResearchableTechs)
-                vbox.AddChild(new Label { Text = $"  {tech.DisplayName}" });
-        }
-        return box;
+        return null;
     }
 
-    // ── 数据加载（静态，会话外可用）──
+    // ── 数据加载(静态,会话外可用)──
 
     private void LoadData()
     {
@@ -182,12 +286,5 @@ public sealed partial class StructreePanel : ModalPanelBase
         _templates.LoadAllTemplates();
         _techCatalog = TechnologyLoader.LoadAll(techsPath);
         GD.Print($"[Structree] loaded {_civs.Count} civs, {_templates.Cache.Count} templates, {_techCatalog.Technologies.Count} techs");
-    }
-
-    private static string TitleCasePhase(string phase)
-    {
-        // phase_village → Village
-        var parts = phase.Split('_');
-        return parts.Length > 1 ? char.ToUpper(parts[1][0]) + parts[1].Substring(1) : phase;
     }
 }

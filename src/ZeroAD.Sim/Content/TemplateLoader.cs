@@ -123,6 +123,10 @@ namespace ZeroAD.Sim.Content
                 var genericName = identity.GetChild("GenericName");
                 if (genericName.IsOk)
                     stats.GenericName = genericName.ToString();
+                // SpecificName(原语言专名,如 Agora/Oikos;structree 建筑列标题用,原版同)。
+                var specificName = identity.GetChild("SpecificName");
+                if (specificName.IsOk)
+                    stats.SpecificName = specificName.ToString();
                 var category = identity.GetChild("Category");
                 if (category.IsOk)
                     stats.Category = category.ToString();
@@ -804,6 +808,8 @@ namespace ZeroAD.Sim.Content
     {
         public string Name = "Entity";
         public string GenericName = "";
+        /// <summary>Identity/SpecificName(原语言专名,如 Agora、Oikos;科技树建筑列标题用)。</summary>
+        public string SpecificName = "";
         public string Category = "";
         /// <summary>Identity/Requirements/Techs 原文(空格分隔;含否定 token)。
         /// 空 = 无前置。阶段过滤:全部肯定 token 已研究才显示/可用。</summary>

@@ -71,7 +71,11 @@ public static class TechTreeBuilder
                     .Select(t => MakeTechEntry(t!, techCatalog))!;
 
                 buildings.Add(new TreeEntry(
-                    tmpl, stats.GenericName.Length > 0 ? stats.GenericName : stats.Name,
+                    tmpl,
+                    // 建筑列标题用原语言专名(原版 structree 同:Agora/Oikos/Apothēkē…);
+                    // 无专名回退 GenericName。
+                    stats.SpecificName.Length > 0 ? stats.SpecificName
+                        : stats.GenericName.Length > 0 ? stats.GenericName : stats.Name,
                     stats.Icon, phaseIdx,
                     units.ToList(), techs.ToList()));
             }
