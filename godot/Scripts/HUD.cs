@@ -187,10 +187,12 @@ public sealed partial class HUD : CanvasLayer
 
         // 对齐 C++ TopPanel 右侧(top_panel/MenuButton.xml + IconButtons/*):
         // 从左到右 GameSpeed(100%−284) / Diplomacy / Trade / MatchSettings(28×28 图标,
-        // 间距 2) / **Menu 在最右**(100%−164..100%−8,156×28 文字按钮,StoneButtonFancy)。
+        // 间距 2) / **Menu 在最右**(100%−164..100%-8,156×28 文字按钮,StoneButtonFancy)。
+        // 我们比上游多一个暂停按钮(34px)——盒子左扩 38px 容纳,否则 Menu 被挤出屏幕
+        // (内容 314px > 上游盒宽 276px,超界部分被截断)。
         var menuBox = new HBoxContainer();
         menuBox.SetAnchorsPreset(Control.LayoutPreset.TopRight);
-        menuBox.OffsetLeft = -284; menuBox.OffsetTop = 4;
+        menuBox.OffsetLeft = -322; menuBox.OffsetTop = 4;
         menuBox.OffsetRight = -8; menuBox.OffsetBottom = 32;
         menuBox.AddThemeConstantOverride("separation", 2);
         _topBar.AddChild(menuBox);

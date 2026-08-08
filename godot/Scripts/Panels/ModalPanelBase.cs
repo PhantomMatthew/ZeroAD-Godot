@@ -45,6 +45,12 @@ public abstract partial class ModalPanelBase : CanvasLayer
             GrowVertical = Control.GrowDirection.Both,
             MouseFilter = Control.MouseFilterEnum.Stop,
         };
+        // 窄屏保护:内容最小宽超过逻辑视口时,居中对称溢出会把左右两侧一起截掉
+        // (科技树 920px 在 gui.scale 放大/小窗下必中)——钳到视口留边,内容走滚动。
+        _shellPanel = panel;
+        _shellMinWidth = minWidth;
+        ClampShellToViewport();
+        GetViewport().SizeChanged += ClampShellToViewport;
 
         // ModernDialog 贴图(mods/mod/gui/common/modern/sprites.xml L104);binaries 缺失时回退平底+描边。
         // 装饰件先于 panel 挂树 → 画在内容之下;标题文字后挂 → 画在最上。
@@ -141,6 +147,17 @@ public abstract partial class ModalPanelBase : CanvasLayer
     }
 
     private PanelContainer? _skinPanel;
+    private PanelContainer? _shellPanel;
+    private float _shellMinWidth;
+
+    /// <summary>外壳宽度钳到视口(留 48px 边距);视口 SizeChanged 时重算。</summary>
+    private void ClampShellToViewport()
+    {
+        if (_shellPanel == null) return;
+        float vw = GetViewport().GetVisibleRect().Size.X;
+        float maxW = Mathf.Max(320f, vw - 48f);
+        _shellPanel.CustomMinimumSize = new Vector2(Mathf.Min(_shellMinWidth, maxW), 0);
+    }
     private List<SkinPiece>? _skinPieces;
 
     private void OnSkinPanelResized()
