@@ -291,6 +291,13 @@ public static class AudioManager
                 if (rootEl != null)
                 {
                     string prefix = rootEl.Element("Path")?.Value.Trim() ?? "";
+                    // 原版 SoundGroup 的 <Path> 自带 "audio/" 前缀且多数无尾斜杠
+                    // (如 "audio/interface/select/building");我们的 ResolveAudio
+                    // 会再拼 audio/ 根——统一去前缀、补斜杠,否则整条动作音静默。
+                    if (prefix.StartsWith("audio/", StringComparison.Ordinal))
+                        prefix = prefix[6..];
+                    if (prefix.Length > 0 && !prefix.EndsWith('/'))
+                        prefix += "/";
                     var files = new List<string>();
                     foreach (var s in rootEl.Elements("Sound"))
                         files.Add(prefix + s.Value.Trim());
