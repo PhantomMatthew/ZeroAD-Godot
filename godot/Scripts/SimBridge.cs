@@ -2353,9 +2353,14 @@ public sealed partial class SimBridge : Node
             if (pos == null) continue;
             var node = kvp.Value;
 
+            // 地基:Y 由 TickFoundations 按进度逐 tick 升起,位置同步不得用地形高度
+            // 覆盖(否则建筑永远满高显示,"一下子出现")。riseHeight meta 是地基标记。
+            float py = node.HasMeta("riseHeight")
+                ? node.Position.Y
+                : TerrainHeightService.Sample(pos.Position.X.ToFloat(), pos.Position.Z.ToFloat());
             var newPos = new Vector3(
                 pos.Position.X.ToFloat(),
-                TerrainHeightService.Sample(pos.Position.X.ToFloat(), pos.Position.Z.ToFloat()),
+                py,
                 pos.Position.Z.ToFloat());
 
             // 推给插值器记录 prev/curr(新单位/传送 snap 内置);渲染帧在 _Process 末尾

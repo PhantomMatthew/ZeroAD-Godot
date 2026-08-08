@@ -419,9 +419,75 @@ public sealed partial class Main : Node3D
 		AudioManager.StartPlaylist("peace");   // 局内音乐(原版 PEACE 列表 shuffle)
 		AudioManager.StartAmbient("ambient/dayscape/day_temperate.xml", this);   // 环境音景循环
 
+		// dev 自检钩子:ZEROAD_AUTOBUILD=1 时开局 ~8s 后自动下令建一栋住宅
+		// (建造动画/地基渐显的无人值守验证;正常游戏不触发)。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_AUTOBUILD") == "1")
+			AutobuildDeferred();
+
 		GD.Print(_isTutorial
 			? "[Tutorial] Introductory Tutorial started"
 			: $"[Tutorial] MS6 Game started: player={playerId}");
+	}
+
+	/// <summary>dev 钩子:找本地玩家的 CC + 一个工人,在 CC 旁下个住宅建造令。</summary>
+	private async void AutobuildDeferred()
+	{
+		await ToSignal(GetTree().CreateTimer(8.0), SceneTreeTimer.SignalName.Timeout);
+		int lp = (int)_sim.LocalPlayerId;
+		Vector3? ccPos = null;
+		string civ = "spart";
+		ZeroAD.Sim.EntityId builder = default;
+		bool foundBuilder = false;
+		foreach (var e in _sim.Sim.AllEntities)
+		{
+			var own = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.OwnershipComponent>(e);
+			if (own == null || own.PlayerId != lp) continue;
+			var id = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(e);
+			if (id == null) continue;
+			if (ccPos == null && id.TemplateName.Contains("/civil_centre"))
+			{
+				civ = id.TemplateName.Split('/')[1];
+				var p = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.PositionComponent>(e);
+				if (p != null) ccPos = new Vector3(p.Position.X.ToFloat(), 0, p.Position.Z.ToFloat());
+			}
+			if (!foundBuilder && _sim.Sim.QueryInterface<ZeroAD.Sim.Components.BuilderComponent>(e) != null)
+			{
+				builder = e; foundBuilder = true;
+			}
+		}
+		if (ccPos == null || !foundBuilder)
+		{
+			GD.PrintErr("[Autobuild] no CC or builder found");
+			return;
+		}
+		string house = $"structures/{civ}/house";
+		// 逐偏移尝试(放置校验不合法会被执行端拒绝,换下一个)。
+		foreach (var (ox, oz) in new[] { (18f, 0f), (0f, 18f), (-18f, 0f), (0f, -18f), (18f, 18f), (-18f, -18f) })
+		{
+			_sim.CommandBuild(builder, house, ccPos.Value.X + ox, ccPos.Value.Z + oz);
+			// 命令经锁步延迟两回合生效,稍等再数地基。
+			await ToSignal(GetTree().CreateTimer(1.0), SceneTreeTimer.SignalName.Timeout);
+			bool spawned = false;
+			foreach (var e in _sim.Sim.AllEntities)
+				if (_sim.Sim.QueryInterface<ZeroAD.Sim.Components.FoundationComponent>(e) != null) { spawned = true; break; }
+			if (spawned)
+			{
+				GD.Print($"[Autobuild] ordered {house} at +({ox},{oz}) — watch the rise");
+				// 视口自证:镜头对准工地,按进度连拍存 user://autobuild_t*.png。
+				float h = TerrainHeightService.Sample(ccPos.Value.X + ox, ccPos.Value.Z + oz);
+				_camera.SetFocus(new Vector3(ccPos.Value.X + ox, h, ccPos.Value.Z + oz));
+				for (int shot = 0; shot < 4; shot++)
+				{
+					await ToSignal(GetTree().CreateTimer(5.0), SceneTreeTimer.SignalName.Timeout);
+					var img = GetViewport().GetTexture().GetImage();
+					string shotPath = $"user://autobuild_t{shot * 5 + 14}s.png";
+					img.SavePng(shotPath);
+					GD.Print($"[Autobuild] shot saved: {shotPath}");
+				}
+				return;
+			}
+		}
+		GD.PrintErr("[Autobuild] all placements rejected");
 	}
 
 	/// <summary>Build the in-session UI chrome (HUD, game-over overlay, pause menu, tier-2
