@@ -743,7 +743,7 @@ public sealed partial class SimBridge : Node
         // SyncVisuals only updates Position, never Rotation, so this persists for the life of
         // the entity. Matches C++ CmpPosition::SetYRotation at scenario load.
         if (_entityNodes.TryGetValue(entity, out var bldgNode) && def.OrientationY != 0f)
-            bldgNode.Rotation = new Vector3(0, -def.OrientationY, 0);   // 镜像根(Scale.z=-1)下 yaw 取负,否则朝向镜面反转
+            bldgNode.Rotation = new Vector3(0, def.OrientationY, 0);
         return entity;
     }
 
@@ -770,7 +770,7 @@ public sealed partial class SimBridge : Node
         // Authored yaw — overruled the first time the unit walks (UpdateUnitAnimation
         // yaws to travel direction), but until then the unit should face as placed.
         if (_entityNodes.TryGetValue(entity, out var unitNode) && def.OrientationY != 0f)
-            unitNode.Rotation = new Vector3(0, -def.OrientationY, 0);
+            unitNode.Rotation = new Vector3(0, def.OrientationY, 0);
 
         return entity;
     }
@@ -827,7 +827,7 @@ public sealed partial class SimBridge : Node
             isTree ? 2.5f : 1.5f);
         EntityAssembler.RegisterForLos(_sim, entity, def.Template, stats);
         if (_entityNodes.TryGetValue(entity, out var gaiaNode) && def.OrientationY != 0f)
-            gaiaNode.Rotation = new Vector3(0, -def.OrientationY, 0);
+            gaiaNode.Rotation = new Vector3(0, def.OrientationY, 0);
         return entity;
     }
 
@@ -845,7 +845,7 @@ public sealed partial class SimBridge : Node
 
         Node3D? node = ModelLibrary.InstantiateForTemplate(template, x, z, color);
         if (node != null)
-            node.Rotation = new Vector3(0, -yaw, 0);
+            node.Rotation = new Vector3(0, yaw, 0);
         else
             node = MakeFallbackBox(template, x, z, color);
 
@@ -862,7 +862,7 @@ public sealed partial class SimBridge : Node
         box.MaterialOverride = new StandardMaterial3D { AlbedoColor = color };
         float h = TerrainHeightService.Sample(x, z);
         box.Position = new Vector3(x, h, z);
-        box.Rotation = new Vector3(0, -yaw, 0);
+        box.Rotation = new Vector3(0, yaw, 0);
         return box;
     }
 

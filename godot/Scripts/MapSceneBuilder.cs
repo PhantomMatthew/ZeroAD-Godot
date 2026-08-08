@@ -171,7 +171,7 @@ public static class MapSceneBuilder
                 if (node == null) continue;
             }
             node.Name = $"{def.Template.Replace('/', '_')}_{def.Uid}";
-            node.Rotation = new Vector3(0f, -def.OrientationY, 0f);   // 镜像根下 yaw 取负
+            node.Rotation = new Vector3(0f, def.OrientationY, 0f);
             node.SetMeta("template", def.Template);
             node.SetMeta("player", def.Player);
             entityRoot.AddChild(node);
