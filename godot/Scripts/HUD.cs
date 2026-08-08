@@ -179,7 +179,7 @@ public sealed partial class HUD : CanvasLayer
         };
         _civEmblemBtn.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
         _civEmblemBtn.OffsetLeft = -48; _civEmblemBtn.OffsetRight = 48;
-        _civEmblemBtn.OffsetTop = -8; _civEmblemBtn.OffsetBottom = 88;
+        _civEmblemBtn.OffsetTop = -26; _civEmblemBtn.OffsetBottom = 70;
         _civEmblemBtn.GrowHorizontal = Control.GrowDirection.Both;
         _civEmblemBtn.Pressed += () => _main.OpenStructreePanel();
         _topBar.AddChild(_civEmblemBtn);
