@@ -124,27 +124,30 @@ public sealed partial class RTSCamera : Camera3D
         UpdateTransform();
     }
 
-    /// <summary>Positions the orbit camera so its world position matches the scenario's
-    /// authored &lt;Camera&gt; element, deriving yaw/pitch/distance from the delta between
-    /// the camera position and the current focus (look-at). This is how 0 A.D. starts a
-    /// scenario: the Atlas editor's last camera pose is baked into the XML, and the game
-    /// restores it on launch. Subsequent user pan/rotate then update the orbit params
-    /// normally. 输入是 sim 坐标;世界视觉经 _worldRoot 镜像,先把 eye 换到视觉空间再推姿态。</summary>
-    public void PlaceFromScenarioCamera(Vector3 camWorldPos)
+    /// <summary>按场景 XML 的作者机位恢复开局视角(原版 GameView 语义:Position +
+    /// Rotation(航向,0=朝 +z 北) + Declination(俯角)三者直接决定画面;此前忽略
+    /// 两个角度、从"机位→CC"向量反推,Arcadia 视角因此跑偏)。聚焦点 = 视线与地面
+    /// 的交点;镜像世界(vis z = WorldSize − sim z)下世界航向 = −rotation,俯角取负
+    /// (向下看)。输入为 sim 坐标。</summary>
+    public void PlaceFromScenarioCamera(Vector3 camSimPos, float rotation, float declination)
     {
-        Vector3 camVis = new(camWorldPos.X, camWorldPos.Y, TerrainHeightService.MirrorZ(camWorldPos.Z));
-        Vector3 delta = camVis - FocusVisual();
-        float horizDist = Mathf.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
-        // offset = (hd*sin(yaw), vd, hd*cos(yaw)) → yaw = atan2(delta.X, delta.Z)。
-        // Sign matches because both offset.X and delta.X are world-space camera offsets
-        // from focus along the same axes.
-        _yaw = Mathf.Atan2(delta.X, delta.Z);
-        _distance = Mathf.Sqrt(delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z);
-        // offset.Y = distance * sin(-pitch); positive offset.Y (camera above focus) needs
-        // negative pitch (looking down). Inverted atan2 to land on the right sign directly.
-        _pitch = -Mathf.Atan2(delta.Y, horizDist);
-        _pitch = Mathf.Clamp(_pitch, MinPitch, MaxPitch);
-        UpdateTransform();
+        float sinD = Mathf.Max(0.05f, Mathf.Sin(declination));
+        float hd = Mathf.Cos(declination);
+        var fwdSim = new Vector3(Mathf.Sin(rotation) * hd, -sinD, Mathf.Cos(rotation) * hd);
+        // 先按平地估步长,再按地形采样修正一次(坡地图焦点更准)。
+        float t = camSimPos.Y / sinD;
+        float fx = camSimPos.X + fwdSim.X * t;
+        float fz = camSimPos.Z + fwdSim.Z * t;
+        float groundY = TerrainHeightService.Sample(fx, fz);
+        t = Mathf.Max(10f, (camSimPos.Y - groundY) / sinD);
+        fx = camSimPos.X + fwdSim.X * t;
+        fz = camSimPos.Z + fwdSim.Z * t;
+
+        _yaw = -rotation;
+        _pitch = Mathf.Clamp(-declination, MinPitch, MaxPitch);
+        // 视距不做 MaxDistance 上限钳(作者机位优先;首次缩放输入才拉回范围内)。
+        _distance = Mathf.Max(MinDistance, t);
+        SetFocus(new Vector3(fx, groundY, fz));  // SetFocus 内部重采地形 Y 并 UpdateTransform
     }
 
     /// <summary>_focus(sim)的视觉空间坐标:visZ = WorldSize − simZ(对齐 _worldRoot 镜像)。</summary>

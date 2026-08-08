@@ -42,6 +42,12 @@ namespace ZeroAD.Sim.Content
         public float CameraX;
         public float CameraY;
         public float CameraZ;
+        /// <summary>场景相机航向(Camera/Rotation@angle,弧度;0 = 朝 +z 北)。</summary>
+        public float CameraRotation;
+        /// <summary>场景相机俯角(Camera/Declination@angle,弧度;正值向下看)。</summary>
+        public float CameraDeclination;
+        /// <summary>XML 含 &lt;Camera&gt; 元素(场景地图作者机位;含此才做开局相机恢复)。</summary>
+        public bool HasCamera;
         /// <summary>胜利条件列表(EndGameManager;空 = 默认征服)。来自 ScriptSettings.VictoryConditions。</summary>
         public List<string> VictoryConditions = new();
         /// <summary>奇观胜利所需保有秒数(ScriptSettings.WonderVictoryDuration,分钟 → 秒;原版默认 10 分钟)。</summary>
@@ -74,6 +80,7 @@ namespace ZeroAD.Sim.Content
             var camera = root.Element("Camera");
             if (camera != null)
             {
+                data.HasCamera = true;
                 var pos = camera.Element("Position");
                 if (pos != null)
                 {
@@ -81,6 +88,9 @@ namespace ZeroAD.Sim.Content
                     data.CameraY = ParseFloat(pos.Attribute("y")?.Value);
                     data.CameraZ = ParseFloat(pos.Attribute("z")?.Value);
                 }
+                // 航向/俯角(原版 GameView 开局视角由这三者直接决定;缺省 0)。
+                data.CameraRotation = ParseFloat(camera.Element("Rotation")?.Attribute("angle")?.Value);
+                data.CameraDeclination = ParseFloat(camera.Element("Declination")?.Attribute("angle")?.Value);
             }
 
             var entities = root.Element("Entities");
