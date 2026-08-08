@@ -280,6 +280,33 @@ public sealed partial class MainMenu : Control
         _borderBottom = MakeBorderStrip();
         _borderBottom.Visible = false;
         panel.AddChild(_borderBottom);
+
+        // 原版 MainMenuPanel 精灵的另外三条 2px 金边:顶(2 0 100%-2 2)、
+        // 底(2 100%-2 100%-2 100%)、左(0 0 2 100%)——此前只有右缘,左缘金线缺失。
+        var topStrip = new ColorRect
+        {
+            Color = GoldBorder,
+            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 0f,
+            OffsetLeft = 2, OffsetRight = -2, OffsetTop = 0, OffsetBottom = 2,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        panel.AddChild(topStrip);
+        var bottomStrip = new ColorRect
+        {
+            Color = GoldBorder,
+            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 1f, AnchorBottom = 1f,
+            OffsetLeft = 2, OffsetRight = -2, OffsetTop = -2, OffsetBottom = 0,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        panel.AddChild(bottomStrip);
+        var leftStrip = new ColorRect
+        {
+            Color = GoldBorder,
+            AnchorLeft = 0f, AnchorRight = 0f, AnchorTop = 0f, AnchorBottom = 1f,
+            OffsetLeft = 0, OffsetRight = 2, OffsetTop = 0, OffsetBottom = 0,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        panel.AddChild(leftStrip);
     }
 
     private static readonly Color GoldBorder = new(0.90f, 0.75f, 0.31f);
