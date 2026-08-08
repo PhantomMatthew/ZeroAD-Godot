@@ -2174,19 +2174,6 @@ public sealed partial class Main : Node3D
 		// 选中语音(原版 Sound.js select 事件:单位语音/资源/建筑选择声)
 		if (_selectedEntities.Count > 0)
 			PlaySelectionSound("select");
-
-		if (_selectedEntities.Count == 0)
-		{
-			var nearby = _sim.GetEntitiesAtPosition(worldPos.Value, 30f);
-			foreach (var eid in nearby)
-			{
-				var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
-				var node = _sim.EntityNodes.GetValueOrDefault(eid);
-				GD.Print($"[Click] miss at {worldPos.Value:F1} | nearby: {id?.Name ?? "?"} at {node?.Position:F1} dist={node?.Position.DistanceTo(worldPos.Value):F1} isBuilding={id?.IsBuilding}");
-			}
-			if (nearby.Count == 0)
-				GD.Print($"[Click] miss at {worldPos.Value:F1} | NO entities within 30f at all");
-		}
 	}
 
 	private void HandleDragSelect(Vector2 start, Vector2 end)
