@@ -174,8 +174,10 @@ public sealed class BuildManager
 
         // 单锁步命令替代旧 3 连。SimCommandExecutor.ApplyBuild 在执行回合扣费(CanAfford+Spend)、
         // 生地基(owner=_playerId)、派建造者。地基下回合 think 经 AIComponent.RebuildOwned 入 owned。
+        // 朝向 = GUI 默认 3π/4(原版 placement.js DEFAULT_ANGLE;AI 不旋转)。
         _net.SubmitAiCommand(NetCommand.Build(_playerId, builder.Value,
-            AiUtils.MapBuildNameToTemplate(name), Fixed.FromFloat(bx), Fixed.FromFloat(bz)));
+            AiUtils.MapBuildNameToTemplate(name), Fixed.FromFloat(bx), Fixed.FromFloat(bz),
+            Fixed.FromFloat((float)(System.Math.PI * 3.0 / 4.0))));
     }
 }
 
