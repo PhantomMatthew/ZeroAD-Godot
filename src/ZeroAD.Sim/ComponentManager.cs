@@ -468,6 +468,26 @@ namespace ZeroAD.Sim
             return serializer.ComputeHash();
         }
 
+        /// <summary>把单个实体的所有组件 dump 成可读文本(诊断用:F12 选中实体 dump)。
+        /// 复用 TextDumpSerializer,逐组件走 Serialize —— 和 SerializeFullState 同一数据
+        /// 通路,但只取一个实体。用于"为什么不显示/不攻击"类问题的末端反推:选中实体
+        /// dump 一眼看出缺哪个组件、字段值对不对,免去临时加 [DIAG] 打印。</summary>
+        public string DumpEntity(EntityId entity)
+        {
+            var serializer = new Serialization.TextDumpSerializer();
+            serializer.BeginSection($"entity {entity.Value}");
+            serializer.NumberU32("entity", entity.Value);
+            if (_componentsByEntity.TryGetValue(entity, out var components))
+            {
+                foreach (var comp in components.Values.OrderBy(c => c.GetType().Name))
+                {
+                    serializer.BeginSection($"component {comp.GetType().Name}");
+                    comp.Serialize(serializer);
+                }
+            }
+            return serializer.ToString();
+        }
+
         /// <summary>
         /// Save-game serialization: like <see cref="SerializeFullState"/> but with
         /// structural metadata (entity count, component count, component type names)
