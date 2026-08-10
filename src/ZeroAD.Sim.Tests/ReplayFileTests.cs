@@ -195,4 +195,54 @@ public class ReplayFileTests
         ms.Position = 0;
         Assert.Throws<InvalidDataException>(() => ReplayFile.Open(ms));
     }
+
+    [Fact]
+    public void HashLog_RoundTrip_PreservesCheckpoints()
+    {
+        // 录制:写命令流 + 尾部哈希日志段;读回:命令流读完 → 读哈希日志 → 逐条一致。
+        var cm = MakeMinimalWorld();
+        var meta = SampleMeta();
+        var cmds = new[]
+        {
+            (0u, Array.Empty<NetCommand>()),
+            (1u, new[] { NetCommand.Move(1, 1, Fixed.FromInt(5), Fixed.FromInt(6)) }),
+        };
+        // 模拟两个校验点的哈希(实际由 ReplayRecorder 在 OnTurnAdvanced 存入)。
+        var hashes = new Dictionary<uint, byte[]>
+        {
+            [20] = cm.ComputeStateHash(),
+            [40] = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 },
+        };
+
+        using var ms = new MemoryStream();
+        using (var rec = ReplayFile.BeginRecording(ms, meta, cm))
+        {
+            foreach (var (turn, batch) in cmds)
+                rec.WriteTurnBatch(turn, batch);
+            rec.WriteHashLog(hashes);
+        }
+
+        using var reader = ReplayFile.Open(new MemoryStream(ms.ToArray()));
+        // 先读完命令流
+        int batchCount = 0;
+        while (reader.TryReadTurnBatch(out _, out _)) batchCount++;
+        Assert.Equal(2, batchCount);
+        // 再读哈希日志段
+        var readHashes = reader.TryReadHashLog();
+        Assert.Equal(2, readHashes.Count);
+        Assert.Equal(hashes[20], readHashes[20]);
+        Assert.Equal(hashes[40], readHashes[40]);
+    }
+
+    [Fact]
+    public void HashLog_AbsentInOldReplay_ReturnsEmpty()
+    {
+        // 旧录像(无 WriteHashLog 调用)读哈希日志 → 空字典,不报错(向后兼容)。
+        var cm = MakeMinimalWorld();
+        byte[] file = WriteReplay(SampleMeta(), cm, new[] { (0u, Array.Empty<NetCommand>()) });
+        using var reader = ReplayFile.Open(new MemoryStream(file));
+        while (reader.TryReadTurnBatch(out _, out _)) { }
+        var hashes = reader.TryReadHashLog();
+        Assert.Empty(hashes);
+    }
 }

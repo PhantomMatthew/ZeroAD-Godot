@@ -350,7 +350,7 @@ public sealed partial class SimBridge : Node
                 $"Match {stamp}", engineVersion);
             var fs = new System.IO.FileStream(path, System.IO.FileMode.Create);
             var writer = ReplayFile.BeginRecording(fs, meta, _sim);
-            _recorder = new ReplayRecorder(writer, _netTurn, path);
+            _recorder = new ReplayRecorder(writer, _netTurn, path, () => _sim.ComputeStateHash());
         }
         catch (System.Exception ex)
         {

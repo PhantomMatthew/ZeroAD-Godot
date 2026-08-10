@@ -134,7 +134,8 @@ namespace ZeroAD.Sim.Net
         }
     }
 
-    /// <summary>逐回合追加命令批。turn 应单调递增；空回合也必须写以保持回放 turn 算术一致。</summary>
+    /// <summary>逐回合追加命令批。turn 应单调递增；空回合也必须写以保持回放 turn 算术一致。
+    /// 命令流写完后,Dispose 前调 WriteHashLog 写尾部哈希日志段(确定性回归验证用)。</summary>
     public sealed class ReplayWriter : IDisposable
     {
         private readonly BinaryWriter _bw;
@@ -148,6 +149,23 @@ namespace ZeroAD.Sim.Net
             _bw.Write(turn);
             _bw.Write((uint)batch.Length);
             _bw.Write(batch);
+        }
+
+        /// <summary>写尾部哈希日志段(命令流结束后、Dispose 前)。格式:标记字节 0xHA +
+        /// count(uint32) + count × (turn uint32 + 16 字节 MD5)。录像回放时按此段校验
+        /// 每个检查点回合的确定性状态哈希,捕捉 desync 回归。Version 不变——旧 reader
+        /// 在 TryReadTurnBatch 遇到此标记字节会因 batchLen 异常而停止(命令流已读完,
+        /// 流位置 >= 长度则正常返回 false),故向后兼容。</summary>
+        public void WriteHashLog(IReadOnlyDictionary<uint, byte[]> hashes)
+        {
+            _bw.Write((byte)0xAD);  // 段标记(区别于命令流的 turn uint32 首字节)
+            _bw.Write((uint)hashes.Count);
+            foreach (var kv in hashes)
+            {
+                _bw.Write(kv.Key);
+                if (kv.Value.Length != 16) throw new InvalidDataException("hash must be 16 bytes (MD5)");
+                _bw.Write(kv.Value);
+            }
         }
 
         public void Dispose()
@@ -179,14 +197,21 @@ namespace ZeroAD.Sim.Net
             _maxTurn = 0;
         }
 
-        /// <summary>读下一条命令批。返回 false 表示命令流结束（录像播完）。</summary>
+        /// <summary>读下一条命令批。返回 false 表示命令流结束（录像播完或遇到哈希日志段标记）。
+        /// 命令流结束后若存在尾部哈希日志段(标记 0xAD),留给 TryReadHashLog 读。</summary>
         public bool TryReadTurnBatch(out uint turn, out NetCommand[] commands)
         {
             turn = 0; commands = Array.Empty<NetCommand>();
             if (_disposed) return false;
             Stream s = _br.BaseStream;
             if (s.Position >= s.Length) return false;
-            turn = _br.ReadUInt32();
+            // 哈希日志段标记(0xAD):命令流到此结束,后续是哈希日志。停读命令,不消费标记。
+            // 用 ReadByte 确定性判断(BinaryReader.PeekChar 受编码影响:0xAD 作为 char
+            // 可能解码成软连字符,值不符);是标记则回退一字节,留给 TryReadHashLog 读。
+            int b = _br.ReadByte();
+            if (b == 0xAD) { s.Position -= 1; return false; }
+            // 不是标记 → 是 turn uint32 的首字节(小端)。重建完整 turn:首字节 + 续读 3 字节。
+            turn = (uint)b | ((uint)_br.ReadByte() << 8) | ((uint)_br.ReadByte() << 16) | ((uint)_br.ReadByte() << 24);
             uint batchLen = _br.ReadUInt32();
             byte[] batch = _br.ReadBytes(checked((int)batchLen));
             if (batch.Length != batchLen)
@@ -194,6 +219,27 @@ namespace ZeroAD.Sim.Net
             commands = NetCommand.DeserializeBatch(batch);
             if (turn > _maxTurn) _maxTurn = turn;
             return true;
+        }
+
+        /// <summary>读尾部哈希日志段(命令流结束后)。无此段(旧录像)返回空字典。
+        /// 回放驱动器据此在每个 HashCheckInterval 回合对比录制时存的状态哈希,
+        /// 捕捉确定性回归(OOS)。必须在所有 TryReadTurnBatch 读完后调用。</summary>
+        public Dictionary<uint, byte[]> TryReadHashLog()
+        {
+            var result = new Dictionary<uint, byte[]>();
+            if (_disposed) return result;
+            Stream s = _br.BaseStream;
+            // 命令流可能已读完到末尾(旧录像无标记)或停在 0xAD 标记处(新录像)。
+            if (s.Position >= s.Length) return result;  // 无哈希日志段
+            if (_br.ReadByte() != 0xAD) return result;   // 非 0xAD → 旧格式或损坏,忽略
+            uint count = _br.ReadUInt32();
+            for (int i = 0; i < count; i++)
+            {
+                uint turn = _br.ReadUInt32();
+                byte[] hash = _br.ReadBytes(16);
+                if (hash.Length == 16) result[turn] = hash;
+            }
+            return result;
         }
 
         public void Dispose()
