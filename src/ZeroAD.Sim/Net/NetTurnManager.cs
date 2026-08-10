@@ -31,6 +31,11 @@ namespace ZeroAD.Sim.Net
     /// </summary>
     public sealed class NetTurnManager
     {
+        /// <summary>状态哈希校验间隔(回合)。CheckOOS(MP 跨端对比)与录像回放哈希验证
+        /// 共用此节流——每 N 回合算一次 MD5,既够密(OOS 定位到 20 回合内),又不过频
+        /// (全状态序列化 + MD5 不便宜)。原为硬编 % 20,提成常量供录像层复用。</summary>
+        public const int HashCheckInterval = 20;
+
         private readonly ComponentManager _cm;
         private readonly SimCommandExecutor _executor;
         private readonly int _commandDelay;
@@ -150,7 +155,7 @@ namespace ZeroAD.Sim.Net
 
             _currentTurn++;
             OnTurnAdvanced?.Invoke(_currentTurn);
-            if (_currentTurn % 20 == 0)
+            if (_currentTurn % HashCheckInterval == 0)
                 CheckOOS();
         }
 
