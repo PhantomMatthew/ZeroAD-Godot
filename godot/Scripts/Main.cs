@@ -2106,6 +2106,12 @@ public sealed partial class Main : Node3D
 			// pause 热键(原版 MenuButtons.js:226 Pause hotkey):Pause/Break 键直接切暂停,
 			// 不开菜单叠层(顶栏暂停按钮已移除,对齐上游;Menu 按钮仍可开 PauseMenu)。
 			if (key.Keycode == Key.Pause) TogglePause();
+			// F12:dump 选中实体的全部组件 + 关键字段(诊断用)。输出到控制台 + user://debug/
+			// 的 entity_dump.txt。复用 ComponentManager.DumpEntity(TextDumpSerializer 同通路),
+			// 一眼看出实体挂了哪些组件、字段值对不对——定位"为什么不显示/不攻击"类问题,
+			// 免去临时加 [DIAG] 打印再删的循环。
+			if (key.Keycode == Key.F12 && _selectedEntities.Count > 0)
+				DumpSelectedEntity();
 		}
 
 		if (@event is InputEventMouseButton mb && mb.Pressed)
@@ -2980,6 +2986,33 @@ public sealed partial class Main : Node3D
 
 	/// <summary>顶栏 Settings 按钮回调:打开对局设置摘要面板(只读,不暂停 sim)。</summary>
 	public void OpenMatchSettingsPanel() => _matchSettingsPanel?.Open();
+
+	/// <summary>F12:dump 选中(首个)实体的全部组件到控制台 + user://debug/entity_dump.txt。
+	/// 复用 ComponentManager.DumpEntity(与 SerializeFullState 同一逐组件序列化通路)。
+	/// 先打印几行关键组件摘要(AttackComponent/PositionComponent 等最常排查的),再写全量
+	/// dump 文件。定位"为什么射程圈不显示/为什么送回房屋"类问题:选中实体按 F12 一眼看出
+	/// 缺哪个组件、字段值对不对。</summary>
+	private void DumpSelectedEntity()
+	{
+		// 选首个选中实体(多选时只 dump 一个;需要的话可循环)
+		EntityId eid = _selectedEntities.First();
+		var ident = _sim.Sim.QueryInterface<IdentityComponent>(eid);
+		var pos = _sim.Sim.QueryInterface<PositionComponent>(eid);
+		var atk = _sim.Sim.QueryInterface<AttackComponent>(eid);
+		var ai = _sim.Sim.QueryInterface<UnitAIComponent>(eid);
+		var own = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
+		GD.Print($"[Diag] entity {eid} tmpl={ident?.TemplateName ?? ident?.Name ?? "?"}");
+		GD.Print($"[Diag]   owner={own?.PlayerId.ToString() ?? "NULL"} pos={pos?.Position.ToString() ?? "NULL"}");
+		GD.Print($"[Diag]   attack={(atk != null ? $"OK range={atk.Range} rangeOverlay={atk.HasRangeOverlay}" : "NULL")}");
+		GD.Print($"[Diag]   fsm={ai?.FsmStateName ?? "no-UnitAI"}");
+		// 全量 dump 到文件(逐组件 name=value,Fixed 以 hex 显示便于 diff)
+		string dump = _sim.Sim.DumpEntity(eid);
+		string dir = ProjectSettings.GlobalizePath("user://debug");
+		System.IO.Directory.CreateDirectory(dir);
+		string path = System.IO.Path.Combine(dir, "entity_dump.txt");
+		System.IO.File.WriteAllText(path, $"turn={_sim.NetTurn.CurrentTurn} {dump}");
+		GD.Print($"[Diag]   full dump → {path}");
+	}
 
 	/// <summary>F5 快存 / 暂停菜单 Save。返回存档路径(null=失败),供暂停菜单回灌状态。</summary>
 	private string? QuickSave()

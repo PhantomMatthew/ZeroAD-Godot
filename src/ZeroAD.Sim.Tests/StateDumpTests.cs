@@ -70,4 +70,20 @@ public sealed class StateDumpTests
             if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Fact]
+    public void DumpEntity_ReturnsComponentsForOneEntity()
+    {
+        var cm = MakeWorld(7);
+        // MakeWorld 创建了首个实体(Position + Health)。dump 它,应含该实体的组件段。
+        var entity = cm.AllEntities.First();
+        string dump = cm.DumpEntity(entity);
+
+        // 头部 + 至少含 PositionComponent / HealthComponent 段
+        Assert.Contains($"[entity {entity.Value}]", dump);
+        Assert.Contains("[component PositionComponent]", dump);
+        Assert.Contains("[component HealthComponent]", dump);
+        // Fixed 值以 hex 显示(诊断用途便于 diff)
+        Assert.Contains("0x", dump);
+    }
 }
