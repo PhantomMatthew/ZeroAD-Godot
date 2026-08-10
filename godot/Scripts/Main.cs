@@ -57,6 +57,13 @@ public sealed partial class Main : Node3D
 		AddChild(_bandBoxLayer);
 	}
 	private bool _placeBuildingMode;
+	// 放置预览状态(对齐原版 placement.js 的 placementSupport:position + angle)。
+	// 默认朝向 3π/4(原版 PlacementSupport.DEFAULT_ANGLE),[/]键 ±π/12 旋转(15°/步),
+	// 鼠标按住拖拽超阈值后朝向光标方向(input.js:786)。
+	private float _placeAngle = Mathf.Pi * 0.75f;
+	private Node3D? _placeGhost;             // 跟随鼠标的半透明预览节点
+	private Vector2 _placeMouseDown = new(-1, -1);  // 左键按下屏幕坐标(拖拽旋转基准)
+	private Vector3? _placeAnchorWorld;      // 按下点的世界坐标(atan2 基准)
 	private string? _commandTargetMode;   // 命令键目标模式:"garrison"/"repair"/"guard" —— 下次左键选目标
 	/// <summary>进入命令目标模式(原版 unit_actions 按钮 → 光标选目标)。Escape/再次点击后清除。</summary>
 	public void EnterCommandTargetMode(string mode)
@@ -479,7 +486,8 @@ public sealed partial class Main : Node3D
 		// 逐偏移尝试(放置校验不合法会被执行端拒绝,换下一个)。
 		foreach (var (ox, oz) in new[] { (18f, 0f), (0f, 18f), (-18f, 0f), (0f, -18f), (18f, 18f), (-18f, -18f) })
 		{
-			_sim.CommandBuild(builder, house, ccPos.Value.X + ox, ccPos.Value.Z + oz);
+			// 默认朝向 3π/4(原版 placement.js DEFAULT_ANGLE;自动建造不旋转)。
+			_sim.CommandBuild(builder, house, ccPos.Value.X + ox, ccPos.Value.Z + oz, Mathf.Pi * 0.75f);
 			// 命令经锁步延迟两回合生效,稍等再数地基。
 			await ToSignal(GetTree().CreateTimer(1.0), SceneTreeTimer.SignalName.Timeout);
 			bool spawned = false;
@@ -1438,6 +1446,22 @@ public sealed partial class Main : Node3D
 
 		TryDebugCapture();
 		UpdateBattleMusic(delta);
+		UpdatePlaceGhost();
+	}
+
+	/// <summary>放置预览 ghost 跟随鼠标 + 套当前 _placeAngle(原版 placement preview 每帧更新)。</summary>
+	private void UpdatePlaceGhost()
+	{
+		if (!_placeBuildingMode || _placeGhost == null) return;
+		var vp = GetViewport();
+		if (vp == null) return;
+		var worldPos = ScreenToWorld(vp.GetMousePosition());
+		if (worldPos == null) return;
+		// vis 空间:world z 经镜像(_worldRoot)。建筑节点挂在 _worldRoot 下,直接套 vis 坐标。
+		float vz = TerrainHeightService.MirrorZ(worldPos.Value.Z);
+		_placeGhost.Position = new Vector3(worldPos.Value.X,
+			TerrainHeightService.Sample(worldPos.Value.X, worldPos.Value.Z), vz);
+		_placeGhost.Rotation = new Vector3(0, _placeAngle, 0);
 	}
 
 	// pauseonfocusloss 配置项(原版 PauseOnFocusLoss,仅 SP):窗口失焦自动暂停并显示暂停菜单。
@@ -1848,16 +1872,20 @@ public sealed partial class Main : Node3D
 			_selectionMarkers.Add(ring);
 
 			// 攻击射程圈(原版 RangeOverlay:模板 Attack/Ranged/RangeOverlay 存在时,
-			// 选中即显示——CC/箭塔的防御半径;近战无此元素不显示)。
+			// 选中即显示——CC/箭塔的防御半径;近战无此元素不显示)。颜色 = 属主玩家色
+			// (对齐 CCmpRangeOverlayRenderer::UpdateColor → cmpPlayer->GetDisplayedColor),
+			// 此前硬编码白色与原版不符。
 			var attack = _sim.Sim.QueryInterface<AttackComponent>(eid);
 			if (attack is { HasRangeOverlay: true })
 			{
 				var posC = _sim.Sim.QueryInterface<PositionComponent>(eid);
 				if (posC != null)
 				{
+					var ringColor = SimBridge.GetPlayerColor(ownerPlayerId);
+					ringColor.A = 0.75f;
 					var rangeRing = SelectionRing.CreateRangeRing(attack.Range,
 						posC.Position.X.ToFloat(), posC.Position.Z.ToFloat(),
-						new Color(1f, 1f, 1f, 0.55f));
+						ringColor);
 					node.AddChild(rangeRing);
 					_selectionMarkers.Add(rangeRing);
 				}
@@ -2065,16 +2093,33 @@ public sealed partial class Main : Node3D
 			}
 			if (key.Keycode == Key.T) TrainVillager(Input.IsKeyPressed(Key.Shift));
 			if (key.Keycode == Key.S) TrainSoldier(Input.IsKeyPressed(Key.Shift));
-			if (key.Keycode == Key.Escape) { _placeBuildingMode = false; _commandTargetMode = null; _selectedEntities.Clear(); }
+			if (key.Keycode == Key.Escape) { ExitBuildMode(); _commandTargetMode = null; _selectedEntities.Clear(); }
+			// 放置旋转:[ / ] 每次 ±π/12(15°,原版 input.js:1238 rotation_step)。
+			// 仅在放置模式响应,避免和别的 [/] 绑定冲突。
+			if (_placeBuildingMode)
+			{
+				if (key.Keycode == Key.Bracketleft) _placeAngle -= Mathf.Pi / 12f;
+				else if (key.Keycode == Key.Bracketright) _placeAngle += Mathf.Pi / 12f;
+			}
 			if (key.Keycode == Key.F5) QuickSave();
 			if (key.Keycode == Key.F9) QuickLoad();
+			// pause 热键(原版 MenuButtons.js:226 Pause hotkey):Pause/Break 键直接切暂停,
+			// 不开菜单叠层(顶栏暂停按钮已移除,对齐上游;Menu 按钮仍可开 PauseMenu)。
+			if (key.Keycode == Key.Pause) TogglePause();
 		}
 
 		if (@event is InputEventMouseButton mb && mb.Pressed)
 		{
 			if (mb.ButtonIndex == MouseButton.Left)
 			{
-				if (_placeBuildingMode) { PlaceBuilding(mb.Position); return; }
+				if (_placeBuildingMode)
+				{
+					// 原版 input.js INPUT_BUILDING_CLICK:按下记录起点,松开时若未拖过阈值
+					// 则按当前角度放置;拖过阈值则改为朝向光标(自由旋转)。
+					_placeMouseDown = mb.Position;
+					_placeAnchorWorld = ScreenToWorld(mb.Position);
+					return;
+				}
 				if (_commandTargetMode != null) { HandleCommandTargetClick(mb.Position); return; }
 				_pendingDoubleClick = mb.DoubleClick;   // 双击标记在按下帧;释放时消费
 				_dragStart = mb.Position;
@@ -2097,6 +2142,20 @@ public sealed partial class Main : Node3D
 			_bandBox.QueueRedraw();
 		}
 
+		// 放置模式拖拽自由旋转(原版 input.js:786):按住左键拖超阈值后,朝向 = 锚点→光标方向。
+		if (@event is InputEventMouseMotion pmm && _placeBuildingMode
+			&& _placeMouseDown.X >= 0 && _placeAnchorWorld != null
+			&& pmm.Position.DistanceTo(_placeMouseDown) > 8f)
+		{
+			var cur = ScreenToWorld(pmm.Position);
+			if (cur != null)
+			{
+				var anchor = _placeAnchorWorld.Value;
+				// 原版 vector.js:413 atan2(dx, dz);Godot 与原版同 Y-up、angle 0 朝 +Z。
+				_placeAngle = Mathf.Atan2(cur.Value.X - anchor.X, cur.Value.Z - anchor.Z);
+			}
+		}
+
 		if (@event is InputEventMouseButton mbu && !mbu.Pressed && mbu.ButtonIndex == MouseButton.Left && _dragSelecting)
 		{
 			_dragSelecting = false;
@@ -2104,6 +2163,16 @@ public sealed partial class Main : Node3D
 			if (_isDragging) HandleDragSelect(_dragStart, mbu.Position);
 			else if (_pendingDoubleClick) HandleDoubleClick(mbu.Position);
 			else HandleLeftClick(mbu.Position);
+		}
+
+		// 放置模式:左键松开时确认放置(原版 input.js mousebuttonup → tryPlaceBuilding)。
+		// 放在按下之后、松开之时,让拖拽自由旋转有机会先更新 _placeAngle。
+		if (@event is InputEventMouseButton mbuPlace && !mbuPlace.Pressed
+			&& mbuPlace.ButtonIndex == MouseButton.Left && _placeBuildingMode
+			&& _placeMouseDown.X >= 0)
+		{
+			_placeMouseDown = new Vector2(-1, -1);
+			PlaceBuilding(mbuPlace.Position);
 		}
 	}
 
@@ -2368,11 +2437,15 @@ public sealed partial class Main : Node3D
 
 		if (_selectedEntities.Count == 0) return;
 
-		bool isResource = false, isEnemy = false, isGarrisonTarget = false;
+		bool isResource = false, isEnemy = false, isGarrisonTarget = false, isFoundation = false;
 		foreach (var eid in targets)
 		{
 			targetEntity = eid;
 			isResource = _sim.Sim.QueryInterface<ResourceSupply>(eid) != null;
+			// 不完工地基(原版 repair 动作):右键己方地基 → 建造工去帮建。此前无此分支,
+			// 右键地基只走 Move,建造工走过去就站住、不建造。
+			var foundationCmp = _sim.Sim.QueryInterface<FoundationComponent>(eid);
+			isFoundation = foundationCmp != null && !foundationCmp.IsBuilt;
 			var owner = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
 			// 敌对判定走内核外交(对齐原版):敌军建筑/单位/gaia 野兽一视同仁——
 			// gaia 实体无 OwnershipComponent,按玩家 0 处理(IsEnemy 恒 true)。
@@ -2403,6 +2476,14 @@ public sealed partial class Main : Node3D
 				// 宿主是否接受由 sim 侧 Garrisonable.CanGarrison 判)。
 				_sim.CommandGarrison(unit, targetEntity.Value);
 				orderSound ??= "order_garrison";
+			}
+			else if (isFoundation && targetEntity.HasValue
+				&& _sim.Sim.QueryInterface<BuilderComponent>(unit) != null)
+			{
+				// 右键不完工地基 → 建造工去帮建(原版 repair 动作)。此前无此分支,
+				// 右键地基走 Move,建造工走到就站住不建造。多个建造工可同时帮建同一地基。
+				_sim.CommandRepair(unit, targetEntity.Value);
+				orderSound ??= "order_repair";
 			}
 			else if (isResource && targetEntity.HasValue
 				&& (_sim.Sim.QueryInterface<ResourceGatherer>(unit) != null || IsFormationController(unit)))
@@ -2576,6 +2657,61 @@ public sealed partial class Main : Node3D
 		}
 		_placeBuildingMode = true;
 		_buildTemplate = template;
+		// 重置朝向为 GUI 默认 3π/4(原版 placement.js Reset→SetDefaultAngle)。
+		_placeAngle = Mathf.Pi * 0.75f;
+		CreatePlaceGhost();
+	}
+
+	/// <summary>建造放置预览 ghost(原版 placement.js 的 SetEntityPreview 等价):半透明建筑
+	/// 节点跟随鼠标 + 套当前 _placeAngle。失败(无 actor)时静默——ghost 为 null 时
+	/// _Process 跳过位置更新,放置仍可进行(只是看不到预览)。</summary>
+	private void CreatePlaceGhost()
+	{
+		FreePlaceGhost();
+		string fullTemplate = MapBuildTemplateName(_buildTemplate ?? "");
+		if (string.IsNullOrEmpty(fullTemplate)) return;
+		Color color = SimBridge.GetPlayerColor((int)_sim.LocalPlayerId);
+		// 复用建筑视觉装配(ModelLibrary.InstantiateForTemplate),与完工建筑同一套 actor。
+		_placeGhost = ModelLibrary.InstantiateForTemplate(fullTemplate, 0, 0, color);
+		if (_placeGhost == null) return;
+		AddChild(_placeGhost);
+		// 半透明:递归设所有 MeshInstance3D 的透明度(原版 ghost 亦是半透)。
+		SetGhostTransparency(_placeGhost, 0.5f);
+	}
+
+	private static void SetGhostTransparency(Node node, float alpha)
+	{
+		if (node is MeshInstance3D mi)
+		{
+			// 克隆材质避免共享覆盖完工建筑(Instance:每节点独立材质覆盖)。
+			var mat = mi.MaterialOverride?.Duplicate() as Material;
+			if (mat is StandardMaterial3D sm)
+			{
+				sm.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
+				sm.AlbedoColor = new Color(sm.AlbedoColor.R, sm.AlbedoColor.G, sm.AlbedoColor.B, alpha);
+				mi.MaterialOverride = sm;
+			}
+		}
+		foreach (var child in node.GetChildren())
+			SetGhostTransparency(child, alpha);
+	}
+
+	private void FreePlaceGhost()
+	{
+		if (_placeGhost != null)
+		{
+			_placeGhost.QueueFree();
+			_placeGhost = null;
+		}
+		_placeAnchorWorld = null;
+		_placeMouseDown = new Vector2(-1, -1);
+	}
+
+	/// <summary>退出放置模式并清理预览(放置完成/取消/Esc/负担不起时调)。</summary>
+	private void ExitBuildMode()
+	{
+		_placeBuildingMode = false;
+		FreePlaceGhost();
 	}
 
 	public void TrainVillager(bool batch = false) => TrainFirstMatching(batch, support: true);
@@ -2889,12 +3025,12 @@ public sealed partial class Main : Node3D
 		var worldPos = ScreenToWorld(screenPos);
 		if (worldPos == null) return;
 		var player = _sim.GetPlayer();
-		if (player == null) { _placeBuildingMode = false; return; }
+		if (player == null) { ExitBuildMode(); return; }
 		var (wood, stone, metal, food, buildTime) = GetBuildCost(_buildTemplate);
 		if (!CanAfford(player, wood, stone, metal, food))
 		{
 			GD.Print($"Cannot afford {_buildTemplate}: needs {wood}W {stone}S {metal}M {food}F");
-			_placeBuildingMode = false;
+			ExitBuildMode();
 			return;
 		}
 
@@ -2918,19 +3054,21 @@ public sealed partial class Main : Node3D
 		{
 			GD.Print($"Cannot place {_buildTemplate} at ({worldPos.Value.X:F1},{worldPos.Value.Z:F1}): {pr}");
 			_hud?.ShowToast("Cannot place building here.");
+			_placeMouseDown = new Vector2(-1, -1);  // 清按下标记,允许下次重新拖拽
 			// Stay in placement mode so the player can try another spot.
 			return;
 		}
 
 		_ = buildTime; // build time comes from template data at execution; not needed here.
 		string fullTemplate = MapBuildTemplateName(_buildTemplate);
-		_placeBuildingMode = false;
+		float angle = _placeAngle;
+		ExitBuildMode();
+		// 多建造者:每个选中的建造工都发 CommandBuild(同位置同模板)。SimCommandExecutor
+		// 在同 turn 内去重——只 spawn 一个地基、扣一次费,其余 builder 改派去帮建同一地基
+		// (对齐原版 construct 命令带 entities 数组的语义)。此前 break 只派第一个建造工。
 		foreach (var eid in _selectedEntities)
 			if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null)
-			{
-				_sim.CommandBuild(eid, fullTemplate, worldPos.Value.X, worldPos.Value.Z);
-				break;
-			}
+				_sim.CommandBuild(eid, fullTemplate, worldPos.Value.X, worldPos.Value.Z, angle);
 	}
 
 	private (int wood, int stone, int metal, int food, float buildTime) GetBuildCost(string name)

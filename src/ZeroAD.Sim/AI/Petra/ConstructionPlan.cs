@@ -63,7 +63,7 @@ public sealed class ConstructionPlan : QueuePlan
             {
                 X = explicitPos.X,
                 Z = explicitPos.Y,
-                Angle = 0,
+                Angle = DefaultPlacementAngle,
                 Base = 1,
                 Access = 0,
             };
@@ -77,9 +77,11 @@ public sealed class ConstructionPlan : QueuePlan
         Metadata["access"] = pos.Access;
 
         // 4. 下达 Build 命令(经 AI 本地通道,与玩家建造同路径同延迟;
-        // 原版 queueplanBuilding.start 的 PostCommand 等价)
+        // 原版 queueplanBuilding.start 的 PostCommand 等价)。朝向用 GUI 默认 3π/4
+        // (原版 placement.js:6 PlacementSupport.DEFAULT_ANGLE — AI 不旋转故取默认)。
         gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Build(
-            (uint)gameState.PlayerId, builder.Id, Type, pos.X, pos.Z));
+            (uint)gameState.PlayerId, builder.Id, Type, pos.X, pos.Z,
+            Maths.Fixed.FromFloat(pos.Angle)));
         _position = new FixedVector2D(pos.X, pos.Z);
     }
 
@@ -116,11 +118,16 @@ public sealed class ConstructionPlan : QueuePlan
         {
             X = Fixed.FromFloat(x),
             Z = Fixed.FromFloat(z),
-            Angle = angle,
+            // 建筑朝向 ≠ 选址极坐标 θ:用 GUI 默认 3π/4(原版 placement.js DEFAULT_ANGLE)。
+            // 此前的 Angle = angle 把选址随机角当成朝向,AI 建筑朝向因此每栋乱转。
+            Angle = DefaultPlacementAngle,
             Base = baseId,
             Access = access,
         };
     }
+
+    /// <summary>原版 GUI 默认放置朝向 placement.js:6(3π/4 = 135°)。AI 不旋转故取此值。</summary>
+    private const float DefaultPlacementAngle = MathF.PI * 3f / 4f;
 
     private sealed class BuildPosition
     {

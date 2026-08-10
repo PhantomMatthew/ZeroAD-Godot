@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
@@ -132,7 +133,7 @@ public sealed class SimCommandExecutorTests
         int woodBefore = cm.GetPlayerEntity(1)!.Wood;
 
         executor.Apply(NetCommand.Build(1, builder.Value, template,
-            Fixed.FromFloat(30f), Fixed.FromFloat(30f)));
+            Fixed.FromFloat(30f), Fixed.FromFloat(30f), Fixed.FromFloat(MathF.PI * 3f / 4f)));
 
         var player = cm.GetPlayerEntity(1)!;
         var stats = templates.ExtractStats(template);
@@ -159,7 +160,7 @@ public sealed class SimCommandExecutorTests
         int entitiesBefore = cm.AllEntities.Count;
 
         executor.Apply(NetCommand.Build(1, builder.Value, "structures/spart/house",
-            Fixed.FromFloat(30f), Fixed.FromFloat(30f)));
+            Fixed.FromFloat(30f), Fixed.FromFloat(30f), Fixed.FromFloat(MathF.PI * 3f / 4f)));
 
         Assert.Equal(entitiesBefore, cm.AllEntities.Count);
     }

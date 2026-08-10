@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
@@ -233,17 +234,17 @@ public sealed class TerritoryManagerTests
 
         // 1) house("own")落 gaia → 拒(实体数不变)。
         int before = EntityCount();
-        executor.Apply(NetCommand.Build(1, builder.Value, "structures/athen/house", M(56), M(56)));
+        executor.Apply(NetCommand.Build(1, builder.Value, "structures/athen/house", M(56), M(56), Fixed.FromFloat(MathF.PI * 3f / 4f)));
         Assert.Equal(before, EntityCount());
 
         // 2) civil_centre("own neutral")落 gaia → 放;foundation 自带 TerritoryInfluence
         //    (SpawnFoundation → RegisterForLos 装配)→ 周围变 P1 领土。
-        executor.Apply(NetCommand.Build(1, builder.Value, "structures/athen/civil_centre", M(16), M(16)));
+        executor.Apply(NetCommand.Build(1, builder.Value, "structures/athen/civil_centre", M(16), M(16), Fixed.FromFloat(MathF.PI * 3f / 4f)));
         Assert.Equal(before + 1, EntityCount());
         Assert.Equal(1, tm.GetOwner(M(20), M(20)));
 
         // 3) house 落 CC 领土内 → 放。
-        executor.Apply(NetCommand.Build(1, builder.Value, "structures/athen/house", M(20), M(20)));
+        executor.Apply(NetCommand.Build(1, builder.Value, "structures/athen/house", M(20), M(20), Fixed.FromFloat(MathF.PI * 3f / 4f)));
         Assert.Equal(before + 2, EntityCount());
     }
 }

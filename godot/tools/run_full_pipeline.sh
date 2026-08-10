@@ -44,9 +44,31 @@ for category in gaia structural skeletal/new props/new props/special props/helme
         "$BL" --background --python "$SCRIPT" -- \
             --input "$SRC/meshes/$category" \
             --output "$OUT/meshes/$(basename $(dirname $category))/$(basename $category)" \
-            --max 200 2>&1 | grep -E "Found|Done|FAIL|SKIP" | head -5
+            --max 99999 2>&1 | grep -E "Found|Done|FAIL|SKIP" | head -5
     fi
 done
+
+# ---- 1b. Repair unit-scale regression ----
+# Blender's Collada import honors the DAE <unit meter="X"/> declaration, but the
+# 0 A.D. engine IGNORES it (raw coords are game meters). Props authored in
+# centimeters (0.01) / inches (0.0254) therefore bake a shrinking scale onto the
+# GLB root node — heads render at 1% size, buildings at 0.7m instead of 28m.
+# This must run AFTER the DAE→GLB conversion so future regenerations don't
+# silently regress (godot/assets/ is gitignored, so the fix is otherwise lost).
+echo ""
+echo ">>> Repairing DAE <unit> scale regression..."
+python3 "$(dirname "$0")/fix_glb_unit_scale.py" \
+    --meshes-root "$OUT/meshes" \
+    --dae-root "$SRC/meshes" 2>&1 | grep -E "^(fixed|would-fix):" || true
+
+# ---- 1c. Restore field crop-patch grid ----
+# Blender 的 glTF 导出会丢掉 field_propped_*8x8.dae 里 64 个 prop-patch_NNN
+# 空节点的 translation,导致农田作物全堆在中心而非 8×8 网格。从 DAE 读回坐标写进 GLB。
+echo ""
+echo ">>> Restoring field crop-patch grid translations..."
+python3 "$(dirname "$0")/fix_glb_field_patches.py" \
+    --meshes-root "$OUT/meshes" \
+    --dae-root "$SRC/meshes" 2>&1 | grep -E "^  |repaired" || true
 
 # ---- 2. Textures ----
 echo ""

@@ -659,7 +659,11 @@ public sealed partial class SimBridge : Node
     {
         var entity = _sim.CreateEntity();
         _sim.AddComponent(entity, new PositionComponent());
-        _sim.AddComponent(entity, new ResourceDropsite());
+        // 投放点只有带 <ResourceDropsite> 的建筑(CC/storehouse/farmstead/dock)该挂;
+        // 此前无条件给所有建筑挂,房屋也被当投放点 → 村民把资源送回房屋。按 IsDropsite
+        // 过滤,对齐 EntityAssembler 装配路径(SimBridge.cs:1825)。
+        if (stats?.IsDropsite == true)
+            _sim.AddComponent(entity, new ResourceDropsite());
         _sim.AddComponent(entity, new ProductionQueue
         {
             TrainableTokens = stats?.TrainableEntities ?? "",
@@ -732,6 +736,33 @@ public sealed partial class SimBridge : Node
         {
             _sim.AddComponent(entity, new GateComponent());
             obstruction.SetActive(false);
+        }
+
+        // 攻击组件(CC/箭塔/防御塔等有 Attack 的建筑):此前 SpawnScenarioBuilding 不装
+        // AttackComponent → QueryInterface<AttackComponent> 返 null → 选中射程圈分支
+        // (Main.cs:1876)不进,CC 攻击范围圈永不显示,且建筑也不能反击/防御。
+        // 对齐 SpawnUnit 的装配(line 1863)+ EntityAssembler.cs:113。
+        if (stats != null && (stats.AttackDamage > 0 || stats.AttackCaptureStrength > Fixed.Zero))
+        {
+            var bldgAtkDmg = new DamageBlock();
+            if (stats.AttackHack > 0) bldgAtkDmg.Amounts[DamageType.Hack] = stats.AttackHack;
+            if (stats.AttackPierce > 0) bldgAtkDmg.Amounts[DamageType.Pierce] = stats.AttackPierce;
+            if (stats.AttackCrush > 0) bldgAtkDmg.Amounts[DamageType.Crush] = stats.AttackCrush;
+            var bldgAtk = new AttackComponent
+            {
+                Damage = bldgAtkDmg,
+                Range = stats.AttackRange > 0 ? stats.AttackRange : 3.0f,
+                Rate = stats.AttackRate > 0 ? stats.AttackRate : 1.0f,
+                IsRanged = stats.AttackIsRanged,
+                HasRangeOverlay = stats.HasRangeOverlay,
+                CaptureStrength = stats.AttackCaptureStrength,
+                CaptureRange = stats.AttackCaptureRange,
+                CaptureRate = stats.AttackCaptureRate,
+                CaptureRestrictedClasses = stats.AttackCaptureRestrictedClasses,
+                PreferredClasses = stats.AttackPreferredClasses,
+                PhysicalRestrictedClasses = stats.AttackPhysicalRestrictedClasses,
+            };
+            _sim.AddComponent(entity, bldgAtk);
         }
 
         // Fog-of-war registration: Vision/Fogging/Visibility from the template + entry
@@ -1402,6 +1433,9 @@ public sealed partial class SimBridge : Node
                 : MapBuildNameToTemplate(foundation.ResultTemplate);
             float x = pos?.Position.X.ToFloat() ?? 0;
             float z = pos?.Position.Z.ToFloat() ?? 0;
+            // 完工继承 foundation 朝向(原版 Transform.js:57-58 把 rot.y 拷给新实体)。
+            // 此前 OrientationY 留默认 0,完工建筑总是朝北,丢失玩家放置角度。
+            float yaw = pos?.Rotation.Y.ToFloat() ?? 0f;
             var owner = _sim.QueryInterface<OwnershipComponent>(entity);
 
             if (_entityNodes.TryGetValue(entity, out var oldNode))
@@ -1418,7 +1452,8 @@ public sealed partial class SimBridge : Node
                 Template = fullTemplate,
                 X = x,
                 Z = z,
-                Player = owner?.PlayerId ?? 1
+                Player = owner?.PlayerId ?? 1,
+                OrientationY = yaw
             }, stats);
 
             Events.RaiseStructureBuilt(new StructureBuiltEvent
@@ -1625,12 +1660,24 @@ public sealed partial class SimBridge : Node
     private void CreateFoundationVisual(EntityId entity, string template, int playerId)
     {
         Color color = GetPlayerColor(playerId);
-        var visual = ModelLibrary.InstantiateForTemplate(template, 0, 0, color);
+        // 原版地基显示专门的 FoundationActor(矮地基+四角木桩,如 fndn_5x8.xml),不是
+        // 完整建筑。此前直接用完整模板 → rise = 整个建筑 AABB 高(13~25m),地基被埋到
+        // baseY - rise*0.92 = 深入地下,完全看不见。优先取 VisualActor/FoundationActor;
+        // 取不到(模板没声明地基 actor)才回退完整建筑。
+        string foundationActor = template;
+        try
+        {
+            var node = _sim.Templates?.LoadTemplate(template);
+            if (node?.GetChild("VisualActor")?.GetChild("FoundationActor")?.Value is { Length: > 0 } fa)
+                foundationActor = fa;
+        }
+        catch { /* 取不到就回退完整模板,行为同前 */ }
+        var visual = ModelLibrary.InstantiateForTemplate(foundationActor, 0, 0, color);
         if (visual == null)
         {
             // 无模型(演员缺失/未知模板)→ 旧幽灵盒路径,表现不变。
             CreateVisualFor(entity, new Color(0.6f, 0.5f, 0.4f, 0.3f), 6f,
-                isBuilding: true, isGhost: true, templateName: template);
+                isBuilding: true, isGhost: true, templateName: foundationActor);
             return;
         }
 
@@ -1844,7 +1891,12 @@ public sealed partial class SimBridge : Node
             {
                 Damage = dmg,
                 Range = stats?.AttackRange ?? 3.0f,
-                Rate = stats?.AttackRate ?? 1.0f
+                Rate = stats?.AttackRate ?? 1.0f,
+                IsRanged = stats?.AttackIsRanged ?? false,
+                // 选中射程圈开关(对齐 EntityAssembler.cs:119):CC/箭塔模板有
+                // Attack/Ranged/RangeOverlay → 选中时画防御半径圈。此前漏设 → 永远 false
+                // → CC 选中不显示射程圈。
+                HasRangeOverlay = stats?.HasRangeOverlay ?? false
             };
             _sim.AddComponent(entity, atk);
             // Capture 攻击类型(对齐 EntityAssembler):AddComponent 后赋值。
@@ -2037,10 +2089,11 @@ public sealed partial class SimBridge : Node
     }
 
     /// <summary>Issue a build order: cost charge + foundation spawn happen in the sim
-    /// at the execution turn (SimCommandExecutor). `template` is the FULL template name.</summary>
-    public void CommandBuild(EntityId builder, string template, float x, float z) =>
+    /// at the execution turn (SimCommandExecutor). `template` is the FULL template name.
+    /// `angle` = yaw 弧度(原版 cmd.angle;默认 3π/4 = 135°,对齐 placement.js DEFAULT_ANGLE)。</summary>
+    public void CommandBuild(EntityId builder, string template, float x, float z, float angle) =>
         SubmitCommand(NetCommand.Build(LocalPlayerId, builder.Value, template,
-            Fixed.FromFloat(x), Fixed.FromFloat(z)));
+            Fixed.FromFloat(x), Fixed.FromFloat(z), Fixed.FromFloat(angle)));
 
     public void CommandSetRallyPoint(EntityId building, EntityId? target) =>
         SubmitCommand(NetCommand.SetRallyPoint(LocalPlayerId, building.Value, target?.Value ?? 0));
@@ -2369,6 +2422,16 @@ public sealed partial class SimBridge : Node
 
             if (_animators.TryGetValue(kvp.Key, out var animator))
                 UpdateUnitAnimation(kvp.Key, node, animator, newPos);
+            else
+            {
+                // 建筑朝向同步:sim 的 Rotation.Y(原版 SetYRotation)推到 Node3D。
+                // 严格隔离单位——单位走上面 UpdateUnitAnimation 的 travel-delta 朝向,
+                // 若在此覆盖会把单位 yaw 钳回 0。建筑无 animator,只在此设朝向。
+                // Rotation.Y==0 时不写,避免覆盖场景建筑已设好的 OrientationY(spawn 时套的)。
+                float yaw = pos.Rotation.Y.ToFloat();
+                if (yaw != 0f)
+                    node.Rotation = new Vector3(0, yaw, 0);
+            }
         }
     }
 

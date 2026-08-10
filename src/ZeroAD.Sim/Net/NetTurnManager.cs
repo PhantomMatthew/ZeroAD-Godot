@@ -129,6 +129,9 @@ namespace ZeroAD.Sim.Net
                 HostIngestBatch(_localPlayerId, batchTurn, batch);
 
             // Execute the bundle scheduled for this turn (absent/empty = no commands).
+            // BeginTurn 清多建造者去重缓存(SimCommandExecutor 内部用),确保去重只在本
+            // turn 的命令批内生效,不跨 turn 误合并地基。
+            _executor.BeginTurn(_currentTurn);
             if (_bundles.TryGetValue(_currentTurn, out var commands))
             {
                 _bundles.Remove(_currentTurn);

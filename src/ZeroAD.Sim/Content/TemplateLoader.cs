@@ -291,7 +291,27 @@ namespace ZeroAD.Sim.Content
                     ReadApplyStatus(melee, stats);
                 }
                 var rangedNode = attack.GetChild("Ranged");
-                if (rangedNode.IsOk) ReadApplyStatus(rangedNode, stats);
+                if (rangedNode.IsOk)
+                {
+                    ReadApplyStatus(rangedNode, stats);
+                    // Ranged/Damage:此前只读 Melee/Damage,纯远程实体(CC/箭塔/弓兵)的
+                    // Hack/Pierce/Crush/Fire 全丢 → AttackDamage=0 → 不挂 AttackComponent
+                    // → 选中无射程圈、且不能攻击。Melee 缺失时(Ranged-only)此处补读。
+                    var rDmg = rangedNode.GetChild("Damage");
+                    if (rDmg.IsOk && !melee.IsOk)
+                    {
+                        stats.AttackHack = rDmg.GetChild("Hack").IsOk ? rDmg.GetChild("Hack").ToInt() : 0;
+                        stats.AttackPierce = rDmg.GetChild("Pierce").IsOk ? rDmg.GetChild("Pierce").ToInt() : 0;
+                        stats.AttackCrush = rDmg.GetChild("Crush").IsOk ? rDmg.GetChild("Crush").ToInt() : 0;
+                        stats.AttackFire = rDmg.GetChild("Fire").IsOk ? rDmg.GetChild("Fire").ToInt() : 0;
+                    }
+                    // MaxRange / RepeatTime:Melee 路径硬编 AttackRange=3;Ranged 的 60m 等
+                    // 此前没读 → CC 范围错(3m 而非 60m)。
+                    var maxRange = rangedNode.GetChild("MaxRange");
+                    if (maxRange.IsOk) stats.AttackRange = maxRange.ToFloat();
+                    var rRepeat = rangedNode.GetChild("RepeatTime");
+                    if (rRepeat.IsOk) stats.AttackRate = 1000f / rRepeat.ToInt();
+                }
 
                 // 物理型 PreferredClasses(GetBestAttackAgainst 偏好 +2;Melee 优先,
                 // 无 Melee 取 Ranged——原版逐型各有一份,我们物理合一取存在的那型)。

@@ -20,6 +20,25 @@ namespace ZeroAD.Sim.Net
         private readonly PathfinderComponent? _pathfinder;
         private readonly Components.TerritoryManager? _territory;
 
+        // ── 多建造者去重(对齐原版 construct 命令带 entities 数组)──
+        // 原版一条 construct 命令带多个 builder,spawn 一个地基后给所有 builder 派 repair。
+        // C# NetCommand 是固定字段 struct,一条命令只带一个 builder,所以 UI 给每个选中
+        // builder 都发 CommandBuild;此处检测"同 turn + 同玩家 + 同位置 + 同模板"的后续
+        // Build 命令,跳过 spawn/扣费,改为把当前 builder 派去帮建已有地基。
+        // 双端同判(同 turn 同命令序列 → 同去重结果),确定性不受影响。
+        private uint _dedupTurn;
+        private uint _currentTurn;
+        private readonly Dictionary<(uint player, int x, int z, string template), EntityId> _buildSites = new();
+
+        /// <summary>每 turn 执行命令前调(NetTurnManager.AdvanceTurn 调一次)。
+        /// 清多建造者去重缓存,避免跨 turn 误合并地基。</summary>
+        public void BeginTurn(uint turn)
+        {
+            _currentTurn = turn;
+            _dedupTurn = turn;
+            _buildSites.Clear();
+        }
+
         /// <param name="pathfinder">Optional explicit pathfinder for build-placement
         /// validation. When null, falls back to <see cref="SimSystem.Pathfinder"/>
         /// (the production wiring); tests can inject one to avoid the static.</param>
@@ -35,6 +54,10 @@ namespace ZeroAD.Sim.Net
 
         public void Apply(NetCommand cmd)
         {
+            // 去重缓存懒清空:turn 推进时(NetTurnManager 调 BeginTurn)已清;此处的
+            // _dedupTurn 对比是保险——即便漏调 BeginTurn 也不会跨 turn 误合并。
+            if (_buildSites.Count > 0 && _dedupTurn != _currentTurn)
+                _buildSites.Clear();
             switch (cmd.Type)
             {
                 // Entity-bearing commands: EntityId is the acted-on entity (validated ≠ 0).
@@ -166,6 +189,23 @@ namespace ZeroAD.Sim.Net
             var x = Fixed.Zero.WithInternalValue(cmd.FixedParam1);
             var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
 
+            // 多建造者去重:同 turn + 同玩家 + 同位置 + 同模板的后续 Build 命令不再 spawn
+            // 新地基/扣费,直接把当前 builder 派去帮建已有地基(对齐原版 construct 带 entities
+            // 数组 → spawn 一个地基 + 给所有 builder 派 repair)。位置 key 用 Fixed 内部值
+            // (定点,双端一致),不用浮点。
+            var siteKey = (cmd.Player, cmd.FixedParam1, cmd.FixedParam2, template);
+            if (_buildSites.TryGetValue(siteKey, out var existingFoundation))
+            {
+                // 该位置本 turn 已有地基:当前 builder 去帮建,不重复扣费/spawn。
+                var aiExist = _cm.QueryInterface<UnitAIComponent>(builder);
+                if (aiExist != null)
+                    aiExist.Repair(existingFoundation);
+                else
+                    _cm.QueryInterface<BuilderComponent>(builder)?.Build(existingFoundation);
+                _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "repair", Target = existingFoundation });
+                return;
+            }
+
             // Re-validate placement at execution time (the UI check is only a courtesy
             // pre-filter; both peers must reach the same verdict here).
             var pathfinder = _pathfinder ?? SimSystem.Pathfinder;
@@ -200,7 +240,11 @@ namespace ZeroAD.Sim.Net
             }
 
             player.Spend(wood, food, stone, metal);
-            var foundation = SpawnFoundation(template, x, z, buildTime, (int)cmd.Player);
+            // Yaw(原版 cmd.angle):IntParam1 载 Fixed.InternalValue。建造默认 GUI 给 3π/4。
+            var angle = Fixed.Zero.WithInternalValue(cmd.IntParam1);
+            var foundation = SpawnFoundation(template, x, z, angle, buildTime, (int)cmd.Player);
+            // 记录本 turn 此位置的地基,供同批后续 Build 命令去重(多建造者合一地基)。
+            _buildSites[siteKey] = foundation;
 
             var ai = _cm.QueryInterface<UnitAIComponent>(builder);
             if (ai != null)
@@ -229,7 +273,7 @@ namespace ZeroAD.Sim.Net
         /// Task 7) reads IdentityComponent.TemplateName directly instead of re-mapping a
         /// display name — so the full template must travel here, not a UI short name.
         /// </summary>
-        private EntityId SpawnFoundation(string template, Fixed x, Fixed z, float buildTime, int ownerPlayerId)
+        private EntityId SpawnFoundation(string template, Fixed x, Fixed z, Fixed angle, float buildTime, int ownerPlayerId)
         {
             var entity = _cm.CreateEntity();
             _cm.AddComponent(entity, new PositionComponent());
@@ -250,7 +294,13 @@ namespace ZeroAD.Sim.Net
             _cm.QueryInterface<FoundationComponent>(entity)?.Configure(template, buildTime);
             var pos = _cm.QueryInterface<PositionComponent>(entity);
             if (pos != null)
+            {
                 pos.Position = new FixedVector3D(x, Fixed.Zero, z);
+                // Yaw 来自玩家放置角度(原版 Commands.js:1187 cmpPosition.SetYRotation(angle))。
+                // 完工换模板时 SimBridge.TickFoundations 读 Rotation.Y 继承给最终建筑
+                // (原版 Transform.js:57-58)。Rotation.X/Z 留 0(建筑不俯仰/侧倾)。
+                pos.Rotation = new FixedVector3D(Fixed.Zero, angle, Fixed.Zero);
+            }
             _cm.Events.RaiseEntityCreated(new EntityCreatedEvent
             {
                 Entity = entity,
@@ -502,9 +552,11 @@ namespace ZeroAD.Sim.Net
 
             float x = pos.Position.X.ToFloat();
             float z = pos.Position.Z.ToFloat();
+            // 升级继承原建筑朝向(原版 Transform.js 的等价:换模板时拷贝 rot.y)。
+            var yaw = pos.Rotation.Y;
             _cm.DestroyEntity(building);
             var foundation = SpawnFoundation(target,
-                Maths.Fixed.FromFloat(x), Maths.Fixed.FromFloat(z),
+                Maths.Fixed.FromFloat(x), Maths.Fixed.FromFloat(z), yaw,
                 stats.UpgradeTime > 0 ? stats.UpgradeTime : 10f, owner.PlayerId);
 
             // 指派的建造者续建(与玩家放置地基后的 Repair 同路)。

@@ -162,9 +162,11 @@ namespace ZeroAD.Sim.Net
             new(player, NetCommandType.Attack, attackerId, (int)targetId, allowCapture ? 1 : 0);
 
         /// <summary>Build: EntityId = builder, TemplateName = full building template,
-        /// FixedParam1/2 = world x/z. Cost charge + foundation spawn happen at execution.</summary>
-        public static NetCommand Build(uint player, uint builderId, string template, Fixed x, Fixed z) =>
-            new(player, NetCommandType.Build, builderId, 0, 0, x.InternalValue, z.InternalValue, template);
+        /// FixedParam1/2 = world x/z, IntParam1 = yaw angle (radians, Fixed.InternalValue;
+        /// 原版 cmd.angle,对齐 placement.js DEFAULT_ANGLE=3π/4). Cost charge + foundation
+        /// spawn happen at execution.</summary>
+        public static NetCommand Build(uint player, uint builderId, string template, Fixed x, Fixed z, Fixed angle) =>
+            new(player, NetCommandType.Build, builderId, angle.InternalValue, 0, x.InternalValue, z.InternalValue, template);
 
         /// <summary>Train: IntParam1 = count (batch training sends 5 as one command).</summary>
         public static NetCommand Train(uint player, uint buildingId, string templateName, int count = 1) =>
