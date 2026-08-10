@@ -61,6 +61,15 @@ python3 "$(dirname "$0")/fix_glb_unit_scale.py" \
     --meshes-root "$OUT/meshes" \
     --dae-root "$SRC/meshes" 2>&1 | grep -E "^(fixed|would-fix):" || true
 
+# ---- 1c. Restore field crop-patch grid ----
+# Blender 的 glTF 导出会丢掉 field_propped_*8x8.dae 里 64 个 prop-patch_NNN
+# 空节点的 translation,导致农田作物全堆在中心而非 8×8 网格。从 DAE 读回坐标写进 GLB。
+echo ""
+echo ">>> Restoring field crop-patch grid translations..."
+python3 "$(dirname "$0")/fix_glb_field_patches.py" \
+    --meshes-root "$OUT/meshes" \
+    --dae-root "$SRC/meshes" 2>&1 | grep -E "^  |repaired" || true
+
 # ---- 2. Textures ----
 echo ""
 echo ">>> Copying textures..."

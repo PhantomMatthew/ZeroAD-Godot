@@ -19,7 +19,11 @@ namespace ZeroAD.Godot.SkeletalAnim;
 public sealed partial class ManualAnimator : Node
 {
     private Skeleton3D? _skeleton;
-    private readonly Dictionary<string, AnimClip> _clips = new();
+    // 大小写不敏感:加载侧(ActorComposer.TryLoadExternalAnimations)把 clip key 强制
+    // 小写,但请求侧 ResolveAnimationState 可能返回原版 XML 的大小写("Build"/"Walk"/
+    // "Idle"——variants/biped/*.xml 的 name 属性本就大写)。OrdinalIgnoreCase 让两侧
+    // 无论哪种写法都能匹配,根治"建造工永远 idle"这类大小写契约分裂。
+    private readonly Dictionary<string, AnimClip> _clips = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _boneIdx = new();
     // Per-bone frame correction: mesh_rest * dae_rest⁻¹. Converts a DAE animation
     // quaternion (Collada bone frame) into the mesh GLB's bone frame (Blender-

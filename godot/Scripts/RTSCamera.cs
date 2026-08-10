@@ -82,8 +82,10 @@ public sealed partial class RTSCamera : Camera3D
             {
                 if (mp.X < EdgeMargin)       { _focus -= right * PanSpeed * dt; moved = true; }
                 else if (mp.X > sz.X - EdgeMargin) { _focus += right * PanSpeed * dt; moved = true; }
-                if (mp.Y < EdgeMargin)       { _focus -= forward * PanSpeed * dt; moved = true; }
-                else if (mp.Y > sz.Y - EdgeMargin) { _focus += forward * PanSpeed * dt; moved = true; }
+                // Godot 屏幕坐标 Y 向下为正:顶边 mp.Y 小 → 应前进(+= forward,对齐 cam_up);
+                // 底边 mp.Y 大 → 应后退。此前两分支接反,鼠标上移反而后退。
+                if (mp.Y < EdgeMargin)       { _focus += forward * PanSpeed * dt; moved = true; }
+                else if (mp.Y > sz.Y - EdgeMargin) { _focus -= forward * PanSpeed * dt; moved = true; }
             }
         }
 
