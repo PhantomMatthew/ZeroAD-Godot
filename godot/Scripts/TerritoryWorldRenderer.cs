@@ -147,8 +147,10 @@ public sealed class TerritoryWorldRenderer
         _mat?.SetShaderParameter("territory_cells", (float)n);
     }
 
-    /// <summary>领土描边网格(C++ TerritoryBoundary):沿异主格界画 0.8m 宽贴地四边形条,
-    /// 顶点色 = 属主玩家色(异主共边取较大 id 一侧,每条边只发一次)。</summary>
+    /// <summary>领土描边网格(C++ TerritoryBoundary):沿异主格界画贴地四边形条,
+    /// 顶点色 = 属主玩家色。双色边界(对齐原版):两异主格共边时,各画半宽带、各用
+    /// 己方玩家色,合起来就是一条左半 A 色、右半 B 色的双色线(原版为每个 owner 独立
+    /// 生成边界环,叠加成同效)。gaia(owner 0)侧不画(只画有主侧)。</summary>
     private void RebuildBorderMesh(byte[] owners, int n)
     {
         if (_borderMesh == null) return;
@@ -157,47 +159,53 @@ public sealed class TerritoryWorldRenderer
         var verts = new System.Collections.Generic.List<Vector3>();
         var colors = new System.Collections.Generic.List<Color>();
 
-        void EmitEdge(float simX0, float simZ0, float simX1, float simZ1, int owner)
+        // 画半宽带:边在 (simX0,simZ0)-(simX1,simZ1),owner 色条偏向 dirX/dirZ 侧
+        // (法向正方向 = owner 己方格),宽 halfW。gaia(owner 0)跳过。
+        void EmitHalfEdge(float simX0, float simZ0, float simX1, float simZ1,
+            float dirX, float dirZ, int owner)
         {
-            // 边的法向(垂直方向 ±halfW)由端点差推得:竖边(x 同)→ x 偏;横边(z 同)→ z 偏。
-            float nx = Mathf.Abs(simZ1 - simZ0) > 0.01f ? halfW : 0f;
-            float nz = Mathf.Abs(simX1 - simX0) > 0.01f ? halfW : 0f;
+            if (owner <= 0) return;   // gaia 不画
             var c = SimBridge.GetPlayerColor(owner);
             c.A = 0.92f;
-            // 世界坐标:z 镜像(vis z = worldSize − sim z),y = 地形高 + 抬升。
             Vector3 P(float sx, float sz, float ox, float oz)
             {
                 float y = TerrainHeightService.Sample(sx + ox, sz + oz) + 0.07f;
                 return new Vector3(sx + ox, y, _worldSize - (sz + oz));
             }
-            var a1 = P(simX0, simZ0, -nx, -nz); var a2 = P(simX0, simZ0, nx, nz);
-            var b1 = P(simX1, simZ1, -nx, -nz); var b2 = P(simX1, simZ1, nx, nz);
-            // 两个三角形(a1-a2-b2, a1-b2-b1)
-            foreach (var v in new[] { a1, a2, b2, a1, b2, b1 }) { verts.Add(v); colors.Add(c); }
+            // 从边线(ox=0)向 owner 侧偏 halfW(ox=dirX*halfW)
+            var a0 = P(simX0, simZ0, 0, 0);
+            var a1 = P(simX0, simZ0, dirX * halfW, dirZ * halfW);
+            var b0 = P(simX1, simZ1, 0, 0);
+            var b1 = P(simX1, simZ1, dirX * halfW, dirZ * halfW);
+            foreach (var v in new[] { a0, a1, b1, a0, b1, b0 }) { verts.Add(v); colors.Add(c); }
         }
 
         for (int cz = 0; cz < n; cz++)
             for (int cx = 0; cx < n; cx++)
             {
                 int own = owners[cz * n + cx];
-                // +x 邻边
+                // +x 邻边:own 在左(cx 格),nb 在右(cx+1 格)。边线 x=(cx+1)*cell。
                 if (cx + 1 < n)
                 {
                     int nb = owners[cz * n + cx + 1];
                     if (nb != own)
                     {
-                        int o = System.Math.Max(own, nb);
-                        if (o > 0) EmitEdge((cx + 1) * cell, cz * cell, (cx + 1) * cell, (cz + 1) * cell, o);
+                        float ex = (cx + 1) * cell;
+                        // own 侧偏 -x(法向指向 own 格),nb 侧偏 +x。
+                        EmitHalfEdge(ex, cz * cell, ex, (cz + 1) * cell, -1f, 0f, own);
+                        EmitHalfEdge(ex, cz * cell, ex, (cz + 1) * cell, 1f, 0f, nb);
                     }
                 }
-                // +z 邻边
+                // +z 邻边:own 在上(cz 格),nb 在下(cz+1 格)。边线 z=(cz+1)*cell。
                 if (cz + 1 < n)
                 {
                     int nb = owners[(cz + 1) * n + cx];
                     if (nb != own)
                     {
-                        int o = System.Math.Max(own, nb);
-                        if (o > 0) EmitEdge(cx * cell, (cz + 1) * cell, (cx + 1) * cell, (cz + 1) * cell, o);
+                        float ez = (cz + 1) * cell;
+                        // own 侧偏 -z,nb 侧偏 +z。
+                        EmitHalfEdge(cx * cell, ez, (cx + 1) * cell, ez, 0f, -1f, own);
+                        EmitHalfEdge(cx * cell, ez, (cx + 1) * cell, ez, 0f, 1f, nb);
                     }
                 }
             }

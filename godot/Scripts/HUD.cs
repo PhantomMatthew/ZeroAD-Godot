@@ -188,11 +188,11 @@ public sealed partial class HUD : CanvasLayer
         // 对齐 C++ TopPanel 右侧(top_panel/MenuButton.xml + IconButtons/*):
         // 从左到右 GameSpeed(100%−284) / Diplomacy / Trade / MatchSettings(28×28 图标,
         // 间距 2) / **Menu 在最右**(100%−164..100%-8,156×28 文字按钮,StoneButtonFancy)。
-        // 我们比上游多一个暂停按钮(34px)——盒子左扩 38px 容纳,否则 Menu 被挤出屏幕
-        // (内容 314px > 上游盒宽 276px,超界部分被截断)。
+        // 原版顶栏无暂停按钮——暂停是 Menu 下拉里的项(PauseMenu 的 Resume)+ pause 热键;
+        // 此前在此塞了个 ❚❚ 按钮并把盒宽从 276 拓到 322,与上游布局不符,已移除。
         var menuBox = new HBoxContainer();
         menuBox.SetAnchorsPreset(Control.LayoutPreset.TopRight);
-        menuBox.OffsetLeft = -322; menuBox.OffsetTop = 4;
+        menuBox.OffsetLeft = -284; menuBox.OffsetTop = 4;
         menuBox.OffsetRight = -8; menuBox.OffsetBottom = 32;
         menuBox.AddThemeConstantOverride("separation", 2);
         _topBar.AddChild(menuBox);
@@ -201,19 +201,6 @@ public sealed partial class HUD : CanvasLayer
         AddMenuButton(menuBox, "diplomacy", "Diplomacy", () => _main.OpenDiplomacyPanel());
         AddMenuButton(menuBox, "economics", "Trade", () => _main.OpenTradePanel());
         AddMenuButton(menuBox, "match-settings", "Settings", () => _main.OpenMatchSettingsPanel());
-
-        // 暂停键(原版 PauseControl 顶栏按钮:直接切 sim 冻结,不开菜单叠层;
-        // 菜单叠层仍由 Menu/Esc 开)。
-        var pauseBtn = new Button
-        {
-            Text = "❚❚",
-            Theme = UITheme.GetTheme(),
-            CustomMinimumSize = new Vector2(34, 28),
-            TooltipText = "Pause",
-        };
-        StoneButtonStyle.Apply(pauseBtn, FindBinariesDir());
-        pauseBtn.Pressed += () => _main.TogglePause();
-        menuBox.AddChild(pauseBtn);
 
         // 速度控制弹出条(原版 GameSpeedControl.xml:gameSpeed 下拉位于顶栏下方
         // 100%-390 40 100%-230 65,由时间按钮开合,默认隐藏)。顶栏不内联 +/-——

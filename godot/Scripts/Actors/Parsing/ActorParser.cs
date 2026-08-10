@@ -124,7 +124,8 @@ public static class ActorParser
 	}
 
 	/// <summary>Parses &lt;decal width depth angle offsetx offsetz/&gt; — 贴花变体
-	/// (无 mesh;原版 decal 渲染器的平铺贴图参数)。</summary>
+	/// (无 mesh;原版 decal 渲染器的平铺贴图参数)。angle 在 XML 里是角度(原版
+	/// ObjectBase.cpp:277 DEGTORAD),此处转弧度对齐,MakeDecalQuad 直接当弧度用。</summary>
 	private static DecalSpec? ParseDecal(XElement el)
 	{
 		var d = el.Element("decal");
@@ -132,7 +133,7 @@ public static class ActorParser
 		float F(string n) => float.TryParse((string?)d.Attribute(n),
 			System.Globalization.NumberStyles.Float,
 			System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0f;
-		return new DecalSpec(F("width"), F("depth"), F("angle"), F("offsetx"), F("offsetz"));
+		return new DecalSpec(F("width"), F("depth"), Mathf.DegToRad(F("angle")), F("offsetx"), F("offsetz"));
 	}
 
 	/// <summary>Parses &lt;particles file="x"/&gt; — 粒子系统引用(不移植,仅记录存在性)。</summary>
