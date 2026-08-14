@@ -336,6 +336,12 @@ namespace ZeroAD.Sim
             }
             _componentsByEntity[entity][iid] = component;
             ((IComponent)component).Init();
+            // OwnershipComponent 后挂(SpawnUnit 走 AssembleUnit 时不带 owner,调用方在
+            // AddComponent 后才设):通知 RangeManager 更新 d.Owner + SyncLos 加视野圆。
+            // 此前不通知 → d.Owner 保持 -1 → SyncLos 的 want=false → LOS grid 永远不加
+            // 该单位的视野圆 → 该玩家单位永远看不到敌人 → 不攻击(原版 MT_OwnershipChanged)。
+            if (component is Components.OwnershipComponent oc)
+                NotifyOwnerChanged(entity, -1, oc.PlayerId);
         }
 
         public T? QueryInterface<T>(EntityId entity) where T : class, IComponent

@@ -320,7 +320,15 @@ namespace ZeroAD.Sim
 
             var pos = cm.QueryInterface<PositionComponent>(entity);
             if (pos != null)
-                pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+            {
+                // 通知 RangeManager 更新 spatial subdivision(同 SimBridge.SpawnUnit 的修复):
+                // 此前直接字段赋值 → subdivision 里实体在 (0,0) → ExecuteQuery 查不到 → 不攻击。
+                var p = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+                pos.Position = p;
+                cm.NotifyPositionChanged(entity,
+                    new Maths.FixedVector2D(Maths.Fixed.Zero, Maths.Fixed.Zero),
+                    new Maths.FixedVector2D(p.X, p.Z));
+            }
 
             // Register the obstruction now that Position is set, so it's tracked from frame 1.
             cm.QueryInterface<ObstructionComponent>(entity)?.EnsureRegistered();
@@ -550,7 +558,13 @@ namespace ZeroAD.Sim
 
             var pos = cm.QueryInterface<PositionComponent>(entity);
             if (pos != null)
-                pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+            {
+                var p = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+                pos.Position = p;
+                cm.NotifyPositionChanged(entity,
+                    new Maths.FixedVector2D(Maths.Fixed.Zero, Maths.Fixed.Zero),
+                    new Maths.FixedVector2D(p.X, p.Z));
+            }
         }
 
         /// <summary>Attach a TurretHolder with its template-defined named points
