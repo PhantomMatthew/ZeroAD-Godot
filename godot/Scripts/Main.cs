@@ -1062,7 +1062,9 @@ public sealed partial class Main : Node3D
 		TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
 
 		// 可通行性(rmgen 陆水:超过水面高度=Land,否则 Water)+ 顶点高度网格。
-		FillPassabilityAllLand(pmp);
+		// rmgen 水面在米制 SEA_LEVEL=20m(rmgen 内部水面高度 0 + SEA_LEVEL 偏移;
+		// 原版 alpine_lakes.js 水 tile 内部 -5 → 米制 15 < 20)。
+		FillPassabilityAllLand(pmp, (float)ZeroAD.Sim.Rmgen.RmgenConstants.SEA_LEVEL);
 
 		// 放置实体（从 MapExport.Entities）。rmgen 实体坐标单位是 TILES——上游
 		// MapReader::ParseEntities ×TERRAIN_TILE_SIZE 转米;不乘 4 会把全部实体挤进
@@ -1167,20 +1169,28 @@ public sealed partial class Main : Node3D
 			_sim.Pathfinder.RebuildGrid();
 		}
 
-	private void FillPassabilityAllLand(PmpMap? pmp = null)
+	private void FillPassabilityAllLand(PmpMap? pmp = null, float waterHeight = -999f)
 	{
 		var terrain = _sim.Terrain;
 		if (terrain == null) return;
 		int n = terrain.MapSize;
 		var grid = new ZeroAD.Sim.Components.TerrainClass[n, n];
 		// Default Land (0) is already the zero value, so no need to fill explicitly.
-		// 但有高度图时按坡度标悬崖(Impassable):> MaxTerrainSlope(1.0,45°) 不该能走。
-		// (rmgen 无 waterHeight,水陆分类不在此——rmgen 水分类是独立缺陷。)
+		// 有高度图时:水(低于水面)+ 悬崖(坡度>1.0=45°)标对应类别。rmgen 水面在米制
+		// SEA_LEVEL=20m(heightmap 编码 currentHeight+20;原版 alpine_lakes.js 水 tile
+		// 内部高度 -5 → 米制 15 < 20)。
 		if (pmp != null)
 		{
 			for (int tz = 0; tz < n; tz++)
 				for (int tx = 0; tx < n; tx++)
 				{
+					float wx = (tx + 0.5f) * terrain.TileSize;
+					float wz = (tz + 0.5f) * terrain.TileSize;
+					if (pmp.GetHeightWorld(wx, wz) < waterHeight)
+					{
+						grid[tx, tz] = ZeroAD.Sim.Components.TerrainClass.Water;
+						continue;
+					}
 					float h00 = pmp.GetHeight(tx, tz);
 					float h10 = pmp.GetHeight(tx + 1, tz);
 					float h01 = pmp.GetHeight(tx, tz + 1);
