@@ -42,7 +42,7 @@ public sealed class ReplayDriver
         _hashes = reader.TryReadHashLog();
         // 订阅 OnTurnAdvanced:每回合推进后做哈希验证(只在校验点回合对比)。
         _sim.NetTurn.OnTurnAdvanced += VerifyHash;
-        GD.Print($"[Replay] loaded {_batches.Count} turn batches, max turn {_maxTurn}, {_hashes.Count} hash checkpoints");
+        ZeroAD.Sim.Diag.Log("Replay", $"loaded {_batches.Count} turn batches, max turn {_maxTurn}, {_hashes.Count} hash checkpoints");
     }
 
     private void VerifyHash(uint turn)
@@ -52,11 +52,11 @@ public sealed class ReplayDriver
         if (!_hashes.TryGetValue(turn, out var recorded)) return;
         byte[] actual;
         try { actual = _sim.Sim.ComputeStateHash(); }
-        catch (Exception ex) { GD.PrintErr($"[Replay] hash compute failed at turn {turn}: {ex.Message}"); return; }
+        catch (Exception ex) { ZeroAD.Sim.Diag.Err("Replay", $"hash compute failed at turn {turn}: {ex.Message}"); return; }
         if (!HashEquals(actual, recorded))
         {
-            GD.PrintErr($"[Replay] OOS at turn {turn}: recorded {ToHex(recorded)} != actual {ToHex(actual)}");
-            GD.PrintErr("[Replay] 确定性回归:同输入产生不同状态——检查是否改了 NetCommand 结构/sim 逻辑");
+            ZeroAD.Sim.Diag.Err("Replay", $"OOS at turn {turn}: recorded {ToHex(recorded)} != actual {ToHex(actual)}");
+            ZeroAD.Sim.Diag.Err("Replay", "确定性回归:同输入产生不同状态——检查是否改了 NetCommand 结构/sim 逻辑");
         }
     }
 
@@ -79,7 +79,7 @@ public sealed class ReplayDriver
             _sim.SimulationRunning = false;
             _finished = true;
             _sim.NetTurn.OnTurnAdvanced -= VerifyHash;  // 退订
-            GD.Print("[Replay] playback finished");
+            ZeroAD.Sim.Diag.Log("Replay", "playback finished");
             return;
         }
         if (_batches.TryGetValue(current, out var cmds))

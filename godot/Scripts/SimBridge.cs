@@ -178,23 +178,23 @@ public sealed partial class SimBridge : Node
         if (templatesPath != null && System.IO.Directory.Exists(templatesPath))
         {
             templates = new TemplateLoader(templatesPath);
-            GD.Print($"Loaded templates from: {templatesPath}");
+            ZeroAD.Sim.Diag.Log("Sim", $"Loaded templates from: {templatesPath}");
             int count = 0;
             foreach (var kvp in templates.Cache) count++;
             if (count == 0) templates.LoadAllTemplates();
-            GD.Print($"Template cache: {templates.Cache.Count} entries");
+            ZeroAD.Sim.Diag.Log("Sim", $"Template cache: {templates.Cache.Count} entries");
 
             // 科技 JSON 与模板同根(simulation/templates → simulation/data/technologies)
             var techDir = System.IO.Path.GetFullPath(
                 System.IO.Path.Combine(templatesPath, "..", "data", "technologies"));
             techCatalog = TechnologyLoader.LoadAll(techDir);
-            GD.Print($"Technologies: {techCatalog.Technologies.Count} (+{techCatalog.Pairs.Count} pairs)");
+            ZeroAD.Sim.Diag.Log("Sim", $"Technologies: {techCatalog.Technologies.Count} (+{techCatalog.Pairs.Count} pairs)");
 
             // 光环 JSON 同根(simulation/data/auras)。MVP 仅收 range/global/player 三型。
             var auraDir = System.IO.Path.GetFullPath(
                 System.IO.Path.Combine(templatesPath, "..", "data", "auras"));
             auraCatalog = AuraLoader.LoadAll(auraDir);
-            GD.Print($"Auras: {auraCatalog.Auras.Count} entries (range/global/player only)");
+            ZeroAD.Sim.Diag.Log("Sim", $"Auras: {auraCatalog.Auras.Count} entries (range/global/player only)");
         }
 
         _sim = new ComponentManager(seed, registry, templates);
@@ -317,7 +317,7 @@ public sealed partial class SimBridge : Node
         if (script != null)
         {
             script.OnInit(_sim);
-            GD.Print($"[Map] trigger script installed: {mapName}");
+            ZeroAD.Sim.Diag.Log("Map", $"trigger script installed: {mapName}");
         }
     }
 
@@ -354,7 +354,7 @@ public sealed partial class SimBridge : Node
         }
         catch (System.Exception ex)
         {
-            GD.PrintErr($"[Replay] start recording failed: {ex.Message}");
+            ZeroAD.Sim.Diag.Err("Replay", $"start recording failed: {ex.Message}");
         }
     }
 
@@ -386,7 +386,7 @@ public sealed partial class SimBridge : Node
         string? xmlPath = ScenarioLoader.FindScenarioPath(dataRoot, "maps/tutorials/introductory_tutorial");
         if (xmlPath == null)
         {
-            GD.PrintErr("Tutorial scenario XML not found");
+            ZeroAD.Sim.Diag.Err("Sim", "Tutorial scenario XML not found");
             return null;
         }
 
@@ -400,7 +400,7 @@ public sealed partial class SimBridge : Node
         foreach (var pd in scenario.Players)
             teams[pd.PlayerId] = pd.Team;
         _sim.Players.SeedDiplomacyFromTeams(teams);
-        GD.Print($"Loaded tutorial scenario: {scenario.Entities.Count} entities ({scenario.Name})");
+        ZeroAD.Sim.Diag.Log("Sim", $"Loaded tutorial scenario: {scenario.Entities.Count} entities ({scenario.Name})");
         return scenario;
     }
 
@@ -463,7 +463,7 @@ public sealed partial class SimBridge : Node
         // 按玩家文明随机选英雄生成在其最佳建筑旁(CivCentre > Structure > Ship)。
         if (_sim?.EndGame.HasCondition("regicide") == true)
             SpawnRegicideHeroes();
-        GD.Print($"[Map] loaded map entities: {scenario.Entities.Count} ({scenario.Name})");
+        ZeroAD.Sim.Diag.Log("Map", $"loaded map entities: {scenario.Entities.Count} ({scenario.Name})");
         return scenario;
     }
 
@@ -526,7 +526,7 @@ public sealed partial class SimBridge : Node
             }
             var hero = SpawnFromTemplate(heroTemplate, hx, hz, pid);
             _sim.EndGame.RegicideHeroes[pid] = hero;
-            GD.Print($"[Map] regicide hero for player {pid}: {heroTemplate}");
+            ZeroAD.Sim.Diag.Log("Map", $"regicide hero for player {pid}: {heroTemplate}");
         }
     }
 
@@ -546,13 +546,13 @@ public sealed partial class SimBridge : Node
         endGame.AlliedVictory = scenario.LockTeams || !scenario.LastManStanding;
         endGame.RegicideGarrison = scenario.RegicideGarrison;
         if (scenario.VictoryConditions.Count > 0)
-            GD.Print($"[Map] victory conditions: {string.Join(",", scenario.VictoryConditions)}");
+            ZeroAD.Sim.Diag.Log("Map", $"victory conditions: {string.Join(",", scenario.VictoryConditions)}");
         // 停战设置(原版 Setup.js:if (settings.Ceasefire) StartCeasefire)——
         // 期间全体非 gaia 互置中立,到期恢复外交。
         if (scenario.CeasefireDuration > 0 && _sim != null)
         {
             endGame.StartCeasefire(_sim);
-            GD.Print($"[Map] ceasefire: {scenario.CeasefireDuration}s");
+            ZeroAD.Sim.Diag.Log("Map", $"ceasefire: {scenario.CeasefireDuration}s");
         }
     }
 
@@ -597,7 +597,7 @@ public sealed partial class SimBridge : Node
                 civ = scenario.Players.FirstOrDefault(p => p.PlayerId == pid)?.Civ;
             return string.IsNullOrEmpty(civ) ? null : civ;
         });
-        GD.Print($"[Skirmish] civ-replaced {replaced} placeholder entities, destroyed {destroyed} " +
+        ZeroAD.Sim.Diag.Log("Skirmish", $"civ-replaced {replaced} placeholder entities, destroyed {destroyed} " +
                  $"(no mapping for owner civ)");
     }
 
@@ -628,7 +628,7 @@ public sealed partial class SimBridge : Node
             catch (System.Exception ex)
             {
                 ZeroAD.Godot.Actors.ActorDiagnostics.Fallback(def.Template, $"spawn-exception:{ex.GetType().Name}:{ex.Message}");
-                GD.PushWarning($"SimBridge: spawn failed for '{def.Template}': {ex.Message}");
+                ZeroAD.Sim.Diag.Warn("Sim", $"SimBridge: spawn failed for '{def.Template}': {ex.Message}");
             }
         }
 
@@ -1019,7 +1019,7 @@ public sealed partial class SimBridge : Node
             {
                 if (!_stallLogged)
                 {
-                    GD.Print($"[Lockstep] waiting for turn {_netTurn.CurrentTurn} bundle");
+                    ZeroAD.Sim.Diag.Log("Lockstep", $"waiting for turn {_netTurn.CurrentTurn} bundle");
                     _stallLogged = true;
                 }
                 break;
@@ -1191,7 +1191,7 @@ public sealed partial class SimBridge : Node
             EntityAssembler.RegisterForLos(_sim, entity, template, null);
         }
 
-        GD.Print($"[RebuildAllVisuals] recreated {_entityNodes.Count} visual nodes");
+        ZeroAD.Sim.Diag.Log("RebuildAllVisuals", $"recreated {_entityNodes.Count} visual nodes");
     }
 
     /// <summary>Cold-load rebuild of the two system spatial indexes that
@@ -1207,7 +1207,7 @@ public sealed partial class SimBridge : Node
             _sim.QueryInterface<ObstructionComponent>(e)?.EnsureRegistered();
         _range.Repopulate(GetAllEntitiesSnapshot());
         _range.UpdateVisibilityData();
-        GD.Print($"[RebuildSpatialIndexesAfterLoad] re-registered obstructions + repopulated range index");
+        ZeroAD.Sim.Diag.Log("RebuildSpatialIndexesAfterLoad", $"re-registered obstructions + repopulated range index");
     }
 
     private void OnSimEntityDestroyed(EntityId entity)

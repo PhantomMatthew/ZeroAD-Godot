@@ -63,7 +63,7 @@ public static class SplatBaker
         int texCount = map.TextureNames.Count;
         if (texCount == 0 || map.TileTex1.Length == 0)
         {
-            GD.PushWarning("SplatBaker: no texture data in PMP; falling back to flat terrain");
+            ZeroAD.Sim.Diag.Warn("Terrain", "SplatBaker: no texture data in PMP; falling back to flat terrain");
             return null;
         }
 
@@ -138,7 +138,7 @@ public static class SplatBaker
         var img = Image.CreateFromData(px, px, false, Image.Format.Rgb8, outp);
         img.GenerateMipmaps();
         sw.Stop();
-        GD.Print($"Terrain splat baked: {px}x{px} from {texCount} textures ({t}x{t} tiles) in {sw.ElapsedMilliseconds}ms");
+        ZeroAD.Sim.Diag.Log("Terrain", $"Terrain splat baked: {px}x{px} from {texCount} textures ({t}x{t} tiles) in {sw.ElapsedMilliseconds}ms");
         return img;
     }
 
@@ -291,7 +291,7 @@ public static class SplatBaker
             if (!File.Exists(path))
             {
                 if (_warned.Add("shapes"))
-                    GD.PushWarning($"SplatBaker: alpha shape maps not found at {dir}; overlays disabled");
+                    ZeroAD.Sim.Diag.Warn("Terrain", $"SplatBaker: alpha shape maps not found at {dir}; overlays disabled");
                 _shapes = Array.Empty<byte[]>();
                 return;
             }
@@ -551,7 +551,7 @@ public static class SplatBaker
         else
         {
             if (_warned.Add(name))
-                GD.PushWarning($"SplatBaker: texture '{name}' not found; using placeholder");
+                ZeroAD.Sim.Diag.Warn("Terrain", $"SplatBaker: texture '{name}' not found; using placeholder");
             var fallback = Image.CreateEmpty(LayerSize, LayerSize, false, Image.Format.Rgba8);
             fallback.Fill(new Color(0.35f, 0.50f, 0.20f));
             info.Pixels = fallback.GetData();
@@ -573,7 +573,7 @@ public static class SplatBaker
         catch (Exception ex)
         {
             if (_warned.Add("xml:" + name))
-                GD.PushWarning($"SplatBaker: terrain XML scan failed for '{name}': {ex.Message}");
+                ZeroAD.Sim.Diag.Warn("Terrain", $"SplatBaker: terrain XML scan failed for '{name}': {ex.Message}");
         }
         return null;
     }
@@ -616,7 +616,7 @@ public static class SplatBaker
         catch (Exception ex)
         {
             if (_warned.Add("parse:" + xmlPath))
-                GD.PushWarning($"SplatBaker: terrain XML parse failed '{xmlPath}': {ex.Message}");
+                ZeroAD.Sim.Diag.Warn("Terrain", $"SplatBaker: terrain XML parse failed '{xmlPath}': {ex.Message}");
         }
     }
 

@@ -85,7 +85,7 @@ public sealed partial class MultiplayerController : Node
         _peerToPlayer[1] = 1; // host's own ENet id is always 1
         Multiplayer.PeerConnected += OnPeerConnected;
         Multiplayer.PeerDisconnected += OnPeerDisconnected;
-        GD.Print($"Hosting on port {port}, seed={seed}, player=1");
+        ZeroAD.Sim.Diag.Log("MP", $"Hosting on port {port}, seed={seed}, player=1");
     }
 
     public void StartClient(string address, int port)
@@ -97,7 +97,7 @@ public sealed partial class MultiplayerController : Node
         Multiplayer.MultiplayerPeer = _peer;
         Multiplayer.PeerConnected += OnPeerConnected;
         Multiplayer.PeerDisconnected += OnPeerDisconnected;
-        GD.Print($"Connecting to {address}:{port}");
+        ZeroAD.Sim.Diag.Log("MP", $"Connecting to {address}:{port}");
     }
 
     /// <summary>
@@ -129,7 +129,7 @@ public sealed partial class MultiplayerController : Node
 
     private void OnPeerConnected(long id)
     {
-        GD.Print($"Peer connected: {id}");
+        ZeroAD.Sim.Diag.Log("MP", $"Peer connected: {id}");
         if (!_isHost) return;
         // Lobby phase only: claim a Human slot for the new peer, then broadcast the lobby
         // state. The host does NOT start the game here — that waits for HostStartGame so the
@@ -158,12 +158,12 @@ public sealed partial class MultiplayerController : Node
                 {
                     int idx = _slots.FindIndex(s => s.PlayerId == claimedSlot);
                     _slots[idx] = _slots[idx] with { Kind = PlayerSlotKind.Human };
-                    GD.Print($"Peer {id} bumped AI in slot {claimedSlot}");
+                    ZeroAD.Sim.Diag.Log("MP", $"Peer {id} bumped AI in slot {claimedSlot}");
                 }
             }
             if (claimedSlot == -1)
             {
-                GD.PrintErr($"No free slot for peer {id} (lobby full)");
+                ZeroAD.Sim.Diag.Err("MP", $"No free slot for peer {id} (lobby full)");
                 return;
             }
             _peerToPlayer[(int)id] = (uint)claimedSlot;
@@ -173,7 +173,7 @@ public sealed partial class MultiplayerController : Node
 
     private void OnPeerDisconnected(long id)
     {
-        GD.Print($"Peer disconnected: {id}");
+        ZeroAD.Sim.Diag.Log("MP", $"Peer disconnected: {id}");
         _peerToPlayer.Remove((int)id);
         if (_lobbyActive && _isHost) BroadcastLobbyState();
         // Mid-game leave: out of scope (no reconnection/host migration — design doc §9).
@@ -241,7 +241,7 @@ public sealed partial class MultiplayerController : Node
             string reason = $"Cannot start: {humanSlots} Human slot(s) but only " +
                             $"{_peerToPlayer.Count} player(s) connected. " +
                             "Set unclaimed Human slots to AI or Closed.";
-            GD.PrintErr(reason);
+            ZeroAD.Sim.Diag.Err("MP", reason);
             OnStartRefused?.Invoke(reason);
             return;
         }
@@ -260,7 +260,7 @@ public sealed partial class MultiplayerController : Node
         _mapPath = mapPath;
         long myPeer = Multiplayer.GetUniqueId();
         _localPlayerId = _peerToPlayer.TryGetValue((int)myPeer, out var pid) ? pid : 1;
-        GD.Print($"Game starting: seed={seed}, localPlayer={_localPlayerId}, slots={_slots.Count}, map={mapPath}");
+        ZeroAD.Sim.Diag.Log("MP", $"Game starting: seed={seed}, localPlayer={_localPlayerId}, slots={_slots.Count}, map={mapPath}");
         OnGameStart?.Invoke(seed, _localPlayerId, _slots, mapPath);
     }
 
@@ -291,7 +291,7 @@ public sealed partial class MultiplayerController : Node
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void ReceiveOOS(int turn, string msg)
     {
-        GD.PrintErr($"OOS at turn {turn}: {msg}");
+        ZeroAD.Sim.Diag.Err("MP", $"OOS at turn {turn}: {msg}");
         OnOOS?.Invoke(msg);
     }
 

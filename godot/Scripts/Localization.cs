@@ -63,11 +63,11 @@ public static class Localization
             if (File.Exists(file))
             {
                 _table = ParsePo(file);
-                GD.Print($"[Localization] locale={code}, {_table.Count} entries from {file}");
+                ZeroAD.Sim.Diag.Log("Localization", $"locale={code}, {_table.Count} entries from {file}");
                 return;
             }
         }
-        GD.PushWarning($"[Localization] no pack for locale '{code}', falling back to English");
+        ZeroAD.Sim.Diag.Warn("Localization", $"no pack for locale '{code}', falling back to English");
     }
 
     /// <summary>懒初始化:从 UserConfig 读 locale(自动加载存档值,同原版启动时

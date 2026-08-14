@@ -327,12 +327,12 @@ public sealed class ActorComposer
     private void WarnActorOnce(string actor, string message)
     {
         if (_warnedActors.Add(actor + message))
-            GD.PushWarning(message);
+            ZeroAD.Sim.Diag.Warn("Actor", message);
     }
 
     private void WarnAttachpointOnce(string actor, string attachpoint)
     {
         if (_warnedAttachpoints.Add(actor + "|" + attachpoint))
-            GD.PushWarning($"ActorComposer: attachpoint '{attachpoint}' not found in '{actor}'");
+            ZeroAD.Sim.Diag.Warn("Actor", $"ActorComposer: attachpoint '{attachpoint}' not found in '{actor}'");
     }
 }

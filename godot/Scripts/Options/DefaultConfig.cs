@@ -97,7 +97,7 @@ public static class DefaultConfig
         string? path = FindDefaultCfg();
         if (path == null)
         {
-            GD.PrintErr("DefaultConfig: default.cfg not found under binaries/data/config");
+            ZeroAD.Sim.Diag.Err("Options", "DefaultConfig: default.cfg not found under binaries/data/config");
             return new Dictionary<string, string>();
         }
         return Parse(File.ReadAllText(path));

@@ -36,7 +36,7 @@ public sealed record MapEnvironment(
         }
         catch (System.Exception e)
         {
-            GD.PrintErr($"MapEnvironment.LoadFromXml failed: {e.Message}");
+            ZeroAD.Sim.Diag.Err("Map", $"MapEnvironment.LoadFromXml failed: {e.Message}");
             return null;
         }
     }

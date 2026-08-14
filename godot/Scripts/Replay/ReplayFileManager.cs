@@ -37,7 +37,7 @@ public static class ReplayFileManager
             }
             catch (Exception ex)
             {
-                GD.PrintErr($"[Replay] skip unreadable {path}: {ex.Message}");
+                ZeroAD.Sim.Diag.Err("Replay", $"skip unreadable {path}: {ex.Message}");
             }
         }
         result.Sort((a, b) => b.Meta.TimeUnix.CompareTo(a.Meta.TimeUnix)); // newest first
@@ -56,7 +56,7 @@ public static class ReplayFileManager
         }
         catch (Exception ex)
         {
-            GD.PrintErr($"[Replay] open failed {path}: {ex.Message}");
+            ZeroAD.Sim.Diag.Err("Replay", $"open failed {path}: {ex.Message}");
             return null;
         }
     }
@@ -66,7 +66,7 @@ public static class ReplayFileManager
         string path = ReplayPath(slot);
         if (!File.Exists(path)) return false;
         try { File.Delete(path); return true; }
-        catch (Exception ex) { GD.PrintErr($"[Replay] delete failed: {ex.Message}"); return false; }
+        catch (Exception ex) { ZeroAD.Sim.Diag.Err("Replay", $"delete failed: {ex.Message}"); return false; }
     }
 
     public static bool Exists(string slot) => File.Exists(ReplayPath(slot));

@@ -125,7 +125,7 @@ namespace ZeroAD.Sim.Components
             int navcellsPerSide = tiles * PathfindingCore.NavcellsPerTerrainTile;
             if (tiles <= 0 || tiles > 512 || navcellsPerSide > 2048)
             {
-                System.Console.WriteLine($"[Pathfinder] RebuildGrid skipped: tiles={tiles} (navcells/side={navcellsPerSide}, limit 2048)");
+                Diag.Warn("Pathfinder", $"RebuildGrid skipped: tiles={tiles} (navcells/side={navcellsPerSide}, limit 2048)");
                 return;
             }
 
@@ -159,7 +159,7 @@ namespace ZeroAD.Sim.Components
                 }
                 catch (System.Exception ex)
                 {
-                    System.Console.WriteLine($"[Pathfinder] hierarchical/long rebuild failed: {ex.Message}");
+                    Diag.Warn("Pathfinder", $"hierarchical/long rebuild failed: {ex.Message}");
                     // Grid is still usable for direct A* even without hierarchical connectivity;
                     // leave Grid set so ComputePath can at least attempt a search.
                 }

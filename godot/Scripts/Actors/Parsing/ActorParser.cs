@@ -29,7 +29,7 @@ public static class ActorParser
 	{
 		if (!File.Exists(absActorPath))
 		{
-			GD.PushWarning($"ActorParser: actor file not found: {absActorPath}");
+			ZeroAD.Sim.Diag.Warn("Actor", $"ActorParser: actor file not found: {absActorPath}");
 			return null;
 		}
 
@@ -37,14 +37,14 @@ public static class ActorParser
 		try { doc = XDocument.Load(absActorPath); }
 		catch (Exception ex)
 		{
-			GD.PushWarning($"ActorParser: failed to parse '{absActorPath}': {ex.Message}");
+			ZeroAD.Sim.Diag.Warn("Actor", $"ActorParser: failed to parse '{absActorPath}': {ex.Message}");
 			return null;
 		}
 
 		var root = doc.Root;
 		if (root == null || root.Name.LocalName != "actor")
 		{
-			GD.PushWarning($"ActorParser: root is not <actor>: {absActorPath}");
+			ZeroAD.Sim.Diag.Warn("Actor", $"ActorParser: root is not <actor>: {absActorPath}");
 			return null;
 		}
 
@@ -68,7 +68,7 @@ public static class ActorParser
 		}
 		catch (Exception ex)
 		{
-			GD.PushWarning($"ActorParser: error building doc for '{absActorPath}': {ex.Message}");
+			ZeroAD.Sim.Diag.Warn("Actor", $"ActorParser: error building doc for '{absActorPath}': {ex.Message}");
 			return null;
 		}
 	}
@@ -215,7 +215,7 @@ public static class ActorParser
 	{
 		if (depth >= MaxVariantFileDepth)
 		{
-			GD.PushWarning($"ActorParser: variant file recursion depth exceeded at '{relPath}'");
+			ZeroAD.Sim.Diag.Warn("Actor", $"ActorParser: variant file recursion depth exceeded at '{relPath}'");
 			return null;
 		}
 		string abs = Path.GetFullPath(Path.Combine(ArtRoot, "variants", relPath));
@@ -223,7 +223,7 @@ public static class ActorParser
 			return cached;
 		if (!File.Exists(abs))
 		{
-			GD.PushWarning($"ActorParser: variant file not found: {abs}");
+			ZeroAD.Sim.Diag.Warn("Actor", $"ActorParser: variant file not found: {abs}");
 			_variantFileCache[abs] = null!;
 			return null;
 		}
@@ -234,7 +234,7 @@ public static class ActorParser
 			var root = doc.Root;
 			if (root == null || root.Name.LocalName != "variant")
 			{
-				GD.PushWarning($"ActorParser: variant file root is not <variant>: {abs}");
+				ZeroAD.Sim.Diag.Warn("Actor", $"ActorParser: variant file root is not <variant>: {abs}");
 				_variantFileCache[abs] = null!;
 				return null;
 			}
@@ -266,7 +266,7 @@ public static class ActorParser
 		}
 		catch (Exception ex)
 		{
-			GD.PushWarning($"ActorParser: failed to parse variant file '{abs}': {ex.Message}");
+			ZeroAD.Sim.Diag.Warn("Actor", $"ActorParser: failed to parse variant file '{abs}': {ex.Message}");
 			_variantFileCache[abs] = null!;
 			return null;
 		}

@@ -158,7 +158,7 @@ public sealed class ActorLoader
         }
         catch (Exception ex)
         {
-            GD.PushWarning($"ActorLoader: failed to parse template '{abs}': {ex.Message}");
+            ZeroAD.Sim.Diag.Warn("Actor", $"ActorLoader: failed to parse template '{abs}': {ex.Message}");
             return null;
         }
     }

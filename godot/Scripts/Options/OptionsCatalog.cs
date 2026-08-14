@@ -59,7 +59,7 @@ public static class OptionsCatalog
         using var f = global::Godot.FileAccess.Open(JsonPath, global::Godot.FileAccess.ModeFlags.Read);
         if (f == null)
         {
-            GD.PrintErr($"OptionsCatalog: cannot open {JsonPath}");
+            ZeroAD.Sim.Diag.Err("Options", $"OptionsCatalog: cannot open {JsonPath}");
             return new List<OptionCategory>();
         }
 

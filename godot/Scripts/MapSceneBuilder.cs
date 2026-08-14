@@ -43,7 +43,7 @@ public static class MapSceneBuilder
         string? pmpPath = ScenarioLoader.FindPmpPath(dataRoot, mapRel);
         if (pmpPath == null)
         {
-            GD.PrintErr($"[MapSceneBuilder] PMP not found: {mapRel}");
+            ZeroAD.Sim.Diag.Err("MapSceneBuilder", $"PMP not found: {mapRel}");
             return null;
         }
         return BuildFromFiles(pmpPath, ScenarioLoader.FindScenarioPath(dataRoot, mapRel),
@@ -158,7 +158,7 @@ public static class MapSceneBuilder
             try { node = ModelLibrary.InstantiateForTemplate(def.Template, def.X, def.Z, color); }
             catch (System.Exception ex)
             {
-                GD.PushWarning($"[MapSceneBuilder] instantiate failed '{def.Template}': {ex.Message}");
+                ZeroAD.Sim.Diag.Warn("MapSceneBuilder", $"instantiate failed '{def.Template}': {ex.Message}");
             }
             if (node != null)
             {
@@ -182,7 +182,7 @@ public static class MapSceneBuilder
         if (setOwners)
             SetOwnerRecursive(root, root);
 
-        GD.Print($"[MapSceneBuilder] {mapName}: {placed} entities ({modelCount} real models), " +
+        ZeroAD.Sim.Diag.Log("Map", $"{mapName}: {placed} entities ({modelCount} real models), " +
                  $"{pmp.MapSizeMeters}m, water={hasWater}");
         return new Result
         {

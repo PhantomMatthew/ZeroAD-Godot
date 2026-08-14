@@ -129,6 +129,6 @@ public sealed partial class CivInfoPanel : ModalPanelBase
                 return;
             }
         }
-        GD.PrintErr("[CivInfo] civs data not found");
+        ZeroAD.Sim.Diag.Err("CivInfo", "civs data not found");
     }
 }

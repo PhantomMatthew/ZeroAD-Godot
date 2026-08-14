@@ -18,6 +18,9 @@ public sealed partial class MainMenu : Control
 
     public override void _Ready()
     {
+        // 统一日志通道(诊断方案 3):尽早把内核 Diag.Sink 接到 Godot 输出,接住后续所有
+        // startup/运行期日志。幂等——重进主菜单再 _Ready 也不重复挂。
+        ZeroAD.Godot.Diagnostics.DiagGodot.Install();
         SetAnchorsPreset(LayoutPreset.FullRect);
 
         // dev 跳过主菜单:ZEROAD_TUTORIAL/AUTOSTART 读一次即清空,设 GameLaunchConfig 后转 session。
@@ -65,7 +68,7 @@ public sealed partial class MainMenu : Control
         await ToSignal(GetTree().CreateTimer(1.5), SceneTreeTimer.SignalName.Timeout);
         var img = GetViewport().GetTexture().GetImage();
         img.SavePng($"user://shot_{name}.png");
-        GD.Print($"SHOT_SAVED user://shot_{name}.png");
+        ZeroAD.Sim.Diag.Log("Main", $"SHOT_SAVED user://shot_{name}.png");
         GetTree().Quit();
     }
 

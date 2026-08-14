@@ -99,7 +99,7 @@ public static class TerrainRenderer
 
         var instance = new MeshInstance3D { Mesh = mesh };
         instance.CreateTrimeshCollision();
-        GD.Print($"Terrain mesh: {verts}x{verts}={verts*verts} verts, {(verts-1)*(verts-1)*2} tris");
+        ZeroAD.Sim.Diag.Log("Terrain", $"Terrain mesh: {verts}x{verts}={verts*verts} verts, {(verts-1)*(verts-1)*2} tris");
         return instance;
     }
 
@@ -155,16 +155,16 @@ public static class TerrainRenderer
         string path = ProjectSettings.GlobalizePath($"res://assets/textures/{filename}");
         if (!System.IO.File.Exists(path))
         {
-            GD.PrintErr($"Texture not found: {path}");
+            ZeroAD.Sim.Diag.Err("Terrain", $"Texture not found: {path}");
             return null;
         }
         var img = Image.LoadFromFile(path);
         if (img == null)
         {
-            GD.PrintErr($"Image.LoadFromFile failed: {path}");
+            ZeroAD.Sim.Diag.Err("Terrain", $"Image.LoadFromFile failed: {path}");
             return null;
         }
-        GD.Print($"Texture loaded: {filename} ({img.GetWidth()}x{img.GetHeight()})");
+        ZeroAD.Sim.Diag.Log("Terrain", $"Texture loaded: {filename} ({img.GetWidth()}x{img.GetHeight()})");
         return ImageTexture.CreateFromImage(img);
     }
 }

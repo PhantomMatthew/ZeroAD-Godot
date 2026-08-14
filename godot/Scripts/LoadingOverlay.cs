@@ -186,7 +186,7 @@ public sealed partial class LoadingOverlay : CanvasLayer
         }
         catch (Exception ex)
         {
-            GD.PrintErr($"LoadingOverlay.PickTip failed: {ex.Message}");
+            ZeroAD.Sim.Diag.Err("Main", $"LoadingOverlay.PickTip failed: {ex.Message}");
             return ("Loading", "", null);
         }
     }

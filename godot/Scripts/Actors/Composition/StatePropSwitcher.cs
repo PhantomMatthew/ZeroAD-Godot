@@ -151,7 +151,7 @@ public sealed partial class StatePropSwitcher : Node
         if (node == null)
         {
             if (Warned.Add(key))
-                GD.PushWarning($"StatePropSwitcher: failed to build prop '{prop.ActorPath}' for state '{state}'");
+                ZeroAD.Sim.Diag.Warn("Actor", $"StatePropSwitcher: failed to build prop '{prop.ActorPath}' for state '{state}'");
             // Placeholder so a broken prop doesn't retry the compose on every state entry.
             node = new Node3D { Name = "MissingStateProp" };
         }
@@ -162,7 +162,7 @@ public sealed partial class StatePropSwitcher : Node
 
         if (!ActorComposer.AttachPropAt(_root!, _skeleton, attachpoint, node)
             && Warned.Add("attach:" + key))
-            GD.PushWarning($"StatePropSwitcher: attachpoint '{attachpoint}' not found for state '{state}'");
+            ZeroAD.Sim.Diag.Warn("Actor", $"StatePropSwitcher: attachpoint '{attachpoint}' not found for state '{state}'");
 
         _spawned[key] = node;
         return node;
