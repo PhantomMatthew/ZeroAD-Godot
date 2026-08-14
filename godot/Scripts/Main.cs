@@ -28,6 +28,7 @@ public sealed partial class Main : Node3D
 	private MultiplayerController _mp = null!;
 
 	private readonly HashSet<EntityId> _selectedEntities = new();
+	private readonly List<EntityId> _toRemove = new();   // UpdateSelectionMarkers 阵亡清理复用
 	private bool _dragSelecting;
 	private Vector2 _dragStart;
 	private bool _isDragging;
@@ -1122,8 +1123,23 @@ public sealed partial class Main : Node3D
 				float wx = (tx + 0.5f) * terrain.TileSize;
 				float wz = (tz + 0.5f) * terrain.TileSize;
 				float groundH = pmp.GetHeightWorld(wx, wz);
-				grid[tx, tz] = groundH <= waterHeight
-					? ZeroAD.Sim.Components.TerrainClass.Water
+				if (groundH <= waterHeight)
+				{
+					grid[tx, tz] = ZeroAD.Sim.Components.TerrainClass.Water;
+					continue;
+				}
+				// 坡度(原版 CTerrain::GetSlopeFixed):4 个角最高 − 最低,除以 4m tile 边长。
+				// > MaxTerrainSlope(1.0,即 45°)标 Impassable——悬崖/陡坡不该能走。此前只判
+				// 水/陆,从不算坡度 → 单位能从山上走过。
+				float h00 = pmp.GetHeight(tx, tz);
+				float h10 = pmp.GetHeight(tx + 1, tz);
+				float h01 = pmp.GetHeight(tx, tz + 1);
+				float h11 = pmp.GetHeight(tx + 1, tz + 1);
+				float hi = Mathf.Max(Mathf.Max(h00, h10), Mathf.Max(h01, h11));
+				float lo = Mathf.Min(Mathf.Min(h00, h10), Mathf.Min(h01, h11));
+				float slope = (hi - lo) / terrain.TileSize;
+				grid[tx, tz] = slope > 1.0f
+					? ZeroAD.Sim.Components.TerrainClass.Impassable
 					: ZeroAD.Sim.Components.TerrainClass.Land;
 			}
 		terrain.SetPassabilityGrid(grid);
@@ -1158,6 +1174,23 @@ public sealed partial class Main : Node3D
 		int n = terrain.MapSize;
 		var grid = new ZeroAD.Sim.Components.TerrainClass[n, n];
 		// Default Land (0) is already the zero value, so no need to fill explicitly.
+		// 但有高度图时按坡度标悬崖(Impassable):> MaxTerrainSlope(1.0,45°) 不该能走。
+		// (rmgen 无 waterHeight,水陆分类不在此——rmgen 水分类是独立缺陷。)
+		if (pmp != null)
+		{
+			for (int tz = 0; tz < n; tz++)
+				for (int tx = 0; tx < n; tx++)
+				{
+					float h00 = pmp.GetHeight(tx, tz);
+					float h10 = pmp.GetHeight(tx + 1, tz);
+					float h01 = pmp.GetHeight(tx, tz + 1);
+					float h11 = pmp.GetHeight(tx + 1, tz + 1);
+					float hi = Mathf.Max(Mathf.Max(h00, h10), Mathf.Max(h01, h11));
+					float lo = Mathf.Min(Mathf.Min(h00, h10), Mathf.Min(h01, h11));
+					if ((hi - lo) / terrain.TileSize > 1.0f)
+						grid[tx, tz] = ZeroAD.Sim.Components.TerrainClass.Impassable;
+				}
+		}
 		terrain.SetPassabilityGrid(grid);
 
 		// rmgen 适配 PMP 带高度图 → 填顶点高度网格(Attack 高度差/Y 贴地)。
@@ -1826,9 +1859,39 @@ public sealed partial class Main : Node3D
 
 	private void UpdateSelectionMarkers()
 	{
+		try
+		{
+			UpdateSelectionMarkersInner();
+		}
+		catch (System.Exception ex)
+		{
+			// 防护:选择圈重建中任何异常(如引用了已销毁的 node)不应冻结整个渲染循环。
+			// 记录日志后继续,下一帧重试。
+			ZeroAD.Sim.Diag.Err("Main", $"UpdateSelectionMarkers threw: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+		}
+	}
+
+	private void UpdateSelectionMarkersInner()
+	{
+		// 阵亡/销毁实体的选择圈残留:它们的 node 已 QueueFree,但 _selectionMarkers 仍存引用,
+		// 下一帧对死对象调 QueueFree 会抛异常,中断整个选择圈重建 → 阵亡后所有选择框消失。
+		// 先清 _selectionMarkers 里的死引用,再清 _selectedEntities 里 node 已不存在的实体
+		// (阵亡/销毁),保证只对有活 node 的实体画圈。
 		foreach (var m in _selectionMarkers)
-			m.QueueFree();
+			if (GodotObject.IsInstanceValid(m)) m.QueueFree();
 		_selectionMarkers.Clear();
+
+		// 阵亡/销毁的实体:从选中集合移除(node 不在 EntityNodes 里 = 已销毁),避免引用死节点。
+		// 用临时集合避免遍历时改 _selectedEntities。
+		if (_selectedEntities.Count > 0)
+		{
+			_toRemove.Clear();
+			foreach (var eid in _selectedEntities)
+				if (!_sim.EntityNodes.ContainsKey(eid) || !GodotObject.IsInstanceValid(_sim.EntityNodes[eid]))
+					_toRemove.Add(eid);
+			foreach (var eid in _toRemove)
+				_selectedEntities.Remove(eid);
+		}
 
 		foreach (var eid in _selectedEntities)
 		{
@@ -2288,11 +2351,13 @@ public sealed partial class Main : Node3D
 		if (worldPos == null) return;
 		var entities = _sim.GetEntitiesAtPosition(worldPos.Value, 3f);
 		_selectedEntities.Clear();
-		// RTS 约定:左键只选中己方单位。敌方单位只能右键(攻击/目标),不能选中操作。
+		// RTS 约定:左键选中己方单位 或 gaia(树/石头/果子,owner≤0,选中显示资源信息+
+		// 选择圈但不可操作)。敌方单位不能选中(只能右键指定目标)。
 		foreach (var eid in entities)
 		{
 			var own = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
-			if (own != null && own.PlayerId == (int)_sim.LocalPlayerId)
+			int ownerId = own?.PlayerId ?? 0;   // 无 Ownership = gaia
+			if (ownerId == (int)_sim.LocalPlayerId || ownerId <= 0)
 			{
 				_selectedEntities.Add(eid);
 				break;
