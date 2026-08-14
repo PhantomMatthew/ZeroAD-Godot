@@ -36,7 +36,7 @@ public static class HotkeyCatalog
         string? path = FindDefaultCfg();
         if (path == null)
         {
-            GD.PrintErr("[Hotkeys] default.cfg not found");
+            ZeroAD.Sim.Diag.Err("Hotkeys", "default.cfg not found");
             return result;
         }
         var (actions, _) = ParseHotkeys(File.ReadAllText(path));

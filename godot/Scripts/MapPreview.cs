@@ -57,12 +57,12 @@ public partial class MapPreview : Node3D
 
         if (result == null)
         {
-            GD.PrintErr($"[MapPreview] build failed (MapRel='{MapRel}' RmgenMap='{RmgenMap}')");
+            ZeroAD.Sim.Diag.Err("MapPreview", $"build failed (MapRel='{MapRel}' RmgenMap='{RmgenMap}')");
             return;
         }
         result.Root.Name = "Generated";
         AddChild(result.Root);
-        GD.Print($"[MapPreview] built '{result.MapName}': {result.EntityCount} entities " +
+        ZeroAD.Sim.Diag.Log("MapPreview", $"built '{result.MapName}': {result.EntityCount} entities " +
                  $"({result.ModelCount} models), {result.MapSizeMeters}m, water={result.HasWater}");
     }
 }

@@ -100,12 +100,12 @@ public static class SaveGameManager
             // Payload: ComponentManager.SerializeSaveGame
             var ser = new BinarySerializer(bw);
             sim.Sim.SerializeSaveGame(ser);
-            GD.Print($"[SaveGame] saved to {path} (turn {sim.NetTurn.CurrentTurn})");
+            ZeroAD.Sim.Diag.Log("SaveGame", $"saved to {path} (turn {sim.NetTurn.CurrentTurn})");
             return path;
         }
         catch (System.Exception ex)
         {
-            GD.PrintErr($"[SaveGame] save failed: {ex.Message}");
+            ZeroAD.Sim.Diag.Err("SaveGame", $"save failed: {ex.Message}");
             return null;
         }
     }
@@ -118,7 +118,7 @@ public static class SaveGameManager
         string path = SavePath(slot);
         if (!File.Exists(path))
         {
-            GD.PrintErr($"[SaveGame] save file not found: {path}");
+            ZeroAD.Sim.Diag.Err("SaveGame", $"save file not found: {path}");
             return null;
         }
 
@@ -129,18 +129,18 @@ public static class SaveGameManager
             var meta = ReadHeaderFromStream(br, slot);
             if (meta == null)
             {
-                GD.PrintErr($"[SaveGame] bad magic or version mismatch: {path}");
+                ZeroAD.Sim.Diag.Err("SaveGame", $"bad magic or version mismatch: {path}");
                 return null;
             }
             // Payload
             var deser = new BinaryDeserializer(br);
             sim.Sim.DeserializeSaveGame(deser, prepareComponent);
-            GD.Print($"[SaveGame] loaded from {path} (turn {meta.Turn})");
+            ZeroAD.Sim.Diag.Log("SaveGame", $"loaded from {path} (turn {meta.Turn})");
             return meta.Turn;
         }
         catch (System.Exception ex)
         {
-            GD.PrintErr($"[SaveGame] load failed: {ex.Message}");
+            ZeroAD.Sim.Diag.Err("SaveGame", $"load failed: {ex.Message}");
             return null;
         }
     }
@@ -191,12 +191,12 @@ public static class SaveGameManager
         try
         {
             File.Delete(path);
-            GD.Print($"[SaveGame] deleted {path}");
+            ZeroAD.Sim.Diag.Log("SaveGame", $"deleted {path}");
             return true;
         }
         catch (System.Exception ex)
         {
-            GD.PrintErr($"[SaveGame] delete failed: {ex.Message}");
+            ZeroAD.Sim.Diag.Err("SaveGame", $"delete failed: {ex.Message}");
             return false;
         }
     }

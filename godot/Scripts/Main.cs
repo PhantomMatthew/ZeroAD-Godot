@@ -88,6 +88,7 @@ public sealed partial class Main : Node3D
 	private DiplomacyPanel? _diplomacyPanel;
 	private TradePanel? _tradePanel;
 	private StructreePanel? _structreePanel;
+	private DiagPanel? _diagPanel;   // F11 诊断日志面板(诊断方案 3)
 	private MatchSettingsPanel? _matchSettingsPanel;
 
 	public IReadOnlySet<EntityId> SelectedEntities => _selectedEntities;
@@ -255,8 +256,8 @@ public sealed partial class Main : Node3D
 		{
 			// 加载失败不再 rethrow:async void 里抛异常只会留一个无地形的"天蓝空世界",
 			// 用户看到的像卡死而不是崩溃。改为报错 + 回主菜单(同 ColdLoad 失败路径)。
-			GD.PrintErr($"[Gameplay] EXCEPTION in load: {e}");
-			GD.PrintErr($"[Gameplay] Stack: {e.StackTrace}");
+			ZeroAD.Sim.Diag.Err("Gameplay", $"EXCEPTION in load: {e}");
+			ZeroAD.Sim.Diag.Err("Gameplay", $"Stack: {e.StackTrace}");
 			GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Reset();
 			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 		}
@@ -345,10 +346,10 @@ public sealed partial class Main : Node3D
 		_gameStarted = true;
 		_isTutorial = tutorial;
 		_lobby.Hide();
-		GD.Print($"[Tutorial] BeginGameplay start: tutorial={tutorial}");
+		ZeroAD.Sim.Diag.Log("Tutorial", $"BeginGameplay start: tutorial={tutorial}");
 
 		string? templatesPath = FindTemplatesPath();
-		GD.Print($"[Tutorial] templatesPath={templatesPath ?? "null"}");
+		ZeroAD.Sim.Diag.Log("Tutorial", $"templatesPath={templatesPath ?? "null"}");
 
 		// One InitWorld path for SP/MP/tutorial: seed + player slots + role all flow in
 		// here. In MP the host assigned the seed + the frozen slot table over GameStart, so
@@ -374,7 +375,7 @@ public sealed partial class Main : Node3D
 				});
 		_sim.InitWorld(templatesPath, seed, playerId, role, effectiveSlots);
 		_worldSlots = effectiveSlots;   // rmgen 玩家 civ 列表(SetupRmgenTerrain)等用
-		GD.Print("[Tutorial] InitWorld done");
+		ZeroAD.Sim.Diag.Log("Tutorial", "InitWorld done");
 
 		if (isMultiplayer)
 		{
@@ -382,7 +383,7 @@ public sealed partial class Main : Node3D
 			// its empty leading turns so play can start immediately.
 			_mp.AttachTurnManager(_sim.NetTurn);
 			_mp.OnOOS += OnOOSDetected;
-			GD.Print("[MP] AttachTurnManager done");
+			ZeroAD.Sim.Diag.Log("MP", "AttachTurnManager done");
 		}
 		return effectiveSlots;
 	}
@@ -402,19 +403,19 @@ public sealed partial class Main : Node3D
 	{
 		if (_isTutorial)
 		{
-			GD.Print("[Tutorial] calling SetupTutorialWorld...");
+			ZeroAD.Sim.Diag.Log("Tutorial", "calling SetupTutorialWorld...");
 			try
 			{
 				SetupTutorialWorld();
 			}
 			catch (System.Exception ex)
 			{
-				GD.PrintErr($"[Tutorial] SetupTutorialWorld FAILED: {ex}");
-				GD.PrintErr($"[Tutorial] Stack: {ex.StackTrace}");
+				ZeroAD.Sim.Diag.Err("Tutorial", $"SetupTutorialWorld FAILED: {ex}");
+				ZeroAD.Sim.Diag.Err("Tutorial", $"Stack: {ex.StackTrace}");
 				// Don't rethrow — let the game continue without the tutorial scenario rather
 				// than crash. The player can still see terrain and the panel.
 			}
-			GD.Print("[Tutorial] SetupTutorialWorld done");
+			ZeroAD.Sim.Diag.Log("Tutorial", "SetupTutorialWorld done");
 		}
 		else
 			SetupGameWorld(playerId, effectiveSlots, isMultiplayer);
@@ -436,9 +437,9 @@ public sealed partial class Main : Node3D
 		if (int.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_SESSION"), out int shotSec))
 			SessionShotDeferred(shotSec);
 
-		GD.Print(_isTutorial
-			? "[Tutorial] Introductory Tutorial started"
-			: $"[Tutorial] MS6 Game started: player={playerId}");
+		ZeroAD.Sim.Diag.Log("Tutorial", _isTutorial
+			? "Introductory Tutorial started"
+			: $"MS6 Game started: player={playerId}");
 	}
 
 	/// <summary>dev 钩子:N 秒后视口截图(可多次:用 ZEROAD_SHOT_SESSION 逗号秒数)。</summary>
@@ -448,7 +449,7 @@ public sealed partial class Main : Node3D
 		var img = GetViewport().GetTexture().GetImage();
 		string p = $"user://session_shot_{seconds}s.png";
 		img.SavePng(p);
-		GD.Print($"[Shot] saved {p}");
+		ZeroAD.Sim.Diag.Log("Shot", $"saved {p}");
 	}
 
 	/// <summary>dev 钩子:找本地玩家的 CC + 一个工人,在 CC 旁下个住宅建造令。</summary>
@@ -479,7 +480,7 @@ public sealed partial class Main : Node3D
 		}
 		if (ccPos == null || !foundBuilder)
 		{
-			GD.PrintErr("[Autobuild] no CC or builder found");
+			ZeroAD.Sim.Diag.Err("Autobuild", "no CC or builder found");
 			return;
 		}
 		string house = $"structures/{civ}/house";
@@ -495,7 +496,7 @@ public sealed partial class Main : Node3D
 				if (_sim.Sim.QueryInterface<ZeroAD.Sim.Components.FoundationComponent>(e) != null) { spawned = true; break; }
 			if (spawned)
 			{
-				GD.Print($"[Autobuild] ordered {house} at +({ox},{oz}) — watch the rise");
+				ZeroAD.Sim.Diag.Log("Autobuild", $"ordered {house} at +({ox},{oz}) — watch the rise");
 				// 视口自证:镜头对准工地,按进度连拍存 user://autobuild_t*.png。
 				float h = TerrainHeightService.Sample(ccPos.Value.X + ox, ccPos.Value.Z + oz);
 				_camera.SetFocus(new Vector3(ccPos.Value.X + ox, h, ccPos.Value.Z + oz));
@@ -505,12 +506,12 @@ public sealed partial class Main : Node3D
 					var img = GetViewport().GetTexture().GetImage();
 					string shotPath = $"user://autobuild_t{shot * 5 + 14}s.png";
 					img.SavePng(shotPath);
-					GD.Print($"[Autobuild] shot saved: {shotPath}");
+					ZeroAD.Sim.Diag.Log("Autobuild", $"shot saved: {shotPath}");
 				}
 				return;
 			}
 		}
-		GD.PrintErr("[Autobuild] all placements rejected");
+		ZeroAD.Sim.Diag.Err("Autobuild", "all placements rejected");
 	}
 
 	/// <summary>Build the in-session UI chrome (HUD, game-over overlay, pause menu, tier-2
@@ -591,6 +592,9 @@ public sealed partial class Main : Node3D
 		// 打开时预选本地玩家文明。
 		_structreePanel = new StructreePanel();
 		AddChild(_structreePanel);
+		// 诊断日志面板(F11):tag 勾选静音 + 最近日志。非模态,不暂停 sim。
+		_diagPanel = new DiagPanel();
+		AddChild(_diagPanel);
 
 		// FPS 叠层:overlay.fps 改动经 UserConfig.ConfigChanged 即时显隐(Options 页改动不落盘也生效)。
 		_fpsOverlay = new CanvasLayer { Layer = 45, Visible = false };
@@ -656,7 +660,7 @@ public sealed partial class Main : Node3D
 		if (meta == null || meta.MapPath == null)
 		{
 			// No such save / incompatible version / generated-terrain save (no map to rebuild).
-			GD.PrintErr($"[LoadGame] cannot cold-load slot '{cfg.LoadSlot}': " +
+			ZeroAD.Sim.Diag.Err("LoadGame", $"cannot cold-load slot '{cfg.LoadSlot}': " +
 				(meta == null ? "missing or incompatible save" : "generated terrain has no map path"));
 			cfg.Reset();
 			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
@@ -677,7 +681,7 @@ public sealed partial class Main : Node3D
 		var reader = ReplayFileManager.Open(cfg.ReplaySlot);
 		if (reader == null)
 		{
-			GD.PrintErr($"[Replay] cannot open slot '{cfg.ReplaySlot}'");
+			ZeroAD.Sim.Diag.Err("Replay", $"cannot open slot '{cfg.ReplaySlot}'");
 			cfg.Reset();
 			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 			return;
@@ -700,7 +704,7 @@ public sealed partial class Main : Node3D
 		}
 		catch (System.Exception e)
 		{
-			GD.PrintErr($"[Replay] playback init failed: {e}");
+			ZeroAD.Sim.Diag.Err("Replay", $"playback init failed: {e}");
 			cfg.Reset();
 			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 		}
@@ -756,7 +760,7 @@ public sealed partial class Main : Node3D
 		AddChild(controls);
 
 		_sim.SimulationRunning = true;
-		GD.Print($"[Replay] started '{meta.Description}' (commandDelay {meta.CommandDelay})");
+		ZeroAD.Sim.Diag.Log("Replay", $"started '{meta.Description}' (commandDelay {meta.CommandDelay})");
 	}
 
 	/// <summary>冷加载分阶段驱动(同 RunTutorialLoadStages:段间 await 一帧让进度条重绘)。</summary>
@@ -772,7 +776,7 @@ public sealed partial class Main : Node3D
 		}
 		catch (System.Exception e)
 		{
-			GD.PrintErr($"[LoadGame] cold-load failed: {e}");
+			ZeroAD.Sim.Diag.Err("LoadGame", $"cold-load failed: {e}");
 			cfg.Reset();
 			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 		}
@@ -831,7 +835,7 @@ public sealed partial class Main : Node3D
 		FocusCameraOnLocalPlayer();
 		// 世界已完整(组件+索引+视觉全部重建):放行回合推进(同 BeginGameplayScenario 闸门)。
 		_sim.SimulationRunning = true;
-		GD.Print($"[LoadGame] cold-loaded '{meta.Slot}' (turn {turn}, map {meta.MapPath})");
+		ZeroAD.Sim.Diag.Log("LoadGame", $"cold-loaded '{meta.Slot}' (turn {turn}, map {meta.MapPath})");
 	}
 
 	/// <summary>Cold-load camera: focus the local player's first owned in-world entity
@@ -876,11 +880,11 @@ public sealed partial class Main : Node3D
 		{
 			if (System.IO.Directory.Exists(dir))
 			{
-				GD.Print($"Found templates at: {dir}");
+				ZeroAD.Sim.Diag.Log("Main", $"Found templates at: {dir}");
 				return dir;
 			}
 		}
-		GD.PrintErr("FindTemplatesPath: templates dir not found under binaries/data/mods/public/simulation/templates");
+		ZeroAD.Sim.Diag.Err("Main", "FindTemplatesPath: templates dir not found under binaries/data/mods/public/simulation/templates");
 		return null;
 	}
 
@@ -933,7 +937,7 @@ public sealed partial class Main : Node3D
 				TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
 				float h = pmp.GetHeightWorld(130, 122);
 				_camera.SetFocus(new Vector3(130, h, 122));
-				GD.Print($"Loaded PMP terrain: {pmpPath} ({pmp.PatchesPerSide} patches, {pmp.MapSizeMeters}m, height at spawn: {h:F1}m)");
+				ZeroAD.Sim.Diag.Log("Main", $"Loaded PMP terrain: {pmpPath} ({pmp.PatchesPerSide} patches, {pmp.MapSizeMeters}m, height at spawn: {h:F1}m)");
 
 				string? xmlPath = pmpPath.Replace(".pmp", ".xml");
 				// 地图 Environment 光照(太阳方向/色 + 环境光 + 雾色,公式对齐 CLightEnv);
@@ -945,7 +949,7 @@ public sealed partial class Main : Node3D
 				{
 					var waterMesh = WaterRenderer.CreateWaterPlane(water, pmp.MapSizeMeters);
 					_worldRoot.AddChild(waterMesh);
-					GD.Print($"Water: height={water.Height:F1}m color={water.Color}");
+					ZeroAD.Sim.Diag.Log("Main", $"Water: height={water.Height:F1}m color={water.Color}");
 				}
 
 				// Record the authoritative sim-side water height (matches CCmpWaterManager).
@@ -964,7 +968,7 @@ public sealed partial class Main : Node3D
 			}
 			catch (System.Exception e)
 			{
-				GD.PrintErr($"PMP load failed: {e.Message}, falling back to generated terrain");
+				ZeroAD.Sim.Diag.Err("Main", $"PMP load failed: {e.Message}, falling back to generated terrain");
 			}
 		}
 
@@ -986,7 +990,7 @@ public sealed partial class Main : Node3D
 		_camera.SetFocus(new Vector3(130, 0, 122));
 		// Generated terrain has no water by default; mark everything land so placement still works.
 		FillPassabilityAllLand();
-		GD.Print("Using generated terrain (no PMP found)");
+		ZeroAD.Sim.Diag.Log("Main", "Using generated terrain (no PMP found)");
 	}
 
 	/// <summary>Build a [MapSize,MapSize] passability grid from the PMP heightmap + water level and
@@ -994,7 +998,7 @@ public sealed partial class Main : Node3D
 	/// 接入 SetupTerrain 的 "random/" 路径前缀分支。</summary>
 	private void SetupRmgenTerrain(string mapName)
 	{
-		GD.Print($"[Main] Generating random map: {mapName}");
+		ZeroAD.Sim.Diag.Log("Main", $"Generating random map: {mapName}");
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		uint seed = cfg.Seed;
 		int mapSize = 192;
@@ -1027,7 +1031,7 @@ public sealed partial class Main : Node3D
 		var export = ZeroAD.Sim.Rmgen.Maps.MapRegistry.Generate(mapName, rng, settings);
 		if (export == null)
 		{
-			GD.PrintErr($"[Main] Unknown random map type: {mapName}, falling back to arcadia");
+			ZeroAD.Sim.Diag.Err("Main", $"Unknown random map type: {mapName}, falling back to arcadia");
 			SetupTerrain(null);
 			return;
 		}
@@ -1090,13 +1094,13 @@ public sealed partial class Main : Node3D
 				if (_sim.EntityNodes.TryGetValue(eid, out var node) && yaw != 0f)
 					node.Rotation = new Vector3(0, yaw, 0);
 			}
-			catch (System.Exception ex) { GD.PushWarning($"[Main] rmgen entity spawn failed: {ent.TemplateName}: {ex.Message}"); }
+			catch (System.Exception ex) { ZeroAD.Sim.Diag.Warn("Main", $"rmgen entity spawn failed: {ent.TemplateName}: {ex.Message}"); }
 		}
 
 		_sim.MapPath = $"random/{mapName}";
 		// 地图脚本(_triggers.js 移植件):触发点已注册完毕,安装并跑 OnInit。
 		_sim.InitMapScript(mapName);
-		GD.Print($"[Main] rmgen terrain ready: {mapName} ({export.Size}×{export.Size}, {export.Entities.Count} entities)");
+		ZeroAD.Sim.Diag.Log("Main", $"rmgen terrain ready: {mapName} ({export.Size}×{export.Size}, {export.Entities.Count} entities)");
 	}
 
 	/// hand it to the sim-side TerrainComponent. Tiles at/below water are Water, the rest Land.
@@ -1208,26 +1212,26 @@ public sealed partial class Main : Node3D
 
 	private void SetupTutorialWorld()
 	{
-		GD.Print("[Tutorial] SetupTutorialWorld: loading terrain...");
+		ZeroAD.Sim.Diag.Log("Tutorial", "SetupTutorialWorld: loading terrain...");
 		SetupTerrain("maps/tutorials/introductory_tutorial.pmp");
-		GD.Print("[Tutorial] terrain loaded");
+		ZeroAD.Sim.Diag.Log("Tutorial", "terrain loaded");
 
 		string? dataRoot = FindDataRoot();
-		GD.Print($"[Tutorial] dataRoot={dataRoot ?? "null"}");
+		ZeroAD.Sim.Diag.Log("Tutorial", $"dataRoot={dataRoot ?? "null"}");
 		if (dataRoot != null)
 		{
-			GD.Print("[Tutorial] loading scenario...");
+			ZeroAD.Sim.Diag.Log("Tutorial", "loading scenario...");
 			var scenario = _sim.LoadTutorialScenario(dataRoot);
 			if (scenario != null)
 			{
-				GD.Print($"[Tutorial] scenario loaded: {scenario.Entities.Count} entities, camera=({scenario.CameraX},{scenario.CameraZ})");
+				ZeroAD.Sim.Diag.Log("Tutorial", $"scenario loaded: {scenario.Entities.Count} entities, camera=({scenario.CameraX},{scenario.CameraZ})");
 				// 开局视角 = 场景作者机位(Position + Rotation + Declination,原版 GameView
 				// 语义);无 Camera 元素时回退聚焦 P1 市政厅。
 				if (scenario.HasCamera)
 				{
 					var camPos = new Vector3(scenario.CameraX, scenario.CameraY, scenario.CameraZ);
 					_camera.PlaceFromScenarioCamera(camPos, scenario.CameraRotation, scenario.CameraDeclination);
-					GD.Print($"[Tutorial] restored scenario camera pose {camPos} rot={scenario.CameraRotation:F2} decl={scenario.CameraDeclination:F2}");
+					ZeroAD.Sim.Diag.Log("Tutorial", $"restored scenario camera pose {camPos} rot={scenario.CameraRotation:F2} decl={scenario.CameraDeclination:F2}");
 				}
 				else
 				{
@@ -1238,7 +1242,7 @@ public sealed partial class Main : Node3D
 						if (ent.Template.Contains("civil_centre") || ent.Template.Contains("civic_centre"))
 						{
 							focusX = ent.X; focusZ = ent.Z;
-							GD.Print($"[Tutorial] focusing P1 civic centre at ({focusX},{focusZ})");
+							ZeroAD.Sim.Diag.Log("Tutorial", $"focusing P1 civic centre at ({focusX},{focusZ})");
 							break;
 						}
 					}
@@ -1248,19 +1252,19 @@ public sealed partial class Main : Node3D
 			}
 			else
 			{
-				GD.PrintErr("[Tutorial] LoadTutorialScenario returned null!");
+				ZeroAD.Sim.Diag.Err("Tutorial", "LoadTutorialScenario returned null!");
 			}
 		}
 		else
 		{
-			GD.PrintErr("[Tutorial] FindDataRoot returned null — scenario cannot load");
+			ZeroAD.Sim.Diag.Err("Tutorial", "FindDataRoot returned null — scenario cannot load");
 		}
 
-		GD.Print("[Tutorial] StartTutorial...");
+		ZeroAD.Sim.Diag.Log("Tutorial", "StartTutorial...");
 		_sim.StartTutorial();
-		GD.Print("[Tutorial] showing panel...");
+		ZeroAD.Sim.Diag.Log("Tutorial", "showing panel...");
 		_tutorialPanel.ShowTutorial();
-		GD.Print("[Tutorial] SetupTutorialWorld complete");
+		ZeroAD.Sim.Diag.Log("Tutorial", "SetupTutorialWorld complete");
 	}
 
 	/// <summary>Deterministic corner start positions, shared by every peer (Task #10). P1/P2 are
@@ -1780,7 +1784,7 @@ public sealed partial class Main : Node3D
 				$"props={(props != null ? props.Summary : "-")}");
 		}
 		System.IO.File.WriteAllText($"{dir}/entities.txt", sb.ToString());
-		GD.Print($"DEBUG_CAPTURE wrote {dir}/frame.png + entities.txt");
+		ZeroAD.Sim.Diag.Log("Main", $"DEBUG_CAPTURE wrote {dir}/frame.png + entities.txt");
 
 		// Save/load round-trip smoke test (capture mode only).
 		if (SaveGameManager.Save(_sim) != null)
@@ -1792,7 +1796,7 @@ public sealed partial class Main : Node3D
 				if (comp is ZeroAD.Sim.Components.AIComponent ai)
 					ai.Configure(_sim.Sim, _sim.NetTurn);
 			});
-			GD.Print("[SaveLoadTest] round-trip OK");
+			ZeroAD.Sim.Diag.Log("SaveLoadTest", "round-trip OK");
 		}
 	}
 
@@ -1817,7 +1821,7 @@ public sealed partial class Main : Node3D
 		string dir = ProjectSettings.GlobalizePath("user://oos");
 		var (bin, txt) = ZeroAD.Sim.Serialization.StateDump.WriteAll(
 			_sim.Sim, dir, _sim.NetTurn.CurrentTurn, _sim.LocalPlayerId);
-		GD.PrintErr($"OOS: {msg}\nState dumped:\n  {txt}\n  {bin}");
+		ZeroAD.Sim.Diag.Err("Main", $"OOS: {msg}\nState dumped:\n  {txt}\n  {bin}");
 	}
 
 	private void UpdateSelectionMarkers()
@@ -2112,6 +2116,12 @@ public sealed partial class Main : Node3D
 			// 免去临时加 [DIAG] 打印再删的循环。
 			if (key.Keycode == Key.F12 && _selectedEntities.Count > 0)
 				DumpSelectedEntity();
+			// F11:诊断日志面板(tag 勾选静音 + 最近日志;诊断方案 3)。
+			if (key.Keycode == Key.F11)
+			{
+				if (_diagPanel != null && _diagPanel.Visible) _diagPanel.Close();
+				else _diagPanel?.Open();
+			}
 		}
 
 		if (@event is InputEventMouseButton mb && mb.Pressed)
@@ -2673,7 +2683,7 @@ public sealed partial class Main : Node3D
 		var (wood, stone, metal, food, _) = GetBuildCost(template);
 		if (!CanAfford(player, wood, stone, metal, food))
 		{
-			GD.Print($"Cannot afford {template}: needs {wood}W {stone}S {metal}M {food}F");
+			ZeroAD.Sim.Diag.Log("Main", $"Cannot afford {template}: needs {wood}W {stone}S {metal}M {food}F");
 			return;
 		}
 		_placeBuildingMode = true;
@@ -3016,17 +3026,17 @@ public sealed partial class Main : Node3D
 		var atk = _sim.Sim.QueryInterface<AttackComponent>(eid);
 		var ai = _sim.Sim.QueryInterface<UnitAIComponent>(eid);
 		var own = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
-		GD.Print($"[Diag] entity {eid} tmpl={ident?.TemplateName ?? ident?.Name ?? "?"}");
-		GD.Print($"[Diag]   owner={own?.PlayerId.ToString() ?? "NULL"} pos={pos?.Position.ToString() ?? "NULL"}");
-		GD.Print($"[Diag]   attack={(atk != null ? $"OK range={atk.Range} rangeOverlay={atk.HasRangeOverlay}" : "NULL")}");
-		GD.Print($"[Diag]   fsm={ai?.FsmStateName ?? "no-UnitAI"}");
+		ZeroAD.Sim.Diag.Log("Diag", $"entity {eid} tmpl={ident?.TemplateName ?? ident?.Name ?? "?"}");
+		ZeroAD.Sim.Diag.Log("Diag", $"owner={own?.PlayerId.ToString() ?? "NULL"} pos={pos?.Position.ToString() ?? "NULL"}");
+		ZeroAD.Sim.Diag.Log("Diag", $"attack={(atk != null ? $"OK range={atk.Range} rangeOverlay={atk.HasRangeOverlay}" : "NULL")}");
+		ZeroAD.Sim.Diag.Log("Diag", $"fsm={ai?.FsmStateName ?? "no-UnitAI"}");
 		// 全量 dump 到文件(逐组件 name=value,Fixed 以 hex 显示便于 diff)
 		string dump = _sim.Sim.DumpEntity(eid);
 		string dir = ProjectSettings.GlobalizePath("user://debug");
 		System.IO.Directory.CreateDirectory(dir);
 		string path = System.IO.Path.Combine(dir, "entity_dump.txt");
 		System.IO.File.WriteAllText(path, $"turn={_sim.NetTurn.CurrentTurn} {dump}");
-		GD.Print($"[Diag]   full dump → {path}");
+		ZeroAD.Sim.Diag.Log("Diag", $"full dump → {path}");
 	}
 
 	/// <summary>F5 快存 / 暂停菜单 Save。返回存档路径(null=失败),供暂停菜单回灌状态。</summary>
@@ -3034,7 +3044,7 @@ public sealed partial class Main : Node3D
 	{
 		var path = SaveGameManager.Save(_sim);
 		if (path != null)
-			GD.Print($"[QuickSave] saved to {path}");
+			ZeroAD.Sim.Diag.Log("QuickSave", $"saved to {path}");
 		return path;
 	}
 
@@ -3043,7 +3053,7 @@ public sealed partial class Main : Node3D
 	{
 		if (!SaveGameManager.Exists())
 		{
-			GD.PrintErr("[QuickLoad] no save file found");
+			ZeroAD.Sim.Diag.Err("QuickLoad", "no save file found");
 			return null;
 		}
 		var turn = SaveGameManager.Load(_sim, prepareComponent: comp =>
@@ -3064,7 +3074,7 @@ public sealed partial class Main : Node3D
 		// reference entities that were cleared + recreated by DeserializeSaveGame).
 		// Destroy every visual node, then recreate one for each loaded entity.
 		_sim.RebuildAllVisuals();
-		GD.Print($"[QuickLoad] loaded turn {turn}, visuals rebuilt");
+		ZeroAD.Sim.Diag.Log("QuickLoad", $"loaded turn {turn}, visuals rebuilt");
 		return turn;
 	}
 
@@ -3077,7 +3087,7 @@ public sealed partial class Main : Node3D
 		var (wood, stone, metal, food, buildTime) = GetBuildCost(_buildTemplate);
 		if (!CanAfford(player, wood, stone, metal, food))
 		{
-			GD.Print($"Cannot afford {_buildTemplate}: needs {wood}W {stone}S {metal}M {food}F");
+			ZeroAD.Sim.Diag.Log("Main", $"Cannot afford {_buildTemplate}: needs {wood}W {stone}S {metal}M {food}F");
 			ExitBuildMode();
 			return;
 		}
@@ -3100,7 +3110,7 @@ public sealed partial class Main : Node3D
 			ZeroAD.Sim.Maths.Fixed.FromFloat(halfSize));
 		if (pr != ZeroAD.Sim.Components.PlacementResult.Success)
 		{
-			GD.Print($"Cannot place {_buildTemplate} at ({worldPos.Value.X:F1},{worldPos.Value.Z:F1}): {pr}");
+			ZeroAD.Sim.Diag.Log("Main", $"Cannot place {_buildTemplate} at ({worldPos.Value.X:F1},{worldPos.Value.Z:F1}): {pr}");
 			_hud?.ShowToast("Cannot place building here.");
 			_placeMouseDown = new Vector2(-1, -1);  // 清按下标记,允许下次重新拖拽
 			// Stay in placement mode so the player can try another spot.

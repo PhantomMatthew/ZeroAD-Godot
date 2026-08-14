@@ -100,7 +100,7 @@ public sealed class ScenarioMapLoader
             });
         }
 
-        GD.Print($"ScenarioMapLoader: loaded {data.Entities.Count} entities from {baseName} " +
+        ZeroAD.Sim.Diag.Log("Map", $"loaded {data.Entities.Count} entities from {baseName} " +
                  $"(actors:{data.Entities.Count(e => e.IsActor)}, " +
                  $"triggers:{data.Entities.Count(e => e.IsTrigger)}, " +
                  $"skirmish:{data.Entities.Count(e => e.IsSkirmish)})");

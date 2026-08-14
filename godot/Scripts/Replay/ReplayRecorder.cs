@@ -49,7 +49,7 @@ public sealed class ReplayRecorder
         // 与 CheckOOS 同节流:每 HashCheckInterval 回合存一次哈希(够密够省)。
         if (turn % NetTurnManager.HashCheckInterval != 0) return;
         try { _hashes[turn] = _hashSource(); }
-        catch (Exception ex) { GD.PrintErr($"[Replay] hash sample failed at turn {turn}: {ex.Message}"); }
+        catch (Exception ex) { ZeroAD.Sim.Diag.Err("Replay", $"hash sample failed at turn {turn}: {ex.Message}"); }
     }
 
     /// <summary>游戏结束时调用（胜利/失败/退出）。退订事件、写 trailer、关流。
@@ -65,7 +65,7 @@ public sealed class ReplayRecorder
             _writer.WriteHashLog(_hashes);
             _writer.Dispose();
         }
-        catch (Exception ex) { GD.PrintErr($"[Replay] finalize failed: {ex.Message}"); }
-        GD.Print($"[Replay] recorded to {FilePath} ({_hashes.Count} hash checkpoints)");
+        catch (Exception ex) { ZeroAD.Sim.Diag.Err("Replay", $"finalize failed: {ex.Message}"); }
+        ZeroAD.Sim.Diag.Log("Replay", $"recorded to {FilePath} ({_hashes.Count} hash checkpoints)");
     }
 }

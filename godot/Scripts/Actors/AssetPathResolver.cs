@@ -190,6 +190,6 @@ public sealed class AssetPathResolver
 			if (!_warned.Add(message))
 				return;
 		}
-		GD.PushWarning(message);
+		ZeroAD.Sim.Diag.Warn("Actor", message);
 	}
 }

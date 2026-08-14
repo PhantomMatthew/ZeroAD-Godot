@@ -147,7 +147,7 @@ public sealed partial class StructreePanel : ModalPanelBase
 
         if (_templates == null || _techCatalog == null)
         {
-            GD.PrintErr($"[Structree] ShowCiv({civ.Code}): LoadData 未完成");
+            ZeroAD.Sim.Diag.Err("Structree", $"ShowCiv({civ.Code}): LoadData 未完成");
             return;
         }
 
@@ -275,7 +275,7 @@ public sealed partial class StructreePanel : ModalPanelBase
             var candidate = Path.GetFullPath(Path.Combine(projRoot, up, "binaries", "data", "mods", "public"));
             if (Directory.Exists(candidate)) { dataRoot = candidate; break; }
         }
-        if (dataRoot == null) { GD.PrintErr("[Structree] data root not found"); return; }
+        if (dataRoot == null) { ZeroAD.Sim.Diag.Err("Structree", "data root not found"); return; }
 
         var templatesPath = Path.Combine(dataRoot, "simulation", "templates");
         var techsPath = Path.Combine(dataRoot, "simulation", "data", "technologies");
@@ -285,6 +285,6 @@ public sealed partial class StructreePanel : ModalPanelBase
         _templates = new TemplateLoader(templatesPath);
         _templates.LoadAllTemplates();
         _techCatalog = TechnologyLoader.LoadAll(techsPath);
-        GD.Print($"[Structree] loaded {_civs.Count} civs, {_templates.Cache.Count} templates, {_techCatalog.Technologies.Count} techs");
+        ZeroAD.Sim.Diag.Log("Structree", $"loaded {_civs.Count} civs, {_templates.Cache.Count} templates, {_techCatalog.Technologies.Count} techs");
     }
 }
