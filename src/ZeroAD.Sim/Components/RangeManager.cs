@@ -394,6 +394,27 @@ namespace ZeroAD.Sim.Components
                 d.LosAdded = false;
             }
             d.Owner = to;
+            // 补读 InWorld + 位置 + VisionRange(对齐 AssignOwner 的 RefreshFromComponents 路径)。
+            // 关键:SpawnUnit 在 OnEntityCreated 后才设 pos.Position = (x,0,z)(直接字段赋值,
+            // 不通知 RangeManager),所以 d.X/d.Z 仍是 OnEntityCreated 时的 (0,0)。必须从
+            // PositionComponent 重读当前坐标,否则视野圆加在 (0,0) 而非单位实际位置。
+            var pos = _cm.QueryInterface<PositionComponent>(entity);
+            if (pos != null)
+            {
+                d.X = pos.Position.X;
+                d.Z = pos.Position.Z;
+                if (d.InWorld != pos.InWorld)
+                {
+                    SetInWorld(entity, pos.InWorld);
+                    d = _data[entity];
+                    // SetInWorld 可能重写了 d.X/d.Z(读 pos),保持一致
+                    d.X = pos.Position.X;
+                    d.Z = pos.Position.Z;
+                }
+            }
+            var vis = _cm.QueryInterface<VisionComponent>(entity);
+            d.VisionRange = vis == null ? Fixed.Zero
+                : ValueModificationApplier.EffectiveVisionRange(_cm, entity, vis);
             _data[entity] = d;
             _movedOrPlacedEntities.Add(entity); // ownership affects every player's chain
             SyncLos(entity, d);

@@ -437,6 +437,11 @@ public sealed partial class SimBridge : Node
                 });
                 _sim.AddComponent(enemy, new OwnershipComponent { PlayerId = pd.PlayerId });
                 _sim.AddComponent(enemy, new DiplomacyComponent());
+                // 注册玩家实体到 PlayerManager(原版 player registration):此前漏了 →
+                // GetNonGaiaPlayerIds 不含 P2 → RangeManager.UpdateVisibilityData 的评估
+                // 循环从不评估任何实体对 P2 的可见性 → P2 视野圆加了但 P1 对 P2 的缓存
+                // 可见性永远 Hidden → P2 不攻击。
+                _sim.RegisterPlayer(pd.PlayerId, enemy);
             }
         }
     }
@@ -698,11 +703,20 @@ public sealed partial class SimBridge : Node
             _sim.AddComponent(entity, new PopulationComponent { Bonus = stats.PopulationBonus });
 
         if (def.Player > 0)
+        {
             _sim.AddComponent(entity, new OwnershipComponent { PlayerId = def.Player });
+            _range?.RefreshFromComponents(entity);
+        }
 
         var pos = _sim.QueryInterface<PositionComponent>(entity);
         if (pos != null)
-            pos.Position = new FixedVector3D(Fixed.FromFloat(def.X), Fixed.Zero, Fixed.FromFloat(def.Z));
+        {
+            var sp = new FixedVector3D(Fixed.FromFloat(def.X), Fixed.Zero, Fixed.FromFloat(def.Z));
+            pos.Position = sp;
+            _sim.NotifyPositionChanged(entity,
+                new FixedVector2D(Fixed.Zero, Fixed.Zero),
+                new FixedVector2D(sp.X, sp.Z));
+        }
 
         // Building footprint + obstruction + build restrictions, all template-driven. This
         // replaces the legacy hardcoded BlockCircle(x,z,8f) which gave every building an 8m
@@ -792,7 +806,10 @@ public sealed partial class SimBridge : Node
         }
 
         if (def.Player > 0)
+        {
             _sim.AddComponent(entity, new OwnershipComponent { PlayerId = def.Player });
+            _range?.RefreshFromComponents(entity);
+        }
 
         // Re-register now that ownership is set: activates fogging and indexes the entity
         // under its owner (the in-SpawnUnit call ran ownerless). Idempotent.
@@ -847,7 +864,13 @@ public sealed partial class SimBridge : Node
 
         var pos = _sim.QueryInterface<PositionComponent>(entity);
         if (pos != null)
-            pos.Position = new FixedVector3D(Fixed.FromFloat(def.X), Fixed.Zero, Fixed.FromFloat(def.Z));
+        {
+            var sp = new FixedVector3D(Fixed.FromFloat(def.X), Fixed.Zero, Fixed.FromFloat(def.Z));
+            pos.Position = sp;
+            _sim.NotifyPositionChanged(entity,
+                new FixedVector2D(Fixed.Zero, Fixed.Zero),
+                new FixedVector2D(sp.X, sp.Z));
+        }
 
         bool isTree = def.Template.Contains("tree", StringComparison.OrdinalIgnoreCase) ||
                       def.Template.Contains("bush", StringComparison.OrdinalIgnoreCase) ||
@@ -982,7 +1005,11 @@ public sealed partial class SimBridge : Node
         if (Paused) return;   // 状态冻结;早于累加 delta 以避免恢复时补帧爆发
 
         _simAccumulator += delta * SpeedMultiplier;
-        while (_simAccumulator >= SimTickRate)
+        // Death spiral 防护:每帧最多跑 5 个 sim tick。当单个 tick 耗时 > SimTickRate(如
+        // 89 个单位同时战斗 + 寻路),accumulator 会持续增长,while 循环永远追不上 →
+        // 画面冻死。封顶后接受 sim 减速(画面慢但能动)而非冻死。
+        int ticksThisFrame = 0;
+        while (_simAccumulator >= SimTickRate && ticksThisFrame < 5)
         {
             // Turn barrier: in lockstep the sim advances only when the bundle for the
             // upcoming turn has arrived (always true in standalone — local bundles are
@@ -1005,7 +1032,11 @@ public sealed partial class SimBridge : Node
             // currentTurn+commandDelay 本地通道,与人手同路径同延迟,各端确定性同生成。
             TickAI();
             _netTurn.AdvanceTurn();
+            ticksThisFrame++;
         }
+        // 达到 tick 上限但 accumulator 仍有余量:丢弃剩余,避免下帧爆发(death spiral 防护)。
+        if (ticksThisFrame >= 5)
+            _simAccumulator = 0;
         SyncVisuals();
         // 渲染插值:用 tick 余数作 alpha,在两次 tick 之间平滑单位位置(消除 10Hz 瞬移)。
         _interpolator.SetAlpha((float)(_simAccumulator / SimTickRate));
@@ -1078,6 +1109,10 @@ public sealed partial class SimBridge : Node
         // push overlapping pairs apart so rallied/converging units spread into a visible cluster
         // instead of stacking on one point (which made only one render). Pure sim, lockstep-safe.
         UnitSeparation.Separate(_sim, Fixed.FromFloat(dt));
+        // 视野重算在 TickUnitAI 之前:单位移动后立即可见性更新,扫描时看到最新结果。
+        // 此前 UpdateVisibilityData 在 tick 末尾跑 → 扫描用上一帧的可见性 → 攻击有 1 tick 延迟。
+        // 末尾保留第二次调用(拾取驻军/炮塔的位置变更)。
+        _range.UpdateVisibilityData();
         TickUnitAI(dt);
         TickGatherers(dt);
         TickAttackers(dt);
@@ -1686,19 +1721,18 @@ public sealed partial class SimBridge : Node
         float vz = pos?.Position.Z.ToFloat() ?? 0;
         float baseY = TerrainHeightService.Sample(vx, vz);
 
-        // 升起行程 = 整树网格包围盒高的并集(此前取首个子网格 AABB——组合场景
-        // 第一个网格可能是小道具,行程太小 → 建筑几乎全露,"一下显示整个形体");
-        // 初始 8% 露出(原版地基起手有一小截脚手架,不是从零全埋)。
-        float rise = 6f;
-        var aabb = ComputeLocalAabb(visual, Transform3D.Identity, null);
-        if (aabb is { } bb && bb.Size.Y > 0.1f) rise = bb.Size.Y;
-        visual.SetMeta("riseHeight", rise);
-        visual.SetMeta("baseY", baseY);
-        visual.Position = new Vector3(vx, baseY - rise * 0.92f, vz);   // 8% 露出
+        // 原版地基(FoundationActor)是矮平模型(脚手架+砖堆+木桩),直接放在地面可见,
+        // 不沉地、不升起(原版 Foundation.js / CCmpVisualActor 无 sink/rise 逻辑)。
+        // 此前的"沉地 + 随进度升起"是为完整建筑模型编造的,改用 FoundationActor 后
+        // 仍套用 → 地基被埋到 baseY - rise*0.92,92% 在地下看不见。
+        // 完工进度只改头顶血条,不动模型位置;不设 riseHeight meta → TickFoundations
+        // 不再覆盖 Y。
+        visual.Position = new Vector3(vx, baseY, vz);
 
-        // 头顶血条(原版地基建造中显示血量;TickFoundations 每 tick 刷新)。
+        // 头顶血条(原版地基建造中显示血量;TickFoundations 每 tick 刷新)。固定悬于
+        // 地基模型上方 3m(原版地基矮平,无需按模型高算)。
         var bar = SelectionRing.CreateHealthBar(1f);
-        bar.Position = new Vector3(0, rise + 1.5f, 0);
+        bar.Position = new Vector3(0, 3f, 0);
         visual.AddChild(bar);
         _foundationBars[entity] = bar;
 
@@ -1926,7 +1960,16 @@ public sealed partial class SimBridge : Node
 
         var pos = _sim.QueryInterface<PositionComponent>(entity);
         if (pos != null)
-            pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+        {
+            // 从 (0,0)(OnEntityCreated 时的初始值)移到真实坐标,通知 RangeManager 更新
+            // spatial subdivision + RangeEntityData + LOS。此前直接字段赋值不通知 →
+            // subdivision 里实体永远在 (0,0) → ExecuteQuery 查不到 → 不攻击。
+            var spawnPos = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+            pos.Position = spawnPos;
+            _sim.NotifyPositionChanged(entity,
+                new FixedVector2D(Fixed.Zero, Fixed.Zero),
+                new FixedVector2D(spawnPos.X, spawnPos.Z));
+        }
 
         Color color = _lastPlayerColor;
         float visualSize = isStructure ? 8f : isResource ? 2.5f : 1.5f;
@@ -1962,7 +2005,13 @@ public sealed partial class SimBridge : Node
 
         var pos = _sim.QueryInterface<PositionComponent>(entity);
         if (pos != null)
-            pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+        {
+            var sp = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+            pos.Position = sp;
+            _sim.NotifyPositionChanged(entity,
+                new FixedVector2D(Fixed.Zero, Fixed.Zero),
+                new FixedVector2D(sp.X, sp.Z));
+        }
 
         CreateVisualFor(entity, new Color(0.1f, 0.5f, 0.1f), 2.5f);
         // No template stats on this fallback path: indexing only, no fog components.
@@ -1982,7 +2031,13 @@ public sealed partial class SimBridge : Node
 
         var pos = _sim.QueryInterface<PositionComponent>(entity);
         if (pos != null)
-            pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+        {
+            var sp = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+            pos.Position = sp;
+            _sim.NotifyPositionChanged(entity,
+                new FixedVector2D(Fixed.Zero, Fixed.Zero),
+                new FixedVector2D(sp.X, sp.Z));
+        }
 
         _obstructions.BlockCircle(x, z, 8f);
         CreateVisualFor(entity, new Color(0.6f, 0.5f, 0.4f), 8f, isBuilding: true);

@@ -2250,7 +2250,9 @@ public sealed partial class Main : Node3D
 		var hit = targets[0];
 		var identity = _sim.Sim.QueryInterface<IdentityComponent>(hit);
 		if (identity == null || identity.TemplateName.Length == 0) return;
+		// RTS 约定:只选己方(同 HandleLeftClick/HandleDragSelect)。双击选同类不跨阵营。
 		int owner = _sim.Sim.QueryInterface<OwnershipComponent>(hit)?.PlayerId ?? -1;
+		if (owner != (int)_sim.LocalPlayerId) return;
 
 		var camera = GetViewport().GetCamera3D();
 		_selectedEntities.Clear();
@@ -2276,7 +2278,16 @@ public sealed partial class Main : Node3D
 		if (worldPos == null) return;
 		var entities = _sim.GetEntitiesAtPosition(worldPos.Value, 3f);
 		_selectedEntities.Clear();
-		if (entities.Count > 0) _selectedEntities.Add(entities[0]);
+		// RTS 约定:左键只选中己方单位。敌方单位只能右键(攻击/目标),不能选中操作。
+		foreach (var eid in entities)
+		{
+			var own = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
+			if (own != null && own.PlayerId == (int)_sim.LocalPlayerId)
+			{
+				_selectedEntities.Add(eid);
+				break;
+			}
+		}
 
 		// 选中语音(原版 Sound.js select 事件:单位语音/资源/建筑选择声)
 		if (_selectedEntities.Count > 0)
@@ -2293,7 +2304,11 @@ public sealed partial class Main : Node3D
 		foreach (var eid in _sim.GetEntitiesInBounds(center, extents))
 		{
 			var identity = _sim.Sim.QueryInterface<IdentityComponent>(eid);
-			if (identity != null && identity.IsUnit) _selectedEntities.Add(eid);
+			if (identity == null || !identity.IsUnit) continue;
+			// RTS 约定:只选中己方单位(同 HandleLeftClick)。
+			var own = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
+			if (own != null && own.PlayerId == (int)_sim.LocalPlayerId)
+				_selectedEntities.Add(eid);
 		}
 		// 框选语音同点选(原版:选中即播 select 组)
 		if (_selectedEntities.Count > 0)
