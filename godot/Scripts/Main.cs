@@ -83,6 +83,9 @@ public sealed partial class Main : Node3D
 	// FPS 叠层(overlay.fps 配置项驱动,原版 Display 类):右上角实时帧率。
 	private CanvasLayer? _fpsOverlay;
 	private Label? _fpsLabel;
+	// 开发者覆盖层(F8 切换,诊断方案 4):左上角回合/FPS/实体数/选中数/状态 hash。
+	private CanvasLayer? _devOverlay;
+	private Label? _devLabel;
 	// 第二梯队菜单面板(Diplomacy/Trade/Match Settings):模态叠层,不暂停 sim。
 	// (Game Speed 已改为顶栏时间按钮下方的非模态弹出条,见 HUD.BuildGameSpeedPopover,
 	// 对齐原版 GameSpeedControl 下拉位置。)
@@ -610,6 +613,17 @@ public sealed partial class Main : Node3D
 		_fpsOverlay.AddChild(_fpsLabel);
 		AddChild(_fpsOverlay);
 		UpdateFpsOverlayVisibility();
+
+		// 开发者覆盖层(F8):半透明底,左上角多行调试信息。默认隐藏。
+		_devOverlay = new CanvasLayer { Layer = 46, Visible = false };
+		var devBg = new PanelContainer { AnchorsPreset = (int)Control.LayoutPreset.TopLeft, OffsetLeft = 8, OffsetTop = 8 };
+		var sb = new StyleBoxFlat { BgColor = new Color(0, 0, 0, 0.6f), ContentMarginLeft = 8, ContentMarginRight = 8, ContentMarginTop = 6, ContentMarginBottom = 6 };
+		devBg.AddThemeStyleboxOverride("panel", sb);
+		_devLabel = new Label { Theme = UITheme.GetTheme() };
+		_devLabel.AddThemeFontSizeOverride("font_size", 13);
+		devBg.AddChild(_devLabel);
+		_devOverlay.AddChild(devBg);
+		AddChild(_devOverlay);
 		GetNode<UserConfig>("/root/UserConfig").ConfigChanged += OnUserConfigChanged;
 	}
 
@@ -1487,6 +1501,10 @@ public sealed partial class Main : Node3D
 		if (_fpsOverlay?.Visible == true && _fpsLabel != null)
 			_fpsLabel.Text = $"{Engine.GetFramesPerSecond():0} FPS";
 
+		// 开发者覆盖层(F8):回合/FPS/实体数/选中数/状态 hash(每 60 tick 算一次,太贵不每帧算)。
+		if (_devOverlay?.Visible == true && _devLabel != null)
+			UpdateDevOverlay();
+
 		// Turn advancement is driven by SimBridge._Process, which honours the lockstep
 		// barrier (it only advances when the next turn's bundle has arrived). Nothing to
 		// force here.
@@ -2195,6 +2213,9 @@ public sealed partial class Main : Node3D
 				if (_diagPanel != null && _diagPanel.Visible) _diagPanel.Close();
 				else _diagPanel?.Open();
 			}
+			// F8:开发者覆盖层(回合/FPS/实体数/选中数/状态 hash;诊断方案 4)。
+			if (key.Keycode == Key.F8 && _devOverlay != null)
+				_devOverlay.Visible = !_devOverlay.Visible;
 		}
 
 		if (@event is InputEventMouseButton mb && mb.Pressed)
@@ -3086,6 +3107,31 @@ public sealed partial class Main : Node3D
 
 	/// <summary>顶栏 Settings 按钮回调:打开对局设置摘要面板(只读,不暂停 sim)。</summary>
 	public void OpenMatchSettingsPanel() => _matchSettingsPanel?.Open();
+
+	/// <summary>开发者覆盖层内容(F8):回合/FPS/实体数/选中数/状态 hash。hash 每 60 tick 算
+	/// 一次(全状态 MD5 太贵,不每帧算)。</summary>
+	private int _devOverlayTick;
+	private string _devOverlayHash = "-";
+	private void UpdateDevOverlay()
+	{
+		_devOverlayTick++;
+		if (_devOverlayTick % 60 == 0)
+		{
+			try
+			{
+				var h = _sim.Sim.ComputeStateHash();
+				_devOverlayHash = System.Convert.ToHexString(h)[..8].ToLowerInvariant();
+			}
+			catch { _devOverlayHash = "err"; }
+		}
+		int entityCount = 0;
+		foreach (var _ in _sim.Sim.AllEntities) entityCount++;
+		_devLabel!.Text =
+			$"turn {_sim.NetTurn.CurrentTurn}  fps {Engine.GetFramesPerSecond():0}\n" +
+			$"entities {entityCount}  selected {_selectedEntities.Count}\n" +
+			$"hash {_devOverlayHash}  speed {_sim.SpeedMultiplier:0.##}x" +
+			(_sim.Paused ? "  [PAUSED]" : "");
+	}
 
 	/// <summary>F12:dump 选中(首个)实体的全部组件到控制台 + user://debug/entity_dump.txt。
 	/// 复用 ComponentManager.DumpEntity(与 SerializeFullState 同一逐组件序列化通路)。
