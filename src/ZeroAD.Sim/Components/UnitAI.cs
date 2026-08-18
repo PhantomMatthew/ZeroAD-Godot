@@ -376,7 +376,13 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     {
         if (_orderQueue.First is not { } node) return;
         var order = node.Value;
+        long t0 = ProfSw.ElapsedTicks;
         s_fsm.ProcessMessage(this, new FsmMessage { Type = order.Type, Order = order, Cm = cm }, "Order." + order.Type);
+        long cost = ProfSw.ElapsedTicks - t0;
+        ProfOrderMs.TryGetValue(order.Type, out long acc);
+        ProfOrderMs[order.Type] = acc + cost;
+        ProfOrderCount.TryGetValue(order.Type, out long cnt);
+        ProfOrderCount[order.Type] = cnt + 1;
         // 处理器内可能 FinishOrder+PushOrderFront(如 DropAtNearestDropSite 前插
         // ReturnResource):队首已换 → 保持派发标记,下拍续派新首;无条件 false 会把
         // 新单闷在 IDLE(随后 Timer 打进无 handler 的 IDLE 抛异常)。
@@ -394,13 +400,16 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
     public void Tick(float dt, ComponentManager cm)
     {
+        ProfCalls++;
         // 驻防中:订单队列冻结(对齐原版 isGarrisoned 时 FinishOrder 不派发后续订单;
         // 新入队指令留待出驻后处理)。
         if (IsGarrisoned) return;
 
+        long t0 = ProfSw.ElapsedTicks;
         // Dispatch any newly-queued order first (the Order.X handler sets the active state).
         if (_dispatchPending)
             DispatchFrontOrder(cm);
+        long t1 = ProfSw.ElapsedTicks;
 
         // 空闲 stance 行为(原版 IDLE.enter 的 FindNewTargets/FindSightedEnemies +
         // LosAttackRangeUpdate;我们以 1s 节流轮询替代 LOS 事件订阅)。编队成员/控制器
@@ -411,13 +420,23 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         // IDLE 态而抛异常(同"订单残留 IDLE"坑)。
         if (_dispatchPending)
             DispatchFrontOrder(cm);
+        long t2 = ProfSw.ElapsedTicks;
 
         // Then let the FSM handle periodic checks via a Timer-style message. Per-state handlers
         // advance the active order (move-arrival polling, gather progress, attack cycles).
         // 编队控制器空闲时也要收 Timer(IDLE 定期重排,对齐原版控制器 IDLE 定时器)。
         if (!IsIdle || _orderQueue.Count > 0 || IsFormationController)
             s_fsm.ProcessMessage(this, new FsmMessage { Type = "Tick", Dt = dt, Cm = cm }, "Timer");
+        long t3 = ProfSw.ElapsedTicks;
+        ProfDispatch += t1 - t0; ProfScan += t2 - t1; ProfFsm += t3 - t2;
     }
+
+    /// <summary>性能探针:Tick 分段耗时(Stopwatch ticks;SimBridge 聚合打印后清零)。</summary>
+    public static long ProfDispatch, ProfScan, ProfFsm, ProfCalls;
+    public static readonly System.Diagnostics.Stopwatch ProfSw = System.Diagnostics.Stopwatch.StartNew();
+    /// <summary>按订单类型拆 dispatch 耗时(Stopwatch ticks)与次数。</summary>
+    public static readonly System.Collections.Generic.Dictionary<string, long> ProfOrderMs = new();
+    public static readonly System.Collections.Generic.Dictionary<string, long> ProfOrderCount = new();
 
     // 编队控制器定期重排计时(原版控制器 IDLE/WALKING 的 StartTimer 2s 间隔;
     // 我们的 Timer 逐 tick 触发 → 用累计器折成 2s 一拍)。序列化以保持读档后节拍一致。

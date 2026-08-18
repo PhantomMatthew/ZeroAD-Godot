@@ -99,9 +99,12 @@ public sealed class Headquarters
         // 清回合缓存
         _turnCache.Clear();
         CurrentPhase = gameState.CurrentPhase();
+        var prof = ProfSw;
 
         // 事件处理
+        long t0 = prof.ElapsedMilliseconds;
         CheckEvents(gameState, events);
+        long t1 = prof.ElapsedMilliseconds;
 
         // 阶段升级检查
         if (Phasing != 0)
@@ -121,10 +124,12 @@ public sealed class Headquarters
             if (turnMod == 3 && NeedCorral) ManageCorral(gameState);
             // if (turnMod % 5 == 1) ResearchManager.Update(gameState);  // TODO: 2.7
         }
+        long t2 = prof.ElapsedMilliseconds;
 
         // 基地扩张（每10回合）
         if (!HasPotentialBase(gameState) || (CanExpand && CurrentPhase > 1))
             CheckBaseExpansion(gameState);
+        long t3 = prof.ElapsedMilliseconds;
 
         // 建筑（每3回合，town+）
         if (CurrentPhase > 1)
@@ -139,18 +144,24 @@ public sealed class Headquarters
             ConstructTrainingBuildings(gameState);
             if (Config.Difficulty > DifficultyLevel.Sandbox) BuildDefenses(gameState);
         }
+        long t4 = prof.ElapsedMilliseconds;
 
         // 子管理器更新
         EmergencyManager.Update(gameState);
+        long t5 = prof.ElapsedMilliseconds;
         BasesManager.Update(gameState, events);
+        long t6 = prof.ElapsedMilliseconds;
         // 科技管理(原版 researchManager:CheckPhase 在 Phasing==0 时,Update 每 think)。
         if (Phasing == 0)
             ResearchManager.CheckPhase(gameState, Queues);
         ResearchManager.Update(gameState, Queues);
+        long t7 = prof.ElapsedMilliseconds;
         TradeManager.Update(gameState, events, Queues);
+        long t8 = prof.ElapsedMilliseconds;
         // 进攻管理(原版门控:难度 > Sandbox 且(有活基地或不可造兵))
         if (Config.Difficulty > DifficultyLevel.Sandbox && (hasActive || !CanBuildUnits))
             AttackManager.Update(gameState, Queues, events);
+        long t9 = prof.ElapsedMilliseconds;
         // 守家(原版顺序:tradeManager → garrisonManager → defenseManager):
         // 先驻军避险,再调空闲兵力回防——驻军消耗 idle 池,回防取其剩余。
         if (Config.Difficulty > DifficultyLevel.Sandbox && hasActive)
@@ -158,6 +169,7 @@ public sealed class Headquarters
             GarrisonManager.Update(gameState);
             DefenseManager.Update(gameState, events);
         }
+        long t10 = prof.ElapsedMilliseconds;
         // 海军(原版 navalManager.update 门控:navalMap):首 Update 从 Accessibility
         // 判定海图(有 ≥200 格水域区域),海图才运营码头/船。
         if (!_navalMapComputed)
@@ -168,16 +180,27 @@ public sealed class Headquarters
         if (NavalMap && hasActive)
             NavalManager.Update(gameState, Queues, events);
         // 外交/胜利(原版顺序压轴:diplomacyManager → victoryManager):
-        // 贡品输送/LMS 背叛;奇迹建造/弑君护主。
+        // 贡品输送/LMS 背叛;奇迹建造/奇迹建造/弑君护主。
         DiplomacyManager.Update(gameState, events);
         VictoryManager.Update(gameState, events, Queues);
+        long t11 = prof.ElapsedMilliseconds;
         // NavalManager:海图由 Accessibility 判定(见 Update),已启用码头/训船闭环。
 
         // 资源队列管理器
         Queues.Update(gameState);
+        long t12 = prof.ElapsedMilliseconds;
+
+        ProfEvents += t1 - t0; ProfEcon += t2 - t1; ProfExpansion += t3 - t2; ProfBuild += t4 - t3;
+        ProfEmergency += t5 - t4; ProfBases += t6 - t5; ProfResearch += t7 - t6; ProfTrade += t8 - t7;
+        ProfAttack += t9 - t8; ProfDefense += t10 - t9; ProfNavalDiploVictory += t11 - t10; ProfQueues += t12 - t11;
 
         // 占领强度更新（每3秒）—— TODO: 用 gameState 时间做门控
     }
+
+    /// <summary>性能探针:HQ 各阶段耗时(SimBridge 聚合打印后清零)。</summary>
+    public static long ProfEvents, ProfEcon, ProfExpansion, ProfBuild, ProfEmergency, ProfBases,
+        ProfResearch, ProfTrade, ProfAttack, ProfDefense, ProfNavalDiploVictory, ProfQueues;
+    public static readonly System.Diagnostics.Stopwatch ProfSw = System.Diagnostics.Stopwatch.StartNew();
 
     // ── 基地状态查询 ──
 

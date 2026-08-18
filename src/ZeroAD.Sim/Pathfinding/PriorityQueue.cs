@@ -38,6 +38,9 @@ public sealed class PriorityQueueHeap
     public int Count => _count;
     public bool IsEmpty => _count == 0;
 
+    /// <summary>position 查找表容量(id 空间上限)。用于堆复用判定。</summary>
+    public int Capacity => _position.Length;
+
     public void Clear()
     {
         for (int i = 0; i < _count; i++)

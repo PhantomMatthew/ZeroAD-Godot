@@ -59,13 +59,21 @@ public sealed class ActorComposer
 
         if (depth < MaxPropDepth)
         {
+            // TEMP-DIAG: 雅典 CC 的 prop 挂载(7 个 root 装饰 prop 是否全解析/挂载)
+            if (spec.ActorPath.Contains("athenians/civil_centre"))
+                ZeroAD.Sim.Diag.Log("Actor", $"BuildStructural {spec.ActorPath}: spec.Props.Count={spec.Props.Count} attachpoints=[{string.Join(",", spec.Props.Select(p => p.Key + "→" + p.Value.ActorPath.Split('/').Last()))}]");
             foreach (var kv in spec.Props)
             {
                 string attachpoint = kv.Key;
                 var propSpec = kv.Value;
 
                 var childSpec = ResolveChildSpec(propSpec);
-                if (childSpec == null) continue;
+                if (childSpec == null)
+                {
+                    if (spec.ActorPath.Contains("athenians/civil_centre"))
+                        ZeroAD.Sim.Diag.Warn("Actor", $"  childSpec NULL for prop {propSpec.ActorPath}");
+                    continue;
+                }
 
                 var childNode = BuildStructural(childSpec, depth + 1);
                 AttachProp(root, instance, skeleton, attachpoint, childNode, spec.ActorPath);
@@ -145,10 +153,49 @@ public sealed class ActorComposer
     public static void SetAnimationState(Node3D instance, string state)
     {
         if (string.IsNullOrEmpty(state)) return;
-        var animator = ModelLibrary.FindManualAnimator(instance);
-        animator?.Play(state);
+        // 子树里的每一个 animator 都播同名状态:坐骑播马的 idle/walk,骑手 prop
+        // 播骑乘 idle/walk(C++ 对整个 entity 重跑 variation,各部件各取同名 clip)。
+        foreach (var animator in FindAllAnimators(instance))
+            if (animator.HasState(state))
+                animator.Play(state);
         var switcher = StatePropSwitcher.Find(instance);
         switcher?.Apply(state);
+    }
+
+    /// <summary>递归收集子树内所有 ManualAnimator(坐骑 + 骑手等带动画的 prop)。</summary>
+    internal static IEnumerable<ZeroAD.Godot.SkeletalAnim.ManualAnimator> FindAllAnimators(Node node)
+    {
+        if (node is ZeroAD.Godot.SkeletalAnim.ManualAnimator ma) yield return ma;
+        foreach (var child in node.GetChildren())
+            foreach (var found in FindAllAnimators(child))
+                yield return found;
+    }
+
+    /// <summary>给带骨骼的 prop(骑兵骑手、战车乘员等)挂它们自己的动画集。
+    /// BuildStructural 的产物被 PackedScene 缓存,C# clip 状态只能在实例化后挂;
+    /// 主 spec 的动画由 Instantiate 直接挂,prop 的动画在这里按 (seed,attachpoint)
+    /// 链式子种子重新解析 spec 后挂到 prop 子树——与 BuildStructural 用的
+    /// HashCode.Combine(seed, attachpoint) 完全一致,变体选择因此与缓存场景一致。</summary>
+    internal static void AttachPropAnimations(Node3D instance, int seed, int depth = 0)
+    {
+        if (depth > MaxPropDepth) return;
+        foreach (var child in instance.GetChildren())
+        {
+            if (child is not Node3D n3) continue;
+            if (n3.HasMeta(LayerMeta.PropAttachpoint) && n3.HasMeta(LayerMeta.ActorPath))
+            {
+                string attachpoint = (string)n3.GetMeta(LayerMeta.PropAttachpoint);
+                int subSeed = HashCode.Combine(seed, attachpoint);
+                var childSpec = ResolveChildSpec(new PropSpec((string)n3.GetMeta(LayerMeta.ActorPath), subSeed));
+                if (childSpec != null && childSpec.Animations.Count > 0)
+                    TryLoadExternalAnimations(n3, childSpec.Animations);
+                AttachPropAnimations(n3, subSeed, depth + 1);
+            }
+            else
+            {
+                AttachPropAnimations(n3, seed, depth + 1);
+            }
+        }
     }
 
     private static readonly HashSet<string> _animWarned = new();
@@ -271,9 +318,13 @@ public sealed class ActorComposer
 
     internal static void TryPlayIdle(Node3D instance)
     {
-        var animator = ModelLibrary.FindManualAnimator(instance);
-        if (animator == null) return;
-        if (animator.HasState("idle")) SetAnimationState(instance, "idle");
+        bool any = false;
+        foreach (var animator in FindAllAnimators(instance))
+            if (animator.HasState("idle")) any = true;
+        if (!any) return;
+        SetAnimationState(instance, "idle");  // 同时触发 StatePropSwitcher
+        foreach (var animator in FindAllAnimators(instance))
+            animator.Advance((float)GD.Randf() * 2.0f);
     }
 
     public static MeshInstance3D MakeFallbackBox(Color color)

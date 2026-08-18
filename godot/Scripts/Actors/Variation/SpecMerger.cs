@@ -10,7 +10,9 @@ public sealed record ResolvedActorSpec(
 	string ActorPath,
 	string? MeshGlbPath,                            // remapped via AssetPathResolver (null on miss)
 	IReadOnlyDictionary<string, string> Textures,   // sampler -> resolved png path
-	IReadOnlyDictionary<string, PropSpec> Props,    // attachpoint -> prop (later groups win)
+	IReadOnlyList<KeyValuePair<string, PropSpec>> Props, // 保序 attachpoint->prop;同 attachpoint
+	                                                // 多个并存(对齐原版 multimap,雅典 CC 7 个 root
+	                                                // 装饰 prop 全保留;KeyValuePair 兼容下游 kv.Key/Value)
 	IReadOnlyList<AnimRef> Animations,
 	string? Material,
 	bool CastShadow,
@@ -46,7 +48,7 @@ public static class SpecMerger
 		DecalSpec? decal = null;
 		string? particles = null;
 		var textures = new Dictionary<string, string>();
-		var props = new Dictionary<string, PropSpec>();
+		var props = new List<KeyValuePair<string, PropSpec>>();
 		var anims = new List<AnimRef>();
 
 		for (int gi = 0; gi < doc.Groups.Count; gi++)
@@ -66,14 +68,21 @@ public static class SpecMerger
 			foreach (var kv in v.Textures)
 				textures[kv.Key] = kv.Value;
 
-			// C++ erase+insert: later group fully replaces the attachpoint entry;
-			// a clear entry (null ActorPath) erases it outright.
+			// C++ multimap erase+insert(ObjectBase.cpp:493-497 双循环):先把本 variant
+			// 涉及的所有 attachpoint 的旧条目一次性移除(erase(key) 删同 key 全部),
+			// 再把本 variant 的 prop 全加进去(同 attachpoint 多个并存——雅典 CC 的 7 个
+			// root 装饰 prop)。绝不能在单循环里逐 prop RemoveAll,否则同 attachpoint 的
+			// 后一个 prop 会把前一个刚加的删掉,只剩最后一个。clear 条目(null ActorPath)
+			// 只参与移除不新增。
+			var touched = new HashSet<string>();
+			foreach (var kv in v.Props)
+				touched.Add(kv.Attachpoint);
+			props.RemoveAll(p => touched.Contains(p.Key));
 			foreach (var kv in v.Props)
 			{
-				if (kv.Value.ActorPath == null)
-					props.Remove(kv.Key);
-				else
-					props[kv.Key] = new PropSpec(kv.Value.ActorPath!, HashCode.Combine(seed, kv.Key));
+				if (kv.ActorPath != null)
+					props.Add(new KeyValuePair<string, PropSpec>(kv.Attachpoint,
+						new PropSpec(kv.ActorPath!, HashCode.Combine(seed, kv.Attachpoint))));
 			}
 		}
 
@@ -119,16 +128,16 @@ public static class SpecMerger
                 if (string.IsNullOrEmpty(v.Name)) continue;
                 if (stateProps.ContainsKey(v.Name)) continue;
 
-                var adds = new Dictionary<string, PropSpec>();
-                var clears = new HashSet<string>();
-                foreach (var kv in v.Props)
-                {
-                    if (kv.Value.ActorPath == null)
-                        clears.Add(kv.Key);
-                    else
-                        adds[kv.Key] = new PropSpec(kv.Value.ActorPath!, HashCode.Combine(seed, kv.Key));
-                }
-                stateProps[v.Name] = new StatePropDelta(adds, clears);
+			var adds = new Dictionary<string, PropSpec>();
+			var clears = new HashSet<string>();
+			foreach (var kv in v.Props)
+			{
+				if (kv.ActorPath == null)
+					clears.Add(kv.Attachpoint);
+				else
+					adds[kv.Attachpoint] = new PropSpec(kv.ActorPath!, HashCode.Combine(seed, kv.Attachpoint));
+			}
+			stateProps[v.Name] = new StatePropDelta(adds, clears);
             }
         }
 

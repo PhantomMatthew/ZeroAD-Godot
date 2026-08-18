@@ -54,6 +54,9 @@ public sealed class ActorLoader
         // Attach animations to the final instance (not during BuildStructural, whose
         // result is packed into a PackedScene by the cache and would lose C# clip state).
         ActorComposer.TryLoadExternalAnimations(instance, spec.Animations);
+        // 带骨骼的 prop(骑兵骑手、战车乘员)有自己的动画集(骑乘 idle/walk/run),
+        // 按 prop 链式子种子解析后挂到各 prop 子树;缺这步骑手就是绑定姿势站在马背上。
+        ActorComposer.AttachPropAnimations(instance, seed);
         // Same reasoning for the per-state prop switcher (axe while chopping etc.).
         StatePropSwitcher.Attach(instance, spec, teamColor, seed);
         ActorComposer.TryPlayIdle(instance);

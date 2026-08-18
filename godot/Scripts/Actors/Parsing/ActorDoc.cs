@@ -17,7 +17,8 @@ public sealed record ActorVariant(
     int Frequency,
     string? Mesh,                      // raw dae path or null
     IReadOnlyDictionary<string, string> Textures,  // sampler -> path
-    IReadOnlyDictionary<string, PropRef> Props,    // attachpoint -> prop
+    IReadOnlyList<PropRef> Props,      // 保序;同 attachpoint 多个并存(对齐原版 vector<Prop>,
+                                       // 雅典 CC 7 个 attachpoint="root" 的装饰 prop 全保留)
     IReadOnlyList<AnimRef> Animations,
     string? Material,
     ColorVec? Color = null,            // <color>r g b</color> object-color tint (hair etc.)
@@ -30,7 +31,7 @@ public sealed record ActorVariant(
             freq,
             Mesh: null,
             Textures: EmptyDict<string, string>.Value,
-            Props: EmptyDict<string, PropRef>.Value,
+            Props: EmptyList<PropRef>.Value,
             Animations: EmptyList<AnimRef>.Value,
             Material: null);
 }

@@ -32,6 +32,10 @@ public sealed partial class ManualAnimator : Node
 
     private string _current = "";
     private float _elapsed;
+    private float _accum;   // 限频累计(见 _Process)
+
+    /// <summary>每秒由 SimBridge 聚合打印的动画段耗时(TEMP-PROF)。</summary>
+    public static double FrameCostMs;
 
     public bool HasState(string state) => _clips.ContainsKey(state);
 
@@ -90,12 +94,21 @@ public sealed partial class ManualAnimator : Node
     {
         if (_skeleton == null || !_clips.TryGetValue(_current, out var clip)) return;
 
+        // 限频 ~30Hz:骨插值 + ForceUpdateAllBoneTransforms(整骨架矩阵 + CPU 换肤)
+        // 是大地图上的每帧大头。动画在 10Hz tick 下 30Hz 已足够平滑(人眼无感),
+        // 却把这块成本砍掉一半以上(Corinthian 7400 实体时帧率从 4 翻倍级提升)。
+        _accum += (float)delta;
+        if (_accum < 1f / 30f) return;
+        float step = _accum;
+        _accum = 0f;
+        var _sw = System.Diagnostics.Stopwatch.GetTimestamp();
+
         // Animations are Blender-converted GLBs (same pipeline as the mesh GLBs),
         // so their bone frame matches the mesh skeleton exactly — no runtime
         // correction needed. The _corrections map is identity when source and mesh
         // share rest poses (verified per-bone at load).
         _elapsed = clip.Length > 0f
-            ? (_elapsed + (float)delta) % clip.Length
+            ? (_elapsed + step) % clip.Length
             : 0f;
 
         foreach (var kv in clip.Rotations)
@@ -131,6 +144,7 @@ public sealed partial class ManualAnimator : Node
         // so the new bone poses are visible THIS frame. Without this, units stand
         // in their rest/idle pose even while the animator advances walk/run cycles.
         _skeleton.ForceUpdateAllBoneTransforms();
+        FrameCostMs += (System.Diagnostics.Stopwatch.GetTimestamp() - _sw) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
     }
 
     private int BoneIdx(string name)

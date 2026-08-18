@@ -55,11 +55,12 @@ public static class StructuralSignature
     }
 
     private static IEnumerable<KeyValuePair<string, PropSpec>> OrderProps(
-        IReadOnlyDictionary<string, PropSpec> props)
+        IReadOnlyList<KeyValuePair<string, PropSpec>> props)
     {
-        var keys = new List<string>(props.Keys);
-        keys.Sort(System.StringComparer.Ordinal);
-        foreach (var k in keys)
-            yield return new KeyValuePair<string, PropSpec>(k, props[k]);
+        // 保序遍历(同 attachpoint 多个并存);签名按 (attachpoint,actorPath) 排序保证确定性,
+        // 缓存 key 不因同 attachpoint 多 prop 而抖动。
+        foreach (var kv in props.OrderBy(p => p.Key, System.StringComparer.Ordinal)
+                                .ThenBy(p => p.Value.ActorPath, System.StringComparer.Ordinal))
+            yield return kv;
     }
 }

@@ -11,58 +11,58 @@ namespace ZeroAD.Godot;
 [Tool]
 public partial class MapPreview : Node3D
 {
-    /// <summary>PMP 地图相对路径(数据根下,不含扩展名;如 maps/tutorials/introductory_tutorial)。</summary>
-    [Export] public string MapRel = "";
+	/// <summary>PMP 地图相对路径(数据根下,不含扩展名;如 maps/tutorials/introductory_tutorial)。</summary>
+	[Export] public string MapRel = "";
 
-    /// <summary>rmgen 地图名(非空则忽略 MapRel 走生成,如 "mainland")。</summary>
-    [Export] public string RmgenMap = "";
-    [Export] public uint RmgenSeed = 42;
-    [Export] public int RmgenSize = 192;
+	/// <summary>rmgen 地图名(非空则忽略 MapRel 走生成,如 "mainland")。</summary>
+	[Export] public string RmgenMap = "";
+	[Export] public uint RmgenSeed = 42;
+	[Export] public int RmgenSize = 192;
 
-    [ExportToolButton("Rebuild")]
-    public Callable RebuildButton => Callable.From(Rebuild);
+	[ExportToolButton("Rebuild")]
+	public Callable RebuildButton => Callable.From(Rebuild);
 
-    public override void _Ready()
-    {
-        // 编辑器打开/场景运行时各建一次。生成物不进档(Owner 不设)。
-        CallDeferred(nameof(Rebuild));
-    }
+	public override void _Ready()
+	{
+		// 编辑器打开/场景运行时各建一次。生成物不进档(Owner 不设)。
+		CallDeferred(nameof(Rebuild));
+	}
 
-    public void Rebuild()
-    {
-        var old = GetNodeOrNull<Node3D>("Generated");
-        old?.QueueFree();
+	public void Rebuild()
+	{
+		var old = GetNodeOrNull<Node3D>("Generated");
+		old?.QueueFree();
 
-        MapSceneBuilder.Result? result = null;
-        if (RmgenMap.Length > 0)
-        {
-            var rng = new ZeroAD.Sim.RmgenMath.RmgenRng(RmgenSeed);
-            var settings = new ZeroAD.Sim.Rmgen.Common.MapSettings
-            {
-                Size = RmgenSize,
-                Seed = RmgenSeed,
-                DataRoot = MapSceneBuilder.FindDataRoot(),
-                PlayerData = new() { new() { Civ = "gaia" }, new() { Civ = "athen" }, new() { Civ = "spart" } },
-            };
-            var export = ZeroAD.Sim.Rmgen.Maps.MapRegistry.Generate(RmgenMap, rng, settings);
-            if (export != null)
-                result = MapSceneBuilder.BuildFromExport(export, RmgenMap, setOwners: false);
-        }
-        else if (MapRel.Length > 0)
-        {
-            var dataRoot = MapSceneBuilder.FindDataRoot();
-            if (dataRoot != null)
-                result = MapSceneBuilder.Build(dataRoot, MapRel, setOwners: false);
-        }
+		MapSceneBuilder.Result? result = null;
+		if (RmgenMap.Length > 0)
+		{
+			var rng = new ZeroAD.Sim.RmgenMath.RmgenRng(RmgenSeed);
+			var settings = new ZeroAD.Sim.Rmgen.Common.MapSettings
+			{
+				Size = RmgenSize,
+				Seed = RmgenSeed,
+				DataRoot = MapSceneBuilder.FindDataRoot(),
+				PlayerData = new() { new() { Civ = "gaia" }, new() { Civ = "athen" }, new() { Civ = "spart" } },
+			};
+			var export = ZeroAD.Sim.Rmgen.Maps.MapRegistry.Generate(RmgenMap, rng, settings);
+			if (export != null)
+				result = MapSceneBuilder.BuildFromExport(export, RmgenMap, setOwners: false);
+		}
+		else if (MapRel.Length > 0)
+		{
+			var dataRoot = MapSceneBuilder.FindDataRoot();
+			if (dataRoot != null)
+				result = MapSceneBuilder.Build(dataRoot, MapRel, setOwners: false);
+		}
 
-        if (result == null)
-        {
-            ZeroAD.Sim.Diag.Err("MapPreview", $"build failed (MapRel='{MapRel}' RmgenMap='{RmgenMap}')");
-            return;
-        }
-        result.Root.Name = "Generated";
-        AddChild(result.Root);
-        ZeroAD.Sim.Diag.Log("MapPreview", $"built '{result.MapName}': {result.EntityCount} entities " +
-                 $"({result.ModelCount} models), {result.MapSizeMeters}m, water={result.HasWater}");
-    }
+		if (result == null)
+		{
+			ZeroAD.Sim.Diag.Err("MapPreview", $"build failed (MapRel='{MapRel}' RmgenMap='{RmgenMap}')");
+			return;
+		}
+		result.Root.Name = "Generated";
+		AddChild(result.Root);
+		ZeroAD.Sim.Diag.Log("MapPreview", $"built '{result.MapName}': {result.EntityCount} entities " +
+				 $"({result.ModelCount} models), {result.MapSizeMeters}m, water={result.HasWater}");
+	}
 }

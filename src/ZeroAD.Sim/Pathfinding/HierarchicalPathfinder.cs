@@ -289,9 +289,25 @@ public sealed class HierarchicalPathfinder
     {
         uint startGlobal = GetGlobalRegion(startX, startZ, passClass);
         if (startGlobal == 0) return false;
-        // Scan navcells inside the goal shape; if any shares the start's global region, reachable.
-        for (int j = 0; j < _navH; j++)
-            for (int i = 0; i < _navW; i++)
+        // Point 目标(绝对主流:MoveToTargetEdge 出的全是 Point)直接查自身 region——
+        // 旧实现无条件全图 7.6M navcell 扫描 ×region 查表(~250ms/次寻路),2752²
+        // 大地图上每单位每订单一次,是大地图寻路慢的最大单一原因。
+        if (goal.Type == PathGoal.Kind.Point)
+        {
+            return GetGlobalRegion(
+                PathfindingCore.WorldToNavcell(goal.X),
+                PathfindingCore.WorldToNavcell(goal.Z), passClass) == startGlobal;
+        }
+        // 形状目标:只扫形状的包围盒内 navcell,任一与 start 同 global region 即可达。
+        // (Circle/Square 的中心±半径范围;Inverted 形态按同样盒近似——比原版全图扫描保守,
+        // 但 Inverse 目标在实践中不用。)
+        int gx = PathfindingCore.WorldToNavcell(goal.X);
+        int gz = PathfindingCore.WorldToNavcell(goal.Z);
+        int rad = System.Math.Max(
+            PathfindingCore.WorldToNavcell(goal.Hw),
+            PathfindingCore.WorldToNavcell(goal.Hh)) + 1;
+        for (int j = System.Math.Max(0, gz - rad); j <= System.Math.Min(_navH - 1, gz + rad); j++)
+            for (int i = System.Math.Max(0, gx - rad); i <= System.Math.Min(_navW - 1, gx + rad); i++)
             {
                 if (GetGlobalRegion(i, j, passClass) != startGlobal) continue;
                 if (goal.NavcellContainsGoal(PathfindingCore.NavcellCenterToWorld(i),

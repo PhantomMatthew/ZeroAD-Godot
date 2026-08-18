@@ -84,8 +84,13 @@ namespace ZeroAD.Sim
             var id = _entityManager.AllocateEntity();
             _componentsByEntity[id] = new Dictionary<InterfaceId, IComponent>();
             _allEntities.Add(id);
+            EntitySetVersion++;   // AI GameState 集合缓存的失效信号
             return id;
         }
+
+        /// <summary>实体集变更计数(CreateEntity/DestroyEntity 递增)。AI GameState
+        /// 用它给按 tick 的实体集合缓存判活:版本不变 = 世界未变 = 缓存可用。</summary>
+        public int EntitySetVersion { get; private set; }
 
         /// <summary>
         /// Spawn a unit entity from a template name at a world position. The sim owns the full
@@ -429,6 +434,7 @@ namespace ZeroAD.Sim
                 comp.Deinit();
             _componentsByEntity.Remove(entity);
             _allEntities.Remove(entity);
+            EntitySetVersion++;   // AI GameState 集合缓存的失效信号
         }
 
         public void ResetState()

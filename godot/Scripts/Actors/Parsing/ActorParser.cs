@@ -176,9 +176,13 @@ public static class ActorParser
 			mergedTex[kv.Key] = kv.Value;
 
 		var inlineProps = ParseProps(inline.Element("props"));
-		var mergedProps = new Dictionary<string, PropRef>(baseV.Props);
-		foreach (var kv in inlineProps)
-			mergedProps[kv.Key] = kv.Value;
+		// 对齐原版 variant 合并:inline variant 的 prop 按 attachpoint 覆盖 base——先移除
+		// base 里同 attachpoint 的条目(multimap erase(key) 语义),再 append inline 的 prop
+		// (同 attachpoint 多个全加)。
+		var mergedProps = new List<PropRef>(baseV.Props);
+		foreach (var p in inlineProps)
+			mergedProps.RemoveAll(existing => existing.Attachpoint == p.Attachpoint);
+		mergedProps.AddRange(inlineProps);
 
 		var inlineAnims = ParseAnimations(inline.Element("animations"));
 		var mergedAnims = new Dictionary<string, AnimRef>(baseV.Animations.Count + inlineAnims.Count);
@@ -286,10 +290,12 @@ public static class ActorParser
 		return dict;
 	}
 
-	private static IReadOnlyDictionary<string, PropRef> ParseProps(XElement? container)
+	private static IReadOnlyList<PropRef> ParseProps(XElement? container)
 	{
-		if (container == null) return EmptyDict<string, PropRef>.Value;
-		var dict = new Dictionary<string, PropRef>();
+		if (container == null) return EmptyList<PropRef>.Value;
+		// 保序 List:同 attachpoint 多个 prop 全保留(对齐原版 Variant.m_Props 是
+		// vector<Prop>;雅典 CC 7 个 attachpoint="root" 装饰 prop 不再被 Dictionary 覆盖)。
+		var list = new List<PropRef>();
 		foreach (var p in container.Elements("prop"))
 		{
 			string? actor = (string?)p.Attribute("actor");
@@ -298,9 +304,9 @@ public static class ActorParser
 			// Empty <prop attachpoint="x"/> (no actor) is a CLEAR entry, not noise —
 			// animation variants use it to hide weapons/shields while gathering etc.
 			if (string.IsNullOrEmpty(actor)) actor = null;
-			dict[attachpoint!] = new PropRef(actor, attachpoint!);
+			list.Add(new PropRef(actor, attachpoint!));
 		}
-		return dict;
+		return list;
 	}
 
 	private static IReadOnlyList<AnimRef> ParseAnimations(XElement? container)

@@ -30,7 +30,9 @@ public sealed partial class StatePropSwitcher : Node
     private int _seed;
     private IReadOnlyDictionary<string, StatePropDelta> _deltas =
         new Dictionary<string, StatePropDelta>();
-    private readonly Dictionary<string, Node3D> _baseProps = new(StringComparer.OrdinalIgnoreCase);
+    // 同 attachpoint 可有多个 base prop(雅典 CC 7 个 root 装饰 prop)。clear 该 attachpoint
+    // 要隐藏整组,不只第一个。
+    private readonly Dictionary<string, List<Node3D>> _baseProps = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Node3D> _spawned = new(StringComparer.OrdinalIgnoreCase);
     private string _current = "";
 
@@ -54,10 +56,13 @@ public sealed partial class StatePropSwitcher : Node
             {
                 // Parent type proves how the prop rides the skeleton:
                 // BoneAttachment3D = follows animated bone; anything else = frozen.
-                var p = kv.Value.GetParent();
+                // 同 attachpoint 多 prop:报第一个的 parent(同组共享挂法)。
+                var first = kv.Value.Count > 0 ? kv.Value[0] : null;
+                var p = first?.GetParent();
                 string pt = p is BoneAttachment3D ba ? $"bone{ba.BoneIdx}" : p?.GetType().Name ?? "?";
                 sb.Append(' ').Append(kv.Key).Append('@').Append(pt);
-                if (!kv.Value.Visible)
+                if (kv.Value.Count > 1) sb.Append($"x{kv.Value.Count}");
+                if (kv.Value.Any(n => !n.Visible))
                     sb.Append("=off");
             }
             return sb.ToString();
@@ -93,8 +98,12 @@ public sealed partial class StatePropSwitcher : Node
             if (v.VariantType == Variant.Type.String)
             {
                 string attach = (string)v;
-                if (!_baseProps.ContainsKey(attach))
-                    _baseProps[attach] = n3;
+                if (!_baseProps.TryGetValue(attach, out var list))
+                {
+                    list = new List<Node3D>();
+                    _baseProps[attach] = list;
+                }
+                list.Add(n3);   // 同 attachpoint 多个全收
             }
         }
         foreach (var child in node.GetChildren())
@@ -136,8 +145,9 @@ public sealed partial class StatePropSwitcher : Node
 
     private void SetBaseVisible(string attachpoint, bool visible)
     {
-        if (_baseProps.TryGetValue(attachpoint, out var node))
-            node.Visible = visible;
+        if (_baseProps.TryGetValue(attachpoint, out var list))
+            foreach (var node in list)
+                node.Visible = visible;
     }
 
     private Node3D GetOrSpawn(string state, string attachpoint, PropSpec prop)

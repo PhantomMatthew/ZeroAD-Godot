@@ -118,14 +118,15 @@ namespace ZeroAD.Sim.Components
             if (Terrain == null || Obstructions == null) return;
 
             int tiles = Terrain.MapSize;
-            // Guard against pathological map sizes that would explode the navcell grid. The
-            // original caps at 256 tiles/side; if MapSize is unreasonable (e.g. terrain wasn't
-            // Configure'd before RebuildGrid, or a PMP parse returned garbage), skip the build
-            // rather than allocate gigabytes.
+            // Guard against pathological map sizes that would explode the navcell grid. Real
+            // 0 A.D. maps go past 512 tiles (Corinthian Isthmus 4p = 688); the previous 512-tile
+            // cap silently left those maps with NO passability grid at all (units straight-line
+            // through everything). Allow up to 768 tiles (= 3072 navcells/side, ~19MB grid +
+            // hierarchy — well within budget); beyond that the grid builder's cost still explodes.
             int navcellsPerSide = tiles * PathfindingCore.NavcellsPerTerrainTile;
-            if (tiles <= 0 || tiles > 512 || navcellsPerSide > 2048)
+            if (tiles <= 0 || tiles > 768 || navcellsPerSide > 3072)
             {
-                Diag.Warn("Pathfinder", $"RebuildGrid skipped: tiles={tiles} (navcells/side={navcellsPerSide}, limit 2048)");
+                Diag.Warn("Pathfinder", $"RebuildGrid skipped: tiles={tiles} (navcells/side={navcellsPerSide}, limit 3072)");
                 return;
             }
 
@@ -150,6 +151,8 @@ namespace ZeroAD.Sim.Components
                 }
 
             _gridBuilder.Build(terrain, tiles, Obstructions.GetAllStaticObstructions());
+            _pathGen++;            // 寻路缓存世代++(旧条目永不命中)
+            _pathCache.Clear();
             if (_gridBuilder.Grid != null)
             {
                 try
@@ -178,8 +181,32 @@ namespace ZeroAD.Sim.Components
             if (_gridBuilder.Grid == null) return empty;
             int si = PathfindingCore.WorldToNavcell(start.X);
             int sj = PathfindingCore.WorldToNavcell(start.Y);
-            return _long.ComputePath(_hier, si, sj, goal, passClass);
+            // 寻路是纯函数(start,goal,class,grid)→path;大地图全图 A* 每次 ~20ms,
+            // AI 每回合重发同目标订单 ×150 次 → 秒级纯浪费。按输入 memo,网格重建时失效。
+            // 确定性:键即全部输入(含目标形状),缓存不改变结果。
+            var key = (si, sj, (int)goal.Type,
+                goal.X.InternalValue, goal.Z.InternalValue,
+                goal.Hw.InternalValue, goal.Hh.InternalValue,
+                passClass.Mask, _pathGen);
+            if (_pathCache.TryGetValue(key, out var cached))
+            {
+                ProfHits++;
+                return cached;
+            }
+            ProfMisses++;
+            long t0 = ProfSw.ElapsedTicks;
+            var path = _long.ComputePath(_hier, si, sj, goal, passClass);
+            ProfTicks += ProfSw.ElapsedTicks - t0;
+            if (_pathCache.Count > 4096) _pathCache.Clear();   // 无界增长保护
+            _pathCache[key] = path;
+            return path;
         }
+
+        private readonly Dictionary<(int, int, int, long, long, long, long, ushort, int), WaypointPath> _pathCache = new();
+        /// <summary>性能探针:寻路缓存命中/未命中与求解耗时。</summary>
+        public static long ProfHits, ProfMisses, ProfTicks;
+        public static readonly System.Diagnostics.Stopwatch ProfSw = System.Diagnostics.Stopwatch.StartNew();
+        private int _pathGen;
 
         /// <summary>Compute a short-range path that routes precisely around nearby obstructions.
         /// Used for local detours / unit avoidance.</summary>

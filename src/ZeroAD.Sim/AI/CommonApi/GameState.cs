@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim.Components;
@@ -113,8 +114,45 @@ public sealed class GameState
 
     // ── 实体集合（lazy LINQ）──
 
-    private IEnumerable<AIEntity> AllEntities()
-        => Cm.AllEntities.Select(e => MakeEntity(e)).Where(e => e != null)!;
+    // 每实例缓存:此前 AllEntities()/集合方法都是 lazy LINQ——每次 .Values()/.Length
+    // 迭代都把 7400 个实体重新包一遍 AIEntity(Identity 查询 + 模板查找 + 两次分配);
+    // DefenseManager.IsDangerous 每个敌人 foreach 一遍 → 全图重建 ×敌人数,实测
+    // 25 秒/think。物化一次并复用,把成本降回每 tick 一次。
+    // 活性由 ComponentManager.EntitySetVersion 保证:世界(实体集)一变就整体失效
+    // 重建——测试长期持有 GameState 也不会拿到过期集合。
+    private int _cacheVersion = -1;
+    private List<AIEntity>? _allCache;
+
+    /// <summary>实体集一变就整体失效重建。所有缓存访问的入口检查——必须跑在
+    /// 任何缓存读取之前(否则命中的旧集合绕过版本比对)。</summary>
+    private void EnsureFresh()
+    {
+        if (_cacheVersion == Cm.EntitySetVersion) return;
+        _cacheVersion = Cm.EntitySetVersion;
+        _allCache = null;
+        _byId.Clear();
+        _collectionCache.Clear();
+    }
+
+    private List<AIEntity> AllEntitiesList()
+    {
+        EnsureFresh();
+        return _allCache ??= Cm.AllEntities.Select(e => MakeEntity(e)).Where(e => e != null)!.ToList()!;
+    }
+
+    private IEnumerable<AIEntity> AllEntities() => AllEntitiesList();
+
+    // 常用集合的物化缓存:DefenseManager 的 IsDangerous 每敌人 foreach
+    // GetOwnStructures().Values() —— lazy 时每调用都是全图 7400 扫描 ×敌人数。
+    // 改为按谓词 key 物化一次并复用(GameState 按玩家按 tick 新建,缓存天然正确)。
+    private readonly Dictionary<string, List<AIEntity>> _collectionCache = new();
+    private EntityCollection Col(string key, Func<AIEntity, bool> pred)
+    {
+        EnsureFresh();
+        return new(_collectionCache.TryGetValue(key, out var l)
+            ? l
+            : _collectionCache[key] = AllEntitiesList().Where(pred).ToList());
+    }
 
     private AIEntity? MakeEntity(EntityId eid)
     {
@@ -125,48 +163,48 @@ public sealed class GameState
     }
 
     public EntityCollection GetOwnEntities()
-        => new(AllEntities().Where(e => e.Owner == PlayerId));
+        => Col("own", e => e.Owner == PlayerId);
     public EntityCollection GetOwnStructures()
-        => new(AllEntities().Where(e => e.Owner == PlayerId && e.IsStructure));
+        => Col("ownStructures", e => e.Owner == PlayerId && e.IsStructure);
     public EntityCollection GetOwnUnits()
-        => new(AllEntities().Where(e => e.Owner == PlayerId && e.IsUnit));
+        => Col("ownUnits", e => e.Owner == PlayerId && e.IsUnit);
     public EntityCollection GetEnemyEntities()
-        => new(AllEntities().Where(e => IsPlayerEnemy(e.Owner)));
+        => Col("enemy", e => IsPlayerEnemy(e.Owner));
     public EntityCollection GetEnemyStructures()
-        => new(AllEntities().Where(e => IsPlayerEnemy(e.Owner) && e.IsStructure));
+        => Col("enemyStructures", e => IsPlayerEnemy(e.Owner) && e.IsStructure);
     public EntityCollection GetEnemyUnits()
-        => new(AllEntities().Where(e => IsPlayerEnemy(e.Owner) && e.IsUnit));
+        => Col("enemyUnits", e => IsPlayerEnemy(e.Owner) && e.IsUnit);
     public EntityCollection GetAllyEntities()
-        => new(AllEntities().Where(e => e.Owner != PlayerId && IsPlayerAlly(e.Owner)));
+        => Col("ally", e => e.Owner != PlayerId && IsPlayerAlly(e.Owner));
     public EntityCollection GetEntities(int player)
-        => new(AllEntities().Where(e => e.Owner == player));
+        => Col("p" + player, e => e.Owner == player);
     public EntityCollection GetStructures()
-        => new(AllEntities().Where(e => e.IsStructure));
+        => Col("structures", e => e.IsStructure);
     public EntityCollection GetOwnFoundations()
-        => new(AllEntities().Where(e => e.Owner == PlayerId && e.IsFoundation));
+        => Col("ownFoundations", e => e.Owner == PlayerId && e.IsFoundation);
     public EntityCollection GetOwnEntitiesByClass(string cls)
-        => new(AllEntities().Where(e => e.Owner == PlayerId && e.HasClass(cls)));
+        => Col("ownClass:" + cls, e => e.Owner == PlayerId && e.HasClass(cls));
 
     // ── 资源点 ──
 
     public EntityCollection GetResourceSupplies(string resourceType)
-        => new(AllEntities().Where(e => Filters.ByResource(resourceType)(e)));
+        => Col("supplies:" + resourceType, Filters.ByResource(resourceType));
     public EntityCollection GetHuntableSupplies()
-        => new(AllEntities().Where(e => Filters.IsHuntable()(e)));
+        => Col("huntable", Filters.IsHuntable());
     public EntityCollection GetFishableSupplies()
-        => new(AllEntities().Where(e => Filters.IsFishable()(e)));
+        => Col("fishable", Filters.IsFishable());
 
     public EntityCollection GetOwnDropsites(string resourceType)
-        => new(AllEntities().Where(e => e.Owner == PlayerId && Filters.IsDropsite(resourceType)(e)));
+        => Col("ownDropsites:" + resourceType, e => e.Owner == PlayerId && Filters.IsDropsite(resourceType)(e));
     public EntityCollection GetAnyDropsites(string resourceType)
-        => new(AllEntities().Where(e => Filters.IsDropsite(resourceType)(e)));
+        => Col("dropsites:" + resourceType, Filters.IsDropsite(resourceType));
 
     // ── 生产/研究设施 ──
 
     public EntityCollection GetOwnTrainingFacilities()
-        => new(AllEntities().Where(e => e.Owner == PlayerId && e.Template.CanTrain));
+        => Col("ownTraining", e => e.Owner == PlayerId && e.Template.CanTrain);
     public EntityCollection GetOwnResearchFacilities()
-        => new(AllEntities().Where(e => e.Owner == PlayerId && e.Template.CanResearch));
+        => Col("ownResearch", e => e.Owner == PlayerId && e.Template.CanResearch);
 
     // ── 科技查询 ──
 
@@ -282,10 +320,15 @@ public sealed class GameState
 
     // ── 单实体查找 ──
 
+    private readonly Dictionary<uint, AIEntity?> _byId = new();
+
     public AIEntity? GetEntityById(uint id)
     {
-        var eid = new EntityId(id);
-        return MakeEntity(eid);
+        EnsureFresh();
+        if (_byId.TryGetValue(id, out var cached)) return cached;
+        var e = MakeEntity(new EntityId(id));
+        _byId[id] = e;
+        return e;
     }
 
     // ── 地图 ──

@@ -47,6 +47,7 @@ public sealed class LongPathfinder
     {
         var path = new WaypointPath();
         if (_grid == null) return path;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
 
         int startI = x0, startJ = z0;
         // Sanitize start: if impassable, snap to nearest passable.
@@ -60,6 +61,8 @@ public sealed class LongPathfinder
         // MakeGoalReachable rewrites goal to a reachable POINT.
         var resolvedGoal = goal;
         hier.MakeGoalReachable(startI, startJ, ref resolvedGoal, passClass);
+        long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+        ProfReachTicks += t1 - t0;
 
         int goalI = PathfindingCore.WorldToNavcell(resolvedGoal.X);
         int goalJ = PathfindingCore.WorldToNavcell(resolvedGoal.Z);
@@ -79,19 +82,27 @@ public sealed class LongPathfinder
                     PathfindingCore.NavcellCenterToWorld(ni),
                     PathfindingCore.NavcellCenterToWorld(nj)));
         }
+        ProfSearchTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
         return path;
     }
 
-    // The search. P0 uses plain 8-neighbour A* (correct, simple, fast enough at navcell scale).
-    // The JPS jump-point optimization (skipping straight-line cells) can be layered on later as
-    // a pure performance win without changing the result; correctness comes first.
+    /// <summary>性能探针:可达性处理 vs JPS 求解耗时(ticks)。</summary>
+    public static long ProfReachTicks, ProfSearchTicks;
+
+    // The search: JPS(Jump Point Search)。原版 plain A* 在 2752² 开放网格上长路径
+    // 扩展 ~1-3M cell(Gather 长单实测 ~220ms/次);JPS 只展开跳跃点,开放区 10-100x。
+    // 禁角规则同 plain 版:对角移动要求两正交邻均可通。
     private bool JpsSearch(int startI, int startJ, int goalI, int goalJ,
         PassClass passClass, out List<(int i, int j)> navPath)
     {
         navPath = new List<(int, int)>();
         int w = _grid!.W, h = _grid.H;
         var tiles = new SparseGrid<Tile>(w, h);
-        var pq = new PriorityQueueHeap(w * h);
+        // 复用堆实例:此前每次寻路都 new PriorityQueueHeap(w*h)——分配 7.6M 项
+        // int 数组(30MB)再 Fill(-1) 一次,2752² 大地图上 ~20ms/次寻路 ×150 次/回合
+        // = 帧率归零级内存抖动。position 表常驻(30MB 可接受),Clear 只清已用项。
+        var pq = GetQueue(w * h);
+        _jpsGoalI = goalI; _jpsGoalJ = goalJ; _jpsPass = passClass;
 
         SetTile(tiles, startI, startJ, new Tile
         {
@@ -116,29 +127,102 @@ public sealed class LongPathfinder
                 return true;
             }
 
-            // Expand all 8 neighbours (no corner-cutting on diagonals).
-            for (int dj = -1; dj <= 1; dj++)
-                for (int di = -1; di <= 1; di++)
-                {
-                    if (di == 0 && dj == 0) continue;
-                    int ni = ci + di, nj = cj + dj;
-                    if (!Passable(ni, nj, passClass)) continue;
-                    bool diag = di != 0 && dj != 0;
-                    // No corner-cutting: diagonal blocked if either orthogonal neighbour is impassable.
-                    if (diag && (!Passable(ci + di, cj, passClass) || !Passable(ci, cj + dj, passClass)))
-                        continue;
-                    Relax(tiles, pq, ci, cj, ni, nj, diag, goalI, goalJ);
-                }
+            foreach (var (di, dj) in NeighborDirs(tiles, ci, cj, curTile))
+            {
+                var jp = Jump(ci, cj, di, dj);
+                if (jp.HasValue)
+                    RelaxTo(tiles, pq, ci, cj, jp.Value.i, jp.Value.j, di != 0 && dj != 0, goalI, goalJ,
+                        StepCount(ci, cj, jp.Value.i, jp.Value.j));
+            }
         }
         return false;
     }
 
-    // Relax a neighbour: if it's unexplored or this path is cheaper, record the predecessor +
-    // cost and (re)insert into the open set.
-    private void Relax(SparseGrid<Tile> tiles, PriorityQueueHeap pq,
-        int fromI, int fromJ, int ni, int nj, bool diagonal, int goalI, int goalJ)
+    private int _jpsGoalI, _jpsGoalJ;
+    private PassClass _jpsPass;
+
+    /// <summary>JPS 跳跃:沿 (di,dj) 直行,遇跳跃点(目标/含被迫邻点)返回之,撞墙返回 null。</summary>
+    private (int i, int j)? Jump(int ci, int cj, int di, int dj)
     {
-        long stepCost = diagonal ? DiagScaled() : OrthoScaled();
+        int ni = ci + di, nj = cj + dj;
+        if (!Passable(ni, nj, _jpsPass)) return null;
+        if (ni == _jpsGoalI && nj == _jpsGoalJ) return (ni, nj);
+
+        if (di != 0 && dj != 0)
+        {
+            // 对角:被迫邻点检查(两侧开阔但邻侧受阻)
+            if ((Passable(ni - di, nj + dj, _jpsPass) && !Passable(ni - di, nj, _jpsPass))
+                || (Passable(ni + di, nj - dj, _jpsPass) && !Passable(ni, nj - dj, _jpsPass)))
+                return (ni, nj);
+            // 递归:两正交分量任一有跳跃点 → 本点即跳跃点
+            if (Jump(ni, nj, di, 0).HasValue || Jump(ni, nj, 0, dj).HasValue)
+                return (ni, nj);
+        }
+        else if (di != 0)
+        {
+            if ((Passable(ni + di, nj + 1, _jpsPass) && !Passable(ni, nj + 1, _jpsPass))
+                || (Passable(ni + di, nj - 1, _jpsPass) && !Passable(ni, nj - 1, _jpsPass)))
+                return (ni, nj);
+        }
+        else
+        {
+            if ((Passable(ni + 1, nj + dj, _jpsPass) && !Passable(ni + 1, nj, _jpsPass))
+                || (Passable(ni - 1, nj + dj, _jpsPass) && !Passable(ni - 1, nj, _jpsPass)))
+                return (ni, nj);
+        }
+        return Jump(ni, nj, di, dj);
+    }
+
+    /// <summary>JPS 邻点方向剪枝:按来向保留自然邻 + 被迫邻(无来向=起点,全 8 向)。</summary>
+    private static readonly (int di, int dj)[] _allDirs =
+        { (-1,-1), (0,-1), (1,-1), (-1,0), (1,0), (-1,1), (0,1), (1,1) };
+
+    private IEnumerable<(int di, int dj)> NeighborDirs(SparseGrid<Tile> tiles, int ci, int cj, Tile cur)
+    {
+        if (!cur.HasPred)
+        {
+            foreach (var d in _allDirs) yield return d;
+            yield break;
+        }
+        int di = System.Math.Sign(ci - cur.PredI), dj = System.Math.Sign(cj - cur.PredJ);
+        if (di != 0 && dj != 0)
+        {
+            // 对角来向:正交两向 + 同对角
+            yield return (di, 0);
+            yield return (0, dj);
+            yield return (di, dj);
+            // 被迫邻:正交受阻侧的斜向
+            if (!Passable(ci - di, cj, _jpsPass) && Passable(ci - di, cj + dj, _jpsPass))
+                yield return (-di, dj);
+            if (!Passable(ci, cj - dj, _jpsPass) && Passable(ci + di, cj - dj, _jpsPass))
+                yield return (di, -dj);
+        }
+        else if (di != 0)
+        {
+            yield return (di, 0);
+            if (!Passable(ci, cj + 1, _jpsPass) && Passable(ci + di, cj + 1, _jpsPass))
+                yield return (di, 1);
+            if (!Passable(ci, cj - 1, _jpsPass) && Passable(ci + di, cj - 1, _jpsPass))
+                yield return (di, -1);
+        }
+        else
+        {
+            yield return (0, dj);
+            if (!Passable(ci + 1, cj, _jpsPass) && Passable(ci + 1, cj + dj, _jpsPass))
+                yield return (1, dj);
+            if (!Passable(ci - 1, cj, _jpsPass) && Passable(ci - 1, cj + dj, _jpsPass))
+                yield return (-1, dj);
+        }
+    }
+
+    private static int StepCount(int x0, int y0, int x1, int y1) =>
+        System.Math.Max(System.Math.Abs(x1 - x0), System.Math.Abs(y1 - y0));
+
+    // Relax 一个跳跃点:G 按跳步数×单位步进(斜步 diag 价)。
+    private void RelaxTo(SparseGrid<Tile> tiles, PriorityQueueHeap pq,
+        int fromI, int fromJ, int ni, int nj, bool diagonal, int goalI, int goalJ, int steps)
+    {
+        long stepCost = (diagonal ? DiagScaled() : OrthoScaled()) * steps;
         long fromG = tiles.Get(fromI, fromJ).G;
         long tentativeG = fromG + stepCost;
 
@@ -162,6 +246,17 @@ public sealed class LongPathfinder
     {
         tiles.Set(i, j, t);
         pq.Push(i * _grid!.H + j, t.G + t.H);
+    }
+
+    // 跨寻路复用的堆(position 查找表随地图尺寸常驻,免去每次寻路 30MB 分配)。
+    private PriorityQueueHeap? _queue;
+    private PriorityQueueHeap GetQueue(int maxId)
+    {
+        if (_queue == null || _queue.Capacity < maxId)
+            _queue = new PriorityQueueHeap(maxId);
+        else
+            _queue.Clear();
+        return _queue;
     }
 
     // Reconstruct the path by following predecessors from goal back to start, reversing into navPath.
