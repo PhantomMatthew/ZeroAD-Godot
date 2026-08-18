@@ -359,8 +359,9 @@ namespace ZeroAD.Sim.Net
         }
 
         /// <summary>
-        /// 删除己方实体(原版 delete-entities 的简化:仅允许删自己拥有的实体;原版另有
-        /// IsUndeletable/占领点数门槛,本移植暂不引入)。DestroyEntity 自带索引清理
+        /// 删除己方实体(原版 Commands.js delete-entities:仅允许删自己拥有的实体;
+        /// 三道豁免门槛已对齐原版 L390-403——Undeletable 模板 / 占领点未过半 / 须先猎杀
+        /// 的资源;controlAllUnits 作弊未移植)。DestroyEntity 自带索引清理
         /// (RangeManager/ObstructionManager 经 NotifyEntityDestroyed 摘除)。
         /// </summary>
         private void ApplyDelete(NetCommand cmd)
@@ -368,6 +369,13 @@ namespace ZeroAD.Sim.Net
             var entity = new EntityId(cmd.EntityId);
             var owner = _cm.QueryInterface<OwnershipComponent>(entity);
             if (owner == null || owner.PlayerId != (int)cmd.Player) return;
+
+            if (_cm.QueryInterface<IdentityComponent>(entity) is { Undeletable: true }) return;
+            var capturable = _cm.QueryInterface<CapturableComponent>(entity);
+            if (capturable != null && capturable.MaxCapturePoints > Maths.Fixed.Zero
+                && capturable.CapturePoints[(int)cmd.Player] < capturable.MaxCapturePoints / 2) return;
+            if (_cm.QueryInterface<Components.ResourceSupply>(entity)?.KillBeforeGather == true) return;
+
             _cm.DestroyEntity(entity);
         }
 

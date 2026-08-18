@@ -51,6 +51,7 @@ namespace ZeroAD.Sim
                 Name = name,
                 TemplateName = templateName,
                 IsUnit = true,
+                Undeletable = stats?.Undeletable == true,
                 Classes = stats?.GetClassList() ?? new List<string>()
             };
             if (isSoldier && !identity.HasClass("CitizenSoldier"))
@@ -533,6 +534,7 @@ namespace ZeroAD.Sim
                 Name = "Formation",
                 TemplateName = templateName,
                 IsUnit = false,
+                Undeletable = stats.Undeletable,   // template_formation: Undeletable=true
                 Classes = new List<string> { "Formation" },
             });
             var formation = new FormationComponent

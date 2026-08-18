@@ -277,7 +277,13 @@ public sealed partial class Main : Node3D
 		// SP 同样走加载等待页(page_loading:进度条 + 提示卡),标题取所选地图名。
 		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(PickSkirmishMapRel()));
 		AddChild(_loadingOverlay);
-		RunStagedGameplayLoad(seed, 1, null, tutorial: false, isMultiplayer: false, isHost: false);
+		// 选图面板的槽位表(可能为 null = 旧默认 1v1);本地玩家 id = Human 槽的 id。
+		var slots = GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Slots;
+		uint localId = 1;
+		if (slots != null)
+			foreach (var s in slots)
+				if (s.Kind == ZeroAD.Sim.Net.PlayerSlotKind.Human) { localId = (uint)s.PlayerId; break; }
+		RunStagedGameplayLoad(seed, localId, slots, tutorial: false, isMultiplayer: false, isHost: false);
 	}
 
 	/// <summary>Host enters the lobby (transport up, slot table editable). The game does NOT start
@@ -1004,6 +1010,9 @@ public sealed partial class Main : Node3D
 		MapEnvironment.Default.Apply(_light, _env);
 		_camera.SetFocus(new Vector3(130, 0, 122));
 		// Generated terrain has no water by default; mark everything land so placement still works.
+		// 先同步 sim 侧地形尺寸:生成图 128 tiles=512m,缺省 64 tiles=256m ——不配则
+		// 256m 外放置 FailOutOfBounds、寻路网格也只有 1/4(rmgen 路径同款坑的姊妹分支)。
+		_sim.Terrain?.Configure(map.VerticesPerSide - 1, map.TileSize);
 		FillPassabilityAllLand();
 		ZeroAD.Sim.Diag.Log("Main", "Using generated terrain (no PMP found)");
 	}
@@ -1187,6 +1196,12 @@ public sealed partial class Main : Node3D
 	{
 		var terrain = _sim.Terrain;
 		if (terrain == null) return;
+		// rmgen 图也要先把 TerrainComponent 配成真实尺寸:缺省 64×4=256m,而 rmgen 图
+		// 通常 192×4=768m。不配置的话 passability/障碍/LOS/领土网格全按 256m 建——
+		// 超出的区域放置全 FailOutOfBounds、永久黑雾、寻路网格也只有 1/9。
+		// (PMP 路径在 FillPassabilityFromPmp 里 Configure,这里之前漏了。)
+		if (pmp != null && (terrain.MapSize != pmp.TilesPerSide || terrain.TileSize != PmpMap.TileSize))
+			terrain.Configure(pmp.TilesPerSide, PmpMap.TileSize);
 		int n = terrain.MapSize;
 		var grid = new ZeroAD.Sim.Components.TerrainClass[n, n];
 		// Default Land (0) is already the zero value, so no need to fill explicitly.
@@ -1236,6 +1251,8 @@ public sealed partial class Main : Node3D
 		var f1 = ZeroAD.Sim.Maths.Fixed.FromFloat(worldM);
 		_sim.Obstructions.SetBounds(f0, f0, f1, f1);
 		_sim.Range.SetBounds(f1);
+		// 领土网格同尺寸(PMP 路径同款调用;缺了它领土判定/显示也按 256m)。
+		_sim.Territory.SetBounds((int)worldM);
 		_sim.Pathfinder.RebuildGrid();
 	}
 
@@ -1409,10 +1426,14 @@ public sealed partial class Main : Node3D
 				if (scenario != null)
 				{
 					spawnedFromMap = true;
-					// 队伍外交播种(同教程路径:同队互盟,否则敌对)
+					// 队伍外交播种(同教程路径:同队互盟,否则敌对)。
+					// 槽位表的队伍选择优先于地图 PlayerData(选图面板里改的队要生效);
+					// 槽位缺的玩家回退地图值。
 					var teams = new Dictionary<int, int>();
 					foreach (var pd in scenario.Players)
 						teams[pd.PlayerId] = pd.Team;
+					foreach (var slot in slots)
+						teams[slot.PlayerId] = slot.Team;
 					_sim.Sim.Players.SeedDiplomacyFromTeams(teams);
 					// 场景作者机位恢复(Arcadia 等 scenarios/* 的开局视角;此前从不恢复,
 					// 开局停在 SetupTerrain 的硬编码焦点 (130,122)——用户报视角错)。
@@ -2207,6 +2228,9 @@ public sealed partial class Main : Node3D
 			// 免去临时加 [DIAG] 打印再删的循环。
 			if (key.Keycode == Key.F12 && _selectedEntities.Count > 0)
 				DumpSelectedEntity();
+			// F6:dump 鼠标指向的实体(含敌方,不受 owner 过滤)——诊断敌方建筑材质/阵营色用。
+			if (key.Keycode == Key.F6)
+				DumpEntityAtCursor();
 			// F11:诊断日志面板(tag 勾选静音 + 最近日志;诊断方案 3)。
 			if (key.Keycode == Key.F11)
 			{
@@ -2216,6 +2240,13 @@ public sealed partial class Main : Node3D
 			// F8:开发者覆盖层(回合/FPS/实体数/选中数/状态 hash;诊断方案 4)。
 			if (key.Keycode == Key.F8 && _devOverlay != null)
 				_devOverlay.Visible = !_devOverlay.Visible;
+			// F7:全开视野调试(观战/看敌方基地建筑不用冒死靠近)。切换本地玩家的 reveal-all。
+			if (key.Keycode == Key.F7)
+				ToggleRevealAll();
+			// F10:在相机焦点刷一个本文明骑兵(调试骑手挂点/动画用——随机图开局不带骑兵,
+			// 没有这个键就得训练半天才能看到骑手)。
+			if (key.Keycode == Key.F10)
+				DebugSpawnCavalry();
 		}
 
 		if (@event is InputEventMouseButton mb && mb.Pressed)
@@ -3047,12 +3078,34 @@ public sealed partial class Main : Node3D
 				_sim.CommandStop(eid);
 	}
 
-	/// <summary>Delete:销毁选中的己方实体(原版 delete-entities;归属在执行端再校验)。</summary>
+	/// <summary>Delete:销毁选中的己方实体(原版 delete-entities;归属在执行端再校验)。
+	/// 不可删实体(英雄棺椁/须先猎杀/占领点未过半)按原版 execute 端过滤跳过。</summary>
 	public void DeleteSelectedEntities()
 	{
 		foreach (var eid in _selectedEntities)
-			if (IsOwn(eid))
+			if (IsOwn(eid) && GetUndeletableReason(eid) == null)
 				_sim.CommandDelete(eid);
+	}
+
+	/// <summary>原版 unit_actions.js isUndeletable:返回不可删理由(null = 可删)。
+	/// 三道门槛——须先猎杀的资源(动物)/占领点未过半/模板 Undeletable(英雄棺椁等)。
+	/// controlsAll 作弊未移植,恒不豁免。</summary>
+	public string? GetUndeletableReason(EntityId eid)
+	{
+		var supply = _sim.Sim.QueryInterface<ResourceSupply>(eid);
+		if (supply != null && supply.KillBeforeGather)
+			return "The entity has to be killed before it can be gathered from";
+		var capturable = _sim.Sim.QueryInterface<CapturableComponent>(eid);
+		if (capturable != null)
+		{
+			float cp = capturable.CapturePoints[(int)_sim.LocalPlayerId].ToFloat();
+			float maxCp = capturable.MaxCapturePoints.ToFloat();
+			if (maxCp > 0 && cp < maxCp / 2)
+				return "You cannot destroy this entity as you own less than half the capture points";
+		}
+		if (_sim.Sim.QueryInterface<IdentityComponent>(eid) is { Undeletable: true })
+			return "This entity is undeletable";
+		return null;
 	}
 
 	/// <summary>取消生产:选中建筑里第一个有 ProductionQueue 的,取消其队列第 index 项
@@ -3133,11 +3186,49 @@ public sealed partial class Main : Node3D
 			(_sim.Paused ? "  [PAUSED]" : "");
 	}
 
+	private bool _revealAll;
+
+	/// <summary>F7:全开视野调试(观战/看敌方基地建筑不用冒死靠近)。切换本地玩家 reveal-all;
+	/// 再按一次恢复真实迷雾。仅调试/观战用——不应对外暴露为作弊。</summary>
+	private void ToggleRevealAll()
+	{
+		_revealAll = !_revealAll;
+		_sim.Range.SetLosRevealAll((int)_sim.LocalPlayerId, _revealAll);
+		ZeroAD.Sim.Diag.Log("Main", $"reveal-all {(_revealAll ? "ON" : "OFF")} (player {_sim.LocalPlayerId})");
+	}
+
+	/// <summary>F10 调试:在相机焦点(sim 坐标)给本地玩家刷一个本文明骑兵剑士。</summary>
+	private void DebugSpawnCavalry()
+	{
+		if (!_gameStarted || _camera?.Focus is not Vector3 focus) return;
+		string civ = _sim.GetPlayer()?.Civ ?? "athen";
+		var eid = _sim.SpawnFromTemplate($"units/{civ}/cavalry_swordsman_b", focus.X, focus.Z);
+		_sim.AssignOwner(eid, (int)_sim.LocalPlayerId);
+		ZeroAD.Sim.Diag.Log("Main", $"debug-spawn cavalry ({civ}) at ({focus.X:0.#},{focus.Z:0.#})");
+	}
+
 	/// <summary>F12:dump 选中(首个)实体的全部组件到控制台 + user://debug/entity_dump.txt。
 	/// 复用 ComponentManager.DumpEntity(与 SerializeFullState 同一逐组件序列化通路)。
 	/// 先打印几行关键组件摘要(AttackComponent/PositionComponent 等最常排查的),再写全量
 	/// dump 文件。定位"为什么射程圈不显示/为什么送回房屋"类问题:选中实体按 F12 一眼看出
 	/// 缺哪个组件、字段值对不对。</summary>
+	/// <summary>F6:dump 鼠标指向的实体(含敌方,不受选中 owner 过滤)。诊断敌方建筑
+	/// 材质/阵营色:F7 全开视野 → 鼠标移到雅典建筑 → F6 看 playerColor 对不对。</summary>
+	private void DumpEntityAtCursor()
+	{
+		var vp = GetViewport();
+		if (vp == null) return;
+		var worldPos = ScreenToWorld(vp.GetMousePosition());
+		if (worldPos == null) return;
+		var entities = _sim.GetEntitiesAtPosition(worldPos.Value, 4f);
+		if (entities.Count == 0) { ZeroAD.Sim.Diag.Log("Diag", "F6: no entity at cursor"); return; }
+		var eid = entities[0];
+		var ident = _sim.Sim.QueryInterface<IdentityComponent>(eid);
+		var own = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
+		ZeroAD.Sim.Diag.Log("Diag", $"cursor entity {eid} tmpl={ident?.TemplateName ?? "?"} owner={own?.PlayerId.ToString() ?? "?"}");
+		DumpEntityMaterials(eid);
+	}
+
 	private void DumpSelectedEntity()
 	{
 		// 选首个选中实体(多选时只 dump 一个;需要的话可循环)
@@ -3158,6 +3249,66 @@ public sealed partial class Main : Node3D
 		string path = System.IO.Path.Combine(dir, "entity_dump.txt");
 		System.IO.File.WriteAllText(path, $"turn={_sim.NetTurn.CurrentTurn} {dump}");
 		ZeroAD.Sim.Diag.Log("Diag", $"full dump → {path}");
+		DumpEntityMaterials(eid);
+	}
+
+	/// <summary>dump 实体的渲染材质状态(player color 诊断):每个 MeshInstance3D 的
+	/// MaterialOverride 类型 + playerColor uniform 值。定位"阵营色缺失"类问题——
+	/// P1 蓝 P2 不红时,看材质的 playerColor 是不是对的。</summary>
+	private void DumpEntityMaterials(EntityId eid)
+	{
+		if (!_sim.EntityNodes.TryGetValue(eid, out var node) || node == null)
+		{
+			ZeroAD.Sim.Diag.Log("Diag", "materials: no node");
+			return;
+		}
+		DumpMaterialsRecursive(node, 0);
+		// 节点树总览:prop 是否挂载(雅典 CC 该有 7 个 prop 子树)。
+		DumpNodeTree(node, 0);
+	}
+
+	private static void DumpNodeTree(Node node, int depth)
+	{
+		string indent = new string(' ', depth * 2);
+		string kind = node is MeshInstance3D ? "MESH" : node is BoneAttachment3D ? "BONE" : "node";
+		ZeroAD.Sim.Diag.Log("Diag", $"{indent}{kind} {node.Name} children={node.GetChildCount()}");
+		foreach (var child in node.GetChildren())
+			DumpNodeTree(child, depth + 1);
+	}
+
+	private static void DumpMaterialsRecursive(Node node, int depth)
+	{
+		if (node is MeshInstance3D mi)
+		{
+			// 读该 mesh 的 LayerContext meta(决定材质名),解析出实际材质名。
+			string? matName = null;
+			Node? cur = node;
+			while (cur != null)
+			{
+				if (cur is Node3D n3 && n3.HasMeta("actorPath"))
+				{
+					var mp = n3.HasMeta("meshGlbPath") ? (string?)n3.GetMeta("meshGlbPath") : null;
+					var info = ZeroAD.Godot.Actors.Composition.ActorLayerInfoCache.Get((string)n3.GetMeta("actorPath"), mp);
+					matName = info.Material;
+					break;
+				}
+				cur = cur.GetParent();
+			}
+			var mo = mi.MaterialOverride;
+			string desc;
+			if (mo is ShaderMaterial sm)
+			{
+				var pc = sm.GetShaderParameter("playerColor");
+				desc = $"ShaderMaterial playerColor={pc}";
+			}
+			else if (mo is StandardMaterial3D std)
+				desc = $"StandardMaterial albedo={std.AlbedoColor}";
+			else
+				desc = mo == null ? "no-override" : mo.GetType().Name;
+			ZeroAD.Sim.Diag.Log("Diag", $"  mesh[{mi.Name}] material={matName ?? "?"}: {desc}");
+		}
+		foreach (var child in node.GetChildren())
+			DumpMaterialsRecursive(child, depth + 1);
 	}
 
 	/// <summary>F5 快存 / 暂停菜单 Save。返回存档路径(null=失败),供暂停菜单回灌状态。</summary>

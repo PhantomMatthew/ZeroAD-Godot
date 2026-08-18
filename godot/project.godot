@@ -18,6 +18,7 @@ config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 [autoload]
 
 GameLaunchConfig="*res://Scripts/Autoload/GameLaunchConfig.cs"
+CursorService="*res://Scripts/Autoload/CursorService.cs"
 MatchSummaryStore="*res://Scripts/Autoload/MatchSummaryStore.cs"
 UserConfig="*res://Scripts/Autoload/UserConfig.cs"
 MCPScreenshot="*res://addons/godot_mcp/Runtime/McpScreenshotService.cs"

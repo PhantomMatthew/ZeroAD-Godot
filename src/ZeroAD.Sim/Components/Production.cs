@@ -629,6 +629,9 @@ public sealed class IdentityComponent : ComponentBase, IComponentMessageHandler
     public string TemplateName = "";
     public bool IsUnit = true;
     public bool IsBuilding;
+    /// <summary>模板 Identity/Undeletable(原版 Identity.js IsUndeletable):不可被
+    /// delete 命令自毁(英雄棺椁/阵型控制器/gaia 等);HUD 删除钮禁用态据此。</summary>
+    public bool Undeletable;
     public List<string> Classes = new();
 
     protected override void OnInit() { }
@@ -644,6 +647,7 @@ public sealed class IdentityComponent : ComponentBase, IComponentMessageHandler
         s.StringASCII("tmpl", TemplateName);
         s.Bool("unit", IsUnit);
         s.Bool("building", IsBuilding);
+        s.Bool("undel", Undeletable);
         s.NumberI32("classCount", Classes.Count);
         foreach (var c in Classes)
             s.StringASCII("cls", c);
@@ -655,6 +659,7 @@ public sealed class IdentityComponent : ComponentBase, IComponentMessageHandler
         TemplateName = d.StringASCII("tmpl");
         IsUnit = d.Bool("unit");
         IsBuilding = d.Bool("building");
+        Undeletable = d.Bool("undel");
         int count = d.NumberI32("classCount");
         Classes.Clear();
         for (int i = 0; i < count; i++)

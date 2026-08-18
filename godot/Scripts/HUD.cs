@@ -645,6 +645,7 @@ public sealed partial class HUD : CanvasLayer
                 IconAlignment = HorizontalAlignment.Center,
                 VerticalIconAlignment = VerticalAlignment.Center,
             };
+            ApplySessionIconButtonStyle(btn);
             var tex = LoadIcon($"stances/{stance}");
             if (tex != null) btn.Icon = tex;
             string captured = stance;
@@ -683,6 +684,7 @@ public sealed partial class HUD : CanvasLayer
             VerticalIconAlignment = VerticalAlignment.Center,
             Visible = false,
         };
+        ApplySessionIconButtonStyle(_alertBtn);
         var alertTex = LoadIcon("die");
         if (alertTex != null) _alertBtn.Icon = alertTex;
         _alertBtn.Modulate = new Color(1f, 0.35f, 0.3f);
@@ -1019,10 +1021,29 @@ public sealed partial class HUD : CanvasLayer
         _unitActionRow.Visible = hasOwnEntity;
 
         // 与右面板同套布尔量,但按原版顺序:delete 在 stop 前。
+        // 图标对齐原版 unit_actions.js:delete=kill_small.png(骷髅),stop=stop.png(手掌)。
         if (hasOwnEntity)
-            AddUnitActionButton(LoadIcon("die"), "Delete", () => _main.DeleteSelectedEntities());
+        {
+            // 原版 isUndeletable 逐实体判定:有可删实体 → 亮骷髅可用;全部不可删 →
+            // 灰骷髅禁用,tooltip 显示去重后的理由(原版同款文案)。
+            var reasons = new List<string>();
+            bool anyDeletable = false;
+            foreach (var eid in _main.SelectedEntities)
+            {
+                if (!_main.IsOwn(eid)) continue;
+                var reason = _main.GetUndeletableReason(eid);
+                if (reason == null) anyDeletable = true;
+                else if (!reasons.Contains(reason)) reasons.Add(reason);
+            }
+            AddUnitActionButton(
+                LoadIcon(anyDeletable ? "kill_small" : "kill_small_disabled"),
+                anyDeletable ? "Self-Destruct\nDestroy the selected entities."
+                             : string.Join("\n", reasons),
+                () => _main.DeleteSelectedEntities(),
+                enabled: anyDeletable);
+        }
         if (!hasOwnUnit) return;
-        AddUnitActionButton(LoadTex("session/icons/cancel.png"), "Stop", () => _main.StopSelectedUnits());
+        AddUnitActionButton(LoadIcon("stop"), "Stop", () => _main.StopSelectedUnits());
 
         bool anyGarrisonable = false, anyBuilder = false;
         foreach (var eid in _main.SelectedEntities)
@@ -1038,18 +1059,21 @@ public sealed partial class HUD : CanvasLayer
         AddUnitActionButton(LoadIcon("patrol"), "Patrol", () => _main.EnterCommandTargetMode("patrol"));
     }
 
-    /// <summary>32×32 命令钮(原版 unitCommandButton 尺寸;图标缺失时显示名保底)。</summary>
-    private void AddUnitActionButton(Texture2D? tex, string name, System.Action onPressed)
+    /// <summary>32×32 命令钮(原版 unitCommandButton 尺寸;图标缺失时显示名保底)。
+    /// enabled=false → 禁用态(原版 kill_small_disabled 灰骷髅场景;深底换灰阶样式)。</summary>
+    private void AddUnitActionButton(Texture2D? tex, string name, System.Action onPressed, bool enabled = true)
     {
         var btn = new Button
         {
             Theme = UITheme.GetTheme(),
             CustomMinimumSize = new Vector2(32, 32),
             TooltipText = name,
+            Disabled = !enabled,
             ExpandIcon = true,
             IconAlignment = HorizontalAlignment.Center,
             VerticalIconAlignment = VerticalAlignment.Center,
         };
+        ApplySessionIconButtonStyle(btn);
         if (tex != null) btn.Icon = tex;
         else btn.Text = name;
         btn.Pressed += () => onPressed();
@@ -1417,7 +1441,7 @@ public sealed partial class HUD : CanvasLayer
             CustomMinimumSize = new Vector2(46, 46),
             Disabled = !enabled,
         };
-
+        ApplySessionIconButtonStyle(btn);
         if (tex != null)
         {
             btn.Icon = tex;
@@ -1622,6 +1646,7 @@ public sealed partial class HUD : CanvasLayer
                         IconAlignment = HorizontalAlignment.Center,
                         VerticalIconAlignment = VerticalAlignment.Center,
                     };
+                    ApplySessionIconButtonStyle(btn);
                     var tex = LoadPortraitForIdentity(identity2);
                     if (tex != null) btn.Icon = tex;
                     EntityId captured = ge;
@@ -1637,6 +1662,7 @@ public sealed partial class HUD : CanvasLayer
                     IconAlignment = HorizontalAlignment.Center,
                     VerticalIconAlignment = VerticalAlignment.Center,
                 };
+                ApplySessionIconButtonStyle(allBtn);
                 var outTex = LoadIcon("garrison-out");
                 if (outTex != null) allBtn.Icon = outTex;
                 allBtn.Pressed += () => _main.UnloadAllGarrison(first);
@@ -1656,6 +1682,42 @@ public sealed partial class HUD : CanvasLayer
 
     // 通用名缓存(ExtractStats 每帧太贵;模板名 → GenericName)。
     private readonly Dictionary<string, string> _genericNameCache = new();
+    private readonly Dictionary<string, string> _specificNameCache = new();
+    private readonly Dictionary<string, Texture2D?> _portraitCache = new();
+
+    /// <summary>专名(SpecificName,如 Loxodonta africana / Oikos)——模板 Identity/SpecificName,
+    /// 缓存模式同 GenericNameOf。无专名返回 ""。</summary>
+    private string SpecificNameOf(IdentityComponent identity)
+    {
+        if (_specificNameCache.TryGetValue(identity.TemplateName, out var cached)) return cached;
+        string specific = "";
+        try
+        {
+            var stats = _sim.Sim.Templates?.ExtractStats(identity.TemplateName);
+            if (stats != null) specific = stats.SpecificName;
+        }
+        catch { }
+        _specificNameCache[identity.TemplateName] = specific;
+        return specific;
+    }
+
+    /// <summary>头像:数据驱动(模板 Identity/Icon,原版 selection_details 同款数据源,
+    /// 经 PortraitLoader 读 junction 原图);解析失败回退旧的模板名硬编码映射。</summary>
+    private Texture2D? ResolvePortrait(IdentityComponent? identity)
+    {
+        if (identity == null) return null;
+        if (_portraitCache.TryGetValue(identity.TemplateName, out var cached)) return cached;
+        Texture2D? tex = null;
+        try
+        {
+            var icon = _sim.Sim.Templates?.ExtractStats(identity.TemplateName).Icon;
+            if (!string.IsNullOrEmpty(icon)) tex = PortraitLoader.Load(icon);
+        }
+        catch { }
+        tex ??= LoadPortraitForTemplate(identity.TemplateName, identity.IsBuilding);
+        _portraitCache[identity.TemplateName] = tex;
+        return tex;
+    }
 
     private string GenericNameOf(IdentityComponent identity)
     {
@@ -1677,11 +1739,14 @@ public sealed partial class HUD : CanvasLayer
         var identity = _sim.Sim.QueryInterface<IdentityComponent>(ent);
         var health = _sim.Sim.QueryInterface<HealthComponent>(ent);
 
-        _selIcon.Texture = LoadPortraitForIdentity(identity);
+        _selIcon.Texture = ResolvePortrait(identity);
         if (identity != null)
         {
-            _selName.Text = GenericNameOf(identity);          // 主名 = 通用名
-            _selName2.Text = identity.Name;                   // 次名 = 专名
+            // 原版默认 howtoshownames=0:专名主显、通用名次显(无专名回退通用名)。
+            string generic = GenericNameOf(identity);
+            string specific = SpecificNameOf(identity);
+            _selName.Text = specific.Length > 0 ? specific : generic;
+            _selName2.Text = generic;
         }
         else
         {
@@ -1711,16 +1776,15 @@ public sealed partial class HUD : CanvasLayer
             _xpBar.Visible = false;
         }
 
-        // 血条。
-        if (health != null && health.Max > 0)
+        // 血条(原版 healthSection:无 Health 件整体隐藏——树/岩石不可攻击;
+        // 此前缺件时显示满绿条+空文本,与原版相悖)。
+        bool showHealth = health != null && health.Max > 0;
+        _selHealth.Visible = showHealth;
+        _selHealthText.Visible = showHealth;
+        if (showHealth)
         {
             _selHealth.Value = 100.0 * health.Current / health.Max;
             _selHealthText.Text = $"{health.Current}/{health.Max}";
-        }
-        else
-        {
-            _selHealth.Value = 100;
-            _selHealthText.Text = "";
         }
 
         // 占领条:仅可占领实体(Capturable)显示;分段宽=CP/max,玩家色,升序确定。
@@ -1752,9 +1816,15 @@ public sealed partial class HUD : CanvasLayer
             _captureStats.Text = "";
         }
 
-        // 资源条(原版 resourceSection:gaia 资源/尸体剩余量)。
+        // 资源条(原版 resourceSection:gaia 资源/尸体剩余量;无 health 段时提到顶槽——
+        // 原版 sectionPosTop/Middle/Bottom 重排,树/矿的资源段占据血条位置)。
         var supply = _sim.Sim.QueryInterface<ResourceSupply>(ent);
-        if (supply != null && supply.MaxAmount > 0)
+        bool showSupply = supply != null && supply.MaxAmount > 0;
+        float resY = showHealth ? 50f : 26f;
+        _resLabel.Position = new Vector2(100, resY);
+        _resStats.Position = new Vector2(100, resY);
+        _resBar.Position = new Vector2(100, resY + 14);
+        if (showSupply)
         {
             _resLabel.Text = supply.Type.ToString();
             _resStats.Text = $"{supply.Amount}/{supply.MaxAmount}";
@@ -1805,10 +1875,11 @@ public sealed partial class HUD : CanvasLayer
             _attackIcon.TooltipText = "";
         }
 
-        // 玩家带:色块 + 文明徽标 + 玩家号(原版 playerCivIcon/playerColorBackground/player)。
+        // 玩家带:色块 + 文明徽标 + 玩家名(原版 playerCivIcon/playerColorBackground/player)。
+        // 无 OwnershipComponent = gaia(原版 entState.player=0,玩家名 "Gaia")——此前按 -1
+        // 处理整条留空,gaia 单位/资源没有属主带,与 C++ 版不一致。
         var owner = _sim.Sim.QueryInterface<OwnershipComponent>(ent);
-        int pid = owner?.PlayerId ?? -1;
-        if (pid >= 0)
+        int pid = owner?.PlayerId ?? 0;
         {
             _playerBand.Color = SimBridge.GetPlayerColor(pid) with { A = 0.55f };
             var player = _sim.Sim.GetPlayerEntity(pid);
@@ -1819,12 +1890,6 @@ public sealed partial class HUD : CanvasLayer
                 : null;
             _playerCivEmblem.Texture = emblemTex;
             _playerCivEmblem.Visible = emblemTex != null;
-        }
-        else
-        {
-            _playerBand.Color = new Color(0.2f, 0.2f, 0.2f, 0.55f);
-            _playerLabel.Text = "";
-            _playerCivEmblem.Visible = false;
         }
     }
 
@@ -2125,6 +2190,7 @@ public sealed partial class HUD : CanvasLayer
             IconAlignment = HorizontalAlignment.Center,
             VerticalIconAlignment = VerticalAlignment.Center,
         };
+        ApplySessionIconButtonStyle(btn);
         if (tex != null) btn.Icon = tex;
         return btn;
     }
@@ -2193,6 +2259,29 @@ public sealed partial class HUD : CanvasLayer
         // Preserve subdirectories (stances/aggressive) but strip file extension.
         string withoutExt = System.IO.Path.ChangeExtension(name, null);
         return LoadTex($"session/icons/{withoutExt}.png");
+    }
+
+    // ── 会话图标钮样式(原版 iconButton:sprite=snIconPortrait = portrait_black 深底,
+    // hover add_color 42,disabled 灰阶)——第三面板命令条/右面板生产钮/站姿/阵型/驻防
+    // 小图标钮共用;替代主题石纹底(C++ 版这些钮不是石头底)。──
+    private static StyleBox? _iconBtnNormal, _iconBtnHover, _iconBtnPressed, _iconBtnDisabled;
+
+    private static void ApplySessionIconButtonStyle(Button btn)
+    {
+        if (_iconBtnNormal == null)
+        {
+            var tex = UITheme.TryLoad("res://assets/textures/misc/portrait_black.png");
+            if (tex == null) return;
+            _iconBtnNormal = new StyleBoxTexture { Texture = tex };
+            _iconBtnHover = new StyleBoxTexture { Texture = tex, ModulateColor = new Color(1.16f, 1.16f, 1.16f) };
+            _iconBtnPressed = new StyleBoxTexture { Texture = tex, ModulateColor = new Color(0.85f, 0.85f, 0.85f) };
+            _iconBtnDisabled = new StyleBoxTexture { Texture = tex, ModulateColor = new Color(0.55f, 0.55f, 0.55f, 0.7f) };
+        }
+        btn.AddThemeStyleboxOverride("normal", _iconBtnNormal);
+        btn.AddThemeStyleboxOverride("hover", _iconBtnHover);
+        btn.AddThemeStyleboxOverride("pressed", _iconBtnPressed);
+        btn.AddThemeStyleboxOverride("disabled", _iconBtnDisabled);
+        btn.AddThemeStyleboxOverride("focus", _iconBtnNormal);
     }
 
     /// <summary>占领条(对齐原版 selection_details 的 capture bar):自绘分段堆叠条,

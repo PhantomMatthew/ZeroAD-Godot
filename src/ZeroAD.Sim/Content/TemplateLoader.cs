@@ -149,6 +149,11 @@ namespace ZeroAD.Sim.Content
                 var icon = identity.GetChild("Icon");
                 if (icon.IsOk)
                     stats.Icon = icon.ToString().Trim();
+                // Identity/Undeletable:原版 Identity.js IsUndeletable(=="true")——
+                // 英雄棺椁/阵型控制器/gaia 等不可自毁;删除命令与第三面板禁用态的数据源。
+                var undeletable = identity.GetChild("Undeletable");
+                if (undeletable.IsOk)
+                    stats.Undeletable = undeletable.ToBool();
             }
 
             var health = node.GetChild("Health");
@@ -371,6 +376,11 @@ namespace ZeroAD.Sim.Content
                 var max = resourceSupply.GetChild("Max");
                 if (max.IsOk && stats.ResourceAmount == 0)
                     stats.ResourceAmount = max.ToInt();
+                // KillBeforeGather(原版 ResourceSupply.js):动物须先猎杀才能采肉——
+                // 原版 isUndeletable 的豁免理由之一(删除命令跳过)。
+                var killFirst = resourceSupply.GetChild("KillBeforeGather");
+                if (killFirst.IsOk)
+                    stats.KillBeforeGather = killFirst.ToBool();
                 var type = resourceSupply.GetChild("Type");
                 if (type.IsOk)
                 {
@@ -902,6 +912,12 @@ namespace ZeroAD.Sim.Content
         public int ResourceAmount;
         public ResourceType ResourceType = ResourceType.Wood;
         public string ResourceTypeString = "";
+        /// <summary>Identity/Undeletable(原版 Identity.js IsUndeletable):英雄棺椁/阵型
+        /// 控制器/gaia 等不可被 delete 命令自毁(第三面板禁用态 + 执行端跳过的数据源)。</summary>
+        public bool Undeletable;
+        /// <summary>ResourceSupply/KillBeforeGather(原版):须先杀死才能采集(动物)——
+        /// 原版 isUndeletable 的豁免理由之一。</summary>
+        public bool KillBeforeGather;
         public float WalkSpeed = 8f;
         /// <summary>UnitMotion/PassabilityClass("default"/"ship";原版 plane 另有
         /// unrestricted,未移植)。船 = "ship" → 水路寻路 + 水面出生。</summary>

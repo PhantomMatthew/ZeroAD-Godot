@@ -8,20 +8,20 @@ public enum ResourceType { Wood, Food, Stone, Metal }
 [Component("ResourceSupply", "ResourceSupply")]
 public sealed class ResourceSupply : ComponentBase, IComponentMessageHandler
 {
-    public ResourceType Type;
-    public string SpecificType = "";
-    public string GenericType = "";
-    public int Amount;
-    public int MaxAmount;
+    // 默认值活在字段初始化器(对齐 OwnershipComponent 的同款修复,Components.cs:53):
+    // OnInit 在 AddComponent 内、对象构造之后执行——在这里赋默认值会覆盖对象初始化器
+    // 已设的值(此前 new ResourceSupply { Type=Food, Amount=800 } 挂上后全被重置为
+    // Wood/100,大象/鹿的资源在面板上显示成木头 100)。
+    public ResourceType Type = ResourceType.Wood;
+    public string SpecificType = "tree";
+    public string GenericType = "wood";
+    public int Amount = 100;
+    public int MaxAmount = 100;
+    /// <summary>ResourceSupply/KillBeforeGather(原版):须先杀死才能采集(动物)——
+    /// delete 命令的豁免条件之一(isUndeletable)。</summary>
+    public bool KillBeforeGather;
 
-    protected override void OnInit()
-    {
-        Type = ResourceType.Wood;
-        SpecificType = "tree";
-        GenericType = "wood";
-        Amount = 100;
-        MaxAmount = 100;
-    }
+    protected override void OnInit() { }
 
     public void SetTypeString(string typeStr)
     {
@@ -53,6 +53,7 @@ public sealed class ResourceSupply : ComponentBase, IComponentMessageHandler
         s.NumberI32("type", (int)Type);
         s.NumberI32("amount", Amount);
         s.NumberI32("max", MaxAmount);
+        s.Bool("kbg", KillBeforeGather);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -60,6 +61,7 @@ public sealed class ResourceSupply : ComponentBase, IComponentMessageHandler
         Type = (ResourceType)d.NumberI32("type");
         Amount = d.NumberI32("amount");
         MaxAmount = d.NumberI32("max");
+        KillBeforeGather = d.Bool("kbg");
     }
 
     public void HandleMessage(IMessage message) { }

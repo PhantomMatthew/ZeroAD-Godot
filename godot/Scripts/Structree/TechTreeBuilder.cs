@@ -8,7 +8,8 @@ namespace ZeroAD.Godot.Structree;
 /// <summary>科技树数据模型（纯 POCO，供 StructreePanel 渲染）。</summary>
 
 public sealed record TechEntry(string Name, string DisplayName, string Icon,
-    int WoodCost, int FoodCost, int StoneCost, int MetalCost);
+    int WoodCost, int FoodCost, int StoneCost, int MetalCost,
+    int PhaseIndex);   // 科技自身阶段(产出分行用;原版 ProductionRowManager 的 pIdx)
 
 public sealed record TreeEntry(
     string Template,            // "structures/athen/civic_centre"
@@ -53,7 +54,10 @@ public static class TechTreeBuilder
             if (!templates.Cache.TryGetValue(tmpl, out var node)) continue;
 
             bool isStructure = tmpl.StartsWith("structures/", System.StringComparison.Ordinal);
-            if (isStructure)
+            // 原版 TemplateLister:WallSet 模板(wallset_palisade/wallset_stone 等)进
+            // wallsetPieces 列表、出树前删除——折叠为"墙组",不作独立建筑盒。
+            bool isWallSet = node.HasChild("WallSet");
+            if (isStructure && !isWallSet)
             {
                 var stats = templates.ExtractStats(tmpl);
                 int phaseIdx = GetPhaseIndex(node);
@@ -64,11 +68,13 @@ public static class TechTreeBuilder
                     .Where(t => t != null && templates.TemplateExists(t))
                     .Select(t => MakeUnitEntry(t!, templates))!;
 
-                // 读 Researcher/Technologies（可研究科技）。
+                // 读 Researcher/Technologies（可研究科技）。pair 展开为两个子科技
+                // (原版 compileTemplateLists 同款:pair 在 UI 显示为两个并列图标)。
                 var techs = ReadTokenList(node, "Researcher", "Technologies")
                     .Select(t => ResolveTech(t, civ.Code, techCatalog))
                     .Where(t => t != null)
-                    .Select(t => MakeTechEntry(t!, techCatalog))!;
+                    .SelectMany(t => ExpandPair(t!, techCatalog))
+                    .Select(t => MakeTechEntry(t, techCatalog))!;
 
                 buildings.Add(new TreeEntry(
                     tmpl,
@@ -144,6 +150,15 @@ public static class TechTreeBuilder
 
     // ── 入口构造 ──
 
+    /// <summary>pair 科技展开为子科技列表;非 pair 原样返回(原版 structree 把
+    /// pair 的两个子科技并排在同一生产行显示)。</summary>
+    private static IEnumerable<string> ExpandPair(string techName, TechCatalog catalog)
+    {
+        if (catalog.Pairs.TryGetValue(techName, out var subTechs) && subTechs.Count > 0)
+            return subTechs;
+        return new[] { techName };
+    }
+
     private static TreeEntry MakeUnitEntry(string template, TemplateLoader templates)
     {
         var stats = templates.ExtractStats(template);
@@ -165,8 +180,36 @@ public static class TechTreeBuilder
         return new TechEntry(
             techName,
             def?.GenericName ?? techName,
-            "",  // 科技图标（Identity/Icon 在科技 JSON 里无标准字段，暂空）
-            def?.Wood ?? 0, def?.Food ?? 0, def?.Stone ?? 0, def?.Metal ?? 0);
+            def?.Icon ?? "",   // 科技 JSON 顶层 icon 字段(原版 structree 的 tech 图标)
+            def?.Wood ?? 0, def?.Food ?? 0, def?.Stone ?? 0, def?.Metal ?? 0,
+            def != null ? GetTechPhaseIndex(def) : 0);
+    }
+
+    /// <summary>科技的阶段索引:phase_* 科技按自身名;其余按 requirements 链上的首个
+    /// phase_* 前置(原版 tech phase 推断)。无前置 → 0(village)。</summary>
+    private static int GetTechPhaseIndex(TechnologyDefinition def)
+    {
+        for (int i = 0; i < PhaseOrder.Length; i++)
+            if (def.Name == PhaseOrder[i]) return i;
+        int Scan(TechRequirement r)
+        {
+            if (r.Tech != null)
+                for (int i = 0; i < PhaseOrder.Length; i++)
+                    if (r.Tech.StartsWith(PhaseOrder[i], System.StringComparison.Ordinal))
+                        return i;
+            int best = -1;
+            foreach (var sub in r.Any ?? System.Array.Empty<TechRequirement>())
+            { var v = Scan(sub); if (v >= 0 && best < 0) best = v; }
+            foreach (var sub in r.All ?? System.Array.Empty<TechRequirement>())
+            { var v = Scan(sub); if (v > best) best = v; }
+            return best;
+        }
+        foreach (var req in def.Requirements)
+        {
+            int v = Scan(req);
+            if (v >= 0) return v;
+        }
+        return 0;
     }
 
     /// <summary>从 Identity/Requirements/Techs 取 phase 索引。
