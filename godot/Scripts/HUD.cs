@@ -1790,8 +1790,8 @@ public sealed partial class HUD : CanvasLayer
         }
 
         // 血条(原版 healthSection:无 Health 件整体隐藏——树/岩石不可攻击;
-        // 此前缺件时显示满绿条+空文本,与原版相悖)。
-        bool showHealth = health != null && health.Max > 0;
+        // 尸体 hp=0 也按无血条处理,资源段上提到顶槽,与原版尸体显示一致)。
+        bool showHealth = health is { Max: > 0, Current: > 0 };
         _selHealth.Visible = showHealth;
         _selHealthText.Visible = showHealth;
         if (showHealth)

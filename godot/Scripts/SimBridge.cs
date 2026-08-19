@@ -712,7 +712,7 @@ public sealed partial class SimBridge : Node
 		var pos = _sim.QueryInterface<PositionComponent>(entity);
 		if (pos != null)
 		{
-			var sp = new FixedVector3D(Fixed.FromFloat(def.X), Fixed.Zero, Fixed.FromFloat(def.Z));
+			var sp = new FixedVector3D(Fixed.FromFloat(def.X), SimSystem.TerrainHeight(Fixed.FromFloat(def.X), Fixed.FromFloat(def.Z)), Fixed.FromFloat(def.Z));
 			pos.Position = sp;
 			_sim.NotifyPositionChanged(entity,
 				new FixedVector2D(Fixed.Zero, Fixed.Zero),
@@ -738,6 +738,10 @@ public sealed partial class SimBridge : Node
 			Size1 = Fixed.FromFloat(obSize1),
 			Flags = ObstructionFlags.DefaultBlock,
 		};
+		// 墙体(Wall 类):控制组 = 玩家墙组——同玩家墙件互不阻挡(拼链段搭进塔楼;
+		// 对齐原版 control group 语义),Placement 校验同组豁免(执行端同款)。
+		if (stats != null && stats.GetClassList().Contains("Wall") && def.Player > 0)
+			obstruction.ControlGroup = ObstructionComponent.PlayerWallGroup(def.Player);
 		_sim.AddComponent(entity, obstruction);
 		_sim.AddComponent(entity, new BuildRestrictionsComponent
 		{
@@ -778,6 +782,19 @@ public sealed partial class SimBridge : Node
 				PhysicalRestrictedClasses = stats.AttackPhysicalRestrictedClasses,
 			};
 			_sim.AddComponent(entity, bldgAtk);
+		}
+
+		// BuildingAI(原版:防御塔/CC 自动放箭):有攻击件 + 模板带 BuildingAI 段才装。
+		if (stats != null && stats.HasBuildingAI
+			&& _sim.QueryInterface<AttackComponent>(entity) != null)
+		{
+			_sim.AddComponent(entity, new BuildingAIComponent
+			{
+				DefaultArrowCount = stats.DefaultArrowCount,
+				MaxArrowCount = stats.MaxArrowCount,
+				GarrisonArrowMultiplier = stats.GarrisonArrowMultiplier,
+				GarrisonArrowClasses = stats.GarrisonArrowClasses,
+			});
 		}
 
 		// Fog-of-war registration: Vision/Fogging/Visibility from the template + entry
@@ -826,6 +843,25 @@ public sealed partial class SimBridge : Node
 
 	private EntityId SpawnScenarioGaia(ScenarioEntityDef def, TemplateStats? stats)
 	{
+		// gaia 动物(fauna + 有 Health)走移动装配(游荡/逃跑/反击;死后转尸体)。
+		// 树/石/矿仍走下方静态路径。
+		if (stats is { HasHealth: true, ResourceAmount: > 0 }
+			&& def.Template.StartsWith("gaia/fauna", StringComparison.OrdinalIgnoreCase))
+		{
+			var faun = SpawnUnit(def.X, def.Z,
+				isVillager: false,
+				isSoldier: stats.AttackDamage > 0,
+				stats: stats,
+				isStructure: false,
+				isResource: true,
+				isFauna: true,
+				templateName: def.Template);
+			if (_entityNodes.TryGetValue(faun, out var faunNode) && def.OrientationY != 0f)
+				faunNode.Rotation = new Vector3(0, def.OrientationY, 0);
+			EntityAssembler.RegisterForLos(_sim, faun, def.Template, stats);
+			return faun;
+		}
+
 		var entity = _sim.CreateEntity();
 		_sim.AddComponent(entity, new PositionComponent());
 
@@ -868,7 +904,7 @@ public sealed partial class SimBridge : Node
 		var pos = _sim.QueryInterface<PositionComponent>(entity);
 		if (pos != null)
 		{
-			var sp = new FixedVector3D(Fixed.FromFloat(def.X), Fixed.Zero, Fixed.FromFloat(def.Z));
+			var sp = new FixedVector3D(Fixed.FromFloat(def.X), SimSystem.TerrainHeight(Fixed.FromFloat(def.X), Fixed.FromFloat(def.Z)), Fixed.FromFloat(def.Z));
 			pos.Position = sp;
 			_sim.NotifyPositionChanged(entity,
 				new FixedVector2D(Fixed.Zero, Fixed.Zero),
@@ -1174,8 +1210,10 @@ public sealed partial class SimBridge : Node
 		// 末尾保留第二次调用(拾取驻军/炮塔的位置变更)。
 		T("los1", () => _range.UpdateVisibilityData());
 		T("unitai", () => TickUnitAI(dt));
-		T("gather", () => TickGatherers(dt));
+		// gather 旧驱动(TickGatherers)已退役:采集周期由 UnitAI 的 GATHER FSM 子树驱动
+		// (内核自洽、无头测试同路);双驱动曾对同一 supply 重复结算。
 		T("attack", () => TickAttackers(dt));
+		T("buildingai", () => TickBuildingAI(dt));
 		T("build", () => TickBuilders(dt));
 		T("prod", () => TickProductionQueues(dt));
 		T("found", () => TickFoundations(dt));
@@ -1220,7 +1258,10 @@ public sealed partial class SimBridge : Node
 	private void T(string name, System.Action fn)
 	{
 		_phaseSw.Restart();
-		fn();
+		// 单阶段异常不得截断整个 tick(此前 T("unitai") 抛 FSM 异常 → 其后的
+		// foundations/attack 等全不跑,完工地基永远不换建筑)。记录并继续。
+		try { fn(); }
+		catch (System.Exception ex) { ZeroAD.Sim.Diag.Err("Sim", $"tick phase {name} failed: {ex.Message}"); }
 		_phaseMs[name] = _phaseMs.GetValueOrDefault(name) + _phaseSw.ElapsedMilliseconds;
 	}
 
@@ -1304,8 +1345,18 @@ public sealed partial class SimBridge : Node
 		foreach (var entity in GetAllEntitiesSnapshot())
 		{
 			var health = _sim.QueryInterface<HealthComponent>(entity);
-			if (health != null && health.IsDead)
-			{                var owner = _sim.QueryInterface<OwnershipComponent>(entity);
+			if (health == null || !health.IsDead) continue;
+			// 尸体已转换的不再处理(每 tick 全表扫描,IsDead 恒真)。
+			if (_sim.QueryInterface<CorpseComponent>(entity) != null) continue;
+			// gaia 动物(killBeforeGather 无主资源):死亡不销毁,转尸体供采集(原版行为)。
+			var deadSupply = _sim.QueryInterface<ResourceSupply>(entity);
+			var deadOwner = _sim.QueryInterface<OwnershipComponent>(entity);
+			if (deadSupply != null && deadSupply.KillBeforeGather && deadOwner == null)
+			{
+				ConvertToCorpse(entity);
+				continue;
+			}
+			{                var owner = deadOwner;
 				int fromPlayer = owner?.PlayerId ?? -1;
 				Events.RaiseOwnershipChanged(new OwnershipChangedEvent
 				{
@@ -1339,6 +1390,31 @@ public sealed partial class SimBridge : Node
 		}
 	}
 
+	/// <summary>动物死亡 → 尸体(原版:killBeforeGather 的 gaia 死亡不销毁,转尸体供采集)。
+	/// 挂 CorpseComponent(死亡清扫/tick 停摆标记),停 UnitAI 与动画;实体保留
+	/// Position/Identity/ResourceSupply——采完肉(Amount=0)由既有枯竭路径销毁。</summary>
+	private void ConvertToCorpse(EntityId entity)
+	{
+		_sim.AddComponent(entity, new CorpseComponent());
+		_sim.QueryInterface<UnitAIComponent>(entity)?.OnCorpseConverted(_sim);
+		var identity = _sim.QueryInterface<IdentityComponent>(entity);
+		if (identity != null) identity.IsUnit = false;
+		// 视觉:播 death 动画并定格(从 _animators 摘除,走位动画循环不再驱动它)。
+		if (_animators.Remove(entity, out var anim))
+		{
+			if (anim.HasState("death")) anim.Play("death");
+			// 播完定格(表现层计时器;循环播放会反复倒下)。节点销毁则跳过。
+			var animRef = anim;
+			GetTree().CreateTimer(1.2).Timeout += () =>
+			{
+				if (GodotObject.IsInstanceValid(animRef)) animRef.SetProcess(false);
+			};
+		}
+		_animState.Remove(entity);
+		_lastPos.Remove(entity);
+		_interpolator.Remove(entity);
+	}
+
 	private void TickUnitMotions(float dt)
 	{
 		foreach (var entity in GetAllEntitiesSnapshot())
@@ -1357,89 +1433,22 @@ public sealed partial class SimBridge : Node
 		}
 	}
 
-	private void TickGatherers(float dt)
-	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var gatherer = _sim.QueryInterface<ResourceGatherer>(entity);
-			if (gatherer == null || gatherer.State == ResourceGatherer.GatherState.Idle) continue;
-
-			var motion = _sim.QueryInterface<UnitMotion>(entity);
-
-			switch (gatherer.State)
-			{
-				case ResourceGatherer.GatherState.MovingToResource:
-					if (motion != null && !motion.HasMoveTarget)
-						gatherer.State = ResourceGatherer.GatherState.Gathering;
-					break;
-
-				case ResourceGatherer.GatherState.Gathering:
-					if (gatherer.TargetSupply is { } supplyId)
-					{
-						var supply = _sim.QueryInterface<ResourceSupply>(supplyId);
-						if (supply != null && !supply.IsEmpty)
-						{
-							int gathered = supply.Take((int)(gatherer.EffectiveRate(_sim, supply.Type) * dt));
-							gatherer.CarryAmount += gathered;
-							gatherer.CarryType = supply.Type;
-
-							if (gatherer.CarryAmount >= 10 || supply.IsEmpty)
-							{
-								gatherer.CarryAmount = System.Math.Clamp(gatherer.CarryAmount, 0, 10);
-								var dropsite = FindNearestDropsite(entity);
-								if (dropsite.HasValue && motion != null)
-								{
-									var dpos = _sim.QueryInterface<PositionComponent>(dropsite.Value);
-									if (dpos != null)
-									{
-										motion.MoveToPoint(new FixedVector2D(dpos.Position.X, dpos.Position.Z));
-										gatherer.TargetDropsite = dropsite;
-										gatherer.State = ResourceGatherer.GatherState.MovingToDropsite;
-									}
-								}
-							}
-						}
-						else
-						{
-							FindAndGatherNewResource(entity, gatherer.CarryType);
-						}
-					}
-					break;
-
-				case ResourceGatherer.GatherState.MovingToDropsite:
-					if (motion != null && !motion.HasMoveTarget && gatherer.TargetDropsite.HasValue)
-					{
-						var player = GetPlayer();
-						if (player != null)
-							player.AddResource(gatherer.CarryType, gatherer.CarryAmount);
-						gatherer.CarryAmount = 0;
-
-						FindAndGatherNewResource(entity, gatherer.CarryType);
-					}
-					break;
-			}
-		}
-	}
-
-	private void FindAndGatherNewResource(EntityId entity, ResourceType type)
-	{
-		var motion = _sim.QueryInterface<UnitMotion>(entity);
-		var newSupply = FindNearestResource(entity, type);
-		if (newSupply.HasValue && motion != null)
-			GatherResource(entity, newSupply.Value, motion);
-		else
-		{
-			var g = _sim.QueryInterface<ResourceGatherer>(entity);
-			if (g != null) g.State = ResourceGatherer.GatherState.Idle;
-		}
-	}
-
 	private void TickAttackers(float dt)
 	{
 		foreach (var entity in GetAllEntitiesSnapshot())
 		{
 			var attack = _sim.QueryInterface<AttackComponent>(entity);
 			attack?.Tick(dt, _sim);
+		}
+	}
+
+	/// <summary>建筑自动防御驱动(原版 BuildingAI 的 Timer 周期;1s 节流索敌在内)。</summary>
+	private void TickBuildingAI(float dt)
+	{
+		foreach (var entity in GetAllEntitiesSnapshot())
+		{
+			var bai = _sim.QueryInterface<BuildingAIComponent>(entity);
+			bai?.Tick(dt, _sim);
 		}
 	}
 
@@ -1612,7 +1621,12 @@ public sealed partial class SimBridge : Node
 			if (gatherer == null) continue;
 			var motion = _sim.QueryInterface<UnitMotion>(e);
 			if (motion == null || motion.HasMoveTarget) continue;
-			GatherResource(e, nearest.Value, motion);
+			// 队列里还有活(如墙链的下一段)不算空闲——别拽走(此前完工瞬间
+			// builder.Target 刚好为空,被自动派去采集,queued 修复单全被顶掉)。
+			var ai = _sim.QueryInterface<UnitAIComponent>(e);
+			if (ai?.CurrentOrder != null) continue;
+			// 走 UnitAI 订单(GATHER FSM 子树;旧直接设状态不经 FSM 已废弃)。
+			ai?.Gather(nearest.Value);
 		}
 	}
 
@@ -1856,13 +1870,18 @@ public sealed partial class SimBridge : Node
 		// ResourceAmount marks gatherable gaia (trees/stone/metal) vs. decor/animals.
 		bool isStructure = templateName.StartsWith("structures/", StringComparison.OrdinalIgnoreCase);
 		bool isResource = (stats?.ResourceAmount ?? 0) > 0;
+		// gaia 动物(fauna + 有 Health):移动单位——带 UnitMotion/UnitAI(游荡/逃跑/反击),
+		// 同时保留 ResourceSupply(死后转尸体供采集)。树/石无 Health,仍走静态资源。
+		bool isFauna = isResource && stats != null && stats.HasHealth
+			&& templateName.StartsWith("gaia/fauna", StringComparison.OrdinalIgnoreCase);
 
 		var eid = SpawnUnit(x, z,
-			isVillager: stats?.CanGather == true,
+			isVillager: stats?.CanGather == true && !isFauna,
 			isSoldier: stats?.AttackDamage > 0,
 			stats: stats,
 			isStructure: isStructure,
 			isResource: isResource,
+			isFauna: isFauna,
 			templateName: templateName);
 
 		// 属主(rmgen 玩家基地等;上游 ParseEntities:currEnt.playerID → Ownership)。
@@ -1878,14 +1897,15 @@ public sealed partial class SimBridge : Node
 
 	public EntityId SpawnUnit(float x, float z, bool isVillager = false, bool isSoldier = false,
 		TemplateStats? stats = null, bool isStructure = false, bool isResource = false,
-		string? templateName = null)
+		bool isFauna = false, string? templateName = null)
 	{
 		var entity = _sim.CreateEntity();
 		_sim.AddComponent(entity, new PositionComponent());
 		// Motion + unit AI belong only to mobile units. Structures (Town Centre) and resources
 		// (trees) are static — giving them UnitMotion made them move on right-click, and IsUnit
-		// made them drag-selectable as if they were troops.
-		bool isMobile = !isStructure && !isResource;
+		// made them drag-selectable as if they were troops.动物(isFauna)是例外:有资源
+		// 但可移动(游荡/逃跑/反击,死后才变静态尸体)。
+		bool isMobile = !isStructure && (!isResource || isFauna);
 		if (isMobile)
 		{
 			_sim.AddComponent(entity, new UnitMotion());
@@ -1919,6 +1939,7 @@ public sealed partial class SimBridge : Node
 			motion.Speed = Fixed.FromFloat(stats.WalkSpeed);
 
 		// Resource node (tree/stone/metal): gatherable supply, nothing else.
+		// 动物(isFauna)也带 supply(KillBeforeGather=true——须先猎杀,死后采尸体)。
 		if (isResource)
 		{
 			int amt = stats?.ResourceAmount > 0 ? stats.ResourceAmount : 100;
@@ -1929,6 +1950,26 @@ public sealed partial class SimBridge : Node
 				MaxAmount = amt,
 				KillBeforeGather = stats?.KillBeforeGather == true,
 			});
+		}
+
+		// 动物行为接线(原版 template_unit_fauna):模板 stance(skittish 逃/passive-defensive
+		// 反击/aggressive 主动)+ 游荡/进食/逃跑参数;视野(狼的索敌半径)按模板 Vision。
+		if (isFauna)
+		{
+			var faAi = _sim.QueryInterface<UnitAIComponent>(entity);
+			if (faAi != null && stats != null)
+			{
+				if (stats.RoamDistance > 0f) faAi.RoamDistance = stats.RoamDistance;
+				if (stats.RoamTimeMax > 0f) { faAi.RoamTimeMin = stats.RoamTimeMin; faAi.RoamTimeMax = stats.RoamTimeMax; }
+				if (stats.FeedTimeMax > 0f) { faAi.FeedTimeMin = stats.FeedTimeMin; faAi.FeedTimeMax = stats.FeedTimeMax; }
+				if (stats.FleeDistance > 0f) faAi.FleeDistance = stats.FleeDistance;
+				if (stats.DefaultStance.Length > 0) faAi.SetStance(stats.DefaultStance, _sim);
+			}
+			if (stats != null && stats.VisionRange > 0)
+			{
+				_sim.AddComponent(entity, new VisionComponent());
+				_sim.QueryInterface<VisionComponent>(entity)!.Range = Fixed.FromInt(stats.VisionRange);
+			}
 		}
 
 		// Structures train units and accept dropsite deliveries per their template (Civil Centre
@@ -2012,8 +2053,7 @@ public sealed partial class SimBridge : Node
 				atk.CaptureStrength = stats.AttackCaptureStrength;
 				atk.CaptureRange = stats.AttackCaptureRange;
 				atk.CaptureRate = stats.AttackCaptureRate;
-				atk.CaptureRestrictedClasses = stats.AttackCaptureRestrictedClasses;
-				atk.PreferredClasses = stats.AttackPreferredClasses;
+				atk.CaptureRestrictedClasses = stats.AttackCaptureRestrictedClasses;				atk.PreferredClasses = stats.AttackPreferredClasses;
 				atk.PhysicalRestrictedClasses = stats.AttackPhysicalRestrictedClasses;
 			}
 
@@ -2031,13 +2071,27 @@ public sealed partial class SimBridge : Node
 			}
 		}
 
+		// BuildingAI(起始建筑走 SpawnUnit 路径;与 SpawnScenarioBuilding 同款装配——
+		// 须在攻击件之后,组件依赖 AttackComponent)。
+		if (stats != null && stats.HasBuildingAI
+			&& _sim.QueryInterface<AttackComponent>(entity) != null)
+		{
+			_sim.AddComponent(entity, new BuildingAIComponent
+			{
+				DefaultArrowCount = stats.DefaultArrowCount,
+				MaxArrowCount = stats.MaxArrowCount,
+				GarrisonArrowMultiplier = stats.GarrisonArrowMultiplier,
+				GarrisonArrowClasses = stats.GarrisonArrowClasses,
+			});
+		}
+
 		var pos = _sim.QueryInterface<PositionComponent>(entity);
 		if (pos != null)
 		{
 			// 从 (0,0)(OnEntityCreated 时的初始值)移到真实坐标,通知 RangeManager 更新
 			// spatial subdivision + RangeEntityData + LOS。此前直接字段赋值不通知 →
 			// subdivision 里实体永远在 (0,0) → ExecuteQuery 查不到 → 不攻击。
-			var spawnPos = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+			var spawnPos = new FixedVector3D(Fixed.FromFloat(x), SimSystem.TerrainHeight(Fixed.FromFloat(x), Fixed.FromFloat(z)), Fixed.FromFloat(z));
 			pos.Position = spawnPos;
 			_sim.NotifyPositionChanged(entity,
 				new FixedVector2D(Fixed.Zero, Fixed.Zero),
@@ -2079,7 +2133,7 @@ public sealed partial class SimBridge : Node
 		var pos = _sim.QueryInterface<PositionComponent>(entity);
 		if (pos != null)
 		{
-			var sp = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+			var sp = new FixedVector3D(Fixed.FromFloat(x), SimSystem.TerrainHeight(Fixed.FromFloat(x), Fixed.FromFloat(z)), Fixed.FromFloat(z));
 			pos.Position = sp;
 			_sim.NotifyPositionChanged(entity,
 				new FixedVector2D(Fixed.Zero, Fixed.Zero),
@@ -2105,7 +2159,7 @@ public sealed partial class SimBridge : Node
 		var pos = _sim.QueryInterface<PositionComponent>(entity);
 		if (pos != null)
 		{
-			var sp = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+			var sp = new FixedVector3D(Fixed.FromFloat(x), SimSystem.TerrainHeight(Fixed.FromFloat(x), Fixed.FromFloat(z)), Fixed.FromFloat(z));
 			pos.Position = sp;
 			_sim.NotifyPositionChanged(entity,
 				new FixedVector2D(Fixed.Zero, Fixed.Zero),
@@ -2375,19 +2429,6 @@ public sealed partial class SimBridge : Node
 		_playerEntity.HasValue ? _sim.QueryInterface<PlayerComponent>(_playerEntity.Value) : null;
 
 	// --- Helpers ---
-
-	private void GatherResource(EntityId unit, EntityId supplyEntity, UnitMotion motion)
-	{
-		var gatherer = _sim.QueryInterface<ResourceGatherer>(unit);
-		var supply = _sim.QueryInterface<ResourceSupply>(supplyEntity);
-		var supplyPos = _sim.QueryInterface<PositionComponent>(supplyEntity);
-		if (gatherer == null || supply == null || supplyPos == null) return;
-
-		gatherer.TargetSupply = supplyEntity;
-		gatherer.CarryType = supply.Type;
-		gatherer.State = ResourceGatherer.GatherState.MovingToResource;
-		motion.MoveToPoint(new FixedVector2D(supplyPos.Position.X, supplyPos.Position.Z));
-	}
 
 	private EntityId? FindNearestDropsite(EntityId from)
 	{

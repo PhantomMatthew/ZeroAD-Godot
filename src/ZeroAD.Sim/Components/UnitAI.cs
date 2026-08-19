@@ -285,6 +285,107 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     public void Flee(EntityId threat, bool queued = false) =>
         PushOrder(new UnitOrder { Type = "Flee", Target = threat, Queued = queued, Force = !queued });
 
+    // =========================================================================
+    // 动物行为(原版 UnitAI.js 的 LINGERING/ROAMING + IsAnimal=RoamDistance>0)──
+    // =========================================================================
+
+    /// <summary>原版判定:RoamDistance > 0 即动物(template_unit_fauna 系列)。</summary>
+    public bool IsAnimal => RoamDistance > 0f;
+
+    /// <summary>模板 UnitAI 参数(装配时从 TemplateStats 灌入;秒)。RoamDistance>0 即动物。</summary>
+    public float RoamDistance;
+    public float RoamTimeMin = 2f, RoamTimeMax = 8f;
+    public float FeedTimeMin = 15f, FeedTimeMax = 60f;
+
+    // 游荡循环状态(序列化;读档后节拍一致)。
+    private float _animalTimer = -1f;     // 当前阶段剩余秒;-1 = 未初始化(首拍取随机进食)
+    private bool _animalFeeding = true;   // true=进食(LINGERING),false=游走等待(ROAMING)
+    private float _roamAngle;             // MoveRandomly 的多边形步进角(±π/6)
+    private float _roamStartAngle;
+    private bool _roamAngleInit;
+    private bool _isCorpse;               // 尸体(见 OnCorpseConverted):全行为停摆
+
+    private void AnimalIdleTick(float dt, ComponentManager cm)
+    {
+        if (_animalTimer < 0f)
+        {
+            // 原版开局先进 LINGERING 且随机时长——避免全图动物同步起步。
+            _animalFeeding = true;
+            _animalTimer = RandRange(cm, FeedTimeMin, FeedTimeMax);
+            return;
+        }
+        _animalTimer -= dt;
+        if (_animalTimer > 0f) return;
+        if (_animalFeeding)
+        {
+            // 进食结束 → 游走一圈(原版 ROAMING.enter:MoveRandomly + RoamTime 计时)。
+            _animalFeeding = false;
+            MoveRandomly(cm);
+            _animalTimer = RandRange(cm, RoamTimeMin, RoamTimeMax);
+        }
+        else
+        {
+            _animalFeeding = true;
+            _animalTimer = RandRange(cm, FeedTimeMin, FeedTimeMax);
+        }
+    }
+
+    /// <summary>原版 MoveRandomly:近似多边形的圆周游走——每边先半转面向再半转,
+    /// 边长 0.5~1.5×RoamDistance(防卡死角 + 防全图漂移)。RNG 走 cm.RNG(确定性)。</summary>
+    private void MoveRandomly(ComponentManager cm)
+    {
+        var pos = cm.QueryInterface<PositionComponent>(Entity);
+        if (pos == null || !pos.InWorld) return;
+        if (cm.QueryInterface<UnitMotion>(Entity) == null) return;
+
+        float ang = pos.Rotation.Y.ToFloat();
+        if (!_roamAngleInit)
+        {
+            _roamAngleInit = true;
+            _roamAngle = (cm.RNG.NextInt(0, 2) == 0 ? 1 : -1) * MathF.PI / 6f;
+            ang -= _roamAngle / 2f;
+            _roamStartAngle = ang;
+        }
+        else if (MathF.Abs((ang - _roamStartAngle + MathF.PI) % (2f * MathF.PI) - MathF.PI)
+                 < MathF.Abs(_roamAngle / 2f))
+            _roamAngle *= cm.RNG.NextInt(0, 2) == 0 ? 1 : -1;
+
+        float halfDelta = RandRange(cm, _roamAngle / 4f, _roamAngle * 3f / 4f);
+        // 原版先半转(FaceTowardsPoint)再半转;视觉上移动朝向由表现层随走位刷新。
+        ang += halfDelta;
+        ang += halfDelta;
+        float dist = RandRange(cm, 0.5f, 1.5f) * RoamDistance;
+        float tx = pos.Position.X.ToFloat() - 0.5f * MathF.Sin(ang);
+        float tz = pos.Position.Z.ToFloat() - 0.5f * MathF.Cos(ang);
+        // 游走用排队单(Force=false):不抢占受击/逃跑等强制响应。
+        PushOrder(new UnitOrder
+        {
+            Type = "Walk",
+            Position = new FixedVector2D(Fixed.FromFloat(tx), Fixed.FromFloat(tz)),
+            Force = false,
+            Queued = true,
+        });
+    }
+
+    private static float RandRange(ComponentManager cm, float min, float max)
+    {
+        if (max <= min) return min;
+        return min + (float)cm.RNG.NextDouble() * (max - min);
+    }
+
+    /// <summary>死亡转尸体(SimBridge.RemoveDeadEntities 调用;仅 killBeforeGather 的
+    /// gaia 动物):停单/停走/停攻,FSM 永久停摆(Tick 首行查 _isCorpse)。实体保留
+    /// Position/Identity/ResourceSupply,尸体继续供采集(原版行为)。</summary>
+    public void OnCorpseConverted(ComponentManager cm)
+    {
+        _isCorpse = true;
+        _orderQueue.Clear();
+        _dispatchPending = false;
+        cm.QueryInterface<UnitMotion>(Entity)?.Stop();
+        cm.QueryInterface<AttackComponent>(Entity)?.StopAttacking();
+    }
+
+
     /// <summary>护卫(原版 Guard):跟随友方目标并响应其周边战斗;目标受伤时可治疗者自动治疗。</summary>
     public void Guard(EntityId target, bool queued = false) =>
         PushOrder(new UnitOrder { Type = "Guard", Target = target, Queued = queued, Force = !queued });
@@ -401,6 +502,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     public void Tick(float dt, ComponentManager cm)
     {
         ProfCalls++;
+        if (_isCorpse) return;   // 尸体:FSM 全停(死亡转换见 OnCorpseConverted)
         // 驻防中:订单队列冻结(对齐原版 isGarrisoned 时 FinishOrder 不派发后续订单;
         // 新入队指令留待出驻后处理)。
         if (IsGarrisoned) return;
@@ -416,6 +518,11 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         // 不自行索敌(原版 FORMATIONMEMBER 无个体响应)。
         if (IsIdle && !IsGarrisoned && !IsTurret && FormationController == null && !IsFormationController)
             StanceIdleScan(dt, cm);
+        // 动物游荡(原版 LINGERING/ROAMING:进食 FeedTime → 游走一圈 → 再进食)。
+        // 仅空闲无单时驱动;受击/被猎产生的订单会抢占(Flee/Attack 入队即非 idle)。
+        if (IsAnimal && IsIdle && _orderQueue.Count == 0 && !IsGarrisoned && !IsTurret
+            && FormationController == null && !IsFormationController)
+            AnimalIdleTick(dt, cm);
         // 扫描可能入队自动攻击/回锚订单:立即派发,否则下方 Timer 会打进无 handler 的
         // IDLE 态而抛异常(同"订单残留 IDLE"坑)。
         if (_dispatchPending)
@@ -465,6 +572,27 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         BuildIndividualTree(spec);
         BuildFormationControllerTree(spec);
         BuildFormationMemberTree(spec);
+        // 根作用域兜底(原版 UnitFsmSpec 顶层默认 handler):任何状态都能收攻击/停止令——
+        // 编队成员在 FORMATIONMEMBER.* 下接敌必须能转个体 COMBAT,否则订单卡死队列。
+        // 子树的同名注册(FORMATIONCONTROLLER 的 Order.Attack 等)覆盖根,语义不变。
+        spec.Root.On("Order.Attack", (u, m) =>
+        {
+            var attack = m.Cm!.QueryInterface<AttackComponent>(u.Entity);
+            if (attack == null || m.Order!.Target == null) { u.FinishOrder(); return; }
+            if (!attack.AttackTarget(m.Cm!, m.Order.Target.Value, m.Order.AllowCapture))
+            {
+                u.FinishOrder();
+                return;
+            }
+            u.FsmNextState = "COMBAT.APPROACHING";
+        });
+        spec.Root.On("Order.Stop", (u, _) =>
+        {
+            StopMoving(u);
+            SimSystem.GetComponent<HealComponent>(u.Entity)?.StopHealing();
+            SimSystem.GetComponent<TreasureCollectorComponent>(u.Entity)?.StopCollecting();
+            u.FsmNextState = "IDLE";
+        });
         return spec.Build();
     }
 
@@ -548,6 +676,28 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             if (gatherer == null) { u.FinishOrder(); return; }
             if (m.Order!.Target is { } target)
             {
+                // 狩猎重定向(原版 killBeforeGather):活体动物先猎杀,死后采尸体——
+                // 队列改为 [Attack, Gather]:Attack 在目标死亡后完成,接着 Gather 采尸体。
+                var supply = m.Cm.QueryInterface<ResourceSupply>(target);
+                if (supply != null && supply.KillBeforeGather
+                    && m.Cm.QueryInterface<HealthComponent>(target) is { IsDead: false })
+                {
+                    // 目标不在属主视野(动物游走进雾):攻击单会被追击门取消,采集也无处
+                    // 下手——整单取消,防 Attack↔Gather 乒乓(原版:雾里根本点不到目标)。
+                    var ownEnt = m.Cm.QueryInterface<OwnershipComponent>(u.Entity);
+                    if (ownEnt != null && SimSystem.Range != null
+                        && SimSystem.Range.GetLosVisibility(target, ownEnt.PlayerId) != LosVisibility.Visible)
+                    {
+                        u.FinishOrder();
+                        return;
+                    }
+                    u.FinishOrder();   // 弹出当前 Gather,下面以前插重建顺序
+                    u.PushOrderFront(new UnitOrder
+                        { Type = "Gather", Target = target, Force = m.Order.Force, Queued = m.Order.Queued });
+                    u.PushOrderFront(new UnitOrder
+                        { Type = "Attack", Target = target, Force = m.Order.Force });
+                    return;
+                }
                 gatherer.TargetSupply = target;
                 MoveToTargetEdge(u, target, m.Cm!, Fixed.FromInt(1));
             }
@@ -781,7 +931,14 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
         // --- States ---
 
-        spec.State("INDIVIDUAL").State("IDLE");
+        // IDLE 兜底 Timer:订单残留在 IDLE(某路径 FinishOrder/状态推进失序)时重臂派发,
+        // 自愈卡死——此前 IDLE 无 Timer handler,进 Timer 即抛异常并截断整个 sim tick
+        // (其后的 foundations 等阶段全不跑,完工建筑永不落位)。
+        spec.State("INDIVIDUAL").State("IDLE")
+            .On("Timer", (u, m) =>
+            {
+                if (u._orderQueue.Count > 0) u._dispatchPending = true;
+            });
 
         var walking = spec.State("INDIVIDUAL").State("WALKING");
         walking.On("Timer", (u, m) =>
@@ -1424,9 +1581,12 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             })
             .On("Timer", (u, m) =>
             {
+                var fc2 = m.Cm!.QueryInterface<FormationComponent>(u.Entity);
                 if (u.FormationTimerElapsed(m.Dt))
-                    m.Cm!.QueryInterface<FormationComponent>(u.Entity)
-                        ?.UpdateFormation(m.Cm, moveCenter: false, force: true);
+                    fc2?.UpdateFormation(m.Cm, moveCenter: false, force: true);
+                // 原版 UpdateTwinFormationsForMerge 由 MovementUpdate 驱动(移动途中持续
+                // 检查);2s 计时器对短行军太稀(6m 一跳 ~1s 即到,检查永远赶不上)——每拍查。
+                fc2?.MergeTwinFormations(m.Cm);
                 var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
                 if (motion != null && !motion.HasMoveTarget)
                     u.FinishOrder();
@@ -2236,9 +2396,23 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         var empty = new List<EntityId>();
         var own = cm.QueryInterface<OwnershipComponent>(Entity);
         var range = SimSystem.Range;
-        if (own == null || range == null) return empty;
         var vision = cm.QueryInterface<VisionComponent>(Entity);
         if (vision == null || vision.Range <= Fixed.Zero) return empty;
+        if (own == null)
+        {
+            // gaia 动物(狼等 aggressive 站姿)无主索敌:目标是任意真实玩家的存活单位;
+            // gaia 无 LOS 网格,不做视野过滤(原版动物感知不走玩家视野)。
+            if (range == null || !IsAnimal || !flags.TargetVisibleEnemies) return empty;
+            if (cm.QueryInterface<AttackComponent>(Entity) == null) return empty;
+            return range.ExecuteQuery(Entity, Fixed.Zero, vision.Range, e =>
+            {
+                var eo = cm.QueryInterface<OwnershipComponent>(e);
+                if (eo == null || eo.PlayerId <= 0) return false;
+                var h = cm.QueryInterface<HealthComponent>(e);
+                return h is { IsDead: false };
+            });
+        }
+        if (range == null) return empty;
         bool canFight = cm.QueryInterface<AttackComponent>(Entity) != null;
         if (!canFight && !flags.RespondFleeOnSight) return empty;
         int me = own.PlayerId;
@@ -2287,7 +2461,8 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
     private const float StanceScanIntervalCombat = 1.0f;   // 原版 StartTimer(0,1000)
     private const int GuardRange = 12;                     // template_unit.xml Guard/Range
-    private const float FleeDistance = 12f;                // template_unit.xml FleeDistance
+    /// <summary>逃跑距离(template_unit.xml FleeDistance=12;动物模板可覆盖,如 fauna 24)。</summary>
+    public float FleeDistance = 12f;
     private const float PatrolWaitTime = 1f;               // template_unit.xml PatrolWaitTime
 
     /// <summary>WAF/巡逻/护卫共用的 1s 节流索敌(原版 FindWalkAndFightTargets):
@@ -2318,8 +2493,8 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         float len = MathF.Sqrt(dx * dx + dz * dz);
         if (len < 0.001f) { dx = 1f; dz = 0f; len = 1f; }   // 重叠 → 确定性 +x 方向
         var dest = new FixedVector2D(
-            Fixed.FromFloat(pos.Position.X.ToFloat() + dx / len * FleeDistance),
-            Fixed.FromFloat(pos.Position.Z.ToFloat() + dz / len * FleeDistance));
+            Fixed.FromFloat(pos.Position.X.ToFloat() + dx / len * u.FleeDistance),
+            Fixed.FromFloat(pos.Position.Z.ToFloat() + dz / len * u.FleeDistance));
         StartMovingTo(u, dest, cm);
         return true;
     }
@@ -2364,16 +2539,19 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     /// 打断、攻击者须可见——violent(targetAttackersAlways)豁免这两条。</summary>
     public void OnAttacked(EntityId attacker, ComponentManager cm)
     {
-        if (IsGarrisoned || IsTurret || IsFormationController) return;
+        if (_isCorpse || IsGarrisoned || IsTurret || IsFormationController) return;
         var flags = CurrentStanceFlags;
         var own = cm.QueryInterface<OwnershipComponent>(Entity);
         var aOwn = cm.QueryInterface<OwnershipComponent>(attacker);
-        if (own == null || aOwn == null) return;
-        if (!cm.Players.IsEnemy(own.PlayerId, aOwn.PlayerId)) return;
+        // 攻击者须为真实玩家;无主实体(gaia 动物)按玩家 0——动物不设外交检查
+        // (gaia 无人可敌,但动物被打要跑/反击,原版即如此),且跳过 LOS 可见性门
+        // (gaia 无 LOS 网格;原版动物感知不走玩家视野)。
+        if (aOwn == null || aOwn.PlayerId <= 0) return;
+        if (own != null && !cm.Players.IsEnemy(own.PlayerId, aOwn.PlayerId)) return;
         var ah = cm.QueryInterface<HealthComponent>(attacker);
         if (ah == null || ah.IsDead) return;
         if (!flags.TargetAttackersAlways && CurrentOrder is { Force: true }) return;
-        if (!flags.TargetAttackersAlways)
+        if (!flags.TargetAttackersAlways && own != null)
         {
             var range = SimSystem.Range;
             if (range == null || range.GetLosVisibility(attacker, own.PlayerId) != LosVisibility.Visible)
@@ -2421,6 +2599,19 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         s.NumberFixed("patrolWait", Fixed.FromFloat(_patrolWaitElapsed));
         s.NumberU32("guardOf", _isGuardOf?.Value ?? 0);
         s.NumberFixed("combatScan", Fixed.FromFloat(_combatScanElapsed));
+        // 动物行为负载(本存档周期追加,读序须与写序逐位一致)。
+        s.NumberFixed("roamDist", Fixed.FromFloat(RoamDistance));
+        s.NumberFixed("roamTMin", Fixed.FromFloat(RoamTimeMin));
+        s.NumberFixed("roamTMax", Fixed.FromFloat(RoamTimeMax));
+        s.NumberFixed("feedTMin", Fixed.FromFloat(FeedTimeMin));
+        s.NumberFixed("feedTMax", Fixed.FromFloat(FeedTimeMax));
+        s.NumberFixed("fleeDist", Fixed.FromFloat(FleeDistance));
+        s.NumberFixed("animalTimer", Fixed.FromFloat(_animalTimer));
+        s.Bool("animalFeeding", _animalFeeding);
+        s.NumberFixed("roamAngle", Fixed.FromFloat(_roamAngle));
+        s.NumberFixed("roamStartAngle", Fixed.FromFloat(_roamStartAngle));
+        s.Bool("roamAngleInit", _roamAngleInit);
+        s.Bool("isCorpse", _isCorpse);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -2465,6 +2656,19 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         uint guardOf = d.NumberU32("guardOf");
         _isGuardOf = guardOf != 0 ? new EntityId(guardOf) : null;
         _combatScanElapsed = d.NumberFixed("combatScan").ToFloat();
+        // 动物行为负载(与写序逐位一致)。
+        RoamDistance = d.NumberFixed("roamDist").ToFloat();
+        RoamTimeMin = d.NumberFixed("roamTMin").ToFloat();
+        RoamTimeMax = d.NumberFixed("roamTMax").ToFloat();
+        FeedTimeMin = d.NumberFixed("feedTMin").ToFloat();
+        FeedTimeMax = d.NumberFixed("feedTMax").ToFloat();
+        FleeDistance = d.NumberFixed("fleeDist").ToFloat();
+        _animalTimer = d.NumberFixed("animalTimer").ToFloat();
+        _animalFeeding = d.Bool("animalFeeding");
+        _roamAngle = d.NumberFixed("roamAngle").ToFloat();
+        _roamStartAngle = d.NumberFixed("roamStartAngle").ToFloat();
+        _roamAngleInit = d.Bool("roamAngleInit");
+        _isCorpse = d.Bool("isCorpse");
     }
 
     public void HandleMessage(IMessage message) { }

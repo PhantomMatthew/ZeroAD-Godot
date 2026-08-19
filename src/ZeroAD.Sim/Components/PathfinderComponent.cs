@@ -84,7 +84,8 @@ namespace ZeroAD.Sim.Components
         /// Check placing an axis-aligned building footprint at (x,z) with half-size (hw,hh) against
         /// terrain + obstructions. Mirrors <c>CCmpPathfinder::CheckBuildingPlacement</c>.
         /// </summary>
-        public PlacementResult CheckBuildingPlacement(Fixed x, Fixed z, Fixed hw, Fixed hh, ObstructionTag? skipTag = null)
+        public PlacementResult CheckBuildingPlacement(Fixed x, Fixed z, Fixed hw, Fixed hh, ObstructionTag? skipTag = null,
+            uint allowedGroup = 0)
         {
             if (Terrain != null)
             {
@@ -100,8 +101,10 @@ namespace ZeroAD.Sim.Components
             {
                 FixedVector2D u = new(Fixed.FromInt(1), Fixed.Zero);
                 FixedVector2D v = new(Fixed.Zero, Fixed.FromInt(1));
-                ObstructionShapeFilter filter = (tag, flags, _, _) =>
-                    (flags & ObstructionFlags.BlockFoundation) == 0 || (skipTag.HasValue && tag == skipTag.Value);
+                // allowedGroup(同玩家墙件控制组)内的阻挡豁免——墙体拼链段搭进塔楼靠它。
+                ObstructionShapeFilter filter = (tag, flags, group, _) =>
+                    (flags & ObstructionFlags.BlockFoundation) == 0 || (skipTag.HasValue && tag == skipTag.Value)
+                    || (allowedGroup != 0 && group == allowedGroup);
                 var hits = mgr.TestStaticShape(filter, x, z, u, v, hw, hh);
                 if (hits.Count > 0) return PlacementResult.FailObstructsFoundation;
             }

@@ -31,6 +31,10 @@ namespace ZeroAD.Sim.Components
         public uint ControlGroup2;      // 0 = none
         public bool Active = true;
 
+        /// <summary>同玩家墙体共用的控制组(高位命名空间,撞不了实体 id):同组墙件
+        /// 互不阻挡——原版墙体拼链(段搭进塔楼)依赖此。Placement 校验同组豁免。</summary>
+        public static uint PlayerWallGroup(int playerId) => 0x40000000u | (uint)playerId;
+
         private ObstructionTag _tag;
         private bool _registered;
         // Track last-known position so we can forward the old XZ on a PositionChanged notification.

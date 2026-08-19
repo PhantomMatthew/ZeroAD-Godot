@@ -424,6 +424,7 @@ public sealed partial class MainMenu : Control
 			_cfg.MapPath = map.RelPath;
 			_cfg.Seed = seed;
 			_cfg.Slots = slots;   // 面板配好的槽位表(You/AI/文明/队伍);本地玩家 = Human 槽
+			_cfg.CeasefireMinutes = picker.SelectedCeasefireMinutes;
 			GotoSession();
 		};
 		picker.OnCancelled += () => picker.QueueFree();

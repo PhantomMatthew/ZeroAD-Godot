@@ -190,7 +190,9 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
             var identity = cm.QueryInterface<IdentityComponent>(target);
             if (identity != null
                 && Content.EntityClassHelper.MatchesClassList(identity.Classes, PhysicalRestrictedClasses))
+            {
                 return false;
+            }
         }
         // 高度差门(原版 Attack.js CanAttack:|Δh| > 该型射程上限 → 永不可达,
         // 近战够不着悬崖上的单位;远程射程大通常不受影响)。

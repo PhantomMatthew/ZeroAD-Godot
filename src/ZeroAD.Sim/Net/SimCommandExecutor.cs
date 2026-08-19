@@ -29,6 +29,8 @@ namespace ZeroAD.Sim.Net
         private uint _dedupTurn;
         private uint _currentTurn;
         private readonly Dictionary<(uint player, int x, int z, string template), EntityId> _buildSites = new();
+        /// <summary>本回合已领到 Build 命令的建造者(同回合再领则排队施工——墙链/连放)。</summary>
+        private readonly HashSet<EntityId> _buildOrderBuilders = new();
 
         /// <summary>每 turn 执行命令前调(NetTurnManager.AdvanceTurn 调一次)。
         /// 清多建造者去重缓存,避免跨 turn 误合并地基。</summary>
@@ -37,6 +39,7 @@ namespace ZeroAD.Sim.Net
             _currentTurn = turn;
             _dedupTurn = turn;
             _buildSites.Clear();
+            _buildOrderBuilders.Clear();
         }
 
         /// <param name="pathfinder">Optional explicit pathfinder for build-placement
@@ -57,7 +60,10 @@ namespace ZeroAD.Sim.Net
             // 去重缓存懒清空:turn 推进时(NetTurnManager 调 BeginTurn)已清;此处的
             // _dedupTurn 对比是保险——即便漏调 BeginTurn 也不会跨 turn 误合并。
             if (_buildSites.Count > 0 && _dedupTurn != _currentTurn)
+            {
                 _buildSites.Clear();
+                _buildOrderBuilders.Clear();
+            }
             switch (cmd.Type)
             {
                 // Entity-bearing commands: EntityId is the acted-on entity (validated ≠ 0).
@@ -124,7 +130,14 @@ namespace ZeroAD.Sim.Net
                 var gatherer = _cm.QueryInterface<ResourceGatherer>(entity);
                 var supply = _cm.QueryInterface<ResourceSupply>(target);
                 var supplyPos = _cm.QueryInterface<PositionComponent>(target);
-                if (gatherer != null && supply != null && supplyPos != null && motion != null)
+                var unitAi = _cm.QueryInterface<UnitAIComponent>(entity);
+                // 有 UnitAI 走订单链(Order.Gather handler;含狩猎重定向:活体动物先攻击,
+                // 死后采尸体),与攻击命令同构;无 UnitAI 才落旧直接驱动。
+                if (unitAi != null)
+                {
+                    unitAi.Gather(target);
+                }
+                else if (gatherer != null && supply != null && supplyPos != null && motion != null)
                 {
                     gatherer.TargetSupply = target;
                     gatherer.CarryType = supply.Type;
@@ -218,7 +231,12 @@ namespace ZeroAD.Sim.Net
                     if (ob > 0) halfSize = ob * 0.5f;
                 }
                 var result = pathfinder.CheckBuildingPlacement(
-                    x, z, Fixed.FromFloat(halfSize), Fixed.FromFloat(halfSize));
+                    x, z, Fixed.FromFloat(halfSize), Fixed.FromFloat(halfSize),
+                    // 墙件(Identity 含 Wall 类)允许与同玩家其他墙件互叠(拼链段搭进塔楼,
+                    // 原版靠 control group;此处换算为该玩家的墙组)。
+                    allowedGroup: stats != null && stats.GetClassList().Contains("Wall")
+                        ? Components.ObstructionComponent.PlayerWallGroup((int)cmd.Player)
+                        : 0u);
                 if (result != PlacementResult.Success)
                 {
                     RaiseBuildRejected(cmd, "invalid-placement");
@@ -246,9 +264,12 @@ namespace ZeroAD.Sim.Net
             // 记录本 turn 此位置的地基,供同批后续 Build 命令去重(多建造者合一地基)。
             _buildSites[siteKey] = foundation;
 
+            // 同回合同建造者的后续 Build(墙链各件/Shift 连放)排队施工而非顶替——
+            // 对齐原版 construct-wall 的 autorepair/autocontinue 语义。
+            bool queueBuild = !_buildOrderBuilders.Add(builder);
             var ai = _cm.QueryInterface<UnitAIComponent>(builder);
             if (ai != null)
-                ai.Repair(foundation);
+                ai.Repair(foundation, queued: queueBuild);
             else
                 _cm.QueryInterface<BuilderComponent>(builder)?.Build(foundation);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "repair", Target = foundation });

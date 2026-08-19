@@ -19,6 +19,9 @@ public partial class GameLaunchConfig : Node
     /// （"maps/skirmishes/x.pmp"——XML 占位实体按槽位文明替换生成）、随机图
     /// （"random/mainland" 等）。MP 未进协议前由 host 默认地图。</summary>
     public string MapPath = "";
+    /// <summary>停战时长(分钟;0=关,原版 gamesetup Ceasefire 默认)。&gt;0 时开局全体
+    /// 非 gaia 玩家互置中立,倒计时结束恢复外交(EndGameManager.StartCeasefire)。</summary>
+    public int CeasefireMinutes;
     public System.Collections.Generic.IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? Slots;
 
     /// <summary>开始新一局前重置为大厅默认(避免上一局残留 Mode 触发错误启动)。</summary>
@@ -30,6 +33,7 @@ public partial class GameLaunchConfig : Node
         ReplaySlot = "";
         MpHost = false;
         MapPath = "";
+        CeasefireMinutes = 0;
         Slots = null;
     }
 }

@@ -292,6 +292,51 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
         Depth = yMax - yMin;
     }
 
+    /// <summary>Port of UpdateTwinFormationsForMerge:行进中的编队与近旁同模板同主编队
+    /// 合并(距离 < 双方半边长之和 + FormationSeparation);被吸收方空员解散。
+    /// 每拍至多并一队;双方都行进时只在 id 小的一侧检查(防双向重复)。</summary>
+    public void MergeTwinFormations(ComponentManager cm)
+    {
+        var ctrlAI = cm.QueryInterface<UnitAIComponent>(Entity);
+        if (ctrlAI == null || ctrlAI.IsIdle) return;   // 原版:行进中才合并
+
+        var myPos = cm.QueryInterface<PositionComponent>(Entity);
+        var myIdent = cm.QueryInterface<IdentityComponent>(Entity);
+        var myOwn = cm.QueryInterface<OwnershipComponent>(Entity);
+        if (myPos == null || !myPos.InWorld || myIdent == null || myOwn == null) return;
+
+        float myHalf = MathF.Max(Width, Depth) / 2f;
+        float baseDist = myHalf + FormationSeparation;
+
+        foreach (var other in cm.AllEntities)
+        {
+            if (other == Entity) continue;
+            var of = cm.QueryInterface<FormationComponent>(other);
+            if (of == null) continue;
+            var oIdent = cm.QueryInterface<IdentityComponent>(other);
+            if (oIdent == null || oIdent.TemplateName != myIdent.TemplateName) continue;
+            var oOwn = cm.QueryInterface<OwnershipComponent>(other);
+            if (oOwn == null || oOwn.PlayerId != myOwn.PlayerId) continue;
+            var oAI = cm.QueryInterface<UnitAIComponent>(other);
+            if (oAI != null && !oAI.IsIdle && other.Value <= Entity.Value) continue;
+            var oPos = cm.QueryInterface<PositionComponent>(other);
+            if (oPos == null || !oPos.InWorld) continue;
+
+            float dx = myPos.Position.X.ToFloat() - oPos.Position.X.ToFloat();
+            float dz = myPos.Position.Z.ToFloat() - oPos.Position.Z.ToFloat();
+            float dist = MathF.Sqrt(dx * dx + dz * dz);
+            float minDist = baseDist + MathF.Max(of.Width, of.Depth) / 2f;
+            if (minDist < dist) continue;
+
+            // 吸收:对方成员并入本方(对方空员解散,原版 RemoveMembers 连锁)。
+            var members = new List<EntityId>(of.Members);
+            of.RemoveMembers(cm, members);
+            AddMembers(cm, members, renamed: true);
+            UpdateFormation(cm, moveCenter: true, force: true);
+            break;
+        }
+    }
+
     /// <summary>Port of MoveToMembersCenter:控制器跳到成员质心,朝向取成员平均
     /// (非强制转向:已在世界内则保持原朝向)。</summary>
     public void MoveToMembersCenter(ComponentManager cm)
@@ -386,11 +431,27 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
 
         MaxColumnsUsed.Clear();
         MaxRowsUsed = 0;
-        // Shape=="special"(scatter)未移植;square/triangle 之外按 square 处理(原版模板
-        // 只有这两种 + special)。
         int r = 0;
         int left = count;
-        while (left > 0)
+        if (Shape == "special")
+        {
+            // 原版 Formation.js special=Scatter:成员随机散开,宽度 = √count ×
+            // (sepW+sepD) × 2.5(反攻城散布);偏移过同一零均值/排序/分配管线。
+            float width = MathF.Sqrt(count) * (sepW + sepD) * 2.5f;
+            for (int i = 0; i < count; i++)
+            {
+                offsets.Add(new FormationOffset
+                {
+                    X = (float)cm.RNG.NextDouble() * width,
+                    Z = (float)cm.RNG.NextDouble() * width,
+                    Row = 1,
+                    Column = i + 1,
+                });
+            }
+            MaxColumnsUsed.Add(count);
+            MaxRowsUsed = 1;
+        }
+        while (Shape != "special" && left > 0)
         {
             float z = -r * sepD;
             int side = 1;
@@ -432,7 +493,7 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
             ++r;
             MaxColumnsUsed.Add(n);   // 原版 maxColumnsUsed[r] = n(1 索引)
         }
-        MaxRowsUsed = r;
+        if (Shape != "special") MaxRowsUsed = r;
 
         // 零均值居中:编队围绕控制器位置,非零均值会让编队每次重排跳位。
         float avgX = 0, avgZ = 0;

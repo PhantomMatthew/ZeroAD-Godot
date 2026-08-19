@@ -65,6 +65,15 @@ public sealed partial class Main : Node3D
 	private Node3D? _placeGhost;             // 跟随鼠标的半透明预览节点
 	private Vector2 _placeMouseDown = new(-1, -1);  // 左键按下屏幕坐标(拖拽旋转基准)
 	private Vector3? _placeAnchorWorld;      // 按下点的世界坐标(atan2 基准)
+
+	// ── 城墙拖放(原版 placement.js 墙模式):build 按钮选中墙组模板 →
+	// 按下锚定起点,拖动实时拼链预览,松开全链下单;单点(未拖过阈值)= 单座塔楼。──
+	private bool _wallDragMode;
+	private bool _wallDragging;
+	private Vector3 _wallStart;
+	private WallPlacer.WallSetData? _wallSet;
+	private readonly List<Node3D> _wallGhosts = new();
+	private string _wallGhostSignature = "";
 	private string? _commandTargetMode;   // 命令键目标模式:"garrison"/"repair"/"guard" —— 下次左键选目标
 	/// <summary>进入命令目标模式(原版 unit_actions 按钮 → 光标选目标)。Escape/再次点击后清除。</summary>
 	public void EnterCommandTargetMode(string mode)
@@ -435,6 +444,16 @@ public sealed partial class Main : Node3D
 		}
 		else
 			SetupGameWorld(playerId, effectiveSlots, isMultiplayer);
+
+		// 停战(原版 gamesetup 的 Ceasefire 下拉):>0 分钟 → 全体非 gaia 互置中立,
+		// 倒计时结束恢复外交;scenario 图的地图自带值优先(ApplyVictoryConditions 已启动,
+		// 重复调用仅重置计时,语义一致)。
+		var launchCfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		if (launchCfg.CeasefireMinutes > 0)
+		{
+			_sim.Sim.EndGame.CeasefireDuration = launchCfg.CeasefireMinutes * 60f;
+			_sim.Sim.EndGame.StartCeasefire(_sim.Sim);
+		}
 
 		// 世界已完整:放行回合推进(SimBridge._Process 闸门)。分阶段加载在 Init 与本阶段
 		// 之间让帧,此间回合必须冻结,否则 TickVictory 在空世界判全员 0 实体→进场即 Defeat。
@@ -2263,8 +2282,15 @@ public sealed partial class Main : Node3D
 				{
 					// 原版 input.js INPUT_BUILDING_CLICK:按下记录起点,松开时若未拖过阈值
 					// 则按当前角度放置;拖过阈值则改为朝向光标(自由旋转)。
+					// 墙模式:起点 = 拼链首塔锚点。
 					_placeMouseDown = mb.Position;
 					_placeAnchorWorld = ScreenToWorld(mb.Position);
+					if (_wallDragMode && _placeAnchorWorld != null)
+					{
+						_wallStart = _placeAnchorWorld.Value;
+						_wallDragging = false;
+						_wallGhostSignature = "";
+					}
 					return;
 				}
 				if (_commandTargetMode != null) { HandleCommandTargetClick(mb.Position); return; }
@@ -2297,9 +2323,18 @@ public sealed partial class Main : Node3D
 			var cur = ScreenToWorld(pmm.Position);
 			if (cur != null)
 			{
-				var anchor = _placeAnchorWorld.Value;
-				// 原版 vector.js:413 atan2(dx, dz);Godot 与原版同 Y-up、angle 0 朝 +Z。
-				_placeAngle = Mathf.Atan2(cur.Value.X - anchor.X, cur.Value.Z - anchor.Z);
+				if (_wallDragMode)
+				{
+					// 墙模式:拖动 = 更新拼链预览(非旋转)。
+					_wallDragging = true;
+					UpdateWallPreview(cur.Value);
+				}
+				else
+				{
+					var anchor = _placeAnchorWorld.Value;
+					// 原版 vector.js:413 atan2(dx, dz);Godot 与原版同 Y-up、angle 0 朝 +Z。
+					_placeAngle = Mathf.Atan2(cur.Value.X - anchor.X, cur.Value.Z - anchor.Z);
+				}
 			}
 		}
 
@@ -2319,8 +2354,82 @@ public sealed partial class Main : Node3D
 			&& _placeMouseDown.X >= 0)
 		{
 			_placeMouseDown = new Vector2(-1, -1);
-			PlaceBuilding(mbuPlace.Position);
+			if (_wallDragMode)
+			{
+				if (_wallDragging) PlaceWall(mbuPlace.Position);
+				else PlaceWallSingleTower();   // 未拖动单点 = 单座塔楼(原版同)
+				_wallDragging = false;
+			}
+			else
+			{
+				PlaceBuilding(mbuPlace.Position);
+			}
 		}
+	}
+
+	/// <summary>墙预览:按 起点→当前光标 重算拼链(WallPlacer),件序列签名不变不重建。</summary>
+	private void UpdateWallPreview(Vector3 simPos)
+	{
+		if (_wallSet == null || _placeAnchorWorld == null) return;
+		var pieces = WallPlacer.Compute(_wallSet,
+			new Vector2(_wallStart.X, _wallStart.Z), new Vector2(simPos.X, simPos.Z));
+        // 签名:件数 + 各件模板/坐标(0.5m 粒度),不变不重建(每 mouse-motion 都触发)。
+        var sig = new System.Text.StringBuilder();
+        foreach (var p in pieces)
+            sig.Append(p.Template).Append('@').Append((int)(p.X * 2)).Append(',').Append((int)(p.Z * 2)).Append(';');
+        if (sig.ToString() == _wallGhostSignature) return;
+        _wallGhostSignature = sig.ToString();
+
+        foreach (var g in _wallGhosts) g.QueueFree();
+        _wallGhosts.Clear();
+        Color color = SimBridge.GetPlayerColor((int)_sim.LocalPlayerId);
+        foreach (var p in pieces)
+        {
+            var node = ModelLibrary.InstantiateForTemplate(p.Template, p.X, p.Z, color);
+            if (node == null) continue;
+            // ghost 挂 Main(非 _worldRoot),z 手动镜像,与单件 ghost 同套约定。
+            node.Position = new Vector3(p.X, TerrainHeightService.Sample(p.X, p.Z),
+                TerrainHeightService.MirrorZ(p.Z));
+            node.Rotation = new Vector3(0, p.Angle, 0);
+            SetGhostTransparency(node, 0.5f);
+            AddChild(node);
+            _wallGhosts.Add(node);
+        }
+	}
+
+	/// <summary>松开下单:每个部件一条 Build 命令(首件强制,其余排队——建造者沿链施工)。
+    /// 费用按件在执行端各自收取(与原版一致:每件是独立地基)。</summary>
+	private void PlaceWall(Vector2 screenPos)
+	{
+		if (_wallSet == null || _placeAnchorWorld == null) { ExitBuildMode(); return; }
+		var endPos = ScreenToWorld(screenPos);
+		if (endPos == null) { ExitBuildMode(); return; }
+		var pieces = WallPlacer.Compute(_wallSet,
+			new Vector2(_wallStart.X, _wallStart.Z), new Vector2(endPos.Value.X, endPos.Value.Z));
+		if (pieces.Count == 0) { ExitBuildMode(); return; }
+
+		// 找首个己方建造者(与 PlaceBuilding 同款;建造队列经锁步命令,各端一致)。
+		EntityId builder = default;
+		foreach (var eid in _selectedEntities)
+			if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) { builder = eid; break; }
+		if (builder.Equals(default)) { ExitBuildMode(); return; }
+
+		foreach (var p in pieces)
+			_sim.CommandBuild(builder, p.Template, p.X, p.Z, p.Angle);
+		ExitBuildMode();
+	}
+
+	/// <summary>单点放置:单座塔楼(原版墙模式未拖动单击的语义)。</summary>
+	private void PlaceWallSingleTower()
+	{
+		if (_wallSet == null || _placeAnchorWorld == null) { ExitBuildMode(); return; }
+		EntityId builder = default;
+		foreach (var eid in _selectedEntities)
+			if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) { builder = eid; break; }
+		if (builder.Equals(default)) { ExitBuildMode(); return; }
+		var a = _placeAnchorWorld.Value;
+		_sim.CommandBuild(builder, _wallSet.Tower, a.X, a.Z, _placeAngle);
+		ExitBuildMode();
 	}
 
 	/// <summary>命令目标模式下的左键点击(原版 unit_actions 按钮 → 光标选目标):
@@ -2823,7 +2932,34 @@ public sealed partial class Main : Node3D
 		_buildTemplate = template;
 		// 重置朝向为 GUI 默认 3π/4(原版 placement.js Reset→SetDefaultAngle)。
 		_placeAngle = Mathf.Pi * 0.75f;
+		// 墙组模板 → 拖放连段模式(无单件 ghost;按下锚定后才出预览)。
+		var wstats = _sim.Templates?.ExtractStats(MapBuildTemplateName(template));
+		if (wstats is { IsWallSet: true })
+		{
+			_wallSet = BuildWallSetData(wstats);
+			_wallDragMode = _wallSet != null;
+			if (!_wallDragMode) ZeroAD.Sim.Diag.Warn("Main", $"wallset {template} 部件数据缺失");
+			return;
+		}
 		CreatePlaceGhost();
+	}
+
+	/// <summary>墙组模板 → 拼链数据(部件模板 + 各段链长 + 塔楼重叠度;含 {civ} 已解析)。</summary>
+	private WallPlacer.WallSetData? BuildWallSetData(TemplateStats ws)
+	{
+		if (_sim.Templates == null) return null;
+		float LenOf(string tmpl)
+		{
+			if (tmpl.Length == 0) return 0f;
+			try { return _sim.Templates.ExtractStats(tmpl).WallPieceLength; }
+			catch { return 0f; }
+		}
+		float tower = LenOf(ws.WallSetTower), lng = LenOf(ws.WallSetLong),
+			med = LenOf(ws.WallSetMedium), sht = LenOf(ws.WallSetShort);
+		if (tower <= 0f || lng <= 0f || med <= 0f || sht <= 0f) return null;
+		return new WallPlacer.WallSetData(ws.WallSetTower, ws.WallSetGate, ws.WallSetLong,
+			ws.WallSetMedium, ws.WallSetShort, tower, lng, med, sht,
+			ws.WallSetMinTowerOverlap, ws.WallSetMaxTowerOverlap);
 	}
 
 	/// <summary>建造放置预览 ghost(原版 placement.js 的 SetEntityPreview 等价):半透明建筑
@@ -2875,6 +3011,11 @@ public sealed partial class Main : Node3D
 	private void ExitBuildMode()
 	{
 		_placeBuildingMode = false;
+		_wallDragMode = false;
+		_wallDragging = false;
+		foreach (var g in _wallGhosts) g.QueueFree();
+		_wallGhosts.Clear();
+		_wallGhostSignature = "";
 		FreePlaceGhost();
 	}
 

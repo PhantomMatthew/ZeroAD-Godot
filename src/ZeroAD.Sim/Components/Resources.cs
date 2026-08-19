@@ -161,3 +161,15 @@ public sealed class ResourceDropsite : ComponentBase, IComponentMessageHandler
 
     public void HandleMessage(IMessage message) { }
 }
+
+/// <summary>尸体标记(原版:killBeforeGather 的 gaia 动物死亡不销毁,转尸体继续供采集)。
+/// 死亡清扫见此组件即跳过;UnitAI/移动/攻击的 tick 驱动见此组件即停。
+/// 无字段——存在即语义。</summary>
+[Component("Corpse", "Corpse")]
+public sealed class CorpseComponent : ComponentBase, IComponentMessageHandler
+{
+    protected override void OnInit() { }
+    public override void Serialize(ISerializer s) { }
+    public override void Deserialize(IDeserializer d) { }
+    public void HandleMessage(IMessage message) { }
+}

@@ -24,6 +24,11 @@ public sealed partial class MapPickerPanel : Panel
     private LineEdit _seedEdit = null!;
     private Button _startBtn = null!;
     private OptionButton _mapTypeOpt = null!;
+    private OptionButton _ceasefireOpt = null!;
+    /// <summary>原版 gamesetup 的停战分钟档。</summary>
+    private static readonly int[] CeasefireChoices = { 0, 5, 10, 15, 20, 30, 40, 45, 60 };
+    /// <summary>选中的停战分钟(0=关)。MainMenu 的 OnStart 读进 GameLaunchConfig。</summary>
+    public int SelectedCeasefireMinutes => CeasefireChoices[_ceasefireOpt.Selected];
     private SpinBox _playerCount = null!;
     private VBoxContainer _slotRows = null!;
     private PanelContainer _browser = null!;
@@ -279,6 +284,14 @@ public sealed partial class MapPickerPanel : Panel
             TooltipText = "随机种子:同图同种子 = 同布局;每次打开本面板自动摇新",
         };
         settings.AddChild(MakeSettingRow("Seed", _seedEdit));
+
+        // 停战时长(原版 gamesetup 的 Ceasefire 下拉):>0 分钟时开局全体非 gaia
+        // 互置中立,倒计时结束恢复外交。
+        _ceasefireOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        foreach (var m in CeasefireChoices) _ceasefireOpt.AddItem(m == 0 ? Localization.Tr("Off") : $"{m} min");
+        _ceasefireOpt.Selected = 0;
+        _ceasefireOpt.TooltipText = "Ceasefire duration — players can't attack each other until it expires.";
+        settings.AddChild(MakeSettingRow("Ceasefire", _ceasefireOpt));
 
         // 地图描述(原版 GameDescription:右列设置列表下方,白字多行)
         _nameLabel = new Label { Text = "" };

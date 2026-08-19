@@ -239,12 +239,70 @@ namespace ZeroAD.Sim.Content
                 var formations = unitAi.GetChild("Formations");
                 if (formations.IsOk)
                     stats.FormationShapes = formations.ToString().Trim();
+
+                // 动物行为参数(原版 UnitAI.js:RoamDistance 存在即动物;template_unit_fauna
+                // 系列)。DefaultStance 决定受击响应(skittish 逃/passive-defensive 反击/
+                // aggressive 主动);时间字段毫秒 → 秒。
+                var stance = unitAi.GetChild("DefaultStance");
+                if (stance.IsOk)
+                    stats.DefaultStance = stance.ToString().Trim();
+                if (unitAi.GetChild("RoamDistance").IsOk)
+                    stats.RoamDistance = unitAi.GetChild("RoamDistance").ToFixed().ToFloat();
+                if (unitAi.GetChild("FleeDistance").IsOk)
+                    stats.FleeDistance = unitAi.GetChild("FleeDistance").ToFixed().ToFloat();
+                if (unitAi.GetChild("RoamTimeMin").IsOk)
+                    stats.RoamTimeMin = unitAi.GetChild("RoamTimeMin").ToInt() / 1000f;
+                if (unitAi.GetChild("RoamTimeMax").IsOk)
+                    stats.RoamTimeMax = unitAi.GetChild("RoamTimeMax").ToInt() / 1000f;
+                if (unitAi.GetChild("FeedTimeMin").IsOk)
+                    stats.FeedTimeMin = unitAi.GetChild("FeedTimeMin").ToInt() / 1000f;
+                if (unitAi.GetChild("FeedTimeMax").IsOk)
+                    stats.FeedTimeMax = unitAi.GetChild("FeedTimeMax").ToInt() / 1000f;
+            }
+
+            // WallSet(城墙组,原版 WallSet.js schema):各部件模板 + 塔楼重叠度;
+            // 墙段长度在各自模板的 WallPiece/Length(见下方)。
+            var wallSet = node.GetChild("WallSet");
+            if (wallSet.IsOk)
+            {
+                var templates = wallSet.GetChild("Templates");
+                if (templates.IsOk)
+                {
+                    stats.WallSetTower = templates.GetChild("Tower").ToString().Trim();
+                    stats.WallSetGate = templates.GetChild("Gate").ToString().Trim();
+                    stats.WallSetLong = templates.GetChild("WallLong").ToString().Trim();
+                    stats.WallSetMedium = templates.GetChild("WallMedium").ToString().Trim();
+                    stats.WallSetShort = templates.GetChild("WallShort").ToString().Trim();
+                }
+                if (wallSet.GetChild("MinTowerOverlap").IsOk)
+                    stats.WallSetMinTowerOverlap = wallSet.GetChild("MinTowerOverlap").ToFixed().ToFloat();
+                if (wallSet.GetChild("MaxTowerOverlap").IsOk)
+                    stats.WallSetMaxTowerOverlap = wallSet.GetChild("MaxTowerOverlap").ToFixed().ToFloat();
+            }
+            // WallPiece/Length(墙段/塔楼模板;原版 WallPiece.js,墙体拼链算法的长度源)。
+            var wallPiece = node.GetChild("WallPiece");
+            if (wallPiece.IsOk && wallPiece.GetChild("Length").IsOk)
+                stats.WallPieceLength = wallPiece.GetChild("Length").ToFixed().ToFloat();
+
+            // BuildingAI(建筑自动防御,原版 BuildingAI.js):默认箭数 + 驻军加成倍率/类别。
+            var buildingAi = node.GetChild("BuildingAI");
+            if (buildingAi.IsOk)
+            {
+                stats.HasBuildingAI = true;
+                if (buildingAi.GetChild("DefaultArrowCount").IsOk)
+                    stats.DefaultArrowCount = buildingAi.GetChild("DefaultArrowCount").ToInt();
+                if (buildingAi.GetChild("MaxArrowCount").IsOk)
+                    stats.MaxArrowCount = buildingAi.GetChild("MaxArrowCount").ToInt();
+                if (buildingAi.GetChild("GarrisonArrowMultiplier").IsOk)
+                    stats.GarrisonArrowMultiplier = buildingAi.GetChild("GarrisonArrowMultiplier").ToFixed().ToFloat();
+                var garClasses = buildingAi.GetChild("GarrisonArrowClasses");
+                if (garClasses.IsOk)
+                    stats.GarrisonArrowClasses = garClasses.ToString().Trim();
             }
 
             // Upgrade(建筑升级路径,原版 Upgrade.js):首个升级子节点的目标模板/造价/时间。
             // 哨塔→防御塔等;Entity 含 {civ} 占位,解析端替换。
-            var upgrade = node.GetChild("Upgrade");
-            if (upgrade.IsOk)
+            var upgrade = node.GetChild("Upgrade");            if (upgrade.IsOk)
             {
                 var target = upgrade.GetOnlyChild();
                 if (target.IsOk)
@@ -918,6 +976,38 @@ namespace ZeroAD.Sim.Content
         /// <summary>ResourceSupply/KillBeforeGather(原版):须先杀死才能采集(动物)——
         /// 原版 isUndeletable 的豁免理由之一。</summary>
         public bool KillBeforeGather;
+        /// <summary>UnitAI/DefaultStance(原版 g_Stances 行名:aggressive/skittish/
+        /// passive-defensive …)。空 = 用组件默认(aggressive)。</summary>
+        public string DefaultStance = "";
+        /// <summary>UnitAI/RoamDistance(原版:IsAnimal 的判定——&gt;0 即动物)及配套
+        /// 游荡/进食/逃跑参数(模板毫秒已转秒)。</summary>
+        public float RoamDistance;
+        public float FleeDistance;
+        public float RoamTimeMin, RoamTimeMax, FeedTimeMin, FeedTimeMax;
+
+        /// <summary>WallSet/Templates 各部件模板(空 = 非墙组)。原版 Walls.js GetWallPlacement
+        /// 的输入。</summary>
+        public string WallSetTower = "";
+        public string WallSetGate = "";
+        public string WallSetLong = "";
+        public string WallSetMedium = "";
+        public string WallSetShort = "";
+        public float WallSetMinTowerOverlap = 0.05f;
+        public float WallSetMaxTowerOverlap = 0.9f;
+        public bool IsWallSet => WallSetLong.Length > 0;
+        /// <summary>WallPiece/Length(墙段/塔楼的链长,拼链算法用)。</summary>
+        public float WallPieceLength;
+
+        /// <summary>BuildingAI 段存在(原版:防御塔/CC 等自动放箭)。</summary>
+        public bool HasBuildingAI;
+        /// <summary>BuildingAI/DefaultArrowCount:无驻军时的基础箭数(塔 2、CC 6)。</summary>
+        public int DefaultArrowCount = 1;
+        /// <summary>BuildingAI/MaxArrowCount:箭数上限(0 = 不限,原版 Infinity)。</summary>
+        public int MaxArrowCount;
+        /// <summary>BuildingAI/GarrisonArrowMultiplier:每个驻军弓手加箭倍率。</summary>
+        public float GarrisonArrowMultiplier = 1f;
+        /// <summary>BuildingAI/GarrisonArrowClasses:计入加箭的类别(tokens,如 "Infantry"/"Soldier")。</summary>
+        public string GarrisonArrowClasses = "";
         public float WalkSpeed = 8f;
         /// <summary>UnitMotion/PassabilityClass("default"/"ship";原版 plane 另有
         /// unrestricted,未移植)。船 = "ship" → 水路寻路 + 水面出生。</summary>
