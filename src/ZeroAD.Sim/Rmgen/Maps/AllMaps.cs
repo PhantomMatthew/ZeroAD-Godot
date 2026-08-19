@@ -246,12 +246,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "medit_grass_field";
     }
 
-    public sealed class HellasMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
     public sealed class CorinthianIsthmusMap : StandardMap
     {
         protected override double HeightLand => 3;
@@ -301,12 +295,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
     }
 
     public sealed class SnowflakeSearocksMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
-    public sealed class WildLakeMap : StandardMap
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "medit_grass_field";

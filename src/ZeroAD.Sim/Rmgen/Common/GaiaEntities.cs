@@ -194,5 +194,74 @@ namespace ZeroAD.Sim.Rmgen.Common
                 RmgenLibrary.ScaleByMapSize(1, 8, map.GetSize()) * counts,
                 RmgenLibrary.ScaleByMapSize(1, 8, map.GetSize()) * counts,
                 randomness);
+
+        /// <summary>placeDocks（gaia_entities.js）——陆上随机点找最近大水域，
+        /// 朝陆地方向取高度在 [heightMin,heightMax] 的首点放码头；
+        /// 朝向 = 到 8 格半径水域平均点方向的反向 + π/2。
+        /// （上游还标记了 areaLand/areaWater 两个区域但从未使用，不移植。）</summary>
+        public static void PlaceDocks(RmgenRng rng, RandomMap map,
+            string template, int playerID, double count, TileClass tileClassWater,
+            TileClass tileClassDock, double heightMin, double heightMax,
+            IConstraint? constraints, double offset, int retryFactor)
+        {
+            var mapCenter = map.GetCenter();
+
+            // 码头搜索起点区（远离水的陆地）
+            var areaSearchStart = RmgenLibrary.CreateArea(
+                new DiskPlacer(RmgenLibrary.FractionToTiles(0.5, map.GetSize()) - 10, mapCenter),
+                (IPainter?)null,
+                RmgenLibrary.AvoidClasses(tileClassWater, 6));
+
+            // 码头搜索终点区（大片水域）
+            var areaSearchEnd = RmgenLibrary.CreateArea(
+                new DiskPlacer(RmgenLibrary.FractionToTiles(0.5, map.GetSize()) - 10, mapCenter),
+                (IPainter?)null,
+                RmgenLibrary.StayClasses(tileClassWater, 20));
+
+            if (areaSearchEnd == null || areaSearchEnd.PointCount == 0)
+                return;
+
+            var constraint = constraints ?? new NullConstraint();
+            for (int i = 0; i < count; ++i)
+                for (int tries = 0; tries < retryFactor; ++tries)
+                {
+                    if (areaSearchStart == null || areaSearchStart.PointCount == 0)
+                        return;   // 上游此处会抛异常——防御性提前结束
+                    var positionLand = rng.PickRandom(areaSearchStart.GetPoints());
+                    var positionWaterLarge = areaSearchEnd.GetClosestPointTo(positionLand);
+                    if (positionWaterLarge == null)
+                        return;
+                    var positionDock = RmgenCommon.FindLocationInDirectionBasedOnHeight(map,
+                        positionWaterLarge.Value, positionLand, heightMin, heightMax, offset);
+                    if (positionDock == null)
+                        continue;
+
+                    var dockPos = positionDock.Value;
+                    dockPos.Round();
+
+                    if (!map.InMapBounds(dockPos) || !constraint.Allows(dockPos))
+                        continue;
+
+                    var waterPoints = new DiskPlacer(8, dockPos)
+                        .Place(RmgenLibrary.StayClasses(tileClassWater, 0))!;
+                    double angle = dockPos.AngleTo(Average(waterPoints));
+
+                    map.PlaceEntityPassable(template, playerID, dockPos, -angle + Math.PI / 2);
+                    tileClassDock.Add(dockPos);
+                    break;
+                }
+        }
+
+        /// <summary>Vector2D.average——点集质心。</summary>
+        private static RmgenVector2D Average(List<RmgenVector2D> points)
+        {
+            double x = 0, y = 0;
+            foreach (var p in points)
+            {
+                x += p.X;
+                y += p.Y;
+            }
+            return new RmgenVector2D(x / points.Count, y / points.Count);
+        }
     }
 }

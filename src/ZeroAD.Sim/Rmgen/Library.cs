@@ -230,6 +230,10 @@ namespace ZeroAD.Sim.Rmgen
         /// <summary>tilesToFraction(t) = t / mapSize。</summary>
         public static double TilesToFraction(double t, int mapSize) => t / mapSize;
 
+        /// <summary>actorTemplate——"actor|" + name + ".xml"。</summary>
+        public static string ActorTemplate(string templateName)
+            => ScatterObject.ActorPrefix + templateName + ".xml";
+
         /// <summary>randomPositionOnTile——图块内随机点（randFloat(0,1) × 2 次抽数）。</summary>
         public static RmgenVector2D RandomPositionOnTile(RmgenRng rng, RmgenVector2D tilePosition)
             => RmgenVector2D.Add(tilePosition,

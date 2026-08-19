@@ -784,6 +784,206 @@ namespace ZeroAD.Sim.Rmgen.Common
                 Enumerable.Range(1, numPlayers).ToList(), playerPosition);
         }
 
+        /// <summary>sortAllPlayers——sortPlayers(getPlayerIDs())。</summary>
+        public static List<int> SortAllPlayers(RmgenRng rng, MapSettings settings)
+            => SortPlayers(rng, settings, Enumerable.Range(1, GetNumPlayers(settings)).ToList());
+
+        /// <summary>defaultPlayerBaseRadius——scaleByMapSize(15, 25)。</summary>
+        public static double DefaultPlayerBaseRadius(int mapSize)
+            => RmgenLibrary.ScaleByMapSize(15, 25, mapSize);
+
+        /// <summary>playerPlacementRandom——约束区内随机取点（玩家最小间距 1/4 图径、
+        /// 距图心不超过 (图心-边界)），500 次失败重置并渐缩间距，重置 500 次放弃返回 null。</summary>
+        public static (List<int> playerIDs, List<RmgenVector2D> playerPosition)? PlayerPlacementRandom(
+            RmgenRng rng, RandomMap map, MapSettings settings, IConstraint? constraints)
+        {
+            int numPlayers = GetNumPlayers(settings);
+            var locations = new List<RmgenVector2D>();
+            int attempts = 0;
+            int resets = 0;
+
+            var mapCenter = map.GetCenter();
+            double playerMinDistSquared = SafeMath.Square(RmgenLibrary.FractionToTiles(0.25, map.GetSize()));
+            double borderDistance = RmgenLibrary.FractionToTiles(0.08, map.GetSize());
+
+            var area = RmgenLibrary.CreateArea(new MapBoundsPlacer(), (IPainter?)null, constraints);
+            if (area == null)
+                return null;
+
+            for (int i = 0; i < numPlayers; ++i)
+            {
+                var position = rng.PickRandom(area.GetPoints());
+                // JS pickRandom 空数组返回 undefined —— C# 以 Count==0 判定
+                if (area.PointCount == 0)
+                    return null;
+
+                // 初始基地最小间距为图径 1/4
+                bool tooClose = false;
+                foreach (var loc in locations)
+                    if (loc.DistanceToSquared(position) < playerMinDistSquared)
+                    { tooClose = true; break; }
+
+                if (tooClose ||
+                    position.DistanceToSquared(mapCenter) > SafeMath.Square(mapCenter.X - borderDistance))
+                {
+                    --i;
+                    ++attempts;
+
+                    // 疑似死循环则重置
+                    if (attempts > 500)
+                    {
+                        locations = new List<RmgenVector2D>();
+                        i = -1;
+                        attempts = 0;
+                        ++resets;
+
+                        // 渐缩最小间距
+                        if (resets % 25 == 0)
+                            playerMinDistSquared *= 0.95;
+
+                        // 只抽到坏点则放弃
+                        if (resets == 500)
+                            return null;
+                    }
+                    continue;
+                }
+
+                if (locations.Count == i)
+                    locations.Add(position);
+                else
+                    locations[i] = position;
+            }
+
+            return GroupPlayersByArea(rng, settings,
+                Enumerable.Range(1, numPlayers).ToList(), locations);
+        }
+
+        /// <summary>findLocationInDirectionBasedOnHeight——startPoint→endPoint 方向上
+        /// 首个高度落在 [min,max] 的位置（再沿方向偏移 offset）。</summary>
+        public static RmgenVector2D? FindLocationInDirectionBasedOnHeight(RandomMap map,
+            RmgenVector2D startPoint, RmgenVector2D endPoint, double minHeight, double maxHeight,
+            double offset = 0)
+        {
+            var stepVec = RmgenVector2D.Sub(endPoint, startPoint);
+            int distance = (int)Math.Ceiling(stepVec.Length());
+            stepVec.Normalize();
+
+            for (int i = 0; i < distance; ++i)
+            {
+                var pos = RmgenVector2D.Add(startPoint, RmgenVector2D.Mult(stepVec, i));
+                var ipos = pos;
+                ipos.Round();
+
+                if (map.ValidHeight(ipos) &&
+                    map.GetHeight(ipos) >= minHeight &&
+                    map.GetHeight(ipos) <= maxHeight)
+                    return RmgenVector2D.Add(pos, RmgenVector2D.Mult(stepVec, offset));
+            }
+
+            return null;
+        }
+
+        /// <summary>placeStartingEntities——首实体（structures/ 前缀）居中，
+        /// 其余环绕（BUILDING_ORIENTATION = -π/4 默认朝向）。</summary>
+        public static void PlaceStartingEntities(RandomMap map, RmgenVector2D location, int playerID,
+            IReadOnlyList<(string Template, int Count)> civEntities, double dist = 6,
+            double orientation = -SafeMath.PI / 4)
+        {
+            int i = 0;
+            string firstTemplate = civEntities[0].Template;
+            if (firstTemplate.StartsWith("structures/", StringComparison.Ordinal))
+            {
+                map.PlaceEntityPassable(firstTemplate, playerID, location, orientation);
+                ++i;
+            }
+
+            const double space = 2;
+            for (int j = i; j < civEntities.Count; ++j)
+            {
+                double angle = orientation - SafeMath.PI * (1 - j / 2.0);
+                int count = civEntities[j].Count;
+
+                for (int num = 0; num < count; ++num)
+                {
+                    var a = new RmgenVector2D(dist, 0);
+                    a.Rotate(-angle);
+                    var b = new RmgenVector2D(space * (-num + (count - 1) / 2.0), 0);
+                    b.Rotate(angle);
+                    var position = RmgenVector2D.Add(RmgenVector2D.Add(location, a), b);
+                    map.PlaceEntityPassable(civEntities[j].Template, playerID, position, angle);
+                }
+            }
+        }
+
+        /// <summary>addCivicCenterAreaToClass——CC 大小圆盘标 TileClass。</summary>
+        public static void AddCivicCenterAreaToClass(RandomMap map, RmgenVector2D position, TileClass tileClass)
+            => RmgenLibrary.CreateArea(new DiskPlacer(5, position), new TileClassPainter(tileClass), null);
+
+        /// <summary>groupPlayersCycle——起始位置按最短回路排序后，
+        /// 旋转玩家（按队排好序的）使同队距离最大者最小化。</summary>
+        public static (List<int> playerIDs, List<RmgenVector2D> playerPosition) GroupPlayersCycle(
+            RmgenRng rng, MapSettings settings, List<RmgenVector2D> startLocations)
+        {
+            var startLocationOrder = RmgenGeometry.SortPointsShortestCycle(startLocations);
+
+            var newStartLocations = new List<RmgenVector2D>();
+            for (int i = 0; i < startLocations.Count; ++i)
+                newStartLocations.Add(startLocations[startLocationOrder[i]]);
+            startLocations = newStartLocations;
+
+            // 按队排序玩家
+            var playerIDs = new List<int>();
+            var teams = new List<int>();
+            for (int i = 0; i < settings.PlayerData.Count - 1; ++i)
+            {
+                playerIDs.Add(i + 1);
+                int t = settings.PlayerData[i + 1].Team ?? -1;
+                if (!teams.Contains(t))
+                    teams.Add(t);
+            }
+
+            playerIDs = SortPlayers(rng, settings, playerIDs);
+
+            if (teams.Count == 0)
+                return (playerIDs, startLocations);
+
+            // 最小化队内最大距离
+            double minDistance = double.PositiveInfinity;
+            int bestShift = 0;
+            for (int s = 0; s < playerIDs.Count; ++s)
+            {
+                double maxTeamDist = 0;
+                for (int pi = 0; pi < playerIDs.Count - 1; ++pi)
+                {
+                    int t1 = GetPlayerTeam(settings, playerIDs[(pi + s) % playerIDs.Count]);
+                    if (!teams.Contains(t1))
+                        continue;
+
+                    for (int pj = pi + 1; pj < playerIDs.Count; ++pj)
+                    {
+                        if (t1 != GetPlayerTeam(settings, playerIDs[(pj + s) % playerIDs.Count]))
+                            continue;
+
+                        maxTeamDist = Math.Max(maxTeamDist,
+                            SafeMath.EuclidDistance2D(
+                                startLocations[pi].X, startLocations[pi].Y,
+                                startLocations[pj].X, startLocations[pj].Y));
+                    }
+                }
+
+                if (maxTeamDist < minDistance)
+                {
+                    minDistance = maxTeamDist;
+                    bestShift = s;
+                }
+            }
+
+            if (bestShift != 0)
+                playerIDs = playerIDs.Select((_, i) => playerIDs[(i + bestShift) % playerIDs.Count]).ToList();
+
+            return (playerIDs, startLocations);
+        }
+
         // ── 辅助 ──
 
         /// <summary>随机地图坐标（原版 RandomMap.randomCoordinate）。</summary>

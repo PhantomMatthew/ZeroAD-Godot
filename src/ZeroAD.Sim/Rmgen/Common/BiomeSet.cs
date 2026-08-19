@@ -60,6 +60,9 @@ namespace ZeroAD.Sim.Rmgen.Common
         public string BushSmall = "";
         public string RockLarge = "";
         public string RockMedium = "";
+        public string Reeds = "";
+        public string Lillies = "";
+        public string Tree = "";
 
         // ── ResourceCounts.trees ──
         public int TreesMin = 500;
@@ -160,6 +163,9 @@ namespace ZeroAD.Sim.Rmgen.Common
             MetalSmall = "gaia/ore/temperate_02",
             Grass = "actor|props/flora/grass_soft_large_tall.xml",
             GrassShort = "actor|props/flora/grass_soft_large.xml",
+            Reeds = "actor|props/flora/cattails.xml",
+            Lillies = "actor|props/flora/water_lillies.xml",
+            Tree = "actor|flora/trees/elm_dead.xml",
             RockLarge = "actor|geology/stone_granite_med.xml",
             RockMedium = "actor|geology/stone_granite_small.xml",
             BushMedium = "actor|props/flora/bush_medit_me.xml",
@@ -280,6 +286,9 @@ namespace ZeroAD.Sim.Rmgen.Common
             Assign(ref s.BushSmall, d, "bushSmall");
             Assign(ref s.RockLarge, d, "rockLarge");
             Assign(ref s.RockMedium, d, "rockMedium");
+            Assign(ref s.Reeds, d, "reeds");
+            Assign(ref s.Lillies, d, "lillies");
+            Assign(ref s.Tree, d, "tree");
         }
 
         // ── .js 随机分支覆盖层(逐行移植;未知 biome 无覆盖)──

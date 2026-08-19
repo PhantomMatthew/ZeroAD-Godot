@@ -7,6 +7,10 @@ namespace ZeroAD.Sim.RmgenMath;
 /// 全部 double；三角/开方走 SafeMath 保证跨平台一致。</summary>
 public static class RmgenGeometry
 {
+    /// <summary>g_TileVertices（math.js）——图块 4 个角点偏移。</summary>
+    public static readonly RmgenVector2D[] TileVertices =
+        { new(0, 0), new(0, 1), new(1, 0), new(1, 1) };
+
     /// <summary>diskArea(radius) = PI * radius²。</summary>
     public static double DiskArea(double radius) => SafeMath.PI * SafeMath.Square(radius);
 
@@ -83,4 +87,60 @@ public static class RmgenGeometry
         int pointCount, double startAngle, double radius, RmgenVector2D center)
         => DistributePointsOnCircularSegment(
             pointCount, 2 * SafeMath.PI * (pointCount - 1) / pointCount, startAngle, radius, center);
+
+    /// <summary>sortPointsShortestCycle（math.js）——贪心插入使回路伸长最小的点序
+    /// （返回索引）。≤3 点直接按原序。</summary>
+    public static List<int> SortPointsShortestCycle(IReadOnlyList<RmgenVector2D> points)
+    {
+        var order = new List<int>();
+        var distances = new List<double>();
+        if (points.Count <= 3)
+        {
+            for (int i = 0; i < points.Count; ++i)
+                order.Add(i);
+            return order;
+        }
+
+        // 先放前 3 点
+        var pointsToAdd = new List<RmgenVector2D>(points);
+        for (int i = 0; i < 3; ++i)
+        {
+            order.Add(i);
+            pointsToAdd.RemoveAt(0);
+            if (i != 0)
+                distances.Add(points[order[i]].DistanceTo(points[order[i - 1]]));
+        }
+
+        distances.Add(points[order[0]].DistanceTo(points[order[^1]]));
+
+        // 剩余点插到伸长最小处
+        int numPointsToAdd = pointsToAdd.Count;
+        for (int i = 0; i < numPointsToAdd; ++i)
+        {
+            int indexToAddTo = 0;
+            double minEnlengthen = double.PositiveInfinity;
+            double minDist1 = 0;
+            double minDist2 = 0;
+            for (int k = 0; k < order.Count; ++k)
+            {
+                double dist1 = pointsToAdd[0].DistanceTo(points[order[k]]);
+                double dist2 = pointsToAdd[0].DistanceTo(points[order[(k + 1) % order.Count]]);
+
+                double enlengthen = dist1 + dist2 - distances[k];
+                if (enlengthen < minEnlengthen)
+                {
+                    indexToAddTo = k;
+                    minEnlengthen = enlengthen;
+                    minDist1 = dist1;
+                    minDist2 = dist2;
+                }
+            }
+            order.Insert(indexToAddTo + 1, i + 3);
+            distances.RemoveAt(indexToAddTo);
+            distances.InsertRange(indexToAddTo, new[] { minDist1, minDist2 });
+            pointsToAdd.RemoveAt(0);
+        }
+
+        return order;
+    }
 }

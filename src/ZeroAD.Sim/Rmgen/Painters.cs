@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ZeroAD.Sim.RmgenMath;
 
@@ -191,6 +192,140 @@ namespace ZeroAD.Sim.Rmgen
                         }
                 }
             }
+        }
+    }
+
+    /// <summary>SmoothingPainter（逐字移植 painter/SmoothingPainter.js）——曼哈顿距离加权
+    /// 邻域平滑。注意上游克隆的高度图只用于取尺寸，读写都落在活地图上
+    /// （Gauss-Seidel 式，按 Area 点序 × 4 角点序）。</summary>
+    public sealed class SmoothingPainter : IPainter
+    {
+        private readonly int _size;
+        private readonly double _strength;
+        private readonly int _iterations;
+
+        public SmoothingPainter(double size, double strength, int iterations)
+        {
+            if (size < 1)
+                throw new ArgumentException("Invalid size: " + size);
+            if (strength <= 0 || strength > 1)
+                throw new ArgumentException("Invalid strength: " + strength);
+            if (iterations <= 0)
+                throw new ArgumentException("Invalid iterations: " + iterations);
+            _size = (int)Math.Floor(size);
+            _strength = strength;
+            _iterations = iterations;
+        }
+
+        public void Paint(Area area)
+        {
+            var map = RmgenLibrary.CurrentMap;
+            var brushPoints = RmgenGeometry.GetPointsInBoundingBox(
+                new RmgenVector2D(-_size, -_size), new RmgenVector2D(_size, _size));
+
+            for (int i = 0; i < _iterations; ++i)
+            {
+                int hms = map.GetSize() + 1;
+                var seen = new byte[hms, hms];
+
+                foreach (var point in area.GetPoints())
+                    foreach (var tileVertex in RmgenGeometry.TileVertices)
+                    {
+                        var vertex = RmgenVector2D.Add(point, tileVertex);
+                        if (!map.ValidHeight(vertex) || seen[(int)vertex.X, (int)vertex.Y] != 0)
+                            continue;
+                        seen[(int)vertex.X, (int)vertex.Y] = 1;
+
+                        double sumWeightedHeights = 0;
+                        double sumWeights = 0;
+
+                        foreach (var brushPoint in brushPoints)
+                        {
+                            var position = RmgenVector2D.Add(vertex, brushPoint);
+                            double distance = Math.Abs(brushPoint.X) + Math.Abs(brushPoint.Y);
+                            if (distance == 0 || !map.ValidHeight(position))
+                                continue;
+
+                            sumWeightedHeights += map.GetHeight(position) / distance;
+                            sumWeights += 1 / distance;
+                        }
+
+                        map.SetHeight(vertex,
+                            _strength * sumWeightedHeights / sumWeights +
+                            (1 - _strength) * map.GetHeight(vertex));
+                    }
+            }
+        }
+    }
+
+    /// <summary>HeightmapPainter（逐字移植 painter/HeightmapPainter.js）——把外部高度图
+    /// （可为子区域裁剪）按双三次插值刷到地图高度表。高度值为源图的 u16 原始值
+    /// （0..0xFFFF），经 scaleHeight 映射到 normalMin..normalMax（320 图基准）。</summary>
+    public sealed class HeightmapPainter : IPainter
+    {
+        private readonly float[][] _heightmap;
+        private readonly double? _normalMinHeight, _normalMaxHeight;
+        private readonly RandomMap _map;
+
+        public HeightmapPainter(RandomMap map, float[][] heightmap,
+            double? normalMinHeight = null, double? normalMaxHeight = null)
+        {
+            _map = map;
+            _heightmap = heightmap;
+            VerticesPerSide = heightmap.Length;
+            _normalMinHeight = normalMinHeight;
+            _normalMaxHeight = normalMaxHeight;
+        }
+
+        public int VerticesPerSide { get; }
+
+        public double GetScale() => (double)VerticesPerSide / (_map.GetSize() + 1);
+
+        public double ScaleHeight(double height)
+        {
+            if (_normalMinHeight == null || _normalMaxHeight == null)
+                return height / GetScale() / RmgenConstants.HEIGHT_UNITS_PER_METRE;
+
+            double minHeight = _normalMinHeight.Value * (_map.GetSize() + 1) / 321.0;
+            double maxHeight = _normalMaxHeight.Value * (_map.GetSize() + 1) / 321.0;
+            return minHeight + (maxHeight - minHeight) * height / 0xFFFF;
+        }
+
+        public void Paint(Area area)
+        {
+            double scale = GetScale();
+            int vps = VerticesPerSide;
+            int hms = _map.GetSize() + 1;
+            var seen = new byte[hms, hms];
+
+            foreach (var point in area.GetPoints())
+                foreach (var vertex in RmgenGeometry.TileVertices)
+                {
+                    var vertexPos = RmgenVector2D.Add(point, vertex);
+                    if (!_map.ValidHeight(vertexPos) || seen[(int)vertexPos.X, (int)vertexPos.Y] != 0)
+                        continue;
+                    seen[(int)vertexPos.X, (int)vertexPos.Y] = 1;
+
+                    var sourcePos = RmgenVector2D.Mult(vertexPos, scale);
+                    var sourceTilePos = sourcePos;
+                    sourceTilePos.Floor();
+
+                    // brushPosition = max((0,0), min(sourceTilePos-(1,1), (vps,vps)-(3,3)-(1,1)))
+                    int bx = (int)Math.Max(0, Math.Min(sourceTilePos.X - 1, vps - 3 - 1));
+                    int bz = (int)Math.Max(0, Math.Min(sourceTilePos.Y - 1, vps - 3 - 1));
+
+                    // 4×4 采样（getPointsInBoundingBox 顺序：x 外层 y 内层）
+                    var s = new double[16];
+                    int k = 0;
+                    for (int sx = bx; sx <= bx + 3; ++sx)
+                        for (int sz = bz; sz <= bz + 3; ++sz)
+                            s[k++] = ScaleHeight(_heightmap[sx][sz]);
+
+                    _map.SetHeight(vertexPos, Interpolation.BicubicInterpolation(
+                        new RmgenVector2D(sourcePos.X - bx - 1, sourcePos.Y - bz - 1),
+                        s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
+                        s[8], s[9], s[10], s[11], s[12], s[13], s[14], s[15]));
+                }
         }
     }
 

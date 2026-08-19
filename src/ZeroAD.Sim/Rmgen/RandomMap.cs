@@ -9,8 +9,8 @@ namespace ZeroAD.Sim.Rmgen
     {
         public const double SEA_LEVEL = 20.0;
         public const double HEIGHT_UNITS_PER_METRE = 92;
-        public const int TERRAIN_TILE_SIZE = 16;  // 引擎注入的全局常量
-        public const int MAP_BORDER_WIDTH = 0;    // 引擎注入
+        public const int TERRAIN_TILE_SIZE = 4;   // 引擎注入（source/graphics/Terrain.h）
+        public const int MAP_BORDER_WIDTH = 3;    // 引擎注入（source MapEdgeTiles.h MAP_EDGE_TILES=3）
     }
 
     /// <summary>地图生成的中心数据结构（逐字移植 RandomMap.js，499 行）。
@@ -134,6 +134,39 @@ namespace ZeroAD.Sim.Rmgen
         {
             if (pos.X < 0 || pos.Y < 0) return false;
             return pos.X <= Size && pos.Y <= Size;  // corner-based: <= Size
+        }
+
+        /// <summary>g_AdjacentCoordinates（math.js）——8 邻域偏移。</summary>
+        private static readonly RmgenVector2D[] AdjacentCoordinates =
+        {
+            new(1, 0), new(1, 1), new(0, 1), new(-1, 1),
+            new(-1, 0), new(-1, -1), new(0, -1), new(1, -1),
+        };
+
+        /// <summary>getAdjacentPoints——图内 8 邻域点（加偏移后 round）。</summary>
+        public List<RmgenVector2D> GetAdjacentPoints(RmgenVector2D position)
+        {
+            var result = new List<RmgenVector2D>();
+            foreach (var c in AdjacentCoordinates)
+            {
+                var p = RmgenVector2D.Add(position, c);
+                p.Round();
+                if (InMapBounds(p))
+                    result.Add(p);
+            }
+            return result;
+        }
+
+        /// <summary>getSlope——相邻图块平均高度差（坡度）。</summary>
+        public double GetSlope(RmgenVector2D position)
+        {
+            var adjacentPositions = GetAdjacentPoints(position);
+            if (adjacentPositions.Count == 0)
+                return 0;
+            double totalSlope = 0;
+            foreach (var adjacentPos in adjacentPositions)
+                totalSlope += Math.Abs(GetHeight(adjacentPos) - GetHeight(position));
+            return totalSlope / adjacentPositions.Count;
         }
 
         public string GetTexture(RmgenVector2D pos)

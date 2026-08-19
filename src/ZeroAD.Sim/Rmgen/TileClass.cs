@@ -102,6 +102,26 @@ namespace ZeroAD.Sim.Rmgen
         public bool Contains(RmgenVector2D pos)
             => _points.Contains(((int)pos.X, (int)pos.Y));
 
+        /// <summary>getClosestPointTo——区域内距 position 最近的点（空区域返回 null）。</summary>
+        public RmgenVector2D? GetClosestPointTo(RmgenVector2D position)
+        {
+            if (_pointArray.Length == 0)
+                return null;
+
+            var closestPoint = _pointArray[0];
+            double shortestDistance = double.PositiveInfinity;
+            foreach (var point in _pointArray)
+            {
+                double currentDistance = point.DistanceToSquared(position);
+                if (currentDistance < shortestDistance)
+                {
+                    shortestDistance = currentDistance;
+                    closestPoint = point;
+                }
+            }
+            return closestPoint;
+        }
+
         public System.Collections.Generic.List<RmgenVector2D> GetPoints()
             => new(_pointArray);
 

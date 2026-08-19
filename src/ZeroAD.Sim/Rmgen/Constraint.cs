@@ -130,6 +130,21 @@ namespace ZeroAD.Sim.Rmgen
         public bool Allows(RmgenVector2D pos) => _map.ValidTilePassable(pos);
     }
 
+    /// <summary>SlopeConstraint（逐字移植 Constraint.js）——坡度（8 邻域平均高度差）
+    /// 在 [min,max]（含端点）；单侧时另一侧传 ±Infinity。</summary>
+    public sealed class SlopeConstraint : IConstraint
+    {
+        private readonly double _minSlope, _maxSlope;
+        private readonly RandomMap _map;
+        public SlopeConstraint(RandomMap map, double minSlope, double maxSlope)
+        { _map = map; _minSlope = minSlope; _maxSlope = maxSlope; }
+        public bool Allows(RmgenVector2D pos)
+        {
+            double s = _map.GetSlope(pos);
+            return _minSlope <= s && s <= _maxSlope;
+        }
+    }
+
     /// <summary>静态缓存约束（整个地图预计算一次，后续查缓存）。</summary>
     public sealed class StaticConstraint : IConstraint
     {
