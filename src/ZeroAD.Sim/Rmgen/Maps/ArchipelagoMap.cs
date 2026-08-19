@@ -71,8 +71,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
             RmgenLibrary.PaintTerrainBasedOnHeight(rng, heightSeaGround, heightShore,
                 HeightPlacer.Mode.ExcludeMinIncludeMax, biome.Water);
 
+            // 上游 CityPatch radius = islandRadius/3（默认半径的 1/3 缩小版）
             RmgenCommon.PlacePlayerBases(rng, map, settings, biome.MainTerrain0, ClPlayer, biome,
-                playerPosition);
+                playerPosition, cityPatchRadius: islandRadius / 3);
 
             // ── 起伏（限陆地）──
             RmgenLibrary.CreateAreas(rng,

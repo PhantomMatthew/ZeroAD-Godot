@@ -21,7 +21,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             { tPineForestFloor, tPineForestFloor, "temperate_grass_mud_01" };
         private static readonly string[] tCliff =
             { "alpine_cliff_c", "alpine_cliff_c", "temperate_cliff_01" };
-        private const string tCity = "new_alpine_citytile";   // 上游为 2 元素名单，简化取首项
+        private static readonly string[] tCity = { "new_alpine_citytile", "new_alpine_grass_dirt_a" };
         private static readonly string[] tGrassPatch = { "alpine_grass_d" };
 
         private const string oBoar = "gaia/fauna_boar";
@@ -141,8 +141,11 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 return 1;
             }
 
+            // 上游 CityPatch：tCity 名单、radius=scaleByMapSize(5,6)、smoothness=0.05
             RmgenCommon.PlacePlayerBases(rng, map, settings, tPrimary[0], ClPlayer, null,
-                playerPosition, tCity, tCity);
+                playerPosition, tCity, tCity,
+                cityPatchRadius: RmgenLibrary.ScaleByMapSize(5, 6, MapSize),
+                cityPatchSmoothness: 0.05);
 
             // ── 标玩家领地（ClumpPlacer(250) ≈ 半径 9 圆盘）──
             for (int i = 0; i < NumPlayers; ++i)

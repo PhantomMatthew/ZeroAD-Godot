@@ -457,50 +457,62 @@ namespace ZeroAD.Sim.Rmgen.Common
                 double z = map.GetSize() / 2.0 + dist * Math.Sin(angle);
                 var pos = new RmgenVector2D(x, z);
                 pos.Floor();
-                PlacePlayerBase(map, settings, GetCivCode(settings, p), p, pos, playerTileClass,
-                    biome?.RoadWild, biome?.Road);
+                PlacePlayerBase(map, rng, settings, GetCivCode(settings, p), p, pos, playerTileClass,
+                    biome?.RoadWild, biome?.Road, 0, 0.6, 0.3);
             }
         }
 
         /// <summary>显式位置版 placePlayerBases——配合 PlayerPlacementCircle（上游新流程：
-        /// 先 playerPlacement* 定位置，再把位置传给 placePlayerBases）。角度取位置相对图心的方向。
-        /// cityPatchOuter/Inner 可覆盖 CityPatch 贴图（默认 biome 的 roadWild/road；
-        /// 无 biome 图必须显式给出，否则不刷基地区）。</summary>
+        /// 先 playerPlacement* 定位置，再把位置传给 placePlayerBases）。
+        /// cityPatchOuter/Inner 可覆盖 CityPatch 贴图（string 或名单；默认 biome 的
+        /// roadWild/road；无 biome 图必须显式给出，否则不刷基地区）。
+        /// cityPatchRadius=0 表示上游默认 defaultPlayerBaseRadius()/3。</summary>
         public static void PlacePlayerBases(RmgenRng rng, RandomMap map, MapSettings settings,
             string baseTerrain, TileClass playerTileClass, BiomeSet? biome,
             IReadOnlyList<RmgenVector2D> playerPositions,
-            string? cityPatchOuterTerrain = null, string? cityPatchInnerTerrain = null,
-            IReadOnlyList<int>? playerIDs = null)
+            object? cityPatchOuterTerrain = null, object? cityPatchInnerTerrain = null,
+            IReadOnlyList<int>? playerIDs = null,
+            double cityPatchRadius = 0, double cityPatchCoherence = 0.6, double cityPatchSmoothness = 0.3)
         {
             int numPlayers = GetNumPlayers(settings);
-            string? outer = cityPatchOuterTerrain ?? biome?.RoadWild;
-            string? inner = cityPatchInnerTerrain ?? biome?.Road;
+            object? outer = cityPatchOuterTerrain ?? biome?.RoadWild;
+            object? inner = cityPatchInnerTerrain ?? biome?.Road;
             for (int i = 0; i < numPlayers; i++)
             {
                 // 上游 placePlayerBases：PlayerPlacement=[playerIDs, playerPosition] 按序配对
                 int p = playerIDs?[i] ?? (i + 1);
                 var pos = playerPositions[i];
-                PlacePlayerBase(map, settings, GetCivCode(settings, p), p, pos, playerTileClass, outer, inner);
+                PlacePlayerBase(map, rng, settings, GetCivCode(settings, p), p, pos, playerTileClass,
+                    outer, inner, cityPatchRadius, cityPatchCoherence, cityPatchSmoothness);
             }
         }
 
-        private static void PlacePlayerBase(RandomMap map, MapSettings settings, string civ, int playerId,
-            RmgenVector2D pos, TileClass playerTileClass,
-            string? cityPatchOuterTerrain, string? cityPatchInnerTerrain)
+        private static void PlacePlayerBase(RandomMap map, RmgenRng rng, MapSettings settings,
+            string civ, int playerId, RmgenVector2D pos, TileClass playerTileClass,
+            object? cityPatchOuterTerrain, object? cityPatchInnerTerrain,
+            double cityPatchRadius, double cityPatchCoherence, double cityPatchSmoothness)
         {
-            // CityPatch:外圈 outer、内圈 inner,clPlayer 标整片基地区(半径 9)。
+            // CityPatch（逐字移植 placePlayerBaseCityPatch）：ClumpPlacer 噪声团块
+            // （默认半径 defaultPlayerBaseRadius()/3）+ LayeredPainter 外圈 1 格分层，
+            // 不是正圆。TileClassPainter 一并标 playerTileClass（上游 archipelago 等
+            // 经 CityPatch.painters 标；mainland 系另有 addCivicCenterAreaToClass 半径 5 圆盘）。
             if (cityPatchOuterTerrain != null && cityPatchInnerTerrain != null)
             {
-                for (int dz = -9; dz <= 9; dz++)
-                    for (int dx = -9; dx <= 9; dx++)
+                double radius = cityPatchRadius > 0
+                    ? cityPatchRadius
+                    : DefaultPlayerBaseRadius(map.GetSize()) / 3;
+                RmgenLibrary.CreateArea(
+                    new ClumpPlacer(rng, Math.Floor(RmgenGeometry.DiskArea(radius)),
+                        cityPatchCoherence, cityPatchSmoothness, double.PositiveInfinity, pos),
+                    new IPainter[]
                     {
-                        double r = Math.Sqrt(dx * dx + dz * dz);
-                        if (r > 9) continue;
-                        var tp = new RmgenVector2D(pos.X + dx, pos.Y + dz);
-                        if (!map.InMapBounds(tp)) continue;
-                        map.SetTexture(tp, r <= 5 ? cityPatchInnerTerrain : cityPatchOuterTerrain);
-                        playerTileClass.Add(tp);
-                    }
+                        new LayeredPainter(new object[] { cityPatchOuterTerrain, cityPatchInnerTerrain },
+                            new double[] { 1 }, rng),
+                        new TileClassPainter(playerTileClass),
+                    },
+                    null);
+                RmgenLibrary.CreateArea(new DiskPlacer(5, pos),
+                    new TileClassPainter(playerTileClass), null);
             }
 
             // 上游 placeCivDefaultStartingEntities：civ JSON 的 StartEntities 全表——
