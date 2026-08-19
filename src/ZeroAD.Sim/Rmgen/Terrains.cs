@@ -68,5 +68,24 @@ namespace ZeroAD.Sim.Rmgen
             foreach (var t in terrains) list.Add(CreateTerrain(t));
             return new RandomTerrain(list);
         }
+
+        /// <summary>混合嵌套版 createTerrain:string → Simple（"tex|entity" 拆分）；
+        /// ITerrain 直接用；IEnumerable（string 与数组任意嵌套）→ RandomTerrain 逐元素递归——
+        /// 与 JS createTerrain 的数组递归一致。</summary>
+        public static ITerrain CreateTerrain(object terrain)
+        {
+            switch (terrain)
+            {
+                case string s: return CreateTerrain(s);
+                case ITerrain it: return it;
+                case System.Collections.IEnumerable mix:
+                    var list = new List<ITerrain>();
+                    foreach (var item in mix)
+                        list.Add(CreateTerrain(item!));
+                    return new RandomTerrain(list);
+                default:
+                    throw new ArgumentException($"createTerrain: bad terrain {terrain}", nameof(terrain));
+            }
+        }
     }
 }

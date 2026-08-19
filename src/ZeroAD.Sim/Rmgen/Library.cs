@@ -226,6 +226,14 @@ namespace ZeroAD.Sim.Rmgen
         // ── 辅助函数 ──
 
         public static double FractionToTiles(double f, int mapSize) => mapSize * f;
+
+        /// <summary>tilesToFraction(t) = t / mapSize。</summary>
+        public static double TilesToFraction(double t, int mapSize) => t / mapSize;
+
+        /// <summary>randomPositionOnTile——图块内随机点（randFloat(0,1) × 2 次抽数）。</summary>
+        public static RmgenVector2D RandomPositionOnTile(RmgenRng rng, RmgenVector2D tilePosition)
+            => RmgenVector2D.Add(tilePosition,
+                new RmgenVector2D(rng.RandFloat(0, 1), rng.RandFloat(0, 1)));
         public static double ScaleByMapSize(double min, double max, int mapSize, int minSize = 128, int maxSize = 512)
             => min + (max - min) * (mapSize - minSize) / (maxSize - minSize);
         public static double ScaleByMapArea(double min, double max, int mapSize, bool circular)

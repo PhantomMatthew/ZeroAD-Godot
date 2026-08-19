@@ -16,6 +16,14 @@ namespace ZeroAD.Sim.Rmgen
             _rng = rng ?? new RmgenRng(0);
         }
 
+        /// <summary>混合地形版（嵌套数组/名单，如 ardennes 的 pForest）——走
+        /// TerrainFactory.CreateTerrain(object) 递归解析。</summary>
+        public TerrainPainter(object terrain, RmgenRng rng)
+        {
+            _terrain = TerrainFactory.CreateTerrain(terrain);
+            _rng = rng;
+        }
+
         public TerrainPainter(ITerrain terrain, RmgenRng rng)
         {
             _terrain = terrain;

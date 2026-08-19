@@ -99,7 +99,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             }
 
             // 创建地图
-            Map = new RandomMap(rng, MapSize, HeightLand, Biome.MainTerrain0, settings.CircularMap);
+            Map = CreateMap(Biome);
             RmgenLibrary.CurrentMap = Map;
 
             // 创建 TileClass
@@ -110,6 +110,11 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ClRock = new TileClass(MapSize);
             ClMetal = new TileClass(MapSize);
         }
+
+        /// <summary>RandomMap 创建（默认 MainTerrain0 单贴图）。基底为名单的图
+        /// （上游 RandomMap 对数组逐图块 pickRandom）覆盖此钩子。</summary>
+        protected virtual RandomMap CreateMap(BiomeSet biome)
+            => new(Rng, MapSize, HeightLand, biome.MainTerrain0, Settings.CircularMap);
 
         /// <summary>无 biome 图的前导（arctic_summer 等内联常量图——上游不 LoadLibrary("rmbiome")，
         /// 也就不消耗 biome 选择抽数）。</summary>
@@ -160,7 +165,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
 
         /// <summary>本局 biome 全名（"generic/temperate" 或图专属 "alpine/winter"；
         /// 对应上游 currentBiome()。调用方以 BiomeData 直接指定时为 ""。</summary>
-        protected string BiomeName { get; private set; } = "";
+        protected string BiomeName { get; set; } = "";
 
         /// <summary>地形生成（丘陵/山脉）。子类可覆盖。</summary>
         protected virtual void GenerateTerrain(BiomeSet biome)
@@ -464,6 +469,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ["arctic_summer"] = () => new ArcticSummerMap(),
             ["aegean_sea"] = () => new AegeanSeaMap(),
             ["archipelago"] = () => new ArchipelagoMap(),
+            ["african_plains"] = () => new AfricanPlainsMap(),
+            ["ardennes_forest"] = () => new ArdennesForestMap(),
         };
 
         public static MapExport? Generate(string mapName, RmgenRng rng, MapSettings settings)

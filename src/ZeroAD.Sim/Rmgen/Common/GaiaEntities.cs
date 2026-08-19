@@ -72,6 +72,37 @@ namespace ZeroAD.Sim.Rmgen.Common
             if (treeCount == 0)
                 return;
 
+            double numberOfForests = Math.Floor(treeCount /
+                (RmgenLibrary.ScaleByMapSize(3, 6, map.GetSize()) * numPlayers * 2));
+            CreateForestsCore(rng, map, terrainSet, constraint, tileClass,
+                treeCount, numberOfForests, retryFactor);
+        }
+
+        /// <summary>createForests（对象 treeCount 版：nbForests + treesPerForest 分别给定）——
+        /// numberOfTrees = nbForests * treesPerForest（两者均可浮点）。</summary>
+        public static void CreateForests(RmgenRng rng, RandomMap map,
+            IReadOnlyList<object> terrainSet, IConstraint? constraint, TileClass tileClass,
+            double numberOfForests, double treesPerForest, int retryFactor)
+            => CreateForestsCore(rng, map, terrainSet, constraint, tileClass,
+                numberOfForests * treesPerForest, numberOfForests, retryFactor);
+
+        /// <summary>createDefaultForests——g_DefaultNumberOfForests = scaleByMapSize(8, 36)。</summary>
+        public static void CreateDefaultForests(RmgenRng rng, RandomMap map,
+            IReadOnlyList<object> terrainSet, IConstraint? constraint, TileClass tileClass,
+            double totalNumberOfTrees)
+        {
+            double numberOfForests = RmgenLibrary.ScaleByMapSize(8, 36, map.GetSize());
+            CreateForestsCore(rng, map, terrainSet, constraint, tileClass,
+                totalNumberOfTrees, numberOfForests, 10);
+        }
+
+        private static void CreateForestsCore(RmgenRng rng, RandomMap map,
+            IReadOnlyList<object> terrainSet, IConstraint? constraint, TileClass tileClass,
+            double numberOfTrees, double numberOfForests, int retryFactor)
+        {
+            if (numberOfForests == 0)
+                return;
+
             object main = terrainSet[0], ff1 = terrainSet[1], ff2 = terrainSet[2];
             object tree1 = terrainSet[3], tree2 = terrainSet[4];
 
@@ -80,12 +111,6 @@ namespace ZeroAD.Sim.Rmgen.Common
                 (new object[] { ff2, main, tree1 }, new object[] { ff2, tree1 }),
                 (new object[] { ff1, main, tree2 }, new object[] { ff1, tree2 }),
             };
-
-            double numberOfTrees = treeCount;
-            int numberOfForests = (int)Math.Floor(numberOfTrees /
-                (RmgenLibrary.ScaleByMapSize(3, 6, map.GetSize()) * numPlayers * variants.Length));
-            if (numberOfForests == 0)
-                return;
 
             foreach (var v in variants)
                 RmgenLibrary.CreateAreas(rng,
@@ -98,5 +123,76 @@ namespace ZeroAD.Sim.Rmgen.Common
                     },
                     constraint, numberOfForests, retryFactor);
         }
+
+        /// <summary>createBalancedMines——大矿远散 + 小矿簇 + 随机小矿点三档，
+        /// randomness∈(0,1) 时三个数量各乘一次 randFloat(1±r) 再 Math.round（3 次抽数）。
+        /// 注意走非 deprecated 的 createObjectGroups（失败重试）。</summary>
+        public static void CreateBalancedMines(RmgenRng rng, RandomMap map,
+            string oSmall, string oLarge, TileClass clMine, IConstraint constraint,
+            double largeCount, double smallCount, double randomSmallCount, double randomness)
+        {
+            int mapSize = map.GetSize();
+            if (randomness > 0 && randomness < 1)
+            {
+                largeCount = SafeMath.Round(largeCount * rng.RandFloat(1 - randomness, 1 + randomness));
+                smallCount = SafeMath.Round(smallCount * rng.RandFloat(1 - randomness, 1 + randomness));
+                randomSmallCount = SafeMath.Round(randomSmallCount * rng.RandFloat(1 - randomness, 1 + randomness));
+            }
+
+            // 大矿彼此远散
+            RmgenLibrary.CreateObjectGroups(rng,
+                new ObjectGroup(new IGroupElement[] { new ScatterObject(rng, oLarge, 1, 1, 0, 1) },
+                    avoidSelf: true, tileClass: clMine),
+                0, new AndConstraint(new IConstraint[]
+                {
+                    RmgenLibrary.AvoidClasses(clMine, RmgenLibrary.ScaleByMapSize(25, 50, mapSize)),
+                    constraint,
+                }),
+                largeCount, 100);
+
+            // 小矿簇
+            RmgenLibrary.CreateObjectGroups(rng,
+                new ObjectGroup(new IGroupElement[] { new ScatterObject(rng, oSmall, 2, 3, 0, 2) },
+                    avoidSelf: true, tileClass: clMine),
+                0, new AndConstraint(new IConstraint[]
+                {
+                    RmgenLibrary.AvoidClasses(clMine, RmgenLibrary.ScaleByMapSize(18, 35, mapSize)),
+                    constraint,
+                }),
+                smallCount, 50);
+
+            // 随机小矿点（偶发形成好矿点）
+            RmgenLibrary.CreateObjectGroups(rng,
+                new ObjectGroup(new IGroupElement[] { new ScatterObject(rng, oSmall, 1, 2, 0, 2) },
+                    avoidSelf: true, tileClass: clMine),
+                0, new AndConstraint(new IConstraint[]
+                {
+                    RmgenLibrary.AvoidClasses(clMine, 5),
+                    constraint,
+                }),
+                randomSmallCount, 50);
+        }
+
+        /// <summary>createBalancedMetalMines（counts=1.0, randomness=0.05 缺省）。</summary>
+        public static void CreateBalancedMetalMines(RmgenRng rng, RandomMap map, int numPlayers,
+            string oSmall, string oLarge, TileClass clMine, IConstraint constraint,
+            double counts = 1.0, double randomness = 0.05)
+            => CreateBalancedMines(rng, map, oSmall, oLarge, clMine, constraint,
+                Math.Max(RmgenLibrary.ScaleByMapSize(1, 9, map.GetSize()),
+                    numPlayers * 1.8 - 0.8) * counts,
+                RmgenLibrary.ScaleByMapSize(4, 12, map.GetSize()) * counts,
+                RmgenLibrary.ScaleByMapSize(1, 8, map.GetSize()) * counts,
+                randomness);
+
+        /// <summary>createBalancedStoneMines（石矿总量略少于金属矿）。</summary>
+        public static void CreateBalancedStoneMines(RmgenRng rng, RandomMap map, int numPlayers,
+            string oSmall, string oLarge, TileClass clMine, IConstraint constraint,
+            double counts = 1.0, double randomness = 0.05)
+            => CreateBalancedMines(rng, map, oSmall, oLarge, clMine, constraint,
+                Math.Max(RmgenLibrary.ScaleByMapSize(1, 9, map.GetSize()),
+                    numPlayers * 1.25) * counts,
+                RmgenLibrary.ScaleByMapSize(1, 8, map.GetSize()) * counts,
+                RmgenLibrary.ScaleByMapSize(1, 8, map.GetSize()) * counts,
+                randomness);
     }
 }
