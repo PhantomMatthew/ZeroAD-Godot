@@ -64,17 +64,46 @@ public static class MapCatalog
         var list = new List<MapEntry>();
         foreach (var name in ZeroAD.Sim.Rmgen.Maps.MapRegistry.AvailableMaps)
         {
-            list.Add(new MapEntry
+            var entry = new MapEntry
             {
                 DisplayName = PrettifyName(name),
                 RelPath = "random/" + name,
                 MapType = "random",
                 Description = "Randomly generated map (seed-driven).",
                 PreviewPath = FindPreview(dataRoot, name + ".png"),
-            });
+            };
+            // 原版 gamesetup 读 maps/random/{name}.json 的 settings.Name/Description/Preview
+            // 作显示名/描述/预览(文件名推导只在 JSON 缺失时兜底)——同一图两侧名字才可能不同。
+            if (dataRoot != null)
+                FillFromRandomJson(Path.Combine(dataRoot, "maps", "random", name + ".json"), dataRoot, entry);
+            list.Add(entry);
         }
         list.Sort((a, b) => string.Compare(a.RelPath, b.RelPath, StringComparison.Ordinal));
         return list;
+    }
+
+    /// <summary>读 random 图 JSON 的 settings 块(Name/Description/Preview 覆盖到条目)。</summary>
+    private static void FillFromRandomJson(string jsonPath, string dataRoot, MapEntry entry)
+    {
+        try
+        {
+            if (!File.Exists(jsonPath)) return;
+            using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
+            if (!doc.RootElement.TryGetProperty("settings", out var settings)) return;
+            if (settings.TryGetProperty("Name", out var name) && name.ValueKind == JsonValueKind.String
+                && name.GetString() is { Length: > 0 } n)
+                entry.DisplayName = n;
+            if (settings.TryGetProperty("Description", out var desc) && desc.ValueKind == JsonValueKind.String
+                && desc.GetString() is { Length: > 0 } d)
+                entry.Description = d;
+            if (settings.TryGetProperty("Preview", out var prev) && prev.ValueKind == JsonValueKind.String
+                && prev.GetString() is { Length: > 0 } pv)
+            {
+                string abs = Path.Combine(dataRoot, "art", "textures", "ui", "session", "icons", "mappreview", pv);
+                if (File.Exists(abs)) entry.PreviewPath = abs;
+            }
+        }
+        catch { /* 坏 JSON 不阻塞目录 */ }
     }
 
     private static void ScanDir(List<MapEntry> list, string dir, string mapType)
