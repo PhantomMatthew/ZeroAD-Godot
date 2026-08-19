@@ -86,8 +86,17 @@ namespace ZeroAD.Sim.Rmgen.Maps
             MapSize = settings.Size;
             NumPlayers = RmgenCommon.GetNumPlayers(settings);
 
-            Biome = settings.BiomeData
-                ?? BiomeLoader.Load(settings.DataRoot, rng.PickRandom(SupportedBiomes), rng);
+            if (settings.BiomeData != null)
+            {
+                Biome = settings.BiomeData;
+                BiomeName = "";
+            }
+            else
+            {
+                string picked = rng.PickRandom(SupportedBiomes);
+                BiomeName = picked.Contains('/') ? picked : "generic/" + picked;
+                Biome = BiomeLoader.Load(settings.DataRoot, picked, rng);
+            }
 
             // 创建地图
             Map = new RandomMap(rng, MapSize, HeightLand, Biome.MainTerrain0, settings.CircularMap);
@@ -122,12 +131,36 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ClMetal = new TileClass(MapSize);
         }
 
+        /// <summary>无 biome + 基底贴图名单版（aegean_sea 等——上游 RandomMap 对名单
+        /// 逐图块 pickRandom）。</summary>
+        protected void InitContextNoBiome(RmgenRng rng, MapSettings settings, IReadOnlyList<string> baseTerrain)
+        {
+            Rng = rng;
+            Settings = settings;
+            MapSize = settings.Size;
+            NumPlayers = RmgenCommon.GetNumPlayers(settings);
+
+            Map = new RandomMap(rng, MapSize, HeightLand, baseTerrain, settings.CircularMap);
+            RmgenLibrary.CurrentMap = Map;
+
+            ClPlayer = new TileClass(MapSize);
+            ClHill = new TileClass(MapSize);
+            ClForest = new TileClass(MapSize);
+            ClDirt = new TileClass(MapSize);
+            ClRock = new TileClass(MapSize);
+            ClMetal = new TileClass(MapSize);
+        }
+
         /// <summary>本图可随机的 biome 白名单(上游 SupportedBiomes;默认全 generic——
         /// 多数上游图即如此,biome 每局随机)。强主题图覆盖。</summary>
         protected virtual IReadOnlyList<string> SupportedBiomes => BiomeLoader.KnownBiomes;
 
         /// <summary>本局 biome(Generate 中解析)。</summary>
         protected BiomeSet Biome = null!;
+
+        /// <summary>本局 biome 全名（"generic/temperate" 或图专属 "alpine/winter"；
+        /// 对应上游 currentBiome()。调用方以 BiomeData 直接指定时为 ""。</summary>
+        protected string BiomeName { get; private set; } = "";
 
         /// <summary>地形生成（丘陵/山脉）。子类可覆盖。</summary>
         protected virtual void GenerateTerrain(BiomeSet biome)
@@ -429,6 +462,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
             // Phase F（逐字翻译——依赖完整 rmgen 库的图）
             ["alpine_valley"] = () => new AlpineValleyMap(),
             ["arctic_summer"] = () => new ArcticSummerMap(),
+            ["aegean_sea"] = () => new AegeanSeaMap(),
+            ["archipelago"] = () => new ArchipelagoMap(),
         };
 
         public static MapExport? Generate(string mapName, RmgenRng rng, MapSettings settings)

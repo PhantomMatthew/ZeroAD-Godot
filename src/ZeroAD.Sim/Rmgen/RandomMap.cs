@@ -69,6 +69,37 @@ namespace ZeroAD.Sim.Rmgen
             }
         }
 
+        /// <summary>基底贴图名单版构造器（上游 RandomMap(baseHeight, baseTerrain[])——
+        /// 逐图块 pickRandom，size² 次抽数发生在生成最开始）。</summary>
+        public RandomMap(RmgenRng rng, int size, double baseHeight, IReadOnlyList<string> baseTerrain,
+            bool circularMap = false)
+        {
+            _rng = rng;
+            Size = size;
+            _circularMap = circularMap;
+
+            Texture = new ushort[size][];
+            for (int x = 0; x < size; x++)
+            {
+                Texture[x] = new ushort[size];
+                for (int z = 0; z < size; z++)
+                    Texture[x][z] = (ushort)GetTextureID(rng.PickRandom(baseTerrain));
+            }
+
+            TerrainEntities = new RmgenEntity?[size][];
+            for (int x = 0; x < size; x++)
+                TerrainEntities[x] = new RmgenEntity?[size];
+
+            int mapSize = size + 1;
+            Height = new float[mapSize][];
+            for (int x = 0; x < mapSize; x++)
+            {
+                Height[x] = new float[mapSize];
+                for (int z = 0; z < mapSize; z++)
+                    Height[x][z] = (float)baseHeight;
+            }
+        }
+
         public int GetTextureID(string texture)
         {
             if (NameToID.TryGetValue(texture, out int id))

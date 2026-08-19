@@ -468,15 +468,18 @@ namespace ZeroAD.Sim.Rmgen.Common
         public static void PlacePlayerBases(RmgenRng rng, RandomMap map, MapSettings settings,
             string baseTerrain, TileClass playerTileClass, BiomeSet? biome,
             IReadOnlyList<RmgenVector2D> playerPositions,
-            string? cityPatchOuterTerrain = null, string? cityPatchInnerTerrain = null)
+            string? cityPatchOuterTerrain = null, string? cityPatchInnerTerrain = null,
+            IReadOnlyList<int>? playerIDs = null)
         {
             int numPlayers = GetNumPlayers(settings);
             var center = map.GetCenter();
             string? outer = cityPatchOuterTerrain ?? biome?.RoadWild;
             string? inner = cityPatchInnerTerrain ?? biome?.Road;
-            for (int p = 1; p <= numPlayers; p++)
+            for (int i = 0; i < numPlayers; i++)
             {
-                var pos = playerPositions[p - 1];
+                // 上游 placePlayerBases：PlayerPlacement=[playerIDs, playerPosition] 按序配对
+                int p = playerIDs?[i] ?? (i + 1);
+                var pos = playerPositions[i];
                 double angle = Math.Atan2(pos.Y - center.Y, pos.X - center.X);
                 PlacePlayerBase(map, GetCivCode(settings, p), p, pos, angle, playerTileClass, outer, inner);
             }
@@ -541,6 +544,244 @@ namespace ZeroAD.Sim.Rmgen.Common
             int playerId, RmgenVector2D start, RmgenVector2D end, string wallStyle)
         {
             // TODO: 完整版按 wallStyle 查 wall pieces 长度 + 沿线放置
+        }
+
+        // ── gaia_terrain.js 河流 ──
+
+        /// <summary>rndRiver——周期为 1 的伪正弦（paintRiver 蜿蜒曲线用）。</summary>
+        private static double RndRiver(double f, double seed)
+        {
+            double rndRw = seed;
+            for (int i = 0; i <= f; ++i)
+                rndRw = 10 * (rndRw % 1);
+
+            double rndRr = f % 1;
+            double retVal = ((int)Math.Floor(f) % 2 != 0 ? -1 : 1) * rndRr * (rndRr - 1);
+
+            int rndRe = (int)Math.Floor(rndRw) % 5;
+            if (rndRe == 0)
+                retVal *= 2.3 * (rndRr - 0.5) * (rndRr - 0.5);
+            else if (rndRe == 1)
+                retVal *= 2.6 * (rndRr - 0.3) * (rndRr - 0.7);
+            else if (rndRe == 2)
+                retVal *= 22 * (rndRr - 0.2) * (rndRr - 0.3) * (rndRr - 0.3) * (rndRr - 0.8);
+            else if (rndRe == 3)
+                retVal *= 180 * (rndRr - 0.2) * (rndRr - 0.2) * (rndRr - 0.4) *
+                    (rndRr - 0.6) * (rndRr - 0.6) * (rndRr - 0.8);
+            else if (rndRe == 4)
+                retVal *= 2.6 * (rndRr - 0.5) * (rndRr - 0.7);
+            return retVal;
+        }
+
+        /// <summary>paintRiver（逐字移植 gaia_terrain.js）——双正弦叠加的蜿蜒河道。
+        /// 注意 deviation 抽数发生在每个垂直投影在河道范围内的图块上（即使 deviation=0）。
+        /// 仅移植本仓地图用到的参数（无 constraint/waterFunc/landFunc/minHeight）。</summary>
+        public static void PaintRiver(RmgenRng rng, RandomMap map,
+            RmgenVector2D start, RmgenVector2D end, double width, double fadeDist,
+            double heightRiverbed, double heightLand,
+            bool parallel = false, double deviation = 0, double meanderShort = 20, double meanderLong = 10)
+        {
+            int mapSize = map.GetSize();
+
+            // 蜿蜒 = 两条 rndRiver 曲线叠加
+            double meanderShortT = RmgenLibrary.FractionToTiles(
+                meanderShort / RmgenLibrary.ScaleByMapSize(35, 160, mapSize), mapSize);
+            double meanderLongT = RmgenLibrary.FractionToTiles(
+                meanderLong / RmgenLibrary.ScaleByMapSize(35, 100, mapSize), mapSize);
+
+            // 非平行河两岸各有独立种子/起始角
+            double seed1 = rng.RandFloat(2, 3);
+            double seed2 = rng.RandFloat(2, 3);
+            double startingAngle1 = rng.RandFloat(0, 1);
+            double startingAngle2 = rng.RandFloat(0, 1);
+
+            double RiverCurve(double riverFraction, double startAngle, double seed) =>
+                meanderShortT * RndRiver(startAngle + RmgenLibrary.FractionToTiles(riverFraction, mapSize) / 128, seed) +
+                meanderLongT * RndRiver(startAngle + RmgenLibrary.FractionToTiles(riverFraction, mapSize) / 256, seed);
+
+            double riverLength = start.DistanceTo(end);
+            var unitVecRiver = RmgenVector2D.Sub(start, end);
+            unitVecRiver.Normalize();
+            var unitVecPerpendicular = unitVecRiver.Perpendicular();
+
+            double riverMinX = Math.Min(start.X, end.X);
+            double riverMinZ = Math.Min(start.Y, end.Y);
+            double riverMaxX = Math.Max(start.X, end.X);
+            double riverMaxZ = Math.Max(start.Y, end.Y);
+
+            for (int ix = 0; ix < mapSize; ++ix)
+                for (int iz = 0; iz < mapSize; ++iz)
+                {
+                    var vecPoint = new RmgenVector2D(ix, iz);
+
+                    // 到河道的带符号最短距离
+                    double distanceToRiver = RmgenGeometry.DistanceOfPointFromLine(start, end, vecPoint);
+
+                    // 垂足（河道上的最近点）
+                    var river = RmgenVector2D.Sub(vecPoint,
+                        RmgenVector2D.Mult(unitVecPerpendicular, distanceToRiver));
+
+                    // 只处理垂直投影落在河道上的点
+                    if (river.X < riverMinX || river.X > riverMaxX ||
+                        river.Y < riverMinZ || river.Y > riverMaxZ)
+                        continue;
+
+                    // 沿河道方向的 0..1 坐标
+                    double riverFraction = river.DistanceTo(start) / riverLength;
+
+                    double riverCurve1 = RiverCurve(riverFraction, startingAngle1, seed1);
+                    double riverCurve2 = parallel ? riverCurve1 : RiverCurve(riverFraction, startingAngle2, seed2);
+
+                    double dev = deviation * rng.RandFloat(-1, 1);
+
+                    double shoreDist1 = riverCurve1 + distanceToRiver - dev - width / 2;
+                    double shoreDist2 = riverCurve2 + distanceToRiver - dev + width / 2;
+
+                    if (shoreDist1 < 0 && shoreDist2 > 0)
+                    {
+                        double height = heightRiverbed;
+                        if (shoreDist1 > -fadeDist)
+                            height += (heightLand - heightRiverbed) * (1 + shoreDist1 / fadeDist);
+                        else if (shoreDist2 < fadeDist)
+                            height += (heightLand - heightRiverbed) * (1 - shoreDist2 / fadeDist);
+                        map.SetHeight(vecPoint, height);
+                    }
+                }
+        }
+
+        // ── player.js 组队放置 ──
+
+        /// <summary>utility.js shuffleArray——inside-out Fisher-Yates（randIntInclusive(0, i)）。</summary>
+        public static List<T> ShuffleArray<T>(RmgenRng rng, IReadOnlyList<T> source)
+        {
+            if (source.Count == 0)
+                return new List<T>();
+            var result = new List<T> { source[0] };
+            for (int i = 1; i < source.Count; ++i)
+            {
+                int j = rng.RandIntInclusive(0, i);
+                // j==i 时 JS 里 result[i]=result[i] 读到 undefined 但随即被 result[j]=source[i] 覆盖
+                if (j == i)
+                {
+                    result.Add(source[i]);
+                }
+                else
+                {
+                    result.Add(result[j]);
+                    result[j] = source[i];
+                }
+            }
+            return result;
+        }
+
+        /// <summary>getPlayerTeam——未设置（null）即 -1。</summary>
+        public static int GetPlayerTeam(MapSettings settings, int playerId)
+            => settings.PlayerData[playerId].Team ?? -1;
+
+        /// <summary>sortPlayers——先 shuffle 再按队伍稳定排序（V8 Array.sort 稳定 → OrderBy）。</summary>
+        public static List<int> SortPlayers(RmgenRng rng, MapSettings settings, List<int> playerIDs)
+            => ShuffleArray(rng, playerIDs).OrderBy(id => GetPlayerTeam(settings, id)).ToList();
+
+        /// <summary>utility.js heapsPermute——对每个排列回调（Heap 算法；值类型即逐位复制）。</summary>
+        private static void HeapsPermute<T>(List<T> array, Action<List<T>> callback) where T : struct
+        {
+            var c = new int[array.Count];
+            callback(new List<T>(array));
+            int i = 0;
+            while (i < array.Count)
+            {
+                if (c[i] < i)
+                {
+                    int swapIndex = i % 2 != 0 ? c[i] : 0;
+                    (array[swapIndex], array[i]) = (array[i], array[swapIndex]);
+                    callback(new List<T>(array));
+                    ++c[i];
+                    i = 0;
+                }
+                else
+                {
+                    c[i] = 0;
+                    ++i;
+                }
+            }
+        }
+
+        /// <summary>groupPlayersByArea——排列搜索使同队玩家位置最近（按队规模加权）。</summary>
+        public static (List<int> playerIDs, List<RmgenVector2D> playerPosition) GroupPlayersByArea(
+            RmgenRng rng, MapSettings settings, List<int> playerIDs, List<RmgenVector2D> locations)
+        {
+            playerIDs = SortPlayers(rng, settings, playerIDs);
+
+            double minDist = double.PositiveInfinity;
+            List<RmgenVector2D>? minLocations = null;
+
+            var first = ShuffleArray(rng, locations).Take(playerIDs.Count).ToList();
+            HeapsPermute(first, permutation =>
+            {
+                double dist = 0, teamDist = 0;
+                int teamSize = 0;
+
+                for (int i = 1; i < playerIDs.Count; ++i)
+                {
+                    int team1 = GetPlayerTeam(settings, playerIDs[i - 1]);
+                    int team2 = GetPlayerTeam(settings, playerIDs[i]);
+                    ++teamSize;
+                    if (team1 != -1 && team1 == team2)
+                    {
+                        teamDist += permutation[i - 1].DistanceTo(permutation[i]);
+                    }
+                    else
+                    {
+                        dist += teamDist / teamSize;
+                        teamDist = 0;
+                        teamSize = 0;
+                    }
+                }
+
+                if (teamSize != 0)
+                    dist += teamDist / teamSize;
+
+                if (dist < minDist)
+                {
+                    minDist = dist;
+                    minLocations = permutation;
+                }
+            });
+
+            return (playerIDs, minLocations!);
+        }
+
+        /// <summary>playerPlacementRiver——两条平行线上交错放置（中央河道图）。
+        /// angle=0 即沿 Z 轴（南北向）。返回前按 groupPlayersByArea 组队。</summary>
+        public static (List<int> playerIDs, List<RmgenVector2D> playerPosition) PlayerPlacementRiver(
+            RmgenRng rng, RandomMap map, MapSettings settings, double angle, double width,
+            RmgenVector2D? center = null)
+        {
+            int numPlayers = GetNumPlayers(settings);
+            bool numPlayersEven = numPlayers % 2 == 0;
+            int mapSize = map.GetSize();
+            var centerPosition = center ?? map.GetCenter();
+            var playerPosition = new List<RmgenVector2D>();
+
+            for (int i = 0; i < numPlayers; ++i)
+            {
+                bool currentPlayerEven = i % 2 == 0;
+
+                int offsetDivident = numPlayersEven || currentPlayerEven ? (i + 1) % 2 : 0;
+                int offsetDivisor = numPlayersEven ? 0 : currentPlayerEven ? +1 : -1;
+
+                var v = new RmgenVector2D(
+                    width * (i % 2) + (mapSize - width) / 2,
+                    RmgenLibrary.FractionToTiles(
+                        ((i - 1 + offsetDivident) / 2.0 + 1) / ((numPlayers + offsetDivisor) / 2.0 + 1),
+                        mapSize));
+                v.RotateAround(angle, centerPosition);
+                v.Round();
+                playerPosition.Add(v);
+            }
+
+            return GroupPlayersByArea(rng, settings,
+                Enumerable.Range(1, numPlayers).ToList(), playerPosition);
         }
 
         // ── 辅助 ──
