@@ -42,30 +42,10 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected virtual int MaxForestTrees => 3000;
         protected virtual double ForestRatio => 0.7;
 
-        public MapExport Generate(RmgenRng rng, MapSettings settings)
+        public virtual MapExport Generate(RmgenRng rng, MapSettings settings)
         {
-            Rng = rng;
-            Settings = settings;
-            MapSize = settings.Size;
-            NumPlayers = RmgenCommon.GetNumPlayers(settings);
-
-            // biome:调用方指定 > 按 SupportedBiomes 自选(上游 gamesetup "random" 行为——
-            // 多数图每局随机 biome;选择消耗抽数,在生成最前,同 setBiome(mapSettings.Biome))。
-            var biome = settings.BiomeData
-                ?? BiomeLoader.Load(settings.DataRoot, "generic/" + rng.PickRandom(SupportedBiomes), rng);
-            Biome = biome;
-
-            // 创建地图
-            Map = new RandomMap(rng, MapSize, HeightLand, biome.MainTerrain0, settings.CircularMap);
-            RmgenLibrary.CurrentMap = Map;
-
-            // 创建 TileClass
-            ClPlayer = new TileClass(MapSize);
-            ClHill = new TileClass(MapSize);
-            ClForest = new TileClass(MapSize);
-            ClDirt = new TileClass(MapSize);
-            ClRock = new TileClass(MapSize);
-            ClMetal = new TileClass(MapSize);
+            InitContext(rng, settings);
+            var biome = Biome;
 
             // 玩家基地(含 CityPatch 基地区刷漆)
             RmgenCommon.PlacePlayerBases(rng, Map, settings, biome.MainTerrain0, ClPlayer, biome);
@@ -93,6 +73,53 @@ namespace ZeroAD.Sim.Rmgen.Maps
             GenerateResources(biome, stragglerTrees);
 
             return Map.MakeExportable();
+        }
+
+        /// <summary>生成前导：字段 + biome 选择 + RandomMap + 共享 TileClass。
+        /// 自定义流程的地图（覆盖 Generate）以此复用公共初始化。
+        /// biome:调用方指定 > 按 SupportedBiomes 自选(上游 gamesetup "random" 行为——
+        /// 多数图每局随机 biome;选择消耗抽数,在生成最前,同 setBiome(mapSettings.Biome))。</summary>
+        protected void InitContext(RmgenRng rng, MapSettings settings)
+        {
+            Rng = rng;
+            Settings = settings;
+            MapSize = settings.Size;
+            NumPlayers = RmgenCommon.GetNumPlayers(settings);
+
+            Biome = settings.BiomeData
+                ?? BiomeLoader.Load(settings.DataRoot, rng.PickRandom(SupportedBiomes), rng);
+
+            // 创建地图
+            Map = new RandomMap(rng, MapSize, HeightLand, Biome.MainTerrain0, settings.CircularMap);
+            RmgenLibrary.CurrentMap = Map;
+
+            // 创建 TileClass
+            ClPlayer = new TileClass(MapSize);
+            ClHill = new TileClass(MapSize);
+            ClForest = new TileClass(MapSize);
+            ClDirt = new TileClass(MapSize);
+            ClRock = new TileClass(MapSize);
+            ClMetal = new TileClass(MapSize);
+        }
+
+        /// <summary>无 biome 图的前导（arctic_summer 等内联常量图——上游不 LoadLibrary("rmbiome")，
+        /// 也就不消耗 biome 选择抽数）。</summary>
+        protected void InitContextNoBiome(RmgenRng rng, MapSettings settings, string baseTerrain)
+        {
+            Rng = rng;
+            Settings = settings;
+            MapSize = settings.Size;
+            NumPlayers = RmgenCommon.GetNumPlayers(settings);
+
+            Map = new RandomMap(rng, MapSize, HeightLand, baseTerrain, settings.CircularMap);
+            RmgenLibrary.CurrentMap = Map;
+
+            ClPlayer = new TileClass(MapSize);
+            ClHill = new TileClass(MapSize);
+            ClForest = new TileClass(MapSize);
+            ClDirt = new TileClass(MapSize);
+            ClRock = new TileClass(MapSize);
+            ClMetal = new TileClass(MapSize);
         }
 
         /// <summary>本图可随机的 biome 白名单(上游 SupportedBiomes;默认全 generic——
@@ -399,6 +426,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ["unknown"] = () => new UnknownMap(),
             ["wall_demo"] = () => new WallDemoMap(),
             ["new_rms_test"] = () => new NewRmsTestMap(),
+            // Phase F（逐字翻译——依赖完整 rmgen 库的图）
+            ["alpine_valley"] = () => new AlpineValleyMap(),
+            ["arctic_summer"] = () => new ArcticSummerMap(),
         };
 
         public static MapExport? Generate(string mapName, RmgenRng rng, MapSettings settings)

@@ -143,9 +143,12 @@ namespace ZeroAD.Sim.Rmgen
         private readonly double _elevation;
         private readonly SmoothType _type;
         private readonly double _blendRadius;
+        private readonly bool _relative;
 
-        public SmoothElevationPainter(SmoothType type, double elevation, double blendRadius)
-        { _type = type; _elevation = elevation; _blendRadius = blendRadius; }
+        /// <param name="relative">true 对应上游 ELEVATION_MODIFY（相对抬升），
+        /// false 为 ELEVATION_SET（绝对设定，既有调用方默认）。</param>
+        public SmoothElevationPainter(SmoothType type, double elevation, double blendRadius, bool relative = false)
+        { _type = type; _elevation = elevation; _blendRadius = blendRadius; _relative = relative; }
 
         public void Paint(Area area)
         {
@@ -157,7 +160,7 @@ namespace ZeroAD.Sim.Rmgen
                 areaSet.Add(((int)p.X, (int)p.Y));
 
             foreach (var p in area.GetPoints())
-                map.SetHeight(p, _elevation);
+                map.SetHeight(p, _relative ? map.GetHeight(p) + _elevation : _elevation);
 
             // 简化边界混合
             for (int r = 1; r <= _blendRadius; r++)
@@ -174,7 +177,9 @@ namespace ZeroAD.Sim.Rmgen
                             var pos = new RmgenVector2D(nx, ny);
                             if (!map.ValidHeight(pos)) continue;
                             double current = map.GetHeight(pos);
-                            map.SetHeight(pos, current * (1 - weight) + _elevation * weight);
+                            map.SetHeight(pos, _relative
+                                ? current + _elevation * weight
+                                : current * (1 - weight) + _elevation * weight);
                         }
                 }
             }

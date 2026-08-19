@@ -1,22 +1,23 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim.RmgenMath;
 
 namespace ZeroAD.Sim.Rmgen
 {
     /// <summary>ChainPlacer（逐字移植 placer/centered/ChainPlacer.js，114 行）。
     /// 随机链式放置圆形——每次从边缘随机选中心点画圆。</summary>
-    public sealed class ChainPlacer : IPlacer
+    public sealed class ChainPlacer : ICenteredPlacer
     {
         private readonly double _minRadius, _maxRadius;
-        private readonly int _numCircles;
+        private readonly double _numCircles;   // 上游允许浮点（for i < numCircles 等效 ceil）
         private readonly double _failFraction;
         private readonly double _maxDistance;
         private readonly List<int> _queue;
         private RmgenVector2D _center;
         private readonly RmgenRng _rng;
 
-        public ChainPlacer(RmgenRng rng, double minRadius, double maxRadius, int numCircles,
+        public ChainPlacer(RmgenRng rng, double minRadius, double maxRadius, double numCircles,
             double failFraction = 0, RmgenVector2D? centerPosition = null, double maxDistance = 0, int[]? queue = null)
         {
             _rng = rng;
@@ -105,17 +106,19 @@ namespace ZeroAD.Sim.Rmgen
     }
 
     /// <summary>ClumpPlacer（逐字移植 placer/centered/ClumpPlacer.js，~107 行）。
-    /// 用噪声生成不规则团块。Float32Array 存储 ctrlVals/noise（保真度关键）。</summary>
-    public sealed class ClumpPlacer : IPlacer
+    /// 周长噪声圆团：size = 平均点数（≈面积，radius = sqrt(size/π)）。
+    /// ctrlCoords/ctrlVals/noise 用 float 存储复现 Float32Array 截断（保真度关键）；
+    /// 每步角度从圆心沿单位向量累加、逐点 floor 去重。</summary>
+    public sealed class ClumpPlacer : ICenteredPlacer
     {
-        private readonly double _radius, _coherence, _smoothness, _failFraction;
+        private readonly double _size, _coherence, _smoothness, _failFraction;
         private RmgenVector2D _center;
         private readonly RmgenRng _rng;
 
-        public ClumpPlacer(RmgenRng rng, double radius, double coherence = 0.5, double smoothness = 0.1,
+        public ClumpPlacer(RmgenRng rng, double size, double coherence = 0.5, double smoothness = 0.1,
             double failFraction = 0, RmgenVector2D? centerPosition = null)
         {
-            _rng = rng; _radius = radius; _coherence = coherence;
+            _rng = rng; _size = size; _coherence = coherence;
             _smoothness = smoothness; _failFraction = failFraction;
             _center = centerPosition ?? default;
             if (centerPosition.HasValue) SetCenterPosition(centerPosition.Value);
@@ -126,36 +129,78 @@ namespace ZeroAD.Sim.Rmgen
         public List<RmgenVector2D>? Place(IConstraint constraint)
         {
             var map = RmgenLibrary.CurrentMap;
+            // 预检：中心必须在图内且满足约束
             if (!map.InMapBounds(_center) || !constraint.Allows(_center)) return null;
 
             var points = new List<RmgenVector2D>();
-            double radius = _radius;
-            double radius2 = SafeMath.Square(radius);
             int size = map.GetSize();
+            var gotRet = new byte[size, size];
+            double radius = SafeMath.Sqrt(_size / SafeMath.PI);
+            double perim = 4 * radius * 2 * SafeMath.PI;
+            int intPerim = (int)Math.Ceiling(perim);
+
+            int ctrlPts = 1 + (int)Math.Floor(1.0 / Math.Max(_smoothness, 1.0 / intPerim));
+            if (ctrlPts > radius * 2 * SafeMath.PI)
+                ctrlPts = (int)Math.Floor(radius * 2 * SafeMath.PI) + 1;
+
+            var noise = new float[intPerim];
+            var ctrlCoords = new float[ctrlPts + 1];
+            var ctrlVals = new float[ctrlPts + 1];
+
+            // 生成插值噪声的控制点
+            for (int i = 0; i < ctrlPts; i++)
+            {
+                ctrlCoords[i] = (float)(i * perim / ctrlPts);
+                ctrlVals[i] = (float)_rng.RandFloat(0, 2);
+            }
+
+            int c = 0;
+            int looped = 0;
+            for (int i = 0; i < intPerim; ++i)
+            {
+                if ((double)ctrlCoords[(c + 1) % ctrlPts] < i && looped == 0)
+                {
+                    c = (c + 1) % ctrlPts;
+                    if (c == ctrlPts - 1)
+                        looped = 1;
+                }
+
+                noise[i] = (float)Interpolation.CubicInterpolation(
+                    1,
+                    (i - (double)ctrlCoords[c]) /
+                        ((looped != 0 ? perim : (double)ctrlCoords[(c + 1) % ctrlPts]) - ctrlCoords[c]),
+                    ctrlVals[(c + ctrlPts - 1) % ctrlPts],
+                    ctrlVals[c],
+                    ctrlVals[(c + 1) % ctrlPts],
+                    ctrlVals[(c + 2) % ctrlPts]);
+            }
 
             int failed = 0, count = 0;
-            int perim = 4 * (int)Math.Floor(radius * Math.PI / 4 * (1 + 1.0 / 10));  // simplified perimeter
-            // 简化版：用圆形 + 噪声扰动。完整版用 ctrlVals Float32Array + cubicInterpolation。
-            // TODO: 完整移植 ClumpPlacer.js 的 ctrlCoords/ctrlVals/cubicInterpolation 噪声管线。
-
-            int cx = (int)_center.X, cy = (int)_center.Y;
-            int x0 = (int)Math.Max(0, cx - radius - 1);
-            int y0 = (int)Math.Max(0, cy - radius - 1);
-            int x1 = (int)Math.Min(cx + radius + 1, size - 1);
-            int y1 = (int)Math.Min(cy + radius + 1, size - 1);
-
-            for (int x = x0; x <= x1; x++)
+            for (int stepAngle = 0; stepAngle < intPerim; ++stepAngle)
             {
-                for (int y = y0; y <= y1; y++)
-                {
-                    double dx = x - cx, dy = y - cy;
-                    double dist2 = dx * dx + dy * dy;
-                    if (dist2 >= radius2) continue;
+                var position = _center;
+                var radiusUnitVector = new RmgenVector2D(0, 1);
+                radiusUnitVector.Rotate(-2 * SafeMath.PI * stepAngle / perim);
+                int maxRadiusSteps = (int)Math.Ceiling(radius * (1 + (1 - _coherence) * noise[stepAngle]));
 
-                    count++;
-                    var pos = new RmgenVector2D(x, y);
-                    if (!map.InMapBounds(pos) || !constraint.Allows(pos)) { failed++; continue; }
-                    points.Add(pos);
+                count += maxRadiusSteps;
+                for (int stepRadius = 0; stepRadius < maxRadiusSteps; ++stepRadius)
+                {
+                    var tilePos = position;
+                    tilePos.Floor();
+
+                    if (map.InMapBounds(tilePos) && constraint.Allows(tilePos))
+                    {
+                        if (gotRet[(int)tilePos.X, (int)tilePos.Y] == 0)
+                        {
+                            gotRet[(int)tilePos.X, (int)tilePos.Y] = 1;
+                            points.Add(tilePos);
+                        }
+                    }
+                    else
+                        ++failed;
+
+                    position.Add(radiusUnitVector);
                 }
             }
 
@@ -164,7 +209,7 @@ namespace ZeroAD.Sim.Rmgen
     }
 
     /// <summary>DiskPlacer（逐字移植 placer/centered/DiskPlacer.js）——简单圆盘。</summary>
-    public sealed class DiskPlacer : IPlacer
+    public sealed class DiskPlacer : ICenteredPlacer
     {
         private readonly double _radius;
         private RmgenVector2D _center;
@@ -236,10 +281,206 @@ namespace ZeroAD.Sim.Rmgen
         }
     }
 
-    /// <summary>HeightPlacer（逐字移植 placer/noncentered/HeightPlacer.js）——按高度选择。</summary>
+    /// <summary>ConvexPolygonPlacer（逐字移植 placer/noncentered/ConvexPolygonPlacer.js）——
+    /// 返回给定点凸包内的全部图块点。Ctor 先对顶点 round。</summary>
+    public sealed class ConvexPolygonPlacer : IPlacer
+    {
+        private readonly List<RmgenVector2D> _polygonVertices;
+        private readonly double _failFraction;
+
+        public ConvexPolygonPlacer(IReadOnlyList<RmgenVector2D> points, double failFraction = 0)
+        {
+            var rounded = points.Select(p => { var q = p; q.Round(); return q; }).ToList();
+            _polygonVertices = GetConvexHull(rounded);
+            _failFraction = failFraction;
+        }
+
+        public List<RmgenVector2D>? Place(IConstraint constraint)
+        {
+            var map = RmgenLibrary.CurrentMap;
+            var points = new List<RmgenVector2D>();
+            int count = 0, failed = 0;
+
+            var (min, max) = RmgenGeometry.GetBoundingBox(_polygonVertices);
+            foreach (var point in RmgenGeometry.GetPointsInBoundingBox(min, max))
+            {
+                bool outside = false;
+                for (int i = 0; i < _polygonVertices.Count; i++)
+                    if (RmgenGeometry.DistanceOfPointFromLine(
+                            _polygonVertices[i], _polygonVertices[(i + 1) % _polygonVertices.Count], point) > 0)
+                    { outside = true; break; }
+                if (outside) continue;
+
+                ++count;
+                if (map.InMapBounds(point) && constraint.Allows(point))
+                    points.Add(point);
+                else
+                    ++failed;
+            }
+
+            return failed <= _failFraction * count ? points : null;
+        }
+
+        /// <summary>gift-wrapping 凸包（上游 getConvexHull；输入已按值去重后引用比较即值比较）。</summary>
+        private static List<RmgenVector2D> GetConvexHull(List<RmgenVector2D> points)
+        {
+            var uniquePoints = new List<RmgenVector2D>();
+            foreach (var point in points)
+                if (uniquePoints.All(p => p.X != point.X || p.Y != point.Y))
+                    uniquePoints.Add(point);
+
+            // 最左点起手
+            var leftmost = uniquePoints[0];
+            foreach (var p in uniquePoints)
+                if (p.X < leftmost.X) leftmost = p;
+            var result = new List<RmgenVector2D> { leftmost };
+
+            while (result.Count < uniquePoints.Count)
+            {
+                RmgenVector2D? nextLeftmostPoint = null;
+                foreach (var point in uniquePoints)
+                {
+                    if (RmgenVector2D.IsEqualTo(point, result[^1]))
+                        continue;
+                    if (!nextLeftmostPoint.HasValue ||
+                        RmgenGeometry.DistanceOfPointFromLine(nextLeftmostPoint.Value, result[^1], point) <= 0)
+                        nextLeftmostPoint = point;
+                }
+
+                // 回到已知点——剩余点都在凸包内
+                if (result.Contains(nextLeftmostPoint!.Value))
+                    break;
+                result.Add(nextLeftmostPoint.Value);
+            }
+
+            return result;
+        }
+    }
+
+    /// <summary>PathPlacer（逐字移植 placer/noncentered/PathPlacer.js）——两点间蜿蜒路径。
+    /// Start/End/Width 为公开字段（上游 MountainRangeBuilder 在构造后再赋值）。
+    /// ctrlVals/noise 用 float 存储复现 Float32Array 截断。</summary>
+    public sealed class PathPlacer : IPlacer
+    {
+        public RmgenVector2D Start, End;
+        public double Width;
+        private readonly double _waviness, _smoothness, _offset, _tapering, _failFraction;
+        private readonly RmgenRng _rng;
+
+        public PathPlacer(RmgenRng rng, double waviness, double smoothness,
+            double offset, double tapering, double failFraction = 0)
+        {
+            _rng = rng;
+            _waviness = waviness; _smoothness = smoothness;
+            _offset = offset; _tapering = tapering; _failFraction = failFraction;
+        }
+
+        public List<RmgenVector2D>? Place(IConstraint constraint)
+        {
+            var map = RmgenLibrary.CurrentMap;
+            double pathLength = Start.DistanceTo(End);
+
+            int numStepsWaviness = 1 + (int)Math.Floor(pathLength / 4 * _waviness);
+            int numStepsLength = 1 + (int)Math.Floor(pathLength / 4 * _smoothness);
+            int offset = 1 + (int)Math.Floor(pathLength / 4 * _offset);
+
+            // 随机控制值（Float32Array 语义）
+            var ctrlVals = new float[numStepsWaviness];
+            for (int j = 1; j < numStepsWaviness - 1; ++j)
+                ctrlVals[j] = (float)_rng.RandFloat(-offset, offset);
+
+            // 三次样条插值成平滑 1D 噪声
+            int totalSteps = numStepsWaviness * numStepsLength;
+            var noise = new float[totalSteps + 1];
+            for (int j = 0; j < numStepsWaviness; ++j)
+                for (int k = 0; k < numStepsLength; ++k)
+                    noise[j * numStepsLength + k] = (float)Interpolation.CubicInterpolation(
+                        1,
+                        (double)k / numStepsLength,
+                        ctrlVals[(j + numStepsWaviness - 1) % numStepsWaviness],
+                        ctrlVals[j],
+                        ctrlVals[(j + 1) % numStepsWaviness],
+                        ctrlVals[(j + 2) % numStepsWaviness]);
+
+            // 沿直线路径叠加噪声
+            var pathPerpendicular = RmgenVector2D.Sub(End, Start);
+            pathPerpendicular.Normalize();
+            pathPerpendicular = pathPerpendicular.Perpendicular();
+            var segments1 = new List<RmgenVector2D>();
+            var segments2 = new List<RmgenVector2D>();
+
+            for (int j = 0; j < totalSteps; ++j)
+            {
+                double step1 = (double)j / totalSteps;
+                double step2 = (double)(j + 1) / totalSteps;
+                var stepStart = RmgenVector2D.Add(RmgenVector2D.Mult(Start, 1 - step1), RmgenVector2D.Mult(End, step1));
+                var stepEnd = RmgenVector2D.Add(RmgenVector2D.Mult(Start, 1 - step2), RmgenVector2D.Mult(End, step2));
+
+                var noiseStart = RmgenVector2D.Add(stepStart, RmgenVector2D.Mult(pathPerpendicular, noise[j]));
+                var noiseEnd = RmgenVector2D.Add(stepEnd, RmgenVector2D.Mult(pathPerpendicular, noise[j + 1]));
+                var noisePerpendicular = RmgenVector2D.Sub(noiseEnd, noiseStart);
+                noisePerpendicular.Normalize();
+                noisePerpendicular = noisePerpendicular.Perpendicular();
+
+                double taperedWidth = (1 - step1 * _tapering) * Width / 2;
+
+                var s1 = RmgenVector2D.Sub(noiseStart, RmgenVector2D.Mult(noisePerpendicular, taperedWidth));
+                s1.Round();
+                segments1.Add(s1);
+                var s2 = RmgenVector2D.Add(noiseEnd, RmgenVector2D.Mult(noisePerpendicular, taperedWidth));
+                s2.Round();
+                segments2.Add(s2);
+            }
+
+            // 逐段刷凸多边形
+            int size = map.GetSize();
+            var gotRet = new byte[size, size];
+            var retVec = new List<RmgenVector2D>();
+            int failed = 0;
+
+            for (int j = 0; j < segments1.Count - 1; ++j)
+            {
+                var points = new ConvexPolygonPlacer(
+                    new[] { segments1[j], segments1[j + 1], segments2[j], segments2[j + 1] },
+                    double.PositiveInfinity).Place(new NullConstraint());
+                if (points == null)
+                    continue;
+
+                foreach (var point in points)
+                {
+                    if (!constraint.Allows(point))
+                    {
+                        if (_failFraction == 0)
+                            return null;
+                        ++failed;
+                        continue;
+                    }
+
+                    if (map.InMapBounds(point) && gotRet[(int)point.X, (int)point.Y] == 0)
+                    {
+                        retVec.Add(point);
+                        gotRet[(int)point.X, (int)point.Y] = 1;
+                    }
+                }
+            }
+
+            return failed > _failFraction * Width * pathLength ? null : retVec;
+        }
+    }
+
+    /// <summary>HeightPlacer（逐字移植 placer/noncentered/HeightPlacer.js）——按高度选择。
+    /// 遍历图块 0..size-1（上游 getPointsInBoundingBox([0,0],[size-1,size-1]) 含端点）；
+    /// 高度取样于整数图块坐标（corner-based 高度表的前 size×size 项）。</summary>
     public sealed class HeightPlacer : IPlacer
     {
-        public enum Mode { IncludeMin = -1, ExcludeMin = 0, IncludeMax = 1, ExcludeMax = 2 }
+        /// <summary>上游 Elevation_* 常量（是否包含 min/max 边界）。</summary>
+        public enum Mode
+        {
+            ExcludeMinExcludeMax = 0,
+            IncludeMinExcludeMax = 1,
+            ExcludeMinIncludeMax = 2,
+            IncludeMinIncludeMax = 3,
+        }
 
         private readonly double _minHeight, _maxHeight;
         private readonly Mode _mode;
@@ -251,14 +492,19 @@ namespace ZeroAD.Sim.Rmgen
         public List<RmgenVector2D>? Place(IConstraint constraint)
         {
             var points = new List<RmgenVector2D>();
-            int hms = _map.GetSize() + 1;
-            for (int x = 0; x < hms; x++)
-                for (int z = 0; z < hms; z++)
+            int size = _map.GetSize();
+            for (int x = 0; x < size; x++)
+                for (int z = 0; z < size; z++)
                 {
                     double h = _map.Height[x][z];
-                    bool minOk = _mode == Mode.IncludeMin || _mode == Mode.IncludeMax ? h >= _minHeight : h > _minHeight;
-                    bool maxOk = _mode == Mode.IncludeMin || _mode == Mode.ExcludeMin ? h <= _maxHeight : h < _maxHeight;
-                    if (minOk && maxOk)
+                    bool within = _mode switch
+                    {
+                        Mode.ExcludeMinExcludeMax => h > _minHeight && h < _maxHeight,
+                        Mode.IncludeMinExcludeMax => h >= _minHeight && h < _maxHeight,
+                        Mode.ExcludeMinIncludeMax => h > _minHeight && h <= _maxHeight,
+                        _ => h >= _minHeight && h <= _maxHeight,
+                    };
+                    if (within)
                     {
                         var pos = new RmgenVector2D(x, z);
                         if (constraint.Allows(pos)) points.Add(pos);

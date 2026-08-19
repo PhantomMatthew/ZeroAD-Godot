@@ -28,6 +28,14 @@ namespace ZeroAD.Sim.Rmgen.Common
         public List<string> Dirt = new();
         public string Road = "";
         public string RoadWild = "";
+        public string ShoreBlend = "";
+        public string Shore = "";
+        public string Water = "";
+
+        // ── 图专属 biome 字段（rmbiome/<map>/<name>.json 才有，如 alpine_valley）──
+        public string ForestFloor = "";
+        public List<string> HalfSnow = new();
+        public List<string> SnowLimited = new();
 
         // ── Gaia ──
         public string Tree1 = "";
@@ -66,6 +74,8 @@ namespace ZeroAD.Sim.Rmgen.Common
         {
             var c = (BiomeSet)MemberwiseClone();
             c.MainTerrain = new List<string>(MainTerrain);
+            c.HalfSnow = new List<string>(HalfSnow);
+            c.SnowLimited = new List<string>(SnowLimited);
             c.Cliff = new List<string>(Cliff);
             c.Hill = new List<string>(Hill);
             c.Dirt = new List<string>(Dirt);
@@ -128,6 +138,12 @@ namespace ZeroAD.Sim.Rmgen.Common
             Dirt = { "temperate_mud_01", "temperate_grass_mud_01" },
             Road = "temperate_paving_03",
             RoadWild = "temperate_paving_01",
+            ShoreBlend = "temperate_grass_dirt_01",
+            Shore = "temperate_rocks_dirt_01",
+            Water = "temperate_rocks_dirt_01",
+            ForestFloor = "temperate_forestfloor_01",
+            HalfSnow = { "temperate_grass_dirt_02" },
+            SnowLimited = { "temperate_rocks_dirt_01" },
             Tree1 = "gaia/tree/oak",
             Tree2 = "gaia/tree/oak_holly",
             Tree3 = "gaia/tree/oak_hungarian",
@@ -160,7 +176,11 @@ namespace ZeroAD.Sim.Rmgen.Common
             var set = TemperateDefault();   // defaultbiome.json 即 temperate 基线
             string biomeDir = Path.Combine(dataRoot, "maps", "random", "rmbiome");
             ApplyJsonFile(set, Path.Combine(biomeDir, "defaultbiome.json"));
-            ApplyJsonFile(set, Path.Combine(biomeDir, "generic", name + ".json"));
+            // name 带 "/" 时是图专属目录（如 alpine/winter → rmbiome/alpine/winter.json，
+            // 上游 setBiome 同样直接 loadBiomeFile(biomeID)）；否则走 generic/。
+            ApplyJsonFile(set, name.Contains('/')
+                ? Path.Combine(biomeDir, name + ".json")
+                : Path.Combine(biomeDir, "generic", name + ".json"));
             return set;
         }
 
@@ -226,6 +246,12 @@ namespace ZeroAD.Sim.Rmgen.Common
             AssignList(s.Dirt, t, "dirt");
             Assign(ref s.Road, t, "road");
             Assign(ref s.RoadWild, t, "roadWild");
+            Assign(ref s.ShoreBlend, t, "shoreBlend");
+            Assign(ref s.Shore, t, "shore");
+            Assign(ref s.Water, t, "water");
+            Assign(ref s.ForestFloor, t, "forestFloor");
+            AssignList(s.HalfSnow, t, "halfSnow");
+            AssignList(s.SnowLimited, t, "snowLimited");
         }
 
         private static void ApplyGaia(BiomeSet s, JsonElement g)

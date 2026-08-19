@@ -456,42 +456,82 @@ namespace ZeroAD.Sim.Rmgen.Common
                 double z = map.GetSize() / 2.0 + dist * Math.Sin(angle);
                 var pos = new RmgenVector2D(x, z);
                 pos.Floor();
-                var civ = GetCivCode(settings, p);
-
-                // CityPatch:外圈 roadWild、内圈 road,clPlayer 标整片基地区(半径 9)。
-                if (biome != null)
-                {
-                    for (int dz = -9; dz <= 9; dz++)
-                        for (int dx = -9; dx <= 9; dx++)
-                        {
-                            double r = Math.Sqrt(dx * dx + dz * dz);
-                            if (r > 9) continue;
-                            var tp = new RmgenVector2D(pos.X + dx, pos.Y + dz);
-                            if (!map.InMapBounds(tp)) continue;
-                            map.SetTexture(tp, r <= 5 ? biome.Road : biome.RoadWild);
-                            playerTileClass.Add(tp);
-                        }
-                }
-
-                map.PlaceEntityAnywhere($"structures/{civ}/civil_centre", p, pos, (float)angle);
-                playerTileClass.Add(pos);
-
-                // 起始单位(原版 placePlayerBases 的 units 组;兵种模板与 skirmish 占位同系)
-                for (int i = 0; i < 3; i++)
-                {
-                    double a = angle + 0.9 + i * 0.5;
-                    var up = new RmgenVector2D(pos.X + 6 * Math.Cos(a), pos.Y + 6 * Math.Sin(a));
-                    up.Floor();
-                    map.PlaceEntityAnywhere($"units/{civ}/support_female_citizen", p, up, (float)a);
-                }
-                for (int i = 0; i < 2; i++)
-                {
-                    double a = angle - 0.9 - i * 0.5;
-                    var up = new RmgenVector2D(pos.X + 7 * Math.Cos(a), pos.Y + 7 * Math.Sin(a));
-                    up.Floor();
-                    map.PlaceEntityAnywhere($"units/{civ}/infantry_spearman_b", p, up, (float)a);
-                }
+                PlacePlayerBase(map, GetCivCode(settings, p), p, pos, angle, playerTileClass,
+                    biome?.RoadWild, biome?.Road);
             }
+        }
+
+        /// <summary>显式位置版 placePlayerBases——配合 PlayerPlacementCircle（上游新流程：
+        /// 先 playerPlacement* 定位置，再把位置传给 placePlayerBases）。角度取位置相对图心的方向。
+        /// cityPatchOuter/Inner 可覆盖 CityPatch 贴图（默认 biome 的 roadWild/road；
+        /// 无 biome 图必须显式给出，否则不刷基地区）。</summary>
+        public static void PlacePlayerBases(RmgenRng rng, RandomMap map, MapSettings settings,
+            string baseTerrain, TileClass playerTileClass, BiomeSet? biome,
+            IReadOnlyList<RmgenVector2D> playerPositions,
+            string? cityPatchOuterTerrain = null, string? cityPatchInnerTerrain = null)
+        {
+            int numPlayers = GetNumPlayers(settings);
+            var center = map.GetCenter();
+            string? outer = cityPatchOuterTerrain ?? biome?.RoadWild;
+            string? inner = cityPatchInnerTerrain ?? biome?.Road;
+            for (int p = 1; p <= numPlayers; p++)
+            {
+                var pos = playerPositions[p - 1];
+                double angle = Math.Atan2(pos.Y - center.Y, pos.X - center.X);
+                PlacePlayerBase(map, GetCivCode(settings, p), p, pos, angle, playerTileClass, outer, inner);
+            }
+        }
+
+        private static void PlacePlayerBase(RandomMap map, string civ, int playerId,
+            RmgenVector2D pos, double angle, TileClass playerTileClass,
+            string? cityPatchOuterTerrain, string? cityPatchInnerTerrain)
+        {
+            // CityPatch:外圈 outer、内圈 inner,clPlayer 标整片基地区(半径 9)。
+            if (cityPatchOuterTerrain != null && cityPatchInnerTerrain != null)
+            {
+                for (int dz = -9; dz <= 9; dz++)
+                    for (int dx = -9; dx <= 9; dx++)
+                    {
+                        double r = Math.Sqrt(dx * dx + dz * dz);
+                        if (r > 9) continue;
+                        var tp = new RmgenVector2D(pos.X + dx, pos.Y + dz);
+                        if (!map.InMapBounds(tp)) continue;
+                        map.SetTexture(tp, r <= 5 ? cityPatchInnerTerrain : cityPatchOuterTerrain);
+                        playerTileClass.Add(tp);
+                    }
+            }
+
+            map.PlaceEntityAnywhere($"structures/{civ}/civil_centre", playerId, pos, (float)angle);
+            playerTileClass.Add(pos);
+
+            // 起始单位(原版 placePlayerBases 的 units 组;兵种模板与 skirmish 占位同系)
+            for (int i = 0; i < 3; i++)
+            {
+                double a = angle + 0.9 + i * 0.5;
+                var up = new RmgenVector2D(pos.X + 6 * Math.Cos(a), pos.Y + 6 * Math.Sin(a));
+                up.Floor();
+                map.PlaceEntityAnywhere($"units/{civ}/support_female_citizen", playerId, up, (float)a);
+            }
+            for (int i = 0; i < 2; i++)
+            {
+                double a = angle - 0.9 - i * 0.5;
+                var up = new RmgenVector2D(pos.X + 7 * Math.Cos(a), pos.Y + 7 * Math.Sin(a));
+                up.Floor();
+                map.PlaceEntityAnywhere($"units/{civ}/infantry_spearman_b", playerId, up, (float)a);
+            }
+        }
+
+        /// <summary>原版 playerPlacementCircle——startAngle 未给定时消耗 1 次 randomAngle(),
+        /// 位置按整圆等距分布后 round。</summary>
+        public static (List<int> playerIDs, List<RmgenVector2D> playerPosition, List<double> playerAngle,
+            double startAngle) PlayerPlacementCircle(RmgenRng rng, RandomMap map, int numPlayers,
+                double radius, double? startingAngle = null, RmgenVector2D? center = null)
+        {
+            double startAngle = startingAngle ?? rng.RandomAngle();
+            var (points, angles) = RmgenGeometry.DistributePointsOnCircle(
+                numPlayers, startAngle, radius, center ?? map.GetCenter());
+            var rounded = points.Select(p => { var q = p; q.Round(); return q; }).ToList();
+            return (Enumerable.Range(1, numPlayers).ToList(), rounded, angles, startAngle);
         }
 
         // ── wall_builder.js ──
