@@ -97,7 +97,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 new IPainter[]
                 {
                     new LayeredPainter(new object[] { tCliff, tGrass }, new[] { 3 }, rng),
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry, heightLand, 3),
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry, heightLand, 3),
                 },
                 null);
 
@@ -167,7 +167,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                         new LayeredPainter(new object[]
                             { tCliff, new object[] { tForestFloor, tForestFloor, tCliff } },
                             new[] { 2 }, rng),
-                        new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                        new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                             heightHill, hillSize < 50 ? 2 : 4),
                         new TileClassPainter(ClHill),
                     },
@@ -180,7 +180,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                         new IPainter[]
                         {
                             new LayeredPainter(new object[] { tCliff, tForestFloor }, new[] { 2 }, rng),
-                            new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                            new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                                 heightOffsetRavine, 3, relative: true),
                         },
                         RmgenLibrary.StayClasses(ClHill, 4),
@@ -191,7 +191,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     new IPainter[]
                     {
                         new LayeredPainter(new object[] { tCliff, tForestFloor }, new[] { 2 }, rng),
-                        new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                        new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                             heightRavineValley, 2),
                         new TileClassPainter(ClHill),
                     },
@@ -231,7 +231,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                         new IPainter[]
                         {
                             new LayeredPainter(new object[] { tCliff, tForestFloor }, new[] { 2 }, rng),
-                            new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                            new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                                 heightRavineValley, 2),
                         },
                         new AndConstraint(new IConstraint[]
@@ -246,7 +246,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                         new IPainter[]
                         {
                             new LayeredPainter(new object[] { tCliff, tForestFloor }, new[] { 2 }, rng),
-                            new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                            new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                                 heightRavineHill, 2),
                             new TileClassPainter(ClHill),
                         },

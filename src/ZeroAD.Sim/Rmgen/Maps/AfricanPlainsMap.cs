@@ -84,7 +84,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 {
                     new LayeredPainter(new object[] { tDirt2, tCliff, tGrassShrubs },
                         new[] { 1, 2 }, rng),
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Solid, 18, 2),
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Solid, 18, 2),
                     new TileClassPainter(ClHill),
                 },
                 RmgenLibrary.AvoidClasses(ClPlayer, 30, ClHill, 15),
@@ -97,7 +97,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 new IPainter[]
                 {
                     new LayeredPainter(new object[] { tShore, tWater }, new[] { 1 }, rng),
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                         heightSeaGround, 7),
                     new TileClassPainter(clWater),
                 },
@@ -113,7 +113,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     Math.Floor(RmgenLibrary.ScaleByMapSize(2, 5, MapSize)), 0),
                 new IPainter[]
                 {
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry, 2, 2,
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry, 2, 2,
                         relative: true),
                 },
                 RmgenLibrary.AvoidClasses(clWater, 2, ClPlayer, 20),

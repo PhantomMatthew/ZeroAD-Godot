@@ -62,7 +62,7 @@ namespace ZeroAD.Sim.Rmgen.Common
                 var placer = new ChainPlacer(rng, 1,
                     (int)RmgenLibrary.ScaleByMapSize(4, 6, map.GetSize()),
                     (int)RmgenLibrary.ScaleByMapSize(2, 5, map.GetSize()), 0, pos);
-                RmgenLibrary.CreateArea(placer, new SmoothElevationPainter(
+                RmgenLibrary.CreateArea(placer, new SmoothElevationPainter(rng,
                     SmoothElevationPainter.SmoothType.Blurry, elevation, 2), constraint);
             }
         }
@@ -92,7 +92,7 @@ namespace ZeroAD.Sim.Rmgen.Common
                     (int)RmgenLibrary.ScaleByMapSize(16, 40, map.GetSize()), 0.5, pos);
                 RmgenLibrary.CreateArea(placer, new IPainter[] {
                     new TerrainPainter(terrain, rng),
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Solid, elevation, 2),
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Solid, elevation, 2),
                     new TileClassPainter(tileClass)
                 }, constraint);
             }

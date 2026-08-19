@@ -132,7 +132,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     new MapBoundsPlacer(),
                     new IPainter[]
                     {
-                        new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                        new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                             heightSeaGround, 5),
                         new TileClassPainter(clWater),
                     },
@@ -187,7 +187,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 RmgenLibrary.CreateArea(
                     new ClumpPlacer(rng, RmgenGeometry.DiskArea(playerRadius), 0.95, 0.6,
                         double.PositiveInfinity, position),
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                         map.GetHeight(position), playerRadius / 2),
                     null);
 

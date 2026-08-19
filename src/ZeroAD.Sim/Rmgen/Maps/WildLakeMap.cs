@@ -157,7 +157,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 RmgenLibrary.CreateArea(
                     new ClumpPlacer(rng, RmgenGeometry.DiskArea(20), 0.8, 0.8,
                         double.PositiveInfinity, position),
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                         map.GetHeight(position), 20),
                     null);
 
@@ -321,7 +321,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 if (radius != 0)
                     RmgenLibrary.CreateArea(
                         new DiskPlacer(radius, resourceSpots[i]),
-                        new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                        new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                             map.GetHeight(resourceSpots[i]), radius / 3),
                         null);
             }

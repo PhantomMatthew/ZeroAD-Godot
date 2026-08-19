@@ -479,6 +479,24 @@ public sealed partial class Main : Node3D
 		if (System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_FOUNDATION") == "1")
 			FocusFoundationDeferred();
 
+		// dev 镜头钩子:ZEROAD_SHOT_DIST=<米> 设镜头距离(俯瞰验收地图全貌)。
+		if (float.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_DIST"), out float shotDist))
+		{
+			var cam = _camera;
+			ToSignal(GetTree().CreateTimer(1.0), SceneTreeTimer.SignalName.Timeout)
+				.OnCompleted(() => cam.SetDistance(shotDist));
+		}
+
+		// dev 镜头钩子:ZEROAD_SHOT_CENTER=x,z 镜头聚焦指定 sim 坐标(如 384,384 图心)。
+		string shotCenter = System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_CENTER") ?? "";
+		var scParts = shotCenter.Split(',');
+		if (scParts.Length == 2 && float.TryParse(scParts[0], out float scx) && float.TryParse(scParts[1], out float scz))
+		{
+			var cam = _camera;
+			ToSignal(GetTree().CreateTimer(1.0), SceneTreeTimer.SignalName.Timeout)
+				.OnCompleted(() => cam.SetFocus(new Vector3(scx, 0, scz)));
+		}
+
 		ZeroAD.Sim.Diag.Log("Tutorial", _isTutorial
 			? "Introductory Tutorial started"
 			: $"MS6 Game started: player={playerId}");

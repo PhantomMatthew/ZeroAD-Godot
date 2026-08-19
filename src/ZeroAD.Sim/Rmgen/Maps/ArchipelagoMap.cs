@@ -43,7 +43,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                         new[] { (int)Math.Floor(islandRadius) }),
                     new IPainter[]
                     {
-                        new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                        new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                             heightLand, 4),
                         new TileClassPainter(clLand),
                     },
@@ -57,7 +57,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     0.07, null, RmgenLibrary.ScaleByMapSize(30, 70, MapSize)),
                 new IPainter[]
                 {
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry, heightLand, 4),
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry, heightLand, 4),
                     new TileClassPainter(clLand),
                 },
                 null,
@@ -80,7 +80,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     Math.Floor(RmgenLibrary.ScaleByMapSize(2, 5, MapSize)), 0),
                 new IPainter[]
                 {
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry, 2, 2,
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry, 2, 2,
                         relative: true),
                 },
                 new AndConstraint(new IConstraint[]
@@ -104,7 +104,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     {
                         new LayeredPainter(new object[] { biome.MainTerrain, biome.Cliff, biome.Hill },
                             new[] { 1, 2 }, rng),
-                        new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Solid, 18, 2),
+                        new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Solid, 18, 2),
                         new TileClassPainter(ClHill),
                     },
                     hillConstraint,

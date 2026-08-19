@@ -42,7 +42,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             var mountainPainters = new IPainter[]
             {
                 new LayeredPainter(new object[] { biome.Cliff, biome.MainTerrain }, new[] { 3 }, rng),
-                new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry, heightMountain, 2),
+                new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry, heightMountain, 2),
                 new TileClassPainter(ClHill),
             };
             new MountainRangeBuilder(rng, NumPlayers,
@@ -67,7 +67,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     double.PositiveInfinity),
                 new IPainter[]
                 {
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                         heightOffsetBump, 2, relative: true),
                 },
                 RmgenLibrary.AvoidClasses(ClPlayer, 10),
@@ -80,7 +80,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 new IPainter[]
                 {
                     new LayeredPainter(new object[] { biome.Cliff, biome.SnowLimited }, new[] { 2 }, rng),
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry, heightMountain, 2),
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry, heightMountain, 2),
                     new TileClassPainter(ClHill),
                 },
                 RmgenLibrary.AvoidClasses(ClPlayer, 20, ClHill, 14),

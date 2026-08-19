@@ -45,13 +45,19 @@ namespace ZeroAD.Sim.Rmgen
     public sealed class LayeredPainter : IPainter
     {
         private readonly List<ITerrain> _terrains;
-        private readonly int[] _widths;
+        private readonly double[] _widths;
         private readonly RmgenRng _rng;
 
         /// <param name="terrains">string → 按 "tex|entity" 解析;string[]/List&lt;string&gt; →
         /// RandomTerrain;object[](string 与 string[] 混合,森林变体用) → 逐元素解析后 RandomTerrain;
         /// 已是 ITerrain 的直接用。</param>
         public LayeredPainter(IReadOnlyList<object> terrains, int[] widths, RmgenRng rng)
+            : this(terrains, System.Array.ConvertAll(widths, w => (double)w), rng)
+        {
+        }
+
+        /// <summary>浮点 widths 版（上游 widths 本就是浮点比较，如 oasis 的 forestDistance）。</summary>
+        public LayeredPainter(IReadOnlyList<object> terrains, double[] widths, RmgenRng rng)
         {
             _terrains = new List<ITerrain>();
             foreach (var t in terrains)
@@ -116,7 +122,8 @@ namespace ZeroAD.Sim.Rmgen
             {
                 var pt = ((int)p.X, (int)p.Y);
                 int distance = dist.TryGetValue(pt, out var dd) ? dd : int.MaxValue;
-                int width = 0, i = 0;
+                double width = 0;
+                int i = 0;
                 for (; i < _widths.Length; i++)
                 {
                     width += _widths[i];
@@ -142,9 +149,12 @@ namespace ZeroAD.Sim.Rmgen
         }
     }
 
-    /// <summary>SmoothElevationPainter（逐字移植 painter/SmoothElevationPainter.js，~189 行）。
-    /// BFS 平滑高度。Float32Array 存储中间结果（保真度关键）。
-    /// 简化版——完整版需 BFS 边界扩展 + cubic interpolation。</summary>
+    /// <summary>SmoothElevationPainter（逐字移植 painter/SmoothElevationPainter.js + 依赖的
+    /// breadthFirstSearchPaint）——以"到区域边界的 BFS 距离"（顶点级，border=1 起）把高度
+    /// 从现状渐变到目标值：a = distance ≤ blendRadius ? (distance-1)/blendRadius : 1；
+    /// SET: h = (1-a)*current + a*elevation；MODIFY: h = current + a*elevation。
+    /// 每个被刷顶点都消耗一次 randFloat(-0.5, 0.5)（乘 randomElevation，即便为 0 也抽）。
+    /// 末趟 3×3 邻域均值再与自身平均。newHeight 用 float 存储（Float32Array 保真）。</summary>
     public sealed class SmoothElevationPainter : IPainter
     {
         public enum SmoothType { Blurry, Solid }
@@ -153,44 +163,135 @@ namespace ZeroAD.Sim.Rmgen
         private readonly SmoothType _type;
         private readonly double _blendRadius;
         private readonly bool _relative;
+        private readonly double _randomElevation;
+        private readonly RmgenRng _rng;
 
         /// <param name="relative">true 对应上游 ELEVATION_MODIFY（相对抬升），
         /// false 为 ELEVATION_SET（绝对设定，既有调用方默认）。</param>
-        public SmoothElevationPainter(SmoothType type, double elevation, double blendRadius, bool relative = false)
-        { _type = type; _elevation = elevation; _blendRadius = blendRadius; _relative = relative; }
+        public SmoothElevationPainter(RmgenRng rng, SmoothType type, double elevation,
+            double blendRadius, bool relative = false, double randomElevation = 0)
+        {
+            _rng = rng;
+            _type = type; _elevation = elevation; _blendRadius = blendRadius;
+            _relative = relative; _randomElevation = randomElevation;
+        }
 
         public void Paint(Area area)
         {
             var map = RmgenLibrary.CurrentMap;
-            // 简化版：区域内设高度，边界做线性混合。
-            // TODO: 完整移植 BFS smoothing + Float32Array 中间存储
-            var areaSet = new HashSet<(int x, int y)>();
-            foreach (var p in area.GetPoints())
-                areaSet.Add(((int)p.X, (int)p.Y));
+            int heightmapSize = map.GetSize() + 1;   // 顶点网格比图块网格大 1
 
-            foreach (var p in area.GetPoints())
-                map.SetHeight(p, _relative ? map.GetHeight(p) + _elevation : _elevation);
+            // 记录改写前高度
+            var gotHeightPt = new byte[heightmapSize, heightmapSize];
+            var newHeight = new float[heightmapSize, heightmapSize];
 
-            // 简化边界混合
-            for (int r = 1; r <= _blendRadius; r++)
-            {
-                double weight = 1.0 - (double)r / (_blendRadius + 1);
-                foreach (var p in area.GetPoints())
+            // 收集区域内/相邻的顶点（brushSize=2 窗口）
+            const int brushSize = 2;
+            var heightPoints = new List<(int x, int z)>();
+            foreach (var point in area.GetPoints())
+                for (int dx = -1; dx < 1 + brushSize; ++dx)
                 {
-                    for (int dx = -1; dx <= 1; dx++)
-                        for (int dy = -1; dy <= 1; dy++)
+                    int nx = (int)point.X + dx;
+                    for (int dz = -1; dz < 1 + brushSize; ++dz)
+                    {
+                        int nz = (int)point.Y + dz;
+                        var position = new RmgenVector2D(nx, nz);
+                        if (map.ValidHeight(position) && gotHeightPt[nx, nz] == 0)
                         {
-                            if (dx == 0 && dy == 0) continue;
-                            int nx = (int)p.X + dx * r, ny = (int)p.Y + dy * r;
-                            if (areaSet.Contains((nx, ny))) continue;
-                            var pos = new RmgenVector2D(nx, ny);
-                            if (!map.ValidHeight(pos)) continue;
-                            double current = map.GetHeight(pos);
-                            map.SetHeight(pos, _relative
-                                ? current + _elevation * weight
-                                : current * (1 - weight) + _elevation * weight);
+                            newHeight[nx, nz] = (float)map.GetHeight(position);
+                            gotHeightPt[nx, nz] = 1;
+                            heightPoints.Add((nx, nz));
                         }
+                    }
                 }
+
+            // 顶点在区域内 ⟺ 它相邻的 4 个图块任一个在区域内
+            bool WithinArea(RmgenVector2D position)
+            {
+                foreach (var tv in RmgenGeometry.TileVertices)
+                    if (area.Contains(RmgenVector2D.Sub(position, tv)))
+                        return true;
+                return false;
+            }
+
+            // BFS：区域外边界点作种子（dist=0），向内逐圈距离递增
+            var saw = new byte[heightmapSize, heightmapSize];
+            var dist = new ushort[heightmapSize, heightmapSize];
+            bool WithinGrid(int x, int z) => Math.Min(x, z) >= 0 && Math.Max(x, z) < heightmapSize;
+
+            var pointQueue = new Queue<(int x, int z)>();
+            foreach (var point in area.GetPoints())
+                for (int dx = -1; dx < 1 + brushSize; ++dx)
+                {
+                    int nx = (int)point.X + dx;
+                    for (int dz = -1; dz < 1 + brushSize; ++dz)
+                    {
+                        int nz = (int)point.Y + dz;
+                        if (!WithinGrid(nx, nz) || WithinArea(new RmgenVector2D(nx, nz)) || saw[nx, nz] != 0)
+                            continue;
+                        saw[nx, nz] = 1;
+                        dist[nx, nz] = 0;
+                        pointQueue.Enqueue((nx, nz));
+                    }
+                }
+
+            while (pointQueue.Count > 0)
+            {
+                var (px, pz) = pointQueue.Dequeue();
+                int distance = dist[px, pz];
+                var p = new RmgenVector2D(px, pz);
+
+                if (WithinArea(p))
+                {
+                    double a = 1;
+                    if (distance <= _blendRadius)
+                        a = (distance - 1) / _blendRadius;
+
+                    if (!_relative)
+                        newHeight[px, pz] = (float)((1 - a) * map.GetHeight(p));
+
+                    newHeight[px, pz] += (float)(a * _elevation +
+                        _rng.RandFloat(-0.5, 0.5) * _randomElevation);
+                }
+
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    int nx = px + dx;
+                    for (int dz = -1; dz <= 1; ++dz)
+                    {
+                        int nz = pz + dz;
+                        if (!WithinGrid(nx, nz) || !WithinArea(new RmgenVector2D(nx, nz)) || saw[nx, nz] != 0)
+                            continue;
+                        saw[nx, nz] = 1;
+                        dist[nx, nz] = (ushort)(distance + 1);
+                        pointQueue.Enqueue((nx, nz));
+                    }
+                }
+            }
+
+            // 平滑收尾：3×3 邻域均值与自身再平均（只处理区域内顶点）
+            foreach (var (x, z) in heightPoints)
+            {
+                if (!WithinArea(new RmgenVector2D(x, z)))
+                    continue;
+
+                int count = 0;
+                double sum = 0;
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    int nx = x + dx;
+                    for (int dz = -1; dz <= 1; ++dz)
+                    {
+                        int nz = z + dz;
+                        if (map.ValidHeight(new RmgenVector2D(nx, nz)))
+                        {
+                            sum += newHeight[nx, nz];
+                            ++count;
+                        }
+                    }
+                }
+
+                map.SetHeight(new RmgenVector2D(x, z), (newHeight[x, z] + sum / count) / 2);
             }
         }
     }

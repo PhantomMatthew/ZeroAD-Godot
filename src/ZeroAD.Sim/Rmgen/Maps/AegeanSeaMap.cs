@@ -111,7 +111,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     Math.Floor(RmgenLibrary.ScaleByMapSize(2, 5, mapSize)), 0),
                 new IPainter[]
                 {
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry, 2, 2,
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry, 2, 2,
                         relative: true),
                 },
                 RmgenLibrary.AvoidClasses(clWater, 2, ClPlayer, 20),
@@ -141,7 +141,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     new IPainter[]
                     {
                         new LayeredPainter(new object[] { tGrass, tCliff, tHill }, new[] { 1, 2 }, rng),
-                        new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Solid, 18, 2),
+                        new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Solid, 18, 2),
                         new TileClassPainter(ClHill),
                     },
                     RmgenLibrary.AvoidClasses(ClPlayer, 20, ClForest, 1, ClHill, 15, clWater, 3),
@@ -205,7 +205,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     Math.Floor(RmgenLibrary.ScaleByMapSize(16, 40, mapSize)), 0.5),
                 new IPainter[]
                 {
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                         heightSeaBump, 3),
                 },
                 RmgenLibrary.StayClasses(clWater, 6),
@@ -219,7 +219,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 {
                     new LayeredPainter(new object[] { tShoreLower, tShoreUpper, tHill },
                         new[] { 2, 1 }, rng),
-                    new SmoothElevationPainter(SmoothElevationPainter.SmoothType.Blurry,
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
                         heightIsland, 4),
                     new TileClassPainter(clIsland),
                 },

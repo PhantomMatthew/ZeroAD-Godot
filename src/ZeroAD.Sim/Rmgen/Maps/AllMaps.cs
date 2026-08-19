@@ -71,12 +71,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "savanna_grass_b_wetseason";
     }
 
-    public sealed class OasisMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "desert_sand_dunes_100";
-    }
-
     public sealed class PersianHighlandsMap : StandardMap
     {
         protected override double HeightLand => 3;
