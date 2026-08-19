@@ -275,7 +275,8 @@ public sealed partial class Main : Node3D
 	private void StartSinglePlayer(uint seed)
 	{
 		// SP 同样走加载等待页(page_loading:进度条 + 提示卡),标题取所选地图名。
-		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(PickSkirmishMapRel()));
+		string spRel = PickSkirmishMapRel();
+		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(spRel), IsRandomMap(spRel));
 		AddChild(_loadingOverlay);
 		// 选图面板的槽位表(可能为 null = 旧默认 1v1);本地玩家 id = Human 槽的 id。
 		var slots = GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Slots;
@@ -323,7 +324,8 @@ public sealed partial class Main : Node3D
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		cfg.MapPath = map;
 		cfg.Seed = seed;   // rmgen 种子必须与 host 一致(cfg.Seed 的菜单值对 MP 无意义)
-		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(string.IsNullOrEmpty(map) ? PickSkirmishMapRel() : map));
+		string mpRel = string.IsNullOrEmpty(map) ? PickSkirmishMapRel() : map;
+		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(mpRel), IsRandomMap(mpRel));
 		AddChild(_loadingOverlay);
 		RunStagedGameplayLoad(seed, playerId, slots, tutorial: false, isMultiplayer: true, isHost: isHost);
 	}
@@ -346,6 +348,10 @@ public sealed partial class Main : Node3D
 		string name = System.IO.Path.GetFileNameWithoutExtension(rel).Replace('_', ' ').Trim();
 		return name.Length == 0 ? "Single Player" : char.ToUpperInvariant(name[0]) + name[1..];
 	}
+
+	/// <summary>random/ 前缀 = rmgen 地图(原版加载页标题据此换 "Generating …")。</summary>
+	private static bool IsRandomMap(string? rel) =>
+		rel != null && rel.StartsWith("random/", System.StringComparison.Ordinal);
 
 	/// <summary>阶段 1(重:模板解析+世界构建)。guard + InitWorld + MP 接线;返回生效槽位表。
 	/// 拆段是为加载等待页:阶段间 await 一帧让进度条重绘(见 StartTutorial)。</summary>

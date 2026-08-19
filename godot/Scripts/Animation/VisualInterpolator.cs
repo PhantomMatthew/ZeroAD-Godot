@@ -24,6 +24,10 @@ public sealed class VisualInterpolator
         public Node3D Node;
         public Vector3 Prev;
         public Vector3 Curr;
+        /// <summary>本 tick 是否移动(Curr != Prev)。静止单位跳过每帧的 Position 写入——
+        /// 写入即使值不变也会让引擎标脏重算全局变换/渲染脏区,几百个静止村民 ×60fps
+        /// 是纯浪费(实测 sim-paused 与基线的帧时差里 ~5ms 来自这套写入的传播)。</summary>
+        public bool Moving;
     }
 
     private readonly Dictionary<EntityId, Entry> _entries = new();
@@ -53,12 +57,17 @@ public sealed class VisualInterpolator
             // Teleport / path reset: snap, don't interpolate across the map.
             entry.Prev = simPos;
             entry.Curr = simPos;
+            entry.Moving = false;
             node.Position = simPos;
         }
         else
         {
             entry.Prev = entry.Curr;
             entry.Curr = simPos;
+            entry.Moving = entry.Curr != entry.Prev;
+            // 停下的一拍:补写一次落定位置(此前插值可能停在中途),之后静止期不再写。
+            if (!entry.Moving)
+                node.Position = entry.Curr;
         }
         _entries[entity] = entry;
     }
@@ -74,8 +83,10 @@ public sealed class VisualInterpolator
         float a = _alpha;
         // Value iteration is fine: Entry.Node is a reference, mutating its Position
         // property does not require re-storing the dictionary entry.
+        // 静止实体(Moving=false)跳过写入——见 Entry.Moving 注释。
         foreach (var entry in _entries.Values)
-            entry.Node.Position = entry.Prev.Lerp(entry.Curr, a);
+            if (entry.Moving)
+                entry.Node.Position = entry.Prev.Lerp(entry.Curr, a);
     }
 
     /// <summary>单位被销毁时移除其插值条目,避免对已 QueueFree 的节点写 Position。</summary>

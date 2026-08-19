@@ -22,7 +22,26 @@ public sealed partial class CursorService : Node
 
     private Texture2D? _arrow;
     private Texture2D? _arrowPadded;  // 33×33 透明垫边版(视觉一致),刷新规避用
+    private Texture2D? _wait;         // cursor-wait(加载页;热点 16,16 居中)
     private bool _toggle;
+    private bool _waitActive;
+
+    /// <summary>切到等待指针(原版 loading.js:Engine.SetCursor("cursor-wait"),
+    /// 热点 16,16 居中)。贴图缺失时保持箭头。</summary>
+    public void SetWaitCursor()
+    {
+        _wait ??= LoadCursorTexture("cursor-wait");
+        if (_wait == null) return;
+        _waitActive = true;
+        ApplyAll(_wait, new Vector2(16, 16));
+    }
+
+    /// <summary>恢复默认箭头(原版 reallyStartGame 的 Engine.ResetCursor())。</summary>
+    public void RestoreDefaultCursor()
+    {
+        _waitActive = false;
+        if (_arrow != null) ApplyAll(_arrow, Hotspot);
+    }
 
     public override void _Ready()
     {
@@ -54,7 +73,7 @@ public sealed partial class CursorService : Node
 
     private void InstallNow()
     {
-        if (_arrow != null) ApplyAll(_arrow);
+        if (_arrow != null) ApplyAll(_arrow, Hotspot);
     }
 
     /// <summary>焦点/尺寸变化后重设(macOS 全屏回退 workaround):交替两张视觉一致的
@@ -62,15 +81,16 @@ public sealed partial class CursorService : Node
     private void Reapply()
     {
         if (_arrow == null || _arrowPadded == null) return;
-        ApplyAll(_toggle ? _arrow : _arrowPadded);
+        if (_waitActive) { if (_wait != null) ApplyAll(_wait, new Vector2(16, 16)); return; }
+        ApplyAll(_toggle ? _arrow : _arrowPadded, Hotspot);
         _toggle = !_toggle;
     }
 
-    /// <summary>全部指针形状统一为原版箭头(Arrow/Ibeam/PointingHand/… 共 16 形)。</summary>
-    private static void ApplyAll(Texture2D tex)
+    /// <summary>全部指针形状统一为同一纹理(Arrow/Ibeam/PointingHand/… 共 16 形)。</summary>
+    private static void ApplyAll(Texture2D tex, Vector2 hotspot)
     {
         for (int i = 0; i <= (int)Input.CursorShape.Help; i++)
-            Input.SetCustomMouseCursor(tex, (Input.CursorShape)i, Hotspot);
+            Input.SetCustomMouseCursor(tex, (Input.CursorShape)i, hotspot);
     }
 
     /// <summary>优先 vendored 资源 res://assets/ui/cursors/{name}.png;缺失时从 binaries

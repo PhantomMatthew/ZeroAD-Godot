@@ -7,29 +7,47 @@ using Godot;
 
 namespace ZeroAD.Godot;
 
-// 加载等待页(对齐原版 gui/page_loading.xml + gui/loading/loading.xml 布局):
-// 全屏暗底 + 顶部居中进度条(50%±256, y 4..36,带百分比文本)+ 地图标题(LargeTitleText)
-// + 中央提示卡(对齐 TipDisplay:左图右文,50%±452 × 50%±196)。
-// 提示数据端口自原版 reference/tips:tipfiles.json 按 loadingScreenOccurrence_SP 加权选类,
-// 随机取一条(textFile 首行=标题其余=正文,imageFiles 随机一图,图在 art/textures/ui/tips/)。
-// 底部名言条(QuoteDisplay)留 backlog。
+// 加载等待页(逐元素对齐原版 gui/page_loading.xml + gui/loading/loading.xml):
+// ModernWindow 全屏底(12,12,12 + global/modern/background.png 拉伸,内缩 12/22);
+// 顶部居中进度条(50%±256, y 4..36);地图标题(LargeTitleText:sans-bold-24 白,
+// "Loading “map”" / random 图 "Generating “map”");中央提示卡(50%±452 × 50%±196 =
+// 904×392:左侧 512 方图 + 底部渐变 + 金线框,右侧羊皮纸底黑字标题/正文);
+// 底部名言条(QuoteDisplay:50%±448, 50%+230..100%-16,sans-bold-stroke-14 白,
+// 随机取 gui/text/quotes.txt 一行,\[..]/\n 转义还原)。加载期间指针切 cursor-wait
+// (原版 loading.js 的 SetCursor),退出恢复 default-arrow。
 public sealed partial class LoadingOverlay : CanvasLayer
 {
     private readonly LoadingProgressBar _bar;
+    private CursorService? _cursor;
 
-    public LoadingOverlay(string title)
+    public LoadingOverlay(string title, bool isRandom = false)
     {
         Layer = 100; // above everything
 
-        // 全屏暗底(ModernWindow 风格)。
-        var bg = new ColorRect { Color = new Color(0.05f, 0.045f, 0.04f, 1f) };
+        string? binDir = FindBinariesDir();
+
+        // ── ModernWindow 底:backcolor 12,12,12 + background.png(12 22 100%-12 100%-12)──
+        var bg = new ColorRect { Color = new Color(12f / 255f, 12f / 255f, 12f / 255f, 1f) };
         bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         bg.MouseFilter = Control.MouseFilterEnum.Stop;
         AddChild(bg);
+        var bgTex = LoadModern(binDir, "background.png");
+        if (bgTex != null)
+        {
+            var bgImg = new TextureRect
+            {
+                Texture = bgTex,
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Scale,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            bgImg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            bgImg.OffsetLeft = 12; bgImg.OffsetTop = 22;
+            bgImg.OffsetRight = -12; bgImg.OffsetBottom = -12;
+            AddChild(bgImg);
+        }
 
-        string? binDir = FindBinariesDir();
-
-        // 顶部居中进度条(50%±256, y 4..36;贴图合成见 LoadingProgressBar)。
+        // ── 顶部居中进度条(50%±256, y 4..36;贴图合成见 LoadingProgressBar)──
         _bar = new LoadingProgressBar
         {
             AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0f, AnchorBottom = 0f,
@@ -38,78 +56,259 @@ public sealed partial class LoadingOverlay : CanvasLayer
         _bar.Init(binDir);
         AddChild(_bar);
 
-        // 地图标题(y ~44,LargeTitleText 金色大号)。
+        // ── 地图标题(LargeTitleText:sans-bold-24 白居中;区域 36..提示卡顶,垂直居中)──
+        // 原版 TitleDisplay:random 图 "Generating “X”",其余 "Loading “X”"(中文引号同款)。
         var titleLbl = new Label
         {
-            Text = title,
+            Text = isRandom ? $"Generating “{title}”" : $"Loading “{title}”",
             HorizontalAlignment = HorizontalAlignment.Center,
-            AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0f, AnchorBottom = 0f,
-            OffsetLeft = -256, OffsetRight = 256, OffsetTop = 44, OffsetBottom = 76,
+            VerticalAlignment = VerticalAlignment.Center,
+            AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0f, AnchorBottom = 0.5f,
+            OffsetLeft = -452, OffsetRight = 452, OffsetTop = 36, OffsetBottom = -196,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         titleLbl.AddThemeFontSizeOverride("font_size", 24);
-        titleLbl.AddThemeColorOverride("font_color", new Color(1f, 0.89f, 0.58f));
+        titleLbl.AddThemeColorOverride("font_color", Colors.White);
+        titleLbl.AddThemeColorOverride("font_outline_color", Colors.Black);
+        titleLbl.AddThemeConstantOverride("outline_size", 4);
         AddChild(titleLbl);
 
-        // 中央提示卡(50%±452 × 50%±196,左图右文)。
-        var tipBox = new PanelContainer
+        BuildTipCard(binDir);
+        BuildQuote(binDir);
+    }
+
+    public override void _Ready()
+    {
+        // 原版 loading.js init:Engine.SetCursor("cursor-wait")。
+        _cursor = GetNodeOrNull<CursorService>("/root/CursorService");
+        _cursor?.SetWaitCursor();
+    }
+
+    public override void _ExitTree()
+    {
+        // 原版 reallyStartGame:Engine.ResetCursor() 回 default-arrow。
+        _cursor?.RestoreDefaultCursor();
+        _cursor = null;
+    }
+
+    /// <summary>进度 0..1(对齐原版 ProgressBar 百分比)。</summary>
+    public void SetProgress(float fraction) => _bar.SetProgress(fraction);
+
+    // ── 中央提示卡(904×392;TipDisplay.xml)──
+
+    private void BuildTipCard(string? binDir)
+    {
+        var card = new Control
         {
             AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0.5f, AnchorBottom = 0.5f,
             OffsetLeft = -452, OffsetRight = 452, OffsetTop = -196, OffsetBottom = 196,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        var tipBg = new StyleBoxFlat
-        {
-            BgColor = new Color(0.08f, 0.07f, 0.055f, 1f),
-            BorderColor = new Color(0.55f, 0.45f, 0.30f),
-            BorderWidthBottom = 2, BorderWidthTop = 2, BorderWidthLeft = 2, BorderWidthRight = 2,
-        };
-        tipBg.SetContentMarginAll(12);
-        tipBox.AddThemeStyleboxOverride("panel", tipBg);
-        AddChild(tipBox);
-
-        var hbox = new HBoxContainer();
-        hbox.AddThemeConstantOverride("separation", 16);
-        tipBox.AddChild(hbox);
+        AddChild(card);
 
         var (tipTitle, tipBody, tipTex) = PickTip();
+
+        // 左:金线框(0 4, 520×392)+ 方图(4 8, 512×384 居中)+ 底部渐变罩。
+        var frame = new Control
+        {
+            Position = new Vector2(0, 4),
+            Size = new Vector2(520, 392),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        card.AddChild(frame);
         if (tipTex != null)
         {
             var img = new TextureRect
             {
                 Texture = tipTex,
-                CustomMinimumSize = new Vector2(368, 368),
+                Position = new Vector2(4, 4),
+                Size = new Vector2(512, 384),
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
             };
-            hbox.AddChild(img);
+            frame.AddChild(img);
+            var gradient = LoadPublic(binDir, "tipdisplay/tip-image-gradient.png");
+            if (gradient != null)
+            {
+                var gradRect = new TextureRect
+                {
+                    Texture = gradient,
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                    StretchMode = TextureRect.StretchModeEnum.Scale,
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                };
+                gradRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                img.AddChild(gradRect);
+            }
+        }
+        AddBorderLines(binDir, frame);
+
+        // 右:羊皮纸底(556 0, 348×392)+ 黑字标题(sans-bold-16 居中)+ 装饰线 + 正文(14)。
+        var textArea = new Control
+        {
+            Position = new Vector2(556, 0),
+            Size = new Vector2(348, 392),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        card.AddChild(textArea);
+        var parchment = LoadPublicCropped(binDir, "tipdisplay/parchment.png", new Rect2I(0, 0, 318, 391));
+        if (parchment != null)
+        {
+            var parch = new TextureRect
+            {
+                Texture = parchment,
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Scale,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            parch.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            textArea.AddChild(parch);
+        }
+        else
+        {
+            // 素材缺失回退:米色平底(羊皮纸色)。
+            var flat = new ColorRect { Color = new Color(0.87f, 0.80f, 0.66f) };
+            flat.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            flat.MouseFilter = Control.MouseFilterEnum.Ignore;
+            textArea.AddChild(flat);
         }
 
-        var vbox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        vbox.AddThemeConstantOverride("separation", 10);
-        hbox.AddChild(vbox);
-
-        var tipTitleLbl = new Label
+        var titleLbl = new Label
         {
             Text = tipTitle,
+            Position = new Vector2(30, 25),
+            Size = new Vector2(348 - 60, 20),
             HorizontalAlignment = HorizontalAlignment.Center,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        tipTitleLbl.AddThemeFontSizeOverride("font_size", 20);
-        tipTitleLbl.AddThemeColorOverride("font_color", new Color(1f, 0.89f, 0.58f));
-        vbox.AddChild(tipTitleLbl);
+        titleLbl.AddThemeFontSizeOverride("font_size", 16);
+        titleLbl.AddThemeColorOverride("font_color", Colors.Black);
+        textArea.AddChild(titleLbl);
 
-        var tipTextLbl = new Label
+        // TipTitleDecoration:标题下的左右金饰线(tipdisplay/title-ornament.png)。
+        var ornament = LoadPublic(binDir, "tipdisplay/title-ornament.png");
+        if (ornament != null)
+        {
+            var orn = new TextureRect
+            {
+                Texture = ornament,
+                Position = new Vector2(30, 48),
+                Size = new Vector2(348 - 60, 8),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Tile,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            textArea.AddChild(orn);
+        }
+
+        var bodyLbl = new Label
         {
             Text = tipBody,
+            Position = new Vector2(30, 73),
+            Size = new Vector2(348 - 55, 392 - 133),
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        tipTextLbl.AddThemeFontSizeOverride("font_size", 15);
-        tipTextLbl.AddThemeColorOverride("font_color", new Color(0.88f, 0.86f, 0.82f));
-        vbox.AddChild(tipTextLbl);
+        bodyLbl.AddThemeFontSizeOverride("font_size", 14);
+        bodyLbl.AddThemeColorOverride("font_color", Colors.Black);
+        textArea.AddChild(bodyLbl);
     }
 
-    /// <summary>进度 0..1(对齐原版 ProgressBar 百分比)。</summary>
-    public void SetProgress(float fraction) => _bar.SetProgress(fraction);
+    /// <summary>TipImageFrame:四边 4px 金线(line_horiz/line_vert)+ 四角 4×4 角件。</summary>
+    private static void AddBorderLines(string? binDir, Control frame)
+    {
+        var horiz = LoadPublic(binDir, "global/border/line_horiz.png");
+        var vert = LoadPublic(binDir, "global/border/line_vert.png");
+        if (horiz == null || vert == null) return;
+
+        TextureRect Line(Texture2D tex, float l, float t, float r, float b)
+        {
+            var tr = new TextureRect
+            {
+                Texture = tex,
+                Position = new Vector2(l, t),
+                Size = new Vector2(r, b),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Tile,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            frame.AddChild(tr);
+            return tr;
+        }
+        // 上边/下边(内缩 4):横线拉伸
+        Line(horiz, 4, 0, 512, 4);
+        Line(horiz, 4, 388, 512, 4);
+        // 左边/右边
+        Line(vert, 0, 4, 4, 384);
+        Line(vert, 516, 4, 4, 384);
+        // 四角
+        foreach (var (file, x, y) in new[]
+        {
+            ("line_corner_top_left.png", 0f, 0f), ("line_corner_top_right.png", 516f, 0f),
+            ("line_corner_bottom_left.png", 0f, 388f), ("line_corner_bottom_right.png", 516f, 388f),
+        })
+        {
+            var tex = LoadPublic(binDir, "global/border/" + file);
+            if (tex == null) continue;
+            frame.AddChild(new TextureRect
+            {
+                Texture = tex,
+                Position = new Vector2(x, y),
+                Size = new Vector2(4, 4),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Keep,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            });
+        }
+    }
+
+    // ── 底部名言条(QuoteDisplay:quotes.txt 随机一行)──
+
+    private void BuildQuote(string? binDir)
+    {
+        string quote = PickQuote(binDir);
+        if (quote.Length == 0) return;
+        var lbl = new Label
+        {
+            Text = quote,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0.5f, AnchorBottom = 1f,
+            OffsetLeft = -448, OffsetRight = 448, OffsetTop = 230, OffsetBottom = -16,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        // LoadingText:sans-bold-stroke-14 白(黑描边)。
+        lbl.AddThemeFontSizeOverride("font_size", 14);
+        lbl.AddThemeColorOverride("font_color", Colors.White);
+        lbl.AddThemeColorOverride("font_outline_color", Colors.Black);
+        lbl.AddThemeConstantOverride("outline_size", 4);
+        AddChild(lbl);
+    }
+
+    private static string PickQuote(string? binDir)
+    {
+        try
+        {
+            if (binDir == null) return "";
+            string path = Path.Combine(binDir,
+                "data", "mods", "public", "gui", "text", "quotes.txt");
+            if (!File.Exists(path)) return "";
+            var lines = File.ReadAllLines(path);
+            var rng = new RandomNumberGenerator();
+            rng.Randomize();
+            for (int tries = 0; tries < 8; tries++)
+            {
+                string line = lines[(int)(rng.Randi() % lines.Length)].Trim();
+                if (line.Length == 0) continue;
+                // 原版文本转义:\[ \] 是字面方括号(GUI 文本引擎转义),\n 是换行。
+                return line.Replace("\\[", "[").Replace("\\]", "]").Replace("\\n", "\n");
+            }
+        }
+        catch (Exception ex) { ZeroAD.Sim.Diag.Warn("Loading", $"quote pick failed: {ex.Message}"); }
+        return "";
+    }
 
     // ── 提示目录(reference/tips 端口) ──
 
@@ -189,6 +388,41 @@ public sealed partial class LoadingOverlay : CanvasLayer
             ZeroAD.Sim.Diag.Err("Main", $"LoadingOverlay.PickTip failed: {ex.Message}");
             return ("Loading", "", null);
         }
+    }
+
+    // ── 贴图读取(binaries junction)──
+
+    /// <summary>mods/mod 的 modern 贴图(global/modern/xxx.png)。</summary>
+    private static Texture2D? LoadModern(string? binDir, string file)
+    {
+        if (binDir == null) return null;
+        var img = Image.LoadFromFile(Path.Combine(binDir,
+            "data", "mods", "mod", "art", "textures", "ui", "global", "modern", file));
+        return img != null ? ImageTexture.CreateFromImage(img) : null;
+    }
+
+    /// <summary>mods/public 的 ui 贴图(相对 art/textures/ui/,如 "tipdisplay/parchment.png")。</summary>
+    private static Texture2D? LoadPublic(string? binDir, string relPath)
+    {
+        if (binDir == null) return null;
+        var img = Image.LoadFromFile(Path.Combine(binDir,
+            "data", "mods", "public", "art", "textures", "ui",
+            relPath.Replace('/', Path.DirectorySeparatorChar)));
+        return img != null ? ImageTexture.CreateFromImage(img) : null;
+    }
+
+    /// <summary>LoadPublic + 源图裁剪(原版 real_texture_placement 语义:parchment.png 是
+    /// 512×512 画布,纸张本体只占左上 ~318×391,直接拉伸会把文字区留白算进去)。</summary>
+    private static Texture2D? LoadPublicCropped(string? binDir, string relPath, Rect2I region)
+    {
+        if (binDir == null) return null;
+        var img = Image.LoadFromFile(Path.Combine(binDir,
+            "data", "mods", "public", "art", "textures", "ui",
+            relPath.Replace('/', Path.DirectorySeparatorChar)));
+        if (img == null) return null;
+        if (region.Size.X < img.GetWidth() || region.Size.Y < img.GetHeight())
+            img = img.GetRegion(region);
+        return ImageTexture.CreateFromImage(img);
     }
 
     /// <summary>binaries/ 目录定位(与 FindTemplatesPath 同款 ../、../../ 回退)。</summary>

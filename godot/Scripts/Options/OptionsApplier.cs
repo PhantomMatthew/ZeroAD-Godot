@@ -63,9 +63,16 @@ public static class OptionsApplier
                 ApplyMouseGrab(cfg);   // 窗口模式变化后重估鼠标钳制
                 break;
             case "vsync":
-                DisplayServer.WindowSetVsyncMode(Bool(value)
+                // 上游 default.cfg 是 vsync=false;但 Engine.MaxFps 的 sleep 在 macOS 粒度太粗
+                // (上限 60 实测只出 ~50fps),vsync 关闭时它是唯一节拍器。故用户未显式选择时
+                // 默认开(显示节拍精确,实测 98fps@120Hz);用户在选项里关掉则回退到上限 pacing。
+                bool vsyncOn = cfg.GetUserValue("vsync") is { } userVsync
+                    ? userVsync == "true"
+                    : true;
+                DisplayServer.WindowSetVsyncMode(vsyncOn
                     ? DisplayServer.VSyncMode.Enabled
                     : DisplayServer.VSyncMode.Disabled);
+                ApplyFpsCap(cfg, inGame);   // vsync 开关节拍权变化,重估 FPS 上限
                 break;
             case "window.mousegrabinfullscreen":
             case "window.mousegrabinwindowmode":
@@ -110,10 +117,10 @@ public static class OptionsApplier
                 ApplyScaling3DMode(cfg, tree);
                 break;
             case "adaptivefps.menu":
-                if (!inGame) Engine.MaxFps = (int)Mathf.Clamp(Num(value, 60f), 20f, 360f);
+                if (!inGame) ApplyFpsCap(cfg, inGame);
                 break;
             case "adaptivefps.session":
-                if (inGame) Engine.MaxFps = (int)Mathf.Clamp(Num(value, 60f), 20f, 360f);
+                if (inGame) ApplyFpsCap(cfg, inGame);
                 break;
 
             // ── ⬜ 其余 70 余项:列出并持久化,Godot 无对应或消费方未落地(rendererbackend/
@@ -185,6 +192,20 @@ public static class OptionsApplier
             ? "window.mousegrabinfullscreen"
             : "window.mousegrabinwindowmode"));
         Input.MouseMode = grab ? Input.MouseModeEnum.Confined : Input.MouseModeEnum.Visible;
+    }
+
+    /// <summary>FPS 上限:vsync 开启时由显示节拍 pacing,装 Engine.MaxFps 反而有害——
+    /// 其 sleep 粒度在 macOS 上把 ~6ms 的帧过冲到 ~20ms(实测上限 60 只跑出 ~50fps;
+    /// vsync-only 98fps)。vsync 关闭时才按 adaptivefps.menu/.session 装上限。</summary>
+    private static void ApplyFpsCap(UserConfig cfg, bool inGame)
+    {
+        if (DisplayServer.WindowGetVsyncMode() == DisplayServer.VSyncMode.Enabled)
+        {
+            Engine.MaxFps = 0;
+            return;
+        }
+        string key = inGame ? "adaptivefps.session" : "adaptivefps.menu";
+        Engine.MaxFps = (int)Mathf.Clamp(Num(cfg.GetEffective(key), 60f), 20f, 360f);
     }
 
     /// <summary>对齐原版 configToValue:boolean 即 =="true"。</summary>

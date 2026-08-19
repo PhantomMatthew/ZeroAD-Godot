@@ -1508,32 +1508,16 @@ public sealed partial class HUD : CanvasLayer
 
         // 编队组图标条刷新(签名防抖:组集+各组成员数不变不重建)。
         RefreshGroupRow();
-        // 研究进度条刷新(任一己方在研建筑 → 图标+名+进度)。
-        RefreshResearchProgress();
 
-        var player = _sim.GetPlayer();
-        if (player != null)
+        // 顶栏资源/采集人数/研究进度:两个全实体扫描(GetGathererCounts、
+        // RefreshResearchProgress 都遍历 AllEntities)——降频到 4Hz(数值 10Hz tick 才变,
+        // 4Hz 刷新无视觉差异;此前每帧两次全表扫描约占 3ms)。
+        _topBarAccum += (float)delta;
+        if (_topBarAccum >= 0.25f)
         {
-            _resourceCounters[0].Count.Text = player.Food.ToString();
-            _resourceCounters[1].Count.Text = player.Wood.ToString();
-            _resourceCounters[2].Count.Text = player.Stone.ToString();
-            _resourceCounters[3].Count.Text = player.Metal.ToString();
-            _resourceCounters[4].Count.Text = $"{player.PopUsed}/{player.PopulationLimit}";
-
-            int[] gatherers = { 0, 0, 0, 0 };
-            var counts = _sim.Gui.GetGathererCounts(playerId: 1);
-            gatherers[(int)ResourceType.Wood] = counts[ResourceType.Wood];
-            gatherers[(int)ResourceType.Food] = counts[ResourceType.Food];
-            gatherers[(int)ResourceType.Stone] = counts[ResourceType.Stone];
-            gatherers[(int)ResourceType.Metal] = counts[ResourceType.Metal];
-            for (int i = 0; i < 4; i++)
-            {
-                int g = gatherers[i];
-                _resourceCounters[i].Stats.Text = g > 0 ? $"+{g}" : "";
-                _resourceCounters[i].Stats.AddThemeColorOverride("font_color",
-                    g > 0 ? new Color(1f, 0.84f, 0f) : new Color(0.78f, 0.78f, 0.78f));
-            }
-            _resourceCounters[4].Stats.Text = "";
+            _topBarAccum = 0f;
+            RefreshResearchProgress();
+            RefreshTopBar();
         }
 
         var selected = _main.SelectedEntities;
@@ -1544,6 +1528,35 @@ public sealed partial class HUD : CanvasLayer
         }
 
         UpdateSelectionPanel(selected);
+    }
+
+    private float _topBarAccum;
+
+    /// <summary>顶栏资源计数 + 各资源采集人数(4Hz 调用;GetGathererCounts 全实体扫描在此)。</summary>
+    private void RefreshTopBar()
+    {
+        var player = _sim.GetPlayer();
+        if (player == null) return;
+        _resourceCounters[0].Count.Text = player.Food.ToString();
+        _resourceCounters[1].Count.Text = player.Wood.ToString();
+        _resourceCounters[2].Count.Text = player.Stone.ToString();
+        _resourceCounters[3].Count.Text = player.Metal.ToString();
+        _resourceCounters[4].Count.Text = $"{player.PopUsed}/{player.PopulationLimit}";
+
+        int[] gatherers = { 0, 0, 0, 0 };
+        var counts = _sim.Gui.GetGathererCounts(playerId: 1);
+        gatherers[(int)ResourceType.Wood] = counts[ResourceType.Wood];
+        gatherers[(int)ResourceType.Food] = counts[ResourceType.Food];
+        gatherers[(int)ResourceType.Stone] = counts[ResourceType.Stone];
+        gatherers[(int)ResourceType.Metal] = counts[ResourceType.Metal];
+        for (int i = 0; i < 4; i++)
+        {
+            int g = gatherers[i];
+            _resourceCounters[i].Stats.Text = g > 0 ? $"+{g}" : "";
+            _resourceCounters[i].Stats.AddThemeColorOverride("font_color",
+                g > 0 ? new Color(1f, 0.84f, 0f) : new Color(0.78f, 0.78f, 0.78f));
+        }
+        _resourceCounters[4].Stats.Text = "";
     }
 
     private static bool SelectionEqual(IReadOnlySet<EntityId> a, IReadOnlySet<EntityId> b)

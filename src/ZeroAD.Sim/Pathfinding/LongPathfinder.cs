@@ -141,42 +141,47 @@ public sealed class LongPathfinder
     private int _jpsGoalI, _jpsGoalJ;
     private PassClass _jpsPass;
 
-    /// <summary>JPS 跳跃:沿 (di,dj) 直行,遇跳跃点(目标/含被迫邻点)返回之,撞墙返回 null。</summary>
+    /// <summary>JPS 跳跃:沿 (di,dj) 直行,遇跳跃点(目标/含被迫邻点)返回之,撞墙返回 null。
+    /// 迭代实现(递归版在 2752² 开阔区单次搜索 300 万次调用,调用开销即 ~20ms 主因;
+    /// 扫描序列与返回值与递归版逐一对位,输出路径不变)。</summary>
     private (int i, int j)? Jump(int ci, int cj, int di, int dj)
     {
-        int ni = ci + di, nj = cj + dj;
-        if (!Passable(ni, nj, _jpsPass)) return null;
-        if (ni == _jpsGoalI && nj == _jpsGoalJ) return (ni, nj);
+        int ni = ci, nj = cj;
+        while (true)
+        {
+            ni += di; nj += dj;
+            if (!Passable(ni, nj, _jpsPass)) return null;
+            if (ni == _jpsGoalI && nj == _jpsGoalJ) return (ni, nj);
 
-        if (di != 0 && dj != 0)
-        {
-            // 对角:被迫邻点检查(两侧开阔但邻侧受阻)
-            if ((Passable(ni - di, nj + dj, _jpsPass) && !Passable(ni - di, nj, _jpsPass))
-                || (Passable(ni + di, nj - dj, _jpsPass) && !Passable(ni, nj - dj, _jpsPass)))
-                return (ni, nj);
-            // 递归:两正交分量任一有跳跃点 → 本点即跳跃点
-            if (Jump(ni, nj, di, 0).HasValue || Jump(ni, nj, 0, dj).HasValue)
-                return (ni, nj);
+            if (di != 0 && dj != 0)
+            {
+                // 对角:被迫邻点检查(两侧开阔但邻侧受阻)
+                if ((Passable(ni - di, nj + dj, _jpsPass) && !Passable(ni - di, nj, _jpsPass))
+                    || (Passable(ni + di, nj - dj, _jpsPass) && !Passable(ni, nj - dj, _jpsPass)))
+                    return (ni, nj);
+                // 两正交分量任一有跳跃点 → 本点即跳跃点(每步在不同行/列扫描,无法去重)。
+                if (Jump(ni, nj, di, 0).HasValue || Jump(ni, nj, 0, dj).HasValue)
+                    return (ni, nj);
+            }
+            else if (di != 0)
+            {
+                if ((Passable(ni + di, nj + 1, _jpsPass) && !Passable(ni, nj + 1, _jpsPass))
+                    || (Passable(ni + di, nj - 1, _jpsPass) && !Passable(ni, nj - 1, _jpsPass)))
+                    return (ni, nj);
+            }
+            else
+            {
+                if ((Passable(ni + 1, nj + dj, _jpsPass) && !Passable(ni + 1, nj, _jpsPass))
+                    || (Passable(ni - 1, nj + dj, _jpsPass) && !Passable(ni - 1, nj, _jpsPass)))
+                    return (ni, nj);
+            }
         }
-        else if (di != 0)
-        {
-            if ((Passable(ni + di, nj + 1, _jpsPass) && !Passable(ni, nj + 1, _jpsPass))
-                || (Passable(ni + di, nj - 1, _jpsPass) && !Passable(ni, nj - 1, _jpsPass)))
-                return (ni, nj);
-        }
-        else
-        {
-            if ((Passable(ni + 1, nj + dj, _jpsPass) && !Passable(ni + 1, nj, _jpsPass))
-                || (Passable(ni - 1, nj + dj, _jpsPass) && !Passable(ni - 1, nj, _jpsPass)))
-                return (ni, nj);
-        }
-        return Jump(ni, nj, di, dj);
     }
 
-    /// <summary>JPS 邻点方向剪枝:按来向保留自然邻 + 被迫邻(无来向=起点,全 8 向)。</summary>
     private static readonly (int di, int dj)[] _allDirs =
         { (-1,-1), (0,-1), (1,-1), (-1,0), (1,0), (-1,1), (0,1), (1,1) };
 
+    /// <summary>JPS 邻点方向剪枝:按来向保留自然邻 + 被迫邻(无来向=起点,全 8 向)。</summary>
     private IEnumerable<(int di, int dj)> NeighborDirs(SparseGrid<Tile> tiles, int ci, int cj, Tile cur)
     {
         if (!cur.HasPred)

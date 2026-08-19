@@ -1235,6 +1235,7 @@ public sealed partial class SimBridge : Node
 		foreach (var node in _entityNodes.Values)
 			node.QueueFree();
 		_entityNodes.Clear();
+		_floraBatch?.Clear();   // 合批 MultiMesh 一并清(实体经下方 CreateVisualFor 重入批)
 		_animators.Clear();
 		_animState.Clear();
 		_lastPos.Clear();
@@ -1290,6 +1291,7 @@ public sealed partial class SimBridge : Node
 			node.QueueFree();
 			_entityNodes.Remove(entity);
 		}
+		_floraBatch?.Remove(entity);   // 合批实体:回收 MultiMesh 槽位(无锚点时 no-op)
 		_animators.Remove(entity);
 		_animState.Remove(entity);
 		_lastPos.Remove(entity);
@@ -2466,6 +2468,19 @@ public sealed partial class SimBridge : Node
 	private string _lastSpawnedTemplate = "";
 	private Color _lastPlayerColor = new(0.6f, 0.5f, 0.4f);
 
+	// 静态 gaia 资源合批(FloraBatcher 类注释有完整设计);锚点容器与 Units 平级。
+	private FloraBatcher? _floraBatch;
+	private Node3D? _floraAnchors;
+
+	private void EnsureFloraBatcher()
+	{
+		if (_floraBatch != null) return;
+		var worldRoot = UnitContainer.GetParent<Node3D>();
+		_floraBatch = new FloraBatcher(worldRoot);
+		_floraAnchors = new Node3D { Name = "FloraAnchors" };
+		worldRoot.AddChild(_floraAnchors);
+	}
+
 	private void CreateVisualFor(EntityId entity, Color color, float size, bool isBuilding = false, bool isGhost = false, string? templateName = null)
 	{
 		var identity = _sim.QueryInterface<IdentityComponent>(entity);
@@ -2475,6 +2490,40 @@ public sealed partial class SimBridge : Node
 			?? _lastSpawnedTemplate
 			?? name;
 		Node3D? visual = null;
+
+		// 静态 gaia 资源(树/石/矿;无 Health = 非动物)走 MultiMesh 合批:网格并入
+		// 按(模板×变体)分桶的 MultiMeshInstance3D,实体只留无网格锚点(选择圈/诊断仍按
+		// EntityNodes 工作;锚点不进 UnitContainer → 不产阴影代理)。mirage 不合批——
+		// 雾中变暗是逐节点材质处理,量小。
+		if (!isGhost && System.Environment.GetEnvironmentVariable("ZEROAD_NO_FLORA_BATCH") == null
+			&& _sim.QueryInterface<MirageComponent>(entity) == null
+			&& Templates != null && template.StartsWith("gaia/", System.StringComparison.Ordinal))
+		{
+			TemplateStats? st = null;
+			try { st = Templates.ExtractStats(template); } catch { }
+			if (st is { HasHealth: false })
+			{
+				var pos0 = _sim.QueryInterface<PositionComponent>(entity);
+				if (pos0 != null)
+				{
+					float wx = pos0.Position.X.ToFloat();
+					float wz = pos0.Position.Z.ToFloat();
+					var worldPos = new Vector3(wx, TerrainHeightService.Sample(wx, wz), wz);
+					// 朝向用实体 id 哈希(锚点旋转由生成路径后设,与网格解耦;树木无需地图 yaw)。
+					float yaw = entity.Value * 2.399963f;  // 黄金角,确定性的伪随机朝向
+					EnsureFloraBatcher();
+					if (_floraBatch!.Add(entity, template, worldPos, yaw))
+					{
+						var anchor = new Node3D { Position = worldPos };
+						anchor.SetMeta("entityId", (int)entity.Value);
+						_floraAnchors!.AddChild(anchor);
+						_entityNodes[entity] = anchor;
+						_entityCacheDirty = true;
+						return;
+					}
+				}
+			}
+		}
 
 		if (!isGhost)
 		{
@@ -2528,6 +2577,8 @@ public sealed partial class SimBridge : Node
 		_territoryWorld.Update();
 		foreach (var kvp in _entityNodes)
 		{
+			// 合批实体(树/石/矿)位置永不变,跳过 tick 级位置同步。
+			if (_floraBatch != null && _floraBatch.Contains(kvp.Key)) continue;
 			var pos = _sim.QueryInterface<PositionComponent>(kvp.Key);
 			if (pos == null) continue;
 			var node = kvp.Value;
@@ -2575,7 +2626,11 @@ public sealed partial class SimBridge : Node
 			var vis = _range.GetLosVisibility(kvp.Key, lp);
 			if (_lastVis.TryGetValue(kvp.Key, out var old) && old == vis) continue;
 			_lastVis[kvp.Key] = vis;
-			ApplyVisibility(kvp.Value, vis);
+			// 合批实体(树/石/矿):雾隐 = 实例零缩放(锚点无网格,ApplyVisibility 无效)。
+			if (_floraBatch != null && _floraBatch.Contains(kvp.Key))
+				_floraBatch.SetVisible(kvp.Key, vis != LosVisibility.Hidden);
+			else
+				ApplyVisibility(kvp.Value, vis);
 		}
 	}
 
