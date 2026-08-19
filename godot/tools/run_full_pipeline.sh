@@ -129,6 +129,9 @@ for ui_sub in pregame/backgrounds pregame/shell/logo global/button/button_stone_
 done
 echo "  UI: $(ls "$OUT/ui/"*.png 2>/dev/null | wc -l | tr -d ' ') files"
 
+# 文明徽标(HUD 顶条,LoadTex 读 res://assets/ui):保留目录结构拷贝
+mkdir -p "$OUT/ui/session/portraits"
+cp -R "$UI_SRC/session/portraits/emblems" "$OUT/ui/session/portraits/" 2>/dev/null || true
 # ---- Summary ----
 echo ""
 echo "============================================"

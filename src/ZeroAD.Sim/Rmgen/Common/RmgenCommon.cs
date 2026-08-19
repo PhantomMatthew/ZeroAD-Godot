@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using ZeroAD.Sim.RmgenMath;
 
@@ -456,7 +457,7 @@ namespace ZeroAD.Sim.Rmgen.Common
                 double z = map.GetSize() / 2.0 + dist * Math.Sin(angle);
                 var pos = new RmgenVector2D(x, z);
                 pos.Floor();
-                PlacePlayerBase(map, GetCivCode(settings, p), p, pos, angle, playerTileClass,
+                PlacePlayerBase(map, settings, GetCivCode(settings, p), p, pos, playerTileClass,
                     biome?.RoadWild, biome?.Road);
             }
         }
@@ -472,7 +473,6 @@ namespace ZeroAD.Sim.Rmgen.Common
             IReadOnlyList<int>? playerIDs = null)
         {
             int numPlayers = GetNumPlayers(settings);
-            var center = map.GetCenter();
             string? outer = cityPatchOuterTerrain ?? biome?.RoadWild;
             string? inner = cityPatchInnerTerrain ?? biome?.Road;
             for (int i = 0; i < numPlayers; i++)
@@ -480,13 +480,12 @@ namespace ZeroAD.Sim.Rmgen.Common
                 // 上游 placePlayerBases：PlayerPlacement=[playerIDs, playerPosition] 按序配对
                 int p = playerIDs?[i] ?? (i + 1);
                 var pos = playerPositions[i];
-                double angle = Math.Atan2(pos.Y - center.Y, pos.X - center.X);
-                PlacePlayerBase(map, GetCivCode(settings, p), p, pos, angle, playerTileClass, outer, inner);
+                PlacePlayerBase(map, settings, GetCivCode(settings, p), p, pos, playerTileClass, outer, inner);
             }
         }
 
-        private static void PlacePlayerBase(RandomMap map, string civ, int playerId,
-            RmgenVector2D pos, double angle, TileClass playerTileClass,
+        private static void PlacePlayerBase(RandomMap map, MapSettings settings, string civ, int playerId,
+            RmgenVector2D pos, TileClass playerTileClass,
             string? cityPatchOuterTerrain, string? cityPatchInnerTerrain)
         {
             // CityPatch:外圈 outer、内圈 inner,clPlayer 标整片基地区(半径 9)。
@@ -504,25 +503,69 @@ namespace ZeroAD.Sim.Rmgen.Common
                     }
             }
 
-            map.PlaceEntityAnywhere($"structures/{civ}/civil_centre", playerId, pos, (float)angle);
+            // 上游 placeCivDefaultStartingEntities：civ JSON 的 StartEntities 全表——
+            // CC 居中 + 其余按环形布局，统一 BUILDING_ORIENTATION=-π/4 朝向。
+            // 覆盖各族完整起始阵容（germ 的 wagon、maur 的大象、kush 的医师等）。
+            PlaceStartingEntities(map, pos, playerId,
+                GetStartingEntities(settings.DataRoot, civ), 6, -SafeMath.PI / 4);
             playerTileClass.Add(pos);
-
-            // 起始单位(原版 placePlayerBases 的 units 组;兵种模板与 skirmish 占位同系)
-            for (int i = 0; i < 3; i++)
-            {
-                double a = angle + 0.9 + i * 0.5;
-                var up = new RmgenVector2D(pos.X + 6 * Math.Cos(a), pos.Y + 6 * Math.Sin(a));
-                up.Floor();
-                map.PlaceEntityAnywhere($"units/{civ}/support_female_citizen", playerId, up, (float)a);
-            }
-            for (int i = 0; i < 2; i++)
-            {
-                double a = angle - 0.9 - i * 0.5;
-                var up = new RmgenVector2D(pos.X + 7 * Math.Cos(a), pos.Y + 7 * Math.Sin(a));
-                up.Floor();
-                map.PlaceEntityAnywhere($"units/{civ}/infantry_spearman_b", playerId, up, (float)a);
-            }
         }
+
+        /// <summary>civs/{civ}.json 的 StartEntities（上游 g_CivData[civ].StartEntities）。
+        /// 按 dataRoot 缓存整目录；数据缺失回退通用阵容（CC + 4 平民 + 2 矛兵）。</summary>
+        public static List<(string Template, int Count)> GetStartingEntities(string? dataRoot, string civ)
+        {
+            if (dataRoot != null)
+            {
+                if (s_startEntitiesCache == null || s_startEntitiesCacheRoot != dataRoot)
+                {
+                    s_startEntitiesCacheRoot = dataRoot;
+                    s_startEntitiesCache = new Dictionary<string, List<(string, int)>>(StringComparer.Ordinal);
+                    string civsDir = Path.Combine(dataRoot, "simulation", "data", "civs");
+                    if (Directory.Exists(civsDir))
+                        foreach (var file in Directory.GetFiles(civsDir, "*.json"))
+                        {
+                            try
+                            {
+                                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(file));
+                                string code = doc.RootElement.TryGetProperty("Code", out var c)
+                                    ? c.GetString() ?? "" : "";
+                                if (code.Length == 0 ||
+                                    !doc.RootElement.TryGetProperty("StartEntities", out var se))
+                                    continue;
+                                var list = new List<(string, int)>();
+                                foreach (var item in se.EnumerateArray())
+                                {
+                                    string tmpl = item.TryGetProperty("Template", out var t)
+                                        ? t.GetString() ?? "" : "";
+                                    int count = item.TryGetProperty("Count", out var n)
+                                        ? n.GetInt32() : 1;
+                                    if (tmpl.Length > 0)
+                                        list.Add((tmpl, count));
+                                }
+                                if (list.Count > 0)
+                                    s_startEntitiesCache[code] = list;
+                            }
+                            catch (Exception)
+                            {
+                                // 单个 civ JSON 解析失败 → 跳过（回退通用阵容）
+                            }
+                        }
+                }
+                if (s_startEntitiesCache != null &&
+                    s_startEntitiesCache.TryGetValue(civ, out var found))
+                    return found;
+            }
+            return new List<(string, int)>
+            {
+                ($"structures/{civ}/civil_centre", 1),
+                ($"units/{civ}/support_civilian", 4),
+                ($"units/{civ}/infantry_spearman_b", 2),
+            };
+        }
+
+        private static string? s_startEntitiesCacheRoot;
+        private static Dictionary<string, List<(string Template, int Count)>>? s_startEntitiesCache;
 
         /// <summary>原版 playerPlacementCircle——startAngle 未给定时消耗 1 次 randomAngle(),
         /// 位置按整圆等距分布后 round。</summary>

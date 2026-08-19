@@ -76,9 +76,11 @@ public sealed partial class HUD : CanvasLayer
     private static readonly Dictionary<string, string> CivEmblemNames = new(System.StringComparer.Ordinal)
     {
         ["athen"] = "athenians", ["spart"] = "spartans", ["gaul"] = "celts",
-        ["brit"] = "britons", ["rome"] = "romans", ["kart"] = "carthaginians",
+        ["brit"] = "britons", ["rome"] = "romans", ["cart"] = "carthaginians",
+        ["kart"] = "carthaginians",
         ["ptol"] = "ptolemies", ["sele"] = "seleucids", ["kush"] = "kushites",
         ["maur"] = "mauryas", ["iber"] = "iberians", ["pers"] = "achaemenids",
+        ["achae"] = "achaemenids", ["germ"] = "germ", ["han"] = "han",
         ["theb"] = "thebans", ["mace"] = "macedonians",
     };
 

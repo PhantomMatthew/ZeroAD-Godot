@@ -393,11 +393,15 @@ public sealed partial class Main : Node3D
 						// 槽位文明须与地图一致(TechnologyManager 文明键在世界构建时定型)。
 						new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "spart" },
 					}
-				: new List<ZeroAD.Sim.Net.PlayerSlotSetup>
-				{
-					new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human, Civ = "athen", Team = -1 },
-					new() { PlayerId = 2, Kind = ZeroAD.Sim.Net.PlayerSlotKind.AI,    Civ = "gaul",  Team = -1 },
-				});
+			: new List<ZeroAD.Sim.Net.PlayerSlotSetup>
+			{
+				new() { PlayerId = 1, Kind = ZeroAD.Sim.Net.PlayerSlotKind.Human,
+					Civ = System.Environment.GetEnvironmentVariable("ZEROAD_CIV") is { Length: > 0 } c1 ? c1 : "athen",
+					Team = -1 },
+				new() { PlayerId = 2, Kind = ZeroAD.Sim.Net.PlayerSlotKind.AI,
+					Civ = System.Environment.GetEnvironmentVariable("ZEROAD_CIV2") is { Length: > 0 } c2 ? c2 : "gaul",
+					Team = -1 },
+			});
 		_sim.InitWorld(templatesPath, seed, playerId, role, effectiveSlots);
 		_worldSlots = effectiveSlots;   // rmgen 玩家 civ 列表(SetupRmgenTerrain)等用
 		ZeroAD.Sim.Diag.Log("Tutorial", "InitWorld done");
