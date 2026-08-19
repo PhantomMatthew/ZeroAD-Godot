@@ -126,6 +126,13 @@ public sealed partial class RTSCamera : Camera3D
         UpdateTransform();
     }
 
+    /// <summary>dev 截图钩子用：直接设镜头距离（夹在 Min/Max 内）。</summary>
+    public void SetDistance(float distance)
+    {
+        _distance = Mathf.Clamp(distance, MinDistance, MaxDistance);
+        UpdateTransform();
+    }
+
     /// <summary>按场景 XML 的作者机位恢复开局视角(原版 GameView 语义:Position +
     /// Rotation(航向,0=朝 +z 北) + Declination(俯角)三者直接决定画面;此前忽略
     /// 两个角度、从"机位→CC"向量反推,Arcadia 视角因此跑偏)。聚焦点 = 视线与地面

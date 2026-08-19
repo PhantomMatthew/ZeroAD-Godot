@@ -172,11 +172,12 @@ public static class SpecMerger
     public static ResolvedActorSpec? MergeFromActorPath(
         string absActorPath,
         int seed,
-        AssetPathResolver paths)
+        AssetPathResolver paths,
+        VariationResolver.Selections? selections = null)
     {
         var doc = ActorDocCache.GetOrLoad(absActorPath);
         if (doc == null) return null;
-        var chosen = VariationResolver.Resolve(doc, seed, VariationResolver.IdleOnly);
+        var chosen = VariationResolver.Resolve(doc, seed, selections ?? VariationResolver.IdleOnly);
         return Merge(doc, chosen, paths, seed);
     }
 }

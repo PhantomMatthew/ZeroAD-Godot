@@ -36,11 +36,12 @@ public sealed class ActorLoader
     private static readonly Dictionary<string, string?> _templateActorCache = new();
     private static readonly object _templateCacheLock = new();
 
-    public Node3D? Instantiate(string actorRelPath, int seed, Color teamColor)
+    public Node3D? Instantiate(string actorRelPath, int seed, Color teamColor,
+        Variation.VariationResolver.Selections? selections = null)
     {
         actorRelPath = ResolvePlaceholders(actorRelPath, seed);
         string abs = ResolveActorAbsPath(actorRelPath);
-        var spec = SpecMerger.MergeFromActorPath(abs, seed, AssetPathResolver.Instance);
+        var spec = SpecMerger.MergeFromActorPath(abs, seed, AssetPathResolver.Instance, selections);
         if (spec == null) return null;
 
         string sig = StructuralSignature.Compute(spec);

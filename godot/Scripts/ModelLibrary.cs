@@ -14,11 +14,12 @@ public static class ModelLibrary
     private static readonly string _meshesRoot = ProjectSettings.GlobalizePath("res://assets/meshes");
     private static readonly string _animationsRoot = ProjectSettings.GlobalizePath("res://assets/animations");
 
-    public static Node3D? InstantiateForTemplate(string template, float x, float z, Color? teamColor)
+    public static Node3D? InstantiateForTemplate(string template, float x, float z, Color? teamColor,
+        Actors.Variation.VariationResolver.Selections? selections = null)
     {
         var color = teamColor ?? new Color(0.7f, 0.6f, 0.4f);
 
-        var actorNode = TryInstantiateViaActorSystem(template, x, z, color);
+        var actorNode = TryInstantiateViaActorSystem(template, x, z, color, selections);
         if (actorNode != null)
             return actorNode;
 
@@ -26,7 +27,8 @@ public static class ModelLibrary
         return null;
     }
 
-    private static Node3D? TryInstantiateViaActorSystem(string template, float x, float z, Color color)
+    private static Node3D? TryInstantiateViaActorSystem(string template, float x, float z, Color color,
+        Actors.Variation.VariationResolver.Selections? selections)
     {
         var actorPath = ActorLoader.ExtractActorFromTemplate(template);
         if (string.IsNullOrEmpty(actorPath))
@@ -36,7 +38,7 @@ public static class ModelLibrary
         }
 
         int seed = (template.GetHashCode(), x.GetHashCode(), z.GetHashCode()).GetHashCode();
-        var node = ActorLoader.Instance.Instantiate(actorPath!, seed, color);
+        var node = ActorLoader.Instance.Instantiate(actorPath!, seed, color, selections);
         if (node == null)
         {
             ZeroAD.Godot.Actors.ActorDiagnostics.Fallback(template, $"actor-instantiate-failed -> {actorPath}");

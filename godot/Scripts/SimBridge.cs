@@ -1491,14 +1491,26 @@ public sealed partial class SimBridge : Node
 			{
 				if (_entityNodes.TryGetValue(entity, out var node))
 				{
-					if (node.HasMeta("riseHeight"))
+					if (node.HasMeta("previewNode"))
 					{
-						// 真实模型地基:随进度从地下升起(原版建造动画)。
-						float rise = (float)node.GetMeta("riseHeight").AsDouble();
-						float baseY = (float)node.GetMeta("baseY").AsDouble();
-						float f = Math.Max(foundation.BuildFraction, 0.08f);
-						node.Position = new Vector3(node.Position.X,
-							baseY - rise * (1f - f), node.Position.Z);
+						// 建造预览:真实建筑随进度从地下升起(原版
+						// GetConstructionProgressOffset = (progress-1)×模型高)。
+						var preview = (Node3D)node.GetMeta("previewNode");
+						float h = (float)node.GetMeta("previewHeight").AsDouble();
+						float f = Mathf.Clamp(foundation.BuildFraction, 0f, 1f);
+						preview.Position = new Vector3(0, -h * (1f - f), 0);
+
+						// 工人进场(原版 Commit)→ 显示脚手架。
+						if (foundation.NumBuilders > 0 && node.HasMeta("scaffoldNode"))
+						{
+							var scaffold = (Node3D)node.GetMeta("scaffoldNode");
+							if (!scaffold.Visible)
+							{
+								scaffold.Visible = true;
+								ZeroAD.Sim.Diag.Log("Fnd",
+									$"scaffold shown: entity={entity.Value} frac={foundation.BuildFraction:F2}");
+							}
+						}
 					}
 					else if (node is MeshInstance3D mi && mi.Mesh is BoxMesh bm)
 					{
@@ -1774,16 +1786,19 @@ public sealed partial class SimBridge : Node
 	// 建造中地基的头顶血条(随完成释放;键=地基实体)。
 	private readonly Dictionary<EntityId, MeshInstance3D> _foundationBars = new();
 
-	/// <summary>地基视觉(原版地基/建造动画):真实建筑模型沉入地下,随建造进度升到
-	/// 地表(TickFoundations 每 tick 调 Y);头顶挂血条。模型缺失 → 旧幽灵盒兜底。
-	/// meta: riseHeight(模型 AABB 高)/baseY(地表高),TickFoundations 读取。</summary>
+	/// <summary>地基视觉（对齐原版建造三段式）：
+	/// ① FoundationActor（fndn_XxY：泥地贴花 + 矮石板 + 木桩砖堆）放地面不动；
+	/// ② 工人进场（NumBuilders>0，原版 Foundation.js Commit → SelectAnimation("scaffold")）
+	///    显示脚手架 prop（scaffold 变体，初始隐藏）；
+	/// ③ 真实建筑作建造预览沉在地下，随进度升起（原版 CCmpPosition::
+	///    GetConstructionProgressOffset = (progress-1)×模型高）。
+	/// meta：previewNode/previewHeight/baseY/scaffoldNode，TickFoundations 读取。
+	/// 模型缺失 → 旧幽灵盒兜底。建造尘粒子上游为粒子特效，本端无粒子渲染器，跳过。</summary>
 	private void CreateFoundationVisual(EntityId entity, string template, int playerId)
 	{
 		Color color = GetPlayerColor(playerId);
 		// 原版地基显示专门的 FoundationActor(矮地基+四角木桩,如 fndn_5x8.xml),不是
-		// 完整建筑。此前直接用完整模板 → rise = 整个建筑 AABB 高(13~25m),地基被埋到
-		// baseY - rise*0.92 = 深入地下,完全看不见。优先取 VisualActor/FoundationActor;
-		// 取不到(模板没声明地基 actor)才回退完整建筑。
+		// 完整建筑。优先取 VisualActor/FoundationActor;取不到才回退完整模板。
 		string foundationActor = template;
 		try
 		{
@@ -1792,7 +1807,8 @@ public sealed partial class SimBridge : Node
 				foundationActor = fa;
 		}
 		catch { /* 取不到就回退完整模板,行为同前 */ }
-		var visual = ModelLibrary.InstantiateForTemplate(foundationActor, 0, 0, color);
+		var visual = ModelLibrary.InstantiateForTemplate(foundationActor, 0, 0, color,
+			Actors.Variation.VariationResolver.Scaffold);
 		if (visual == null)
 		{
 			// 无模型(演员缺失/未知模板)→ 旧幽灵盒路径,表现不变。
@@ -1805,14 +1821,35 @@ public sealed partial class SimBridge : Node
 		float vx = pos?.Position.X.ToFloat() ?? 0;
 		float vz = pos?.Position.Z.ToFloat() ?? 0;
 		float baseY = TerrainHeightService.Sample(vx, vz);
-
-		// 原版地基(FoundationActor)是矮平模型(脚手架+砖堆+木桩),直接放在地面可见,
-		// 不沉地、不升起(原版 Foundation.js / CCmpVisualActor 无 sink/rise 逻辑)。
-		// 此前的"沉地 + 随进度升起"是为完整建筑模型编造的,改用 FoundationActor 后
-		// 仍套用 → 地基被埋到 baseY - rise*0.92,92% 在地下看不见。
-		// 完工进度只改头顶血条,不动模型位置;不设 riseHeight meta → TickFoundations
-		// 不再覆盖 Y。
 		visual.Position = new Vector3(vx, baseY, vz);
+
+		// 脚手架 prop 初始隐藏（未开工);工人进场后 TickFoundations 显示。
+		var scaffold = FindChildByActorSuffix(visual, "construction/scaffold.xml");
+		if (scaffold != null)
+		{
+			scaffold.Visible = false;
+			visual.SetMeta("scaffoldNode", scaffold);
+		}
+
+		// 建造预览:真实建筑模型沉入地下(baseY - 模型高),随进度升起。
+		if (!foundationActor.Equals(template, StringComparison.Ordinal))
+		{
+			var preview = ModelLibrary.InstantiateForTemplate(template, 0, 0, color);
+			if (preview != null)
+			{
+				float h = ComputeLocalAabb(preview, Transform3D.Identity, null)?.Size.Y ?? 0f;
+				if (h > 0.01f)
+				{
+					preview.Position = new Vector3(0, -h, 0);
+					visual.AddChild(preview);
+					visual.SetMeta("previewNode", preview);
+					visual.SetMeta("previewHeight", h);
+					visual.SetMeta("baseY", baseY);
+				}
+				else
+					preview.QueueFree();
+			}
+		}
 
 		// 头顶血条(原版地基建造中显示血量;TickFoundations 每 tick 刷新)。固定悬于
 		// 地基模型上方 3m(原版地基矮平,无需按模型高算)。
@@ -1825,6 +1862,21 @@ public sealed partial class SimBridge : Node
 		UnitContainer.AddChild(visual);
 		_entityNodes[entity] = visual;
 		_entityCacheDirty = true;
+	}
+
+	/// <summary>按 actor 路径后缀找组合实例里的 prop 子树（LayerMeta.ActorPath 标记）。</summary>
+	private static Node3D? FindChildByActorSuffix(Node node, string actorPathSuffix)
+	{
+		if (node is Node3D n3 && n3.HasMeta(Actors.Composition.LayerMeta.ActorPath) &&
+			((string)n3.GetMeta(Actors.Composition.LayerMeta.ActorPath))
+				.EndsWith(actorPathSuffix, StringComparison.Ordinal))
+			return n3;
+		foreach (var child in node.GetChildren())
+		{
+			var hit = FindChildByActorSuffix(child, actorPathSuffix);
+			if (hit != null) return hit;
+		}
+		return null;
 	}
 
 	/// <summary>整树网格 AABB 并集(节点未入树也能算:沿局部 Transform 累积)。

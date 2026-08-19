@@ -467,10 +467,17 @@ public sealed partial class Main : Node3D
 		if (System.Environment.GetEnvironmentVariable("ZEROAD_AUTOBUILD") == "1")
 			AutobuildDeferred();
 
-		// dev 截图钩子:ZEROAD_SHOT_SESSION=<秒> 开局 N 秒后视口截图存
-		// user://session_shot.png(不退出;窗口无需前台,后台可截)。
-		if (int.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_SESSION"), out int shotSec))
-			SessionShotDeferred(shotSec);
+		// dev 截图钩子:ZEROAD_SHOT_SESSION=<秒[,秒...]> 开局 N 秒后视口截图存
+		// user://session_shot_<N>s.png(不退出;窗口无需前台,后台可截)。
+		foreach (var part in (System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_SESSION") ?? "")
+			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+			if (int.TryParse(part, out int shotSec))
+				SessionShotDeferred(shotSec);
+
+		// dev 镜头钩子:ZEROAD_SHOT_FOUNDATION=1 时轮询直到出现地基实体,
+		// 把镜头对准它并拉近(配合 ZEROAD_SHOT_SESSION 验收建造视觉)。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_FOUNDATION") == "1")
+			FocusFoundationDeferred();
 
 		ZeroAD.Sim.Diag.Log("Tutorial", _isTutorial
 			? "Introductory Tutorial started"
@@ -485,6 +492,27 @@ public sealed partial class Main : Node3D
 		string p = $"user://session_shot_{seconds}s.png";
 		img.SavePng(p);
 		ZeroAD.Sim.Diag.Log("Shot", $"saved {p}");
+	}
+
+	/// <summary>dev 钩子:轮询直到 sim 里出现地基实体,镜头对准(持续跟随到完工,
+	/// 覆盖建造全程的截图机位)。</summary>
+	private async void FocusFoundationDeferred()
+	{
+		for (int i = 0; i < 240; i++)
+		{
+			foreach (var e in _sim.Sim.AllEntities)
+			{
+				var f = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.FoundationComponent>(e);
+				if (f == null || f.IsBuilt) continue;
+				var p = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.PositionComponent>(e);
+				if (p == null) continue;
+				_camera.SetFocus(new Vector3(p.Position.X.ToFloat(), 0, p.Position.Z.ToFloat()));
+				_camera.SetDistance(40f);
+				goto found;
+			}
+			await ToSignal(GetTree().CreateTimer(0.5), SceneTreeTimer.SignalName.Timeout);
+		}
+	found: ;
 	}
 
 	/// <summary>dev 钩子:找本地玩家的 CC + 一个工人,在 CC 旁下个住宅建造令。</summary>

@@ -19,6 +19,15 @@ public static class VariationResolver
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "idle" }
         });
 
+    /// <summary>建造中（原版 Foundation.js Commit → SelectAnimation("scaffold")）：
+    /// scaffold 变体优先，无 scaffold 的组回退 idle，再回退加权随机。</summary>
+    public static readonly Selections Scaffold = new(
+        new[]
+        {
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "scaffold" },
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "idle" },
+        });
+
     public static IReadOnlyList<int> Resolve(ActorDoc doc, int seed, Selections selections)
     {
         var chosen = new int[doc.Groups.Count];
