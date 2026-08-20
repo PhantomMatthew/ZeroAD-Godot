@@ -2551,15 +2551,15 @@ public sealed partial class SimBridge : Node
 
 	private static readonly Color[] PlayerColors = new Color[]
 	{
-		new(0.5f, 0.5f, 0.5f),     // gaia/neutral
-		new(0.08f, 0.22f, 0.58f),  // P1: blue
-		new(0.72f, 0.06f, 0.06f),  // P2: red
-		new(0.12f, 0.55f, 0.14f),  // P3: green
-		new(0.85f, 0.68f, 0.10f),  // P4: yellow
-		new(0.52f, 0.14f, 0.68f),  // P5: purple
-		new(0.10f, 0.62f, 0.70f),  // P6: cyan
-		new(0.86f, 0.48f, 0.14f),  // P7: orange
-		new(0.20f, 0.20f, 0.22f),  // P8: dark gray
+		new(0.5f, 0.5f, 0.5f, 1f),     // gaia/neutral
+		new(0.08f, 0.22f, 0.58f, 1f),  // P1: blue
+		new(0.72f, 0.06f, 0.06f, 1f),  // P2: red
+		new(0.12f, 0.55f, 0.14f, 1f),  // P3: green
+		new(0.85f, 0.68f, 0.10f, 1f),  // P4: yellow
+		new(0.52f, 0.14f, 0.68f, 1f),  // P5: purple
+		new(0.10f, 0.62f, 0.70f, 1f),  // P6: cyan
+		new(0.86f, 0.48f, 0.14f, 1f),  // P7: orange
+		new(0.20f, 0.20f, 0.22f, 1f),  // P8: dark gray
 	};
 
 	public static Color GetPlayerColor(int playerId) =>
