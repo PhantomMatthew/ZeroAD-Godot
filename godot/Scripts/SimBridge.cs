@@ -814,7 +814,9 @@ public sealed partial class SimBridge : Node
 	{
 		bool isVillager = stats?.CanGather == true && stats.AttackDamage == 0;
 		bool isSoldier = stats?.AttackDamage > 0 || stats?.GetClassList().Contains("CitizenSoldier") == true;
-		var entity = SpawnUnit(def.X, def.Z, isVillager, isSoldier, stats);
+		// templateName 必须下传——SpawnUnit 的视觉兜底是"无模板=士兵模型",
+		// 不传则村民/支援单位全部渲染成 spearman(skirmish 起始单位全是兵)。
+		var entity = SpawnUnit(def.X, def.Z, isVillager, isSoldier, stats, templateName: def.Template);
 
 		var identity = _sim.QueryInterface<IdentityComponent>(entity);
 		if (identity != null)
