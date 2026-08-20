@@ -527,6 +527,25 @@ public sealed partial class Main : Node3D
 		ZeroAD.Sim.Diag.Log("Shot", $"saved {p}");
 	}
 
+	/// <summary>读 maps/random/{name}.json 的 settings.CircularMap（缺失/读取失败 → true，
+	/// 上游绝大多数随机图为圆形可玩区）。</summary>
+	private static bool ReadRandomMapCircular(string? dataRoot, string mapName)
+	{
+		if (dataRoot == null) return true;
+		try
+		{
+			string path = System.IO.Path.Combine(dataRoot, "maps", "random", mapName + ".json");
+			if (!System.IO.File.Exists(path)) return true;
+			using var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(path));
+			if (doc.RootElement.TryGetProperty("settings", out var settings) &&
+				settings.TryGetProperty("CircularMap", out var cm) &&
+				cm.ValueKind == System.Text.Json.JsonValueKind.False)
+				return false;
+		}
+		catch { }
+		return true;
+	}
+
 	/// <summary>应用 gamesetup 选项（世界建成后、放行回合前调用）。</summary>
 	private void ApplyMatchOptions(GameLaunchConfig cfg)
 	{
@@ -1198,14 +1217,17 @@ public sealed partial class Main : Node3D
 		uint seed = cfg.Seed;
 		// gamesetup Map Size 下拉(原版默认 Normal 256);cfg.MapSize=0 = 未显式设置(ZEROAD_MAP 等旁路)
 		int mapSize = cfg.MapSize > 0 ? cfg.MapSize : 256;
+		string? dataRoot = FindDataRoot();
 
 		var rng = new ZeroAD.Sim.RmgenMath.RmgenRng(seed);
 		var settings = new ZeroAD.Sim.Rmgen.Common.MapSettings
 		{
 			Size = mapSize,
 			Seed = seed,
-			CircularMap = false,
-			DataRoot = FindDataRoot(),   // biome JSON(rmbiome/generic/*.json)经 junction 读取
+			// 图形状读 maps/random/{name}.json 的 settings.CircularMap(上游 79/84 为圆形;
+			// 此前硬编码 false → 圆图变方图,边角可玩区/布置全变)。
+			CircularMap = ReadRandomMapCircular(dataRoot, mapName),
+			DataRoot = dataRoot,   // biome JSON(rmbiome/generic/*.json)经 junction 读取
 			// gamesetup 选项:Nomad/PlayerPlacement(biome 在 BiomeLoader 处经 BiomeData 下发)
 			Nomad = cfg.Nomad,
 			PlayerPlacement = cfg.PlayerPlacement.Length > 0 ? cfg.PlayerPlacement : "circle",
