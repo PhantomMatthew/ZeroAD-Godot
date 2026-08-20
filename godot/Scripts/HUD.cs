@@ -1311,7 +1311,7 @@ public sealed partial class HUD : CanvasLayer
                   ?? LoadPortraitForTemplate(template);
         string t = template; // 闭包捕获迭代变量
         // 批量提示进 tooltip(原版训练按钮提示 "Shift = 5 个一批");按下瞬间取 Shift。
-        var btn = AddCmdButton(tex, text, () => _main.TrainUnit(t, _shiftHeldAtMouseDown));
+        var btn = AddCmdButton(tex, text, () => _main.TrainUnit(t, _shiftHeldAtMouseDown), enabled: true);
         btn.TooltipText += " — Shift+click: train 5 at once";
     }
 
