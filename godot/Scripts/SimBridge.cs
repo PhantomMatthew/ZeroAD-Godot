@@ -1995,13 +1995,18 @@ public sealed partial class SimBridge : Node
 		if (isResource)
 		{
 			int amt = stats?.ResourceAmount > 0 ? stats.ResourceAmount : 100;
-			_sim.AddComponent(entity, new ResourceSupply
+			var supply = new ResourceSupply
 			{
 				Type = stats?.ResourceType ?? ResourceType.Wood,
 				Amount = amt,
 				MaxAmount = amt,
 				KillBeforeGather = stats?.KillBeforeGather == true,
-			});
+			};
+			_sim.AddComponent(entity, supply);
+			// SpecificType("food.meat"→meat)在 AddComponent 之后设——决定采集光标
+			// (action-gather-meat 而非兜底的 tree)。漏设会让所有资源都显示伐木图标。
+			if (!string.IsNullOrEmpty(stats?.ResourceTypeString))
+				supply.SetTypeString(stats.ResourceTypeString);
 		}
 
 		// 动物行为接线(原版 template_unit_fauna):模板 stance(skittish 逃/passive-defensive
