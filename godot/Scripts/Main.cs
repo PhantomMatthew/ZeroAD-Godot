@@ -441,6 +441,10 @@ public sealed partial class Main : Node3D
 					Civ = System.Environment.GetEnvironmentVariable("ZEROAD_CIV2") is { Length: > 0 } c2 ? c2 : "gaul",
 					Team = -1 },
 			});
+		// "random" 文明统一在开局前解析(SP 选图/MP host 已在上游侧解析;这里兜底 dev 环境变量
+		// ZEROAD_CIV=random 的路径)——sim/skirmish 替换只见真文明代码。
+		if (effectiveSlots.Any(s => s.Civ == "random"))
+			effectiveSlots = CivRandom.Resolve(effectiveSlots);
 		_sim.InitWorld(templatesPath, seed, playerId, role, effectiveSlots);
 		_worldSlots = effectiveSlots;   // rmgen 玩家 civ 列表(SetupRmgenTerrain)等用
 		ZeroAD.Sim.Diag.Log("Tutorial", "InitWorld done");

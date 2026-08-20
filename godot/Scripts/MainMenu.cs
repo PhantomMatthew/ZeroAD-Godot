@@ -451,7 +451,10 @@ public sealed partial class MainMenu : Control
 			_cfg.Mode = GameLaunchConfig.LaunchMode.SinglePlayer;
 			_cfg.MapPath = map.RelPath;
 			_cfg.Seed = seed;
-			_cfg.Slots = slots;   // 面板配好的槽位表(You/AI/文明/队伍);本地玩家 = Human 槽
+			// "random" 文明在此解析成真文明(原版 pickRandomItems 的 GUI 侧抽签)——
+			// sim/skirmish 替换永远见真文明代码,占位 general 兜底才不会指向
+			// structures/random/* 这类不存在的模板(缺了这步 CC/起始单位会全部消失)。
+			_cfg.Slots = CivRandom.Resolve(slots);
 			picker.WriteOptions(_cfg);   // gamesetup 全部选项(尺寸/biome/资源/人口/速度/停战/胜利条件…)
 			GotoSession();
 		};

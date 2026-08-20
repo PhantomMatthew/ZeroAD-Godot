@@ -343,6 +343,10 @@ public sealed partial class MultiplayerController : Node
             return;
         }
         _lobbyActive = false;
+        // "random" 文明在冻结前解析成真文明(原版 pickRandomItems 的 host 侧抽签):
+        // 广播/Rpc 携带解析后的表,双端 InitWorld 拿到同一份真文明代码(确定性一致),
+        // skirmish 占位替换不会落到 structures/random/* 这种不存在的模板上。
+        _slots = CivRandom.Resolve(_slots);
         var (kinds, civs, teams) = PlayerSlotSetupCodec.Pack(_slots);
         Rpc(nameof(ReceiveGameStart), _seed, kinds, civs, teams, _mapPath);
         OnGameStart?.Invoke(_seed, _localPlayerId, _slots, _mapPath); // host starts its own game
