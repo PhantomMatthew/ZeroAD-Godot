@@ -560,6 +560,37 @@ public sealed partial class Main : Node3D
 				.OnCompleted(() => cam.SetFocus(new Vector3(scx, 0, scz)));
 		}
 
+		// dev 钩子:ZEROAD_EXPLORED=1 全图已探索(迷雾仍在;原版 gamesetup 的 Explored Map
+		// 选项等价)——验证探索后静态资源/水面的显隐(棕榈排查用)。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_EXPLORED") == "1")
+			for (int p = 1; p <= ZeroAD.Sim.Components.LosGrid.MaxPlayers; p++)
+				_sim.Range.Los.ExploreAll(p);
+
+		// dev 钩子:ZEROAD_FLORA_DUMP=<秒> 后逐模板打印合批 flora 的(总数/可见数)。
+		if (int.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_FLORA_DUMP"), out int floraDumpSec))
+		{
+			var floraSim = _sim;
+			ToSignal(GetTree().CreateTimer(floraDumpSec), SceneTreeTimer.SignalName.Timeout)
+				.OnCompleted(() =>
+				{
+					foreach (var (tpl, total, vis) in floraSim.FloraStats())
+						ZeroAD.Sim.Diag.Log("FloraDump", $"{tpl}: total={total} visible={vis}");
+					foreach (var s in floraSim.FloraSampleBases(3))
+						ZeroAD.Sim.Diag.Log("FloraDump", s);
+					foreach (var s in floraSim.FloraReportLive())
+						ZeroAD.Sim.Diag.Log("FloraDump", s);
+					foreach (var s in floraSim.FloraReportParts())
+						ZeroAD.Sim.Diag.Log("FloraDump", s);
+					// sim 侧高度探针:绿洲心(512,512)/P1 基地(549,160)/图角(100,900)。
+					var terr = ZeroAD.Sim.Components.SimSystem.Terrain;
+					ZeroAD.Sim.Diag.Log("FloraDump",
+						$"simH(512,512)={ZeroAD.Sim.Components.SimSystem.TerrainHeight(ZeroAD.Sim.Maths.Fixed.FromFloat(512), ZeroAD.Sim.Maths.Fixed.FromFloat(512)).ToFloat():F2} " +
+						$"simH(549,160)={ZeroAD.Sim.Components.SimSystem.TerrainHeight(ZeroAD.Sim.Maths.Fixed.FromFloat(549), ZeroAD.Sim.Maths.Fixed.FromFloat(160)).ToFloat():F2} " +
+						$"simH(100,900)={ZeroAD.Sim.Components.SimSystem.TerrainHeight(ZeroAD.Sim.Maths.Fixed.FromFloat(100), ZeroAD.Sim.Maths.Fixed.FromFloat(900)).ToFloat():F2} " +
+						$"terrMapSize={terr?.MapSize} tileSize={terr?.TileSize}");
+				});
+		}
+
 		ZeroAD.Sim.Diag.Log("Tutorial", _isTutorial
 			? "Introductory Tutorial started"
 			: $"MS6 Game started: player={playerId}");

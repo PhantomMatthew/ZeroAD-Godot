@@ -33,6 +33,7 @@ public sealed class FloraBatcher
         public int[] Slots = System.Array.Empty<int>();
         public Transform3D Base;           // 实体世界变换(恢复可见时用)
         public bool Visible = true;
+        public string Template = "";
     }
 
     private readonly Node3D _root;
@@ -46,6 +47,64 @@ public sealed class FloraBatcher
     }
 
     public bool Contains(EntityId id) => _entities.ContainsKey(id.Value);
+
+    /// <summary>诊断统计:逐模板返回 (实体数, 当前可见数)——ZEROAD_FLORA_DUMP 用。</summary>
+    public System.Collections.Generic.IEnumerable<(string Template, int Total, int Visible)> Stats()
+    {
+        foreach (var g in _entities.Values.GroupBy(e => e.Template))
+            yield return (g.Key, g.Count(), g.Count(e => e.Visible));
+    }
+
+    /// <summary>诊断采样:逐模板前 count 个实体的 Base 平移(世界坐标)——查变换异常。</summary>
+    public System.Collections.Generic.IEnumerable<string> SampleBases(int count)
+    {
+        foreach (var g in _entities.Values.GroupBy(e => e.Template))
+        {
+            int i = 0;
+            foreach (var e in g)
+            {
+                if (i++ >= count) break;
+                yield return $"{g.Key}[{i}] pos={e.Base.Origin}";
+            }
+        }
+    }
+
+    /// <summary>诊断:逐模板统计 MultiMesh 实时实例状态(非零缩放=真渲染,零缩放=被隐)。</summary>
+    public System.Collections.Generic.IEnumerable<string> ReportLive()
+    {
+        foreach (var g in _entities.Values.GroupBy(e => e.Template))
+        {
+            int live = 0, zero = 0, movedOff = 0;
+            foreach (var e in g)
+            {
+                var t = e.Parts[0].Mm.GetInstanceTransform(e.Slots[0]);
+                float sx = t.Basis.Scale.X;
+                if (sx < 0.01f) zero++;
+                else if (t.Origin != e.Base.Origin) movedOff++;
+                else live++;
+            }
+            yield return $"{g.Key}: live={live} zeroScaled={zero} movedOff={movedOff}";
+        }
+    }
+
+    /// <summary>诊断:逐部件(变体×网格)的容量/网格顶点数/活实例数——查空网格桶。</summary>
+    public System.Collections.Generic.IEnumerable<string> ReportParts()
+    {
+        foreach (var bucket in _buckets)
+            for (int v = 0; v < bucket.Value.Length; v++)
+                for (int p = 0; p < bucket.Value[v].Length; p++)
+                {
+                    var part = bucket.Value[v][p];
+                    int verts = 0;
+                    var arr = part.Node.Multimesh.Mesh?.SurfaceGetArrays(0);
+                    if (arr != null && arr.Count > 0)
+                        verts = arr[0].AsVector3Array().Length;
+                    int live = 0;
+                    for (int i = 0; i < part.Top; i++)
+                        if (part.Mm.GetInstanceTransform(i).Basis.Scale.X > 0.01f) live++;
+                    yield return $"{bucket.Key} v{v} p{p}: verts={verts} cap={part.Mm.InstanceCount} used={part.Top} live={live} aabb={part.Mm.GetAabb()}";
+                }
+    }
 
     /// <summary>把实体并入合批;成功返回 true。actor 无网格(兜底盒模型)时返回 false,
     /// 调用方走旧的逐节点路径。</summary>
@@ -61,6 +120,7 @@ public sealed class FloraBatcher
             Parts = parts,
             Slots = new int[parts.Length],
             Base = new Transform3D(new Basis(Vector3.Up, yaw), pos),
+            Template = template,
         };
         for (int i = 0; i < parts.Length; i++)
         {

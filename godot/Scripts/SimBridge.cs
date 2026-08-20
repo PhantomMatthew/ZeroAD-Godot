@@ -2579,6 +2579,22 @@ public sealed partial class SimBridge : Node
 		worldRoot.AddChild(_floraAnchors);
 	}
 
+	/// <summary>合批 flora 逐模板 (总数, 可见数)——dev 诊断(ZEROAD_FLORA_DUMP)。</summary>
+	public System.Collections.Generic.IEnumerable<(string Template, int Total, int Visible)> FloraStats()
+		=> _floraBatch?.Stats() ?? System.Linq.Enumerable.Empty<(string, int, int)>();
+
+	/// <summary>合批 flora 逐模板前 count 个实体的世界坐标采样——dev 诊断。</summary>
+	public System.Collections.Generic.IEnumerable<string> FloraSampleBases(int count)
+		=> _floraBatch?.SampleBases(count) ?? System.Linq.Enumerable.Empty<string>();
+
+	/// <summary>合批 flora 实时实例状态(非零缩放/零缩放计数)——dev 诊断。</summary>
+	public System.Collections.Generic.IEnumerable<string> FloraReportLive()
+		=> _floraBatch?.ReportLive() ?? System.Linq.Enumerable.Empty<string>();
+
+	/// <summary>合批 flora 逐部件(变体×网格)容量/顶点/活实例——dev 诊断。</summary>
+	public System.Collections.Generic.IEnumerable<string> FloraReportParts()
+		=> _floraBatch?.ReportParts() ?? System.Linq.Enumerable.Empty<string>();
+
 	private void CreateVisualFor(EntityId entity, Color color, float size, bool isBuilding = false, bool isGhost = false, string? templateName = null)
 	{
 		var identity = _sim.QueryInterface<IdentityComponent>(entity);
