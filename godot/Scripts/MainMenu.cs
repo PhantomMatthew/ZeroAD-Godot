@@ -58,6 +58,15 @@ public sealed partial class MainMenu : Control
 		{
 			case "hotkeys": OnHotkeys(); break;
 			case "options": OnOptions(); break;
+			case "mpclient":
+				// dev:连 127.0.0.1:61195 的 client 大厅页(需本机已有 mphost 进程)。
+				CallDeferred(nameof(StartMp), false);
+				break;
+			case "mphost":
+				// dev:拉起 MP host 大厅页面截图(真实 ENet host,端口 61195)。
+				// 必须延迟到 _Ready 之后(scene 切换中不能动子树);截图由 Main 场景接力。
+				CallDeferred(nameof(StartMp), true);
+				break;
 			case "matches":
 				OnSinglePlayer();
 				// dev 配合:ZEROAD_MATCH_TAB=1/2 选 Player/Game Type 页签再截。
@@ -77,7 +86,7 @@ public sealed partial class MainMenu : Control
 	{
 		await ToSignal(GetTree().CreateTimer(1.5), SceneTreeTimer.SignalName.Timeout);
 		var img = GetViewport().GetTexture().GetImage();
-		img.SavePng($"user://shot_{name}.png");
+		img?.SavePng($"user://shot_{name}.png");
 		ZeroAD.Sim.Diag.Log("Main", $"SHOT_SAVED user://shot_{name}.png");
 		GetTree().Quit();
 	}

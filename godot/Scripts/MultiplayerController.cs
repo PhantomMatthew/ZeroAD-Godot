@@ -46,6 +46,78 @@ public sealed partial class MultiplayerController : Node
     /// 冻结下发,双端 SetupTerrain 同图——选图已进协议,不再是 SP 独占。</summary>
     private string _mapPath = "";
 
+    /// <summary>gamesetup_mp 的可配置选项（host 大厅可改并广播;Start 时冻结,
+    /// 双端各自写进 GameLaunchConfig 后由 ApplyMatchOptions 落地,保证双端一致）。
+    /// 字段语义与 SP gamesetup 一致;VictoryConditions 以 "," 连接传输。</summary>
+    public sealed record MpLobbyOptions
+    {
+        public int MapSize = 256;
+        public string BiomeId = "";
+        public string PlayerPlacement = "circle";
+        public int StartingResources = 300;
+        public int PopulationCap = 300;
+        public int PopulationCapTypeIdx = 0;
+        public float GameSpeed = 1f;
+        public int CeasefireMinutes;
+        public bool Nomad;
+        public bool Treasures = true;
+        public bool ExploredMap;
+        public bool RevealedMap;
+        public bool AlliedView = true;
+        public bool LockedTeams;
+        public bool Cheats;
+        public bool Spies;
+        public bool LastManStanding;
+        public List<string> VictoryConditions = new() { "conquest" };
+
+        public int[] PackInts() => new[]
+        {
+            MapSize, StartingResources, PopulationCap, PopulationCapTypeIdx, CeasefireMinutes,
+            (int)(GameSpeed * 100),
+            (Nomad ? 1 : 0) | (Treasures ? 2 : 0) | (ExploredMap ? 4 : 0) | (RevealedMap ? 8 : 0)
+                | (AlliedView ? 16 : 0) | (LockedTeams ? 32 : 0) | (Cheats ? 64 : 0)
+                | (Spies ? 128 : 0) | (LastManStanding ? 256 : 0),
+        };
+        public string[] PackStrings() => new[]
+        {
+            BiomeId, PlayerPlacement, string.Join(',', VictoryConditions),
+        };
+        public static MpLobbyOptions Unpack(int[] ints, string[] strings)
+        {
+            var o = new MpLobbyOptions
+            {
+                MapSize = ints[0],
+                StartingResources = ints[1],
+                PopulationCap = ints[2],
+                PopulationCapTypeIdx = ints[3],
+                CeasefireMinutes = ints[4],
+                GameSpeed = ints[5] / 100f,
+                BiomeId = strings[0],
+                PlayerPlacement = strings[1],
+            };
+            int f = ints[6];
+            o.Nomad = (f & 1) != 0;
+            o.Treasures = (f & 2) != 0;
+            o.ExploredMap = (f & 4) != 0;
+            o.RevealedMap = (f & 8) != 0;
+            o.AlliedView = (f & 16) != 0;
+            o.LockedTeams = (f & 32) != 0;
+            o.Cheats = (f & 64) != 0;
+            o.Spies = (f & 128) != 0;
+            o.LastManStanding = (f & 256) != 0;
+            o.VictoryConditions = strings[2].Length > 0
+                ? strings[2].Split(',').ToList()
+                : new List<string> { "conquest" };
+            return o;
+        }
+    }
+
+    /// <summary>大厅当前选项(host 可改;客户端只读,随广播刷新)。</summary>
+    public MpLobbyOptions LobbyOptions { get; private set; } = new();
+
+    /// <summary>大厅选项变更(host 改 / 客户端收到广播)——LobbyUI 刷新显示。</summary>
+    public event System.Action<MpLobbyOptions>? OnLobbyOptionsChanged;
+
     public NetTurnManager? NetTurn => _netTurn;
     public uint LocalPlayerId => _localPlayerId;
     public uint Seed => _seed;
@@ -186,12 +258,14 @@ public sealed partial class MultiplayerController : Node
         var (kinds, civs, teams) = PlayerSlotSetupCodec.Pack(_slots);
         var peers = _peerToPlayer.Keys.ToArray();
         var players = _peerToPlayer.Values.Select(v => (int)v).ToArray();
-        Rpc(nameof(ReceiveLobbyState), peers, players, kinds, civs, teams, _mapPath);
+        Rpc(nameof(ReceiveLobbyState), peers, players, kinds, civs, teams, _mapPath,
+            LobbyOptions.PackInts(), LobbyOptions.PackStrings());
         OnLobbyStateChanged?.Invoke(_slots);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void ReceiveLobbyState(int[] peers, int[] players, int[] kinds, string[] civs, int[] teams, string mapPath)
+    private void ReceiveLobbyState(int[] peers, int[] players, int[] kinds, string[] civs, int[] teams, string mapPath,
+        int[] optionInts, string[] optionStrings)
     {
         _peerToPlayer.Clear();
         for (int i = 0; i < peers.Length; i++)
@@ -204,6 +278,8 @@ public sealed partial class MultiplayerController : Node
             _mapPath = mapPath;
             OnMapChanged?.Invoke(mapPath);
         }
+        LobbyOptions = MpLobbyOptions.Unpack(optionInts, optionStrings);
+        OnLobbyOptionsChanged?.Invoke(LobbyOptions);
         OnLobbyStateChanged?.Invoke(_slots);
     }
 
@@ -216,6 +292,27 @@ public sealed partial class MultiplayerController : Node
         _mapPath = mapPath;
         BroadcastLobbyState();
         OnMapChanged?.Invoke(mapPath);
+    }
+
+    /// <summary>该 Human 槽是否已被某个连接的 peer 认领（显示 "Peer N" 与锁定用）。</summary>
+    public bool IsSlotClaimedByPeer(int playerId) => _peerToPlayer.ContainsValue((uint)playerId);
+
+    /// <summary>认领该槽的 peer id（显示用;未认领 → null）。</summary>
+    public int? PeerIdOfSlot(int playerId)
+    {
+        foreach (var kv in _peerToPlayer)
+            if (kv.Value == (uint)playerId) return kv.Key;
+        return null;
+    }
+
+    /// <summary>Host-only: replace the lobby options (gamesetup_mp 的可改设置)并广播。
+    /// Start 时冻结——双端各自以此配置建局。</summary>
+    public void HostSetOptions(MpLobbyOptions options)
+    {
+        if (!_isHost || !_lobbyActive) return;
+        LobbyOptions = options;
+        OnLobbyOptionsChanged?.Invoke(options);
+        BroadcastLobbyState();
     }
 
     /// <summary>Host-only: edit one slot's kind/civ/team. Slot 1 is locked Human (the host).

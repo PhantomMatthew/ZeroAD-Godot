@@ -171,6 +171,15 @@ public sealed partial class Main : Node3D
 		_lobby.OnMapEdit += map => _mp.HostSetMap(map);
 		_mp.OnMapChanged += map => _lobby.SetMapDisplay(map);
 		_lobby.OnStartGameRequested += () => _mp.HostStartGame();
+		// gamesetup 选项(host 编辑 → 广播;客户端收到广播 → 只读刷新)。
+		_lobby.OnOptionsEdit += o => _mp.HostSetOptions(o);
+		_mp.OnLobbyOptionsChanged += o => { if (!_mp.IsHost) _lobby.RefreshOptions(o); };
+		// 槽位认领显示(Peer N / 锁定):大厅行查询指向 controller。
+		_lobby._peerLookup = id => _mp.IsSlotClaimedByPeer(id);
+		_lobby._peerNameLookup = id => _mp.PeerIdOfSlot(id);
+		// 大厅聊天(gamesetup_mp 聊天栏):发送 → 网络;收到 → 追加行。
+		_lobby.OnChatSend += text => _mp.SendChat((int)_mp.LocalPlayerId, text);
+		_mp.OnChatReceived += (pid, text) => _lobby.AppendChat(pid, text);
 		_lobby.OnSinglePlayer += seed => StartSinglePlayer(seed);
 		_lobby.OnTutorialStart += () => StartTutorial();
 		// Lobby-state refresh: clients repaint their read-only slot list from the host's table.
@@ -229,6 +238,19 @@ public sealed partial class Main : Node3D
 	private void AutoMp()
 	{
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		// dev:ZEROAD_SHOT=mphost/mpclient — 跳过连接表单直进大厅页并截图退出。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_SHOT") == "mphost")
+		{
+			StartMpHost(61195, 42);
+			MpLobbyShotDeferred();
+			return;
+		}
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_SHOT") == "mpclient")
+		{
+			StartMpClient("127.0.0.1", 61195);
+			MpLobbyShotDeferred();
+			return;
+		}
 		_lobby.EnterMpDirect(cfg.MpHost);
 	}
 
@@ -333,6 +355,23 @@ public sealed partial class Main : Node3D
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		cfg.MapPath = map;
 		cfg.Seed = seed;   // rmgen 种子必须与 host 一致(cfg.Seed 的菜单值对 MP 无意义)
+		// gamesetup_mp 选项(host 冻结并经大厅广播;双端各自写入,ApplyMatchOptions 落地)
+		var o = _mp.LobbyOptions;
+		cfg.MapSize = o.MapSize;
+		cfg.BiomeId = o.BiomeId;
+		cfg.PlayerPlacement = o.PlayerPlacement;
+		cfg.StartingResources = o.StartingResources;
+		cfg.PopulationCap = o.PopulationCap;
+		cfg.GameSpeed = o.GameSpeed;
+		cfg.CeasefireMinutes = o.CeasefireMinutes;
+		cfg.Nomad = o.Nomad;
+		cfg.Treasures = o.Treasures;
+		cfg.ExploredMap = o.ExploredMap;
+		cfg.RevealedMap = o.RevealedMap;
+		cfg.AlliedView = o.AlliedView;
+		cfg.LockedTeams = o.LockedTeams;
+		cfg.Cheats = o.Cheats;
+		cfg.VictoryConditions = new System.Collections.Generic.List<string>(o.VictoryConditions);
 		string mpRel = string.IsNullOrEmpty(map) ? PickSkirmishMapRel() : map;
 		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(mpRel), IsRandomMap(mpRel));
 		AddChild(_loadingOverlay);
@@ -489,6 +528,11 @@ public sealed partial class Main : Node3D
 			if (int.TryParse(part, out int shotSec))
 				SessionShotDeferred(shotSec);
 
+		// dev:MP 大厅页截图接力(MainMenu 的 ZEROAD_SHOT=mphost 只负责拉起 host;
+		// 页面就绪后由本场景截图存 user://shot_mphost.png 并退出)。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_SHOT") == "mphost")
+			MpLobbyShotDeferred();
+
 		// dev 镜头钩子:ZEROAD_SHOT_FOUNDATION=1 时轮询直到出现地基实体,
 		// 把镜头对准它并拉近(配合 ZEROAD_SHOT_SESSION 验收建造视觉)。
 		if (System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_FOUNDATION") == "1")
@@ -515,6 +559,18 @@ public sealed partial class Main : Node3D
 		ZeroAD.Sim.Diag.Log("Tutorial", _isTutorial
 			? "Introductory Tutorial started"
 			: $"MS6 Game started: player={playerId}");
+	}
+
+	/// <summary>dev:MP 大厅就绪后截图退出(与 MainMenu 的 mphost 钩子配套)。</summary>
+	private async void MpLobbyShotDeferred()
+	{
+		await ToSignal(GetTree().CreateTimer(2.5), SceneTreeTimer.SignalName.Timeout);
+		var img = GetViewport().GetTexture().GetImage();
+		img?.SavePng("user://shot_mphost.png");
+		ZeroAD.Sim.Diag.Log("Shot", "saved user://shot_mphost.png");
+		// ZEROAD_MP_STAY=1 时驻留(双端联测:host 不能死)。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_MP_STAY") != "1")
+			GetTree().Quit();
 	}
 
 	/// <summary>dev 钩子:N 秒后视口截图(可多次:用 ZEROAD_SHOT_SESSION 逗号秒数)。</summary>
@@ -1782,7 +1838,8 @@ public sealed partial class Main : Node3D
 		// 软件光标:恢复 OS 光标可见(主菜单/桌面需要)。
 		Input.MouseMode = Input.MouseModeEnum.Visible;
 		// 建造拒绝事件订阅(BuildSessionUi 挂)——退订防死引用。
-		if (_sim != null)
+		// _sim.Sim(SimSystem)在 MP 大厅阶段尚为 null(未开局),同理守卫。
+		if (_sim?.Sim != null)
 		{
 			_sim.Sim.Events.PlayerCommand -= OnPlayerCommandEvent;
 			_sim.Sim.Events.PlayerDefeated -= OnPlayerDefeatedChat;

@@ -35,8 +35,16 @@ public sealed partial class LobbyUI : CanvasLayer
     /// 之前只 QueueFree 面板——用户被丢在无菜单的 session 场景里出不去。</summary>
     public event System.Action? OnCancelRequested;
 
-    /// <summary>Lobby civ choices offered in each slot's civ dropdown.</summary>
-    private static readonly string[] CivChoices = { "athen", "spart", "gaul" };
+    /// <summary>Lobby civ choices offered in each slot's civ dropdown(全部 15 文明,
+    /// 与 SP gamesetup 同表)。</summary>
+    private static readonly (string Code, string Name)[] CivChoices =
+    {
+        ("athen", "Athenians"), ("brit", "Britons"), ("cart", "Carthaginians"),
+        ("gaul", "Gauls"), ("germ", "Germans"), ("han", "Han"), ("iber", "Iberians"),
+        ("kush", "Kushites"), ("mace", "Macedonians"), ("maur", "Mauryas"),
+        ("ptol", "Ptolemies"), ("rome", "Romans"), ("sele", "Seleucids"),
+        ("spart", "Spartans"), ("achae", "Achaemenids"),
+    };
 
     // Per-slot row controls, indexed by slot PlayerId-1. The host's rows are editable (built once
     // in ShowSlotLobby); the client's rows are disabled and repainted by RefreshSlotDisplay.
@@ -56,10 +64,25 @@ public sealed partial class LobbyUI : CanvasLayer
         return m?.DisplayName ?? relPath;
     }
 
-    /// <summary>客户端收到 host 的地图广播 → 刷新只读地图行(host 自己改下拉,不经此)。</summary>
+    /// <summary>客户端收到 host 的地图广播 → 刷新地图选择/预览/描述
+    /// (host 自己改下拉时本端也经此刷新展示)。</summary>
     public void SetMapDisplay(string relPath)
     {
         if (_mapLabel != null) _mapLabel.Text = DisplayNameOf(relPath);
+        var m = string.IsNullOrEmpty(relPath)
+            ? null
+            : _lobbyMaps.Find(e => e.RelPath == relPath);
+        if (m == null && _lobbyFiltered.Count > 0)
+            m = _lobbyFiltered.Find(e => e.RelPath == relPath);
+        if (_nameLabel2 != null) _nameLabel2.Text = m?.DisplayName ?? DisplayNameOf(relPath);
+        if (_descLabel2 != null) _descLabel2.Text = m?.Description ?? "";
+        if (_preview2 != null) SetMapTexture(m);
+        if (m != null && _lobbyMapSelectOpt != null)
+        {
+            int idx = _lobbyFiltered.IndexOf(m);
+            if (idx >= 0 && _lobbyMapSelectOpt.Selected != idx)
+                _lobbyMapSelectOpt.Selected = idx;
+        }
     }
 
     private sealed record MenuItem(string Caption, string Tooltip, System.Action? OnPress, MenuItem[]? Submenu = null);
@@ -480,6 +503,10 @@ public sealed partial class LobbyUI : CanvasLayer
     /// <see cref="RefreshSlotDisplay"/> when the host's table arrives).
     /// maps = MapCatalog 目录(host 得可编辑下拉;client 得只读行,随广播刷新);
     /// currentMap = 当前地图 rel 路径("" = 默认)。</summary>
+    /// <summary>gamesetup_mp 风格的全屏对局设置页（对齐原版 Multiplayer Match Setup:
+    /// 左列 = 玩家面板+地图描述,右列 = 预览+设置选项卡(Map/Player/Game Type),
+    /// 底部 = 聊天栏 + Cancel/Start）。host 可编辑设置并广播;client 全部只读,
+    /// 随 host 广播刷新。maps = MapCatalog 目录;currentMap = 当前地图 rel。</summary>
     public void ShowSlotLobby(bool isHost, IReadOnlyList<PlayerSlotSetup>? initialSlots,
         List<MapEntry>? maps = null, string currentMap = "")
     {
@@ -494,78 +521,173 @@ public sealed partial class LobbyUI : CanvasLayer
         }
 
         var panel = new Panel();
-        // 居中 520×440:直写 anchors+offsets(Center+Position 写法会跑偏)。
-        panel.AnchorLeft = 0.5f; panel.AnchorRight = 0.5f; panel.AnchorTop = 0.5f; panel.AnchorBottom = 0.5f;
-        panel.OffsetLeft = -260; panel.OffsetRight = 260; panel.OffsetTop = -220; panel.OffsetBottom = 220;
-        panel.GrowHorizontal = Control.GrowDirection.Both;
-        panel.GrowVertical = Control.GrowDirection.Both;
-        UITheme.ApplyModernDialog(panel);
+        panel.AnchorLeft = 0.02f; panel.AnchorRight = 0.98f;
+        panel.AnchorTop = 0.03f; panel.AnchorBottom = 0.97f;
+        panel.OffsetLeft = 0; panel.OffsetRight = 0; panel.OffsetTop = 0; panel.OffsetBottom = 0;
+        panel.Theme = UITheme.GetTheme();
         AddChild(panel);
         _lobbyPanel = panel;
 
         var vbox = new VBoxContainer();
         vbox.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        vbox.OffsetLeft = 20; vbox.OffsetTop = 20;
-        vbox.OffsetRight = -20; vbox.OffsetBottom = -20;
+        vbox.OffsetLeft = 12; vbox.OffsetTop = 12;
+        vbox.OffsetRight = -12; vbox.OffsetBottom = -12;
         vbox.AddThemeConstantOverride("separation", 8);
         panel.AddChild(vbox);
 
-        var title = new Label { Text = Localization.Tr("Game Lobby"), HorizontalAlignment = HorizontalAlignment.Center };
+        var title = new Label { Text = Localization.Tr("Multiplayer Match Setup"), HorizontalAlignment = HorizontalAlignment.Center };
         title.AddThemeFontSizeOverride("font_size", 22);
         vbox.AddChild(title);
 
-        // 地图行:host = 可编辑下拉(原版 gamesetup 的 map 选择);client = 只读,随广播刷新。
-        var mapRow = new HBoxContainer();
-        mapRow.AddThemeConstantOverride("separation", 8);
-        mapRow.AddChild(new Label { Text = Localization.Tr("Map"), CustomMinimumSize = new Vector2(50, 0) });
-        if (isHost)
-        {
-            _mapOpt = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-            _mapOpt.AddItem("Default (Arcadia)");
-            foreach (var m in _lobbyMaps) _mapOpt.AddItem(m.DisplayName);
-            int sel = _lobbyMaps.FindIndex(m => m.RelPath == currentMap);
-            _mapOpt.Selected = sel >= 0 ? sel + 1 : 0;
-            _mapOpt.ItemSelected += idx =>
-                OnMapEdit?.Invoke(idx == 0 ? "" : _lobbyMaps[(int)idx - 1].RelPath);
-            mapRow.AddChild(_mapOpt);
-        }
-        else
-        {
-            _mapLabel = new Label { Text = DisplayNameOf(currentMap), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-            mapRow.AddChild(_mapLabel);
-        }
-        vbox.AddChild(mapRow);
+        // ── 主体两列(对齐原版:左 = 玩家面板+描述;右 = 预览+设置选项卡)──
+        var cols = new HBoxContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+        cols.AddThemeConstantOverride("separation", 16);
+        vbox.AddChild(cols);
 
-        // Column header.
+        // ══ 左列:玩家面板 + 地图名/描述 ══
+        var left = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        left.AddThemeConstantOverride("separation", 8);
+        cols.AddChild(left);
+
+        var playersBox = new PanelContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+        playersBox.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0.13f, 0.12f, 0.11f),
+            BorderWidthTop = 1, BorderWidthBottom = 1, BorderWidthLeft = 1, BorderWidthRight = 1,
+            BorderColor = new Color(0.72f, 0.60f, 0.35f),
+            ContentMarginTop = 6, ContentMarginBottom = 6,
+            ContentMarginLeft = 6, ContentMarginRight = 6,
+        });
+        left.AddChild(playersBox);
+        var playersInner = new VBoxContainer();
+        playersInner.AddThemeConstantOverride("separation", 4);
+        playersBox.AddChild(playersInner);
+        var playersHeader = new Label { Text = Localization.Tr("Players") };
+        playersHeader.AddThemeFontSizeOverride("font_size", 16);
+        playersInner.AddChild(playersHeader);
+
         var header = new HBoxContainer();
         header.AddThemeConstantOverride("separation", 8);
-        header.AddChild(new Label { Text = Localization.Tr("Slot"),  CustomMinimumSize = new Vector2(50, 0) });
-        header.AddChild(new Label { Text = Localization.Tr("Kind"),  CustomMinimumSize = new Vector2(110, 0) });
-        header.AddChild(new Label { Text = Localization.Tr("Civ"),   CustomMinimumSize = new Vector2(110, 0) });
-        header.AddChild(new Label { Text = Localization.Tr("Team"),  CustomMinimumSize = new Vector2(60, 0) });
-        vbox.AddChild(header);
+        void AddHead(string text, float minW)
+        {
+            var l = new Label { Text = Localization.Tr(text), CustomMinimumSize = new Vector2(minW, 0) };
+            l.AddThemeFontSizeOverride("font_size", 11);
+            l.Modulate = new Color(1, 1, 1, 0.6f);
+            header.AddChild(l);
+        }
+        AddHead("Player Name", 150);
+        AddHead("Kind", 110);
+        AddHead("Civilization", 150);
+        AddHead("Team", 60);
+        playersInner.AddChild(header);
+
+        _slotRowsBox = new VBoxContainer();
+        _slotRowsBox.AddThemeConstantOverride("separation", 2);
+        playersInner.AddChild(_slotRowsBox);
 
         var slots = initialSlots ?? DefaultFourSlots();
         int n = System.Math.Min(slots.Count, PlayerSlotSetupCodec.MaxSlots);
         for (int i = 0; i < n; i++)
-            BuildSlotRow(vbox, slots[i], editable: isHost);
+            BuildSlotRow(_slotRowsBox, slots[i], editable: isHost);
+
+        _nameLabel2 = new Label { Text = "" };
+        _nameLabel2.AddThemeFontSizeOverride("font_size", 14);
+        left.AddChild(_nameLabel2);
+        _descLabel2 = new Label
+        {
+            Text = "",
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        _descLabel2.AddThemeFontSizeOverride("font_size", 12);
+        left.AddChild(_descLabel2);
+
+        // ══ 右列:预览 + 设置选项卡 ══
+        var right = new VBoxContainer
+        {
+            CustomMinimumSize = new Vector2(400, 0),
+            SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd,
+        };
+        right.AddThemeConstantOverride("separation", 8);
+        cols.AddChild(right);
+
+        var frame = new PanelContainer();
+        frame.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0.02f, 0.02f, 0.02f),
+            BorderWidthTop = 2, BorderWidthBottom = 2, BorderWidthLeft = 2, BorderWidthRight = 2,
+            BorderColor = new Color(0, 0, 0),
+            ContentMarginTop = 6, ContentMarginBottom = 6,
+            ContentMarginLeft = 6, ContentMarginRight = 6,
+        });
+        _preview2 = new TextureRect
+        {
+            CustomMinimumSize = new Vector2(360, 200),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+        };
+        frame.AddChild(_preview2);
+        right.AddChild(frame);
+
+        var tabs = new TabContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+        right.AddChild(tabs);
+        tabs.AddChild(BuildLobbyMapTab(isHost));
+        tabs.AddChild(BuildLobbyPlayerTab(isHost));
+        tabs.AddChild(BuildLobbyGameTypeTab(isHost));
+
+        // ── 底部:聊天栏(左) + 状态/按钮(右)──
+        var bottomRow = new HBoxContainer { CustomMinimumSize = new Vector2(0, 110) };
+        bottomRow.AddThemeConstantOverride("separation", 10);
+        vbox.AddChild(bottomRow);
+
+        // 聊天(gamesetup_mp 惯例:消息列表 + 输入行)
+        var chatBox = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        chatBox.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0.10f, 0.09f, 0.08f),
+            BorderWidthTop = 1, BorderWidthBottom = 1, BorderWidthLeft = 1, BorderWidthRight = 1,
+            BorderColor = new Color(0.55f, 0.45f, 0.30f),
+            ContentMarginTop = 4, ContentMarginBottom = 4,
+            ContentMarginLeft = 6, ContentMarginRight = 6,
+        });
+        bottomRow.AddChild(chatBox);
+        var chatV = new VBoxContainer();
+        chatBox.AddChild(chatV);
+        var chatScroll = new ScrollContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+        _chatList = new VBoxContainer();
+        chatScroll.AddChild(_chatList);
+        chatV.AddChild(chatScroll);
+        var chatInputRow = new HBoxContainer();
+        chatInputRow.AddThemeConstantOverride("separation", 6);
+        _chatEdit = new LineEdit
+        {
+            PlaceholderText = Localization.Tr("Chat message…"),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        _chatEdit.TextSubmitted += text => { if (text.Length > 0) { OnChatSend?.Invoke(text); _chatEdit.Clear(); } };
+        chatInputRow.AddChild(_chatEdit);
+        var sendBtn = new Button { Text = Localization.Tr("Send"), CustomMinimumSize = new Vector2(70, 0) };
+        sendBtn.Pressed += () =>
+        {
+            if (_chatEdit.Text.Length > 0) { OnChatSend?.Invoke(_chatEdit.Text); _chatEdit.Clear(); }
+        };
+        chatInputRow.AddChild(sendBtn);
+        chatV.AddChild(chatInputRow);
+
+        var rightBtns = new VBoxContainer();
+        rightBtns.AddThemeConstantOverride("separation", 6);
+        bottomRow.AddChild(rightBtns);
 
         _statusLabel = new Label { Text = "", HorizontalAlignment = HorizontalAlignment.Center };
-        _statusLabel.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
+        _statusLabel.AddThemeColorOverride("font_color", new Color(1f, 0.6f, 0.3f));
         _statusLabel.AddThemeFontSizeOverride("font_size", 13);
-        vbox.AddChild(_statusLabel);
-
-        // 底部按钮行(原版 gamesetup_mp 惯例:Cancel/Close 左半,主按钮右半,红石按钮)。
-        var btnRow = new HBoxContainer();
-        btnRow.AddThemeConstantOverride("separation", 10);
-        vbox.AddChild(btnRow);
+        rightBtns.AddChild(_statusLabel);
 
         var btnCancel = new Button
         {
-            Text = Localization.Tr("Close"),
-            Theme = UITheme.GetRedButtonTheme(),
-            CustomMinimumSize = new Vector2(0, 28),
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            Text = Localization.Tr("Cancel"),
+            CustomMinimumSize = new Vector2(110, 30),
         };
         btnCancel.Pressed += () =>
         {
@@ -573,19 +695,18 @@ public sealed partial class LobbyUI : CanvasLayer
             _lobbyPanel = null;
             OnCancelRequested?.Invoke();
         };
-        btnRow.AddChild(btnCancel);
+        rightBtns.AddChild(btnCancel);
 
         if (isHost)
         {
             var btnStart = new Button
             {
                 Text = Localization.Tr("Start Game"),
-                Theme = UITheme.GetRedButtonTheme(),
-                CustomMinimumSize = new Vector2(0, 28),
-                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                CustomMinimumSize = new Vector2(150, 30),
+                TooltipText = "Start the match for all players.",
             };
             btnStart.Pressed += () => OnStartGameRequested?.Invoke();
-            btnRow.AddChild(btnStart);
+            rightBtns.AddChild(btnStart);
         }
         else
         {
@@ -593,71 +714,520 @@ public sealed partial class LobbyUI : CanvasLayer
             {
                 Text = Localization.Tr("Waiting for host to start…"),
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             };
             wait.AddThemeFontSizeOverride("font_size", 13);
-            btnRow.AddChild(wait);
+            rightBtns.AddChild(wait);
+        }
+
+        // 初始填充地图下拉(random 默认视图)并选中当前图/首项(顺带刷预览/描述)。
+        RefillLobbyMaps();
+        if (!string.IsNullOrEmpty(currentMap))
+        {
+            int idx = _lobbyFiltered.FindIndex(e => e.RelPath == currentMap);
+            if (idx >= 0)
+            {
+                _lobbyMapSelectOpt.Selected = idx;
+                SetMapDisplay(currentMap);
+            }
+        }
+        EmitOptionsIfHost();
+    }
+
+    // ── Map 页签(host 可编辑;client 全只读)──
+    private Control BuildLobbyMapTab(bool editable)
+    {
+        var page = new VBoxContainer { Name = Localization.Tr("Map") };
+        page.AddThemeConstantOverride("separation", 4);
+
+        _lobbyMapTypeOpt = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        foreach (var f in new[] { "Random", "Skirmish", "Scenario" })
+            _lobbyMapTypeOpt.AddItem(Localization.Tr(f));
+        _lobbyMapTypeOpt.Selected = 0;
+        _lobbyMapTypeOpt.Disabled = !editable;
+        _lobbyMapTypeOpt.ItemSelected += _ => { RefillLobbyMaps(); EmitOptionsIfHost(); };
+        page.AddChild(MakeLobbyRow("Map Type", _lobbyMapTypeOpt));
+
+        _lobbyMapSelectOpt = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        _lobbyMapSelectOpt.Disabled = !editable;
+        _lobbyMapSelectOpt.ItemSelected += idx =>
+        {
+            var m = _lobbyFiltered[(int)idx];
+            OnMapEdit?.Invoke(m.RelPath);
+            SetMapDisplay(m.RelPath);
+        };
+        page.AddChild(MakeLobbyRow("Map Selection", _lobbyMapSelectOpt));
+
+        _lobbyMapSizeOpt = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        foreach (var (name, tiles) in LobbyMapSizes)
+            _lobbyMapSizeOpt.AddItem($"{Localization.Tr(name)} ({tiles})");
+        _lobbyMapSizeOpt.Selected = 2;
+        _lobbyMapSizeOpt.Disabled = !editable;
+        _lobbyMapSizeOpt.ItemSelected += _ => EmitOptionsIfHost();
+        page.AddChild(MakeLobbyRow("Map Size", _lobbyMapSizeOpt));
+
+        _lobbyPlacementOpt = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        foreach (var (_, name) in LobbyPlacements) _lobbyPlacementOpt.AddItem(Localization.Tr(name));
+        _lobbyPlacementOpt.Selected = 0;
+        _lobbyPlacementOpt.Disabled = !editable;
+        _lobbyPlacementOpt.ItemSelected += _ => EmitOptionsIfHost();
+        page.AddChild(MakeLobbyRow("Player Placement", _lobbyPlacementOpt));
+
+        _nomadBox = AddLobbyCheck(page, "Nomad", editable, _ => EmitOptionsIfHost());
+        _treasuresBox = AddLobbyCheck(page, "Treasures", editable, _ => EmitOptionsIfHost(), pressed: true);
+        _exploredBox = AddLobbyCheck(page, "Explored Map", editable, _ => EmitOptionsIfHost());
+        _revealedBox = AddLobbyCheck(page, "Revealed Map", editable, _ => EmitOptionsIfHost());
+        _alliedViewBox = AddLobbyCheck(page, "Allied View", editable, _ => EmitOptionsIfHost(), pressed: true);
+        return page;
+    }
+
+    // ── Player 页签 ──
+    private Control BuildLobbyPlayerTab(bool editable)
+    {
+        var page = new VBoxContainer { Name = Localization.Tr("Player") };
+        page.AddThemeConstantOverride("separation", 4);
+
+        _popCapTypeOpt = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        foreach (var t in new[] { "Player Population", "Team Population", "World Population" })
+            _popCapTypeOpt.AddItem(Localization.Tr(t));
+        _popCapTypeOpt.Selected = 0;
+        _popCapTypeOpt.Disabled = !editable;
+        _popCapTypeOpt.ItemSelected += _ => { UpdateLobbyPopCapLabel(); EmitOptionsIfHost(); };
+        page.AddChild(MakeLobbyRow("Population Cap Type", _popCapTypeOpt));
+
+        var capRow = new HBoxContainer();
+        capRow.AddThemeConstantOverride("separation", 8);
+        var capLabel = new Label
+        {
+            Text = Localization.Tr("Player Population Cap"),
+            CustomMinimumSize = new Vector2(110, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        capLabel.AddThemeFontSizeOverride("font_size", 13);
+        capLabel.Modulate = new Color(1, 1, 1, 0.75f);
+        capRow.AddChild(capLabel);
+        _popCapSlider = new HSlider
+        {
+            MinValue = 0, MaxValue = 1, Step = 0.01, Value = 0.5,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            TooltipText = "Choose the population cap (rightmost = Unlimited).",
+        };
+        if (!editable) _popCapSlider.MouseFilter = Control.MouseFilterEnum.Ignore;
+        _popCapSlider.ValueChanged += _ => { UpdateLobbyPopCapLabel(); EmitOptionsIfHost(); };
+        capRow.AddChild(_popCapSlider);
+        _popCapValue = new Label { Text = "300", CustomMinimumSize = new Vector2(64, 0) };
+        _popCapValue.AddThemeFontSizeOverride("font_size", 13);
+        capRow.AddChild(_popCapValue);
+        page.AddChild(capRow);
+
+        _startResOpt = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        foreach (var (name, amount) in LobbyStartResources)
+            _startResOpt.AddItem($"{Localization.Tr(name)} ({amount})");
+        _startResOpt.Selected = 1;
+        _startResOpt.Disabled = !editable;
+        _startResOpt.ItemSelected += _ => EmitOptionsIfHost();
+        page.AddChild(MakeLobbyRow("Starting Resources", _startResOpt));
+
+        _spiesBox = AddLobbyCheck(page, "Spies", editable, _ => EmitOptionsIfHost());
+        _cheatsBox = AddLobbyCheck(page, "Cheats", editable, _ => EmitOptionsIfHost());
+        return page;
+    }
+
+    // ── Game Type 页签 ──
+    private Control BuildLobbyGameTypeTab(bool editable)
+    {
+        var page = new VBoxContainer { Name = Localization.Tr("Game Type") };
+        page.AddThemeConstantOverride("separation", 4);
+
+        _victoryBoxes.Clear();
+        foreach (var (id, name, def) in LobbyVictoryChoices)
+        {
+            var box = AddLobbyCheck(page, name, editable, _ => EmitOptionsIfHost(), pressed: def);
+            _victoryBoxes[id] = box;
+        }
+
+        _gameSpeedOpt = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        foreach (var s in LobbyGameSpeeds) _gameSpeedOpt.AddItem($"{s:0.##}×");
+        _gameSpeedOpt.Selected = 4;
+        _gameSpeedOpt.Disabled = !editable;
+        _gameSpeedOpt.ItemSelected += _ => EmitOptionsIfHost();
+        page.AddChild(MakeLobbyRow("Game Speed", _gameSpeedOpt));
+
+        var cfRow = new HBoxContainer();
+        cfRow.AddThemeConstantOverride("separation", 8);
+        var cfLabel = new Label
+        {
+            Text = Localization.Tr("Ceasefire"),
+            CustomMinimumSize = new Vector2(110, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        cfLabel.AddThemeFontSizeOverride("font_size", 13);
+        cfLabel.Modulate = new Color(1, 1, 1, 0.75f);
+        cfRow.AddChild(cfLabel);
+        _ceasefireSlider = new HSlider
+        {
+            MinValue = 0, MaxValue = 45, Step = 1, Value = 0,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        if (!editable) _ceasefireSlider.MouseFilter = Control.MouseFilterEnum.Ignore;
+        _ceasefireSlider.ValueChanged += v =>
+        {
+            _ceasefireValue.Text = v < 0.5 ? Localization.Tr("Off") : $"{(int)v} min";
+            EmitOptionsIfHost();
+        };
+        cfRow.AddChild(_ceasefireSlider);
+        _ceasefireValue = new Label { Text = Localization.Tr("Off"), CustomMinimumSize = new Vector2(64, 0) };
+        _ceasefireValue.AddThemeFontSizeOverride("font_size", 13);
+        cfRow.AddChild(_ceasefireValue);
+        page.AddChild(cfRow);
+
+        _lockedTeamsBox = AddLobbyCheck(page, "Locked Teams", editable, _ => EmitOptionsIfHost());
+        _lastManBox = AddLobbyCheck(page, "Last Man Standing", editable, _ => EmitOptionsIfHost());
+        return page;
+    }
+
+    private CheckBox AddLobbyCheck(Control parent, string text, bool editable,
+        System.Action<bool>? onToggled = null, bool pressed = false)
+    {
+        var box = new CheckBox
+        {
+            Text = Localization.Tr(text),
+            Disabled = !editable,
+            ButtonPressed = pressed,
+        };
+        UITheme.ApplyCheckboxIcons(box);
+        if (onToggled != null)
+            box.Toggled += pressed => onToggled(pressed);
+        parent.AddChild(box);
+        return box;
+    }
+
+    private static Control MakeLobbyRow(string label, Control widget)
+    {
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 8);
+        var l = new Label
+        {
+            Text = Localization.Tr(label),
+            CustomMinimumSize = new Vector2(110, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        l.AddThemeFontSizeOverride("font_size", 13);
+        l.Modulate = new Color(1, 1, 1, 0.75f);
+        row.AddChild(l);
+        row.AddChild(widget);
+        return row;
+    }
+
+    private void UpdateLobbyPopCapLabel()
+    {
+        double v = _popCapSlider.Value;
+        if (v >= 0.995)
+        {
+            _popCapValue.Text = Localization.Tr("Unlimited");
+            return;
+        }
+        double factor = LobbyPopCapFactors[_popCapTypeOpt.Selected];
+        int cap = (int)System.Math.Round((1 / (1 - v) + 28 * v / (1 + 5 * v)) * factor / 6 / 10) * 10;
+        _popCapValue.Text = cap.ToString();
+    }
+
+    /// <summary>host 编辑 → 汇总当前选项并广播(host-only,no-op on client)。</summary>
+    private void EmitOptionsIfHost()
+    {
+        if (!_lobbyIsHost || OnOptionsEdit == null) return;
+        var o = ReadLobbyOptions();
+        OnOptionsEdit.Invoke(o);
+    }
+
+    private MultiplayerController.MpLobbyOptions ReadLobbyOptions()
+    {
+        var o = new MultiplayerController.MpLobbyOptions
+        {
+            MapSize = LobbyMapSizes[_lobbyMapSizeOpt.Selected].Tiles,
+            PlayerPlacement = LobbyPlacements[_lobbyPlacementOpt.Selected].Id,
+            StartingResources = LobbyStartResources[_startResOpt.Selected].Amount,
+            PopulationCapTypeIdx = _popCapTypeOpt.Selected,
+            GameSpeed = LobbyGameSpeeds[_gameSpeedOpt.Selected],
+            CeasefireMinutes = (int)_ceasefireSlider.Value,
+            Nomad = _nomadBox.ButtonPressed,
+            Treasures = _treasuresBox.ButtonPressed,
+            ExploredMap = _exploredBox.ButtonPressed,
+            RevealedMap = _revealedBox.ButtonPressed,
+            AlliedView = _alliedViewBox.ButtonPressed,
+            LockedTeams = _lockedTeamsBox.ButtonPressed,
+            Cheats = _cheatsBox.ButtonPressed,
+            Spies = _spiesBox.ButtonPressed,
+            LastManStanding = _lastManBox.ButtonPressed,
+        };
+        double v = _popCapSlider.Value;
+        if (v < 0.995)
+        {
+            double factor = LobbyPopCapFactors[_popCapTypeOpt.Selected];
+            o.PopulationCap = (int)System.Math.Round((1 / (1 - v) + 28 * v / (1 + 5 * v)) * factor / 6 / 10) * 10;
+        }
+        else
+            o.PopulationCap = 0;   // Unlimited(0 = 不改,模板默认)
+        o.VictoryConditions = _victoryBoxes
+            .Where(kv => kv.Value.ButtonPressed).Select(kv => kv.Key).ToList();
+        return o;
+    }
+
+    /// <summary>client:host 选项广播到达 → 刷新全部只读控件(host 不回刷,避免打断编辑)。</summary>
+    public void RefreshOptions(MultiplayerController.MpLobbyOptions o)
+    {
+        if (_lobbyIsHost) return;
+        int sizeIdx = System.Array.FindIndex(LobbyMapSizes, s => s.Tiles == o.MapSize);
+        if (sizeIdx >= 0) _lobbyMapSizeOpt.Selected = sizeIdx;
+        int plIdx = System.Array.FindIndex(LobbyPlacements, p => p.Id == o.PlayerPlacement);
+        if (plIdx >= 0) _lobbyPlacementOpt.Selected = plIdx;
+        _popCapTypeOpt.Selected = o.PopulationCapTypeIdx;
+        int resIdx = System.Array.FindIndex(LobbyStartResources, r => r.Amount == o.StartingResources);
+        if (resIdx >= 0) _startResOpt.Selected = resIdx;
+        int speedIdx = System.Array.FindIndex(LobbyGameSpeeds, s => System.Math.Abs(s - o.GameSpeed) < 0.001f);
+        if (speedIdx >= 0) _gameSpeedOpt.Selected = speedIdx;
+        _ceasefireSlider.Value = o.CeasefireMinutes;
+        _ceasefireValue.Text = o.CeasefireMinutes == 0
+            ? Localization.Tr("Off") : $"{o.CeasefireMinutes} min";
+        if (o.PopulationCap > 0)
+        {
+            double factor = LobbyPopCapFactors[_popCapTypeOpt.Selected];
+            // 反推滑条位置(近似,仅供显示)
+            double target = o.PopulationCap / (factor / 6.0);
+            double vv = System.Math.Min(0.99, System.Math.Max(0.0,
+                (target - 2) / (target + 4)));
+            _popCapSlider.Value = vv;
+            _popCapValue.Text = o.PopulationCap.ToString();
+        }
+        else
+        {
+            _popCapSlider.Value = 1;
+            _popCapValue.Text = Localization.Tr("Unlimited");
+        }
+        _nomadBox.ButtonPressed = o.Nomad;
+        _treasuresBox.ButtonPressed = o.Treasures;
+        _exploredBox.ButtonPressed = o.ExploredMap;
+        _revealedBox.ButtonPressed = o.RevealedMap;
+        _alliedViewBox.ButtonPressed = o.AlliedView;
+        _lockedTeamsBox.ButtonPressed = o.LockedTeams;
+        _cheatsBox.ButtonPressed = o.Cheats;
+        _spiesBox.ButtonPressed = o.Spies;
+        _lastManBox.ButtonPressed = o.LastManStanding;
+        foreach (var (id, _, _) in LobbyVictoryChoices)
+            if (_victoryBoxes.TryGetValue(id, out var box))
+                box.ButtonPressed = o.VictoryConditions.Contains(id);
+    }
+
+    private void RefillLobbyMaps()
+    {
+        string type = _lobbyMapTypeOpt.Selected switch
+        {
+            0 => "random",
+            1 => "skirmish",
+            2 => "scenario",
+            _ => "random",
+        };
+        _lobbyFiltered = _lobbyMaps.Where(m => m.MapType == type).ToList();
+        _lobbyMapSelectOpt.Clear();
+        foreach (var m in _lobbyFiltered)
+            _lobbyMapSelectOpt.AddItem(m.DisplayName);
+        if (_lobbyFiltered.Count > 0)
+        {
+            _lobbyMapSelectOpt.Selected = 0;
+            SetMapDisplay(_lobbyFiltered[0].RelPath);
         }
     }
+
+    private void SetMapTexture(MapEntry? m)
+    {
+        _preview2.Texture = null;
+        if (m?.PreviewPath == null) return;
+        var img = Image.LoadFromFile(m.PreviewPath);
+        if (img != null)
+            _preview2.Texture = ImageTexture.CreateFromImage(img);
+    }
+
+    // ── 控件字段(MP 大厅专用)──
+    private VBoxContainer _slotRowsBox = null!;
+    private TextureRect _preview2 = null!;
+    private Label _nameLabel2 = null!;
+    private Label _descLabel2 = null!;
+    private OptionButton _lobbyMapTypeOpt = null!;
+    private OptionButton _lobbyMapSelectOpt = null!;
+    private OptionButton _lobbyMapSizeOpt = null!;
+    private OptionButton _lobbyPlacementOpt = null!;
+    private CheckBox _nomadBox = null!;
+    private CheckBox _treasuresBox = null!;
+    private CheckBox _exploredBox = null!;
+    private CheckBox _revealedBox = null!;
+    private CheckBox _alliedViewBox = null!;
+    private OptionButton _popCapTypeOpt = null!;
+    private HSlider _popCapSlider = null!;
+    private Label _popCapValue = null!;
+    private OptionButton _startResOpt = null!;
+    private CheckBox _spiesBox = null!;
+    private CheckBox _cheatsBox = null!;
+    private readonly Dictionary<string, CheckBox> _victoryBoxes = new();
+    private OptionButton _gameSpeedOpt = null!;
+    private HSlider _ceasefireSlider = null!;
+    private Label _ceasefireValue = null!;
+    private CheckBox _lockedTeamsBox = null!;
+    private CheckBox _lastManBox = null!;
+    private VBoxContainer _chatList = null!;
+    private LineEdit _chatEdit = null!;
+    private List<MapEntry> _lobbyFiltered = new();
+
+    // 选项表(与 SP gamesetup 同一份上游数据)。
+    private static readonly (string Name, int Tiles)[] LobbyMapSizes =
+    {
+        ("Tiny", 128), ("Small", 192), ("Normal", 256), ("Medium", 320),
+        ("Large", 384), ("Very Large", 448), ("Giant", 512),
+    };
+    private static readonly (string Id, string Name)[] LobbyPlacements =
+    {
+        ("circle", "Circle"), ("river", "River"), ("groupedLines", "Grouped Lines"),
+        ("randomGroup", "Random Group"), ("stronghold", "Stronghold"),
+    };
+    private static readonly int[] LobbyPopCapFactors = { 300, 400, 600 };
+    private static readonly (string Name, int Amount)[] LobbyStartResources =
+    {
+        ("Very Low", 100), ("Low", 300), ("Medium", 500),
+        ("High", 1000), ("Very High", 3000), ("Deathmatch", 50000),
+    };
+    private static readonly float[] LobbyGameSpeeds =
+        { 0.1f, 0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 5f, 10f, 20f };
+    private static readonly (string Id, string Name, bool Default)[] LobbyVictoryChoices =
+    {
+        ("conquest", "Conquest", true),
+        ("wonder", "Wonder Victory", false),
+        ("capture_the_relic", "Capture the Relic", false),
+        ("regicide", "Regicide", false),
+        ("conquest_civic_centers", "Conquest Civic Centers", false),
+        ("conquest_structures", "Conquest Structures", false),
+        ("conquest_units", "Conquest Units", false),
+    };
+
+    /// <summary>聊天追加一行("P{id}: text";AppendChat 由 OnChatReceived 驱动)。</summary>
+    public void AppendChat(int playerId, string text)
+    {
+        if (_chatList == null) return;
+        var line = new Label { Text = $"P{playerId}: {text}", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        line.AddThemeFontSizeOverride("font_size", 12);
+        _chatList.AddChild(line);
+    }
+
+    /// <summary>host 的选项编辑事件(ReadLobbyOptions → HostSetOptions)。</summary>
+    public event System.Action<MultiplayerController.MpLobbyOptions>? OnOptionsEdit;
+    /// <summary>聊天发送事件(Main → _mp.SendChat)。</summary>
+    public event System.Action<string>? OnChatSend;
 
     /// <summary>One slot row. Items are added in enum/array order so the OptionButton index
     /// equals the enum value (Closed/Human/AI → 0/1/2) or the CivChoices index, letting us
     /// read/write via <c>.Selected</c>. Slot 1 (the host) is fully locked — its edits are
     /// rejected by <c>HostSetSlot</c>, so allowing them would leave the UI stale.</summary>
+    /// <summary>One slot row(gamesetup_mp 玩家行:整行玩家色底;kind=Open/AI/Closed,
+    /// 已被 peer 认领的 Human 槽显示 Peer N 且锁定;slot 1 = host(You)全锁)。
+    /// Kind 下拉:Open(1)/AI(2)/Closed(0),index == PlayerSlotKind 值。</summary>
     private void BuildSlotRow(VBoxContainer parent, PlayerSlotSetup slot, bool editable)
     {
         int idx = slot.PlayerId - 1;
         bool locked = slot.PlayerId == 1;
+        bool claimed = _peerLookup != null && _peerLookup(slot.PlayerId);
+        bool rowLocked = locked || claimed;
 
+        var card = new PanelContainer();
+        var rowColor = LobbyRowColors[System.Math.Min(idx, LobbyRowColors.Length - 1)];
+        card.CustomMinimumSize = new Vector2(0, 32);
+        card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = rowColor,
+            ContentMarginTop = 2, ContentMarginBottom = 2,
+            ContentMarginLeft = 8, ContentMarginRight = 8,
+        });
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", 8);
-        row.AddChild(new Label { Text = $"P{slot.PlayerId}", CustomMinimumSize = new Vector2(50, 0) });
+        card.AddChild(row);
 
-        // Kind: Closed(0) / Human(1) / AI(2) — index == enum value.
+        string nameText = slot.PlayerId == 1
+            ? Localization.Tr("You (host)")
+            : claimed
+                ? Localization.Tr("Peer") + " " + (_peerNameLookup?.Invoke(slot.PlayerId)?.ToString() ?? "")
+                : $"Player {slot.PlayerId}";
+        var nameLabel = new Label
+        {
+            Text = nameText,
+            CustomMinimumSize = new Vector2(150, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        nameLabel.AddThemeFontSizeOverride("font_size", 14);
+        row.AddChild(nameLabel);
+
+        // Kind: Closed(0) / Open-Human(1) / AI(2) — index == enum value。
         var kind = new OptionButton { CustomMinimumSize = new Vector2(110, 0) };
-        kind.AddItem("Closed", (int)PlayerSlotKind.Closed);
-        kind.AddItem("Human", (int)PlayerSlotKind.Human);
-        kind.AddItem("AI", (int)PlayerSlotKind.AI);
+        kind.AddItem(Localization.Tr("Closed"), (int)PlayerSlotKind.Closed);
+        kind.AddItem(Localization.Tr("Open"), (int)PlayerSlotKind.Human);
+        kind.AddItem(Localization.Tr("AI"), (int)PlayerSlotKind.AI);
         kind.Selected = (int)slot.Kind;
-        kind.Disabled = !editable || locked;
+        kind.Disabled = !editable || rowLocked;
         row.AddChild(kind);
         _kindOpts[idx] = kind;
 
-        // Civ: index into CivChoices.
-        var civ = new OptionButton { CustomMinimumSize = new Vector2(110, 0) };
-        foreach (var c in CivChoices) civ.AddItem(c);
-        int civSel = System.Array.IndexOf(CivChoices, slot.Civ);
-        civ.Selected = civSel >= 0 ? civSel : 0;
-        civ.Disabled = !editable || locked;
+        // Civ: index into CivChoices(+1 位 0=Random)。
+        var civ = new OptionButton
+        {
+            CustomMinimumSize = new Vector2(150, 0),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        civ.AddItem(Localization.Tr("Random"));
+        foreach (var (_, name) in CivChoices) civ.AddItem(name);
+        int civSel = System.Array.FindIndex(CivChoices, c => c.Code == slot.Civ);
+        civ.Selected = civSel >= 0 ? civSel + 1 : 0;
+        civ.Disabled = !editable || rowLocked;
         row.AddChild(civ);
         _civOpts[idx] = civ;
 
-        // Team: -1 = FFA, 0+ = allied team.
+        // Team: -1 = FFA, 0+ = allied team。
         var team = new SpinBox
         {
             MinValue = -1, MaxValue = 3, Value = slot.Team,
             CustomMinimumSize = new Vector2(60, 0),
-            Editable = editable && !locked,
+            Editable = editable && !rowLocked,
         };
         row.AddChild(team);
         _teamSpins[idx] = team;
 
-        if (editable && !locked)
+        if (editable && !rowLocked)
         {
             // Read fresh control values at emit time (closures capture slot.PlayerId, a constant).
             void Emit() => OnSlotEdit?.Invoke(
                 slot.PlayerId,
                 (PlayerSlotKind)kind.Selected,
-                CivChoices[civ.Selected],
+                civ.Selected > 0 ? CivChoices[civ.Selected - 1].Code : CivChoices[GD.RandRange(0, CivChoices.Length - 1)].Code,
                 (int)team.Value);
             kind.ItemSelected += _ => Emit();
             civ.ItemSelected += _ => Emit();
             team.ValueChanged += _ => Emit();
         }
 
-        parent.AddChild(row);
+        parent.AddChild(card);
     }
+
+    /// <summary>槽位认领查询(Main 注入,指向 _mp.IsSlotClaimedByPeer)。</summary>
+    public System.Func<int, bool>? _peerLookup;
+    /// <summary>槽位 → peer 显示名查询(Main 注入,指向 _mp.PeerIdOfSlot)。</summary>
+    public System.Func<int, int?>? _peerNameLookup;
+
+    /// <summary>大厅玩家行底色(玩家色暗化,同 SP gamesetup)。</summary>
+    private static readonly Color[] LobbyRowColors =
+    {
+        new(0.082f, 0.216f, 0.584f),
+        new(0.588f, 0.078f, 0.078f),
+        new(0.337f, 0.706f, 0.121f),
+        new(0.906f, 0.784f, 0.020f),
+        new(0.588f, 0.078f, 0.588f),
+        new(0.078f, 0.627f, 0.784f),
+        new(0.902f, 0.471f, 0.078f),
+        new(0.784f, 0.314f, 0.471f),
+    };
 
     /// <summary>Client-only: repaint the disabled slot rows from the host's broadcast table.
     /// The host is the source of truth (editable rows) and never repaints — repainting would
@@ -665,20 +1235,18 @@ public sealed partial class LobbyUI : CanvasLayer
     public void RefreshSlotDisplay(IReadOnlyList<PlayerSlotSetup> slots)
     {
         if (_lobbyIsHost) return;
+        // client 只读——整表重建(行名(Peer N/You)也随认领状态刷新)。
+        if (_slotRowsBox == null) return;
+        foreach (var c in _slotRowsBox.GetChildren()) c.QueueFree();
+        for (int i = 0; i < _kindOpts.Length; i++)
+        {
+            _kindOpts[i] = null;
+            _civOpts[i] = null;
+            _teamSpins[i] = null;
+        }
         int n = System.Math.Min(slots.Count, PlayerSlotSetupCodec.MaxSlots);
         for (int i = 0; i < n; i++)
-        {
-            var s = slots[i];
-            int idx = s.PlayerId - 1;
-            if (idx < 0 || idx >= _kindOpts.Length) continue;
-            if (_kindOpts[idx] is { } k) k.Selected = (int)s.Kind;
-            if (_civOpts[idx] is { } c)
-            {
-                int sel = System.Array.IndexOf(CivChoices, s.Civ);
-                c.Selected = sel >= 0 ? sel : 0;
-            }
-            if (_teamSpins[idx] is { } t) t.Value = s.Team;
-        }
+            BuildSlotRow(_slotRowsBox, slots[i], editable: false);
     }
 
     /// <summary>Placeholder 4-slot table (all Closed) for a client before the host's first
