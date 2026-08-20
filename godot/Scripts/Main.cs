@@ -564,6 +564,13 @@ public sealed partial class Main : Node3D
 	/// <summary>dev:MP 大厅就绪后截图退出(与 MainMenu 的 mphost 钩子配套)。</summary>
 	private async void MpLobbyShotDeferred()
 	{
+		// dev 配合:ZEROAD_MATCH_TAB=0/1/2 切大厅页签再截(等大厅页建完)。
+		if (int.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_MATCH_TAB"), out int mtTab))
+		{
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+			_lobby.DevSelectTab(mtTab);
+		}
 		// dev 配合:ZEROAD_MATCH_MAPTYPE=0/1/2 预选大厅 Map Type 再截(等大厅页建完)。
 		if (int.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_MATCH_MAPTYPE"), out int mtIdx))
 		{

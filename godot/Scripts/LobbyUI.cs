@@ -603,10 +603,11 @@ public sealed partial class LobbyUI : CanvasLayer
         _descLabel2.AddThemeFontSizeOverride("font_size", 12);
         left.AddChild(_descLabel2);
 
-        // ══ 右列:预览 + 设置选项卡 ══
+        // ══ 右列:预览 + 设置区(内容左置 + 右缘纵向页签条,对齐 A28 gamesetup)══
         var right = new VBoxContainer
         {
-            CustomMinimumSize = new Vector2(400, 0),
+            // 右列加宽:内容区(原 TabContainer 页) + 右侧 150px 纵向页签条。
+            CustomMinimumSize = new Vector2(560, 0),
             SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd,
         };
         right.AddThemeConstantOverride("separation", 8);
@@ -630,11 +631,40 @@ public sealed partial class LobbyUI : CanvasLayer
         frame.AddChild(_preview2);
         right.AddChild(frame);
 
-        var tabs = new TabContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
-        right.AddChild(tabs);
-        tabs.AddChild(BuildLobbyMapTab(isHost));
-        tabs.AddChild(BuildLobbyPlayerTab(isHost));
-        tabs.AddChild(BuildLobbyGameTypeTab(isHost));
+        _lobbyTabPages = new Control[]
+        {
+            BuildLobbyMapTab(isHost), BuildLobbyPlayerTab(isHost), BuildLobbyGameTypeTab(isHost),
+        };
+        var settingsRow = new HBoxContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+        settingsRow.AddThemeConstantOverride("separation", 8);
+        // PanelContainer 宿主:只排可见页,最小尺寸随当前页(裸 Control 宿主最小尺寸为 0,
+        // 会把外层布局压塌——SP MapPickerPanel 同款教训)。
+        var pageHost = new PanelContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+        };
+        pageHost.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
+        for (int i = 0; i < _lobbyTabPages.Length; i++)
+        {
+            _lobbyTabPages[i].Visible = i == 0;
+            pageHost.AddChild(_lobbyTabPages[i]);
+        }
+        settingsRow.AddChild(pageHost);
+        _lobbyTabStrip = new VerticalTabStrip(new[]
+            { Localization.Tr("Map"), Localization.Tr("Player"), Localization.Tr("Game Type") })
+        {
+            CustomMinimumSize = new Vector2(150, 0),
+            SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd,
+            SizeFlagsVertical = Control.SizeFlags.ShrinkBegin,
+        };
+        _lobbyTabStrip.TabSelected += idx =>
+        {
+            for (int i = 0; i < _lobbyTabPages.Length; i++)
+                _lobbyTabPages[i].Visible = i == idx;
+        };
+        settingsRow.AddChild(_lobbyTabStrip);
+        right.AddChild(settingsRow);
 
         // ── 底部:聊天栏(左) + 状态/按钮(右)──
         var bottomRow = new HBoxContainer { CustomMinimumSize = new Vector2(0, 110) };
@@ -1017,6 +1047,13 @@ public sealed partial class LobbyUI : CanvasLayer
                 box.ButtonPressed = o.VictoryConditions.Contains(id);
     }
 
+    /// <summary>dev 截图钩子:切到指定大厅页签(0=Map/1=Player/2=Game Type)。</summary>
+    public void DevSelectTab(int idx)
+    {
+        if (_lobbyTabStrip == null) return;
+        _lobbyTabStrip.Select(idx);
+    }
+
     /// <summary>dev 截图钩子:预选大厅 Map Type(0=random/1=skirmish/2=scenario)——
     /// 程序化 Selected 不发 ItemSelected,须手动 RefillLobbyMaps。</summary>
     public void DevShowMapType(int idx)
@@ -1060,6 +1097,8 @@ public sealed partial class LobbyUI : CanvasLayer
     private TextureRect _preview2 = null!;
     private Label _nameLabel2 = null!;
     private Label _descLabel2 = null!;
+    private Control[] _lobbyTabPages = System.Array.Empty<Control>();
+    private VerticalTabStrip _lobbyTabStrip = null!;
     private OptionButton _lobbyMapTypeOpt = null!;
     private OptionButton _lobbyMapSelectOpt = null!;
     private OptionButton _lobbyMapSizeOpt = null!;

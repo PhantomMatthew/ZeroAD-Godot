@@ -71,11 +71,12 @@ public sealed partial class MainMenu : Control
 				OnSinglePlayer();
 				// dev 配合:ZEROAD_MATCH_TAB=1/2 选 Player/Game Type 页签再截。
 				if (int.TryParse(OS.GetEnvironment("ZEROAD_MATCH_TAB"), out int tabIdx))
-					foreach (var node in this.FindChildren("*", "TabContainer", true, false))
-					{
-						((TabContainer)node).CurrentTab = tabIdx;
-						break;
-					}
+					foreach (var node in GetChildren())
+						if (node is MapPickerPanel tabPicker)
+						{
+							tabPicker.DevSelectTab(tabIdx);
+							break;
+						}
 				// dev 配合:ZEROAD_MATCH_MAPTYPE=0/1/2 预选 Map Type 并展开地图浏览器再截。
 				if (int.TryParse(OS.GetEnvironment("ZEROAD_MATCH_MAPTYPE"), out int mtIdx))
 					foreach (var node in GetChildren())

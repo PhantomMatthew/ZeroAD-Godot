@@ -62,6 +62,9 @@ public sealed partial class MapPickerPanel : Panel
     private VBoxContainer _slotRows = null!;
     private PanelContainer _browser = null!;
     private MapEntry? _selected;
+    private Control[] _tabPages = System.Array.Empty<Control>();
+    private PanelContainer _pageHost = null!;
+    private VerticalTabStrip _tabStrip = null!;
 
     // 每行的控件(kind/civ/team),索引 = 行号。
     private readonly List<OptionButton> _kindOpts = new();
@@ -336,7 +339,8 @@ public sealed partial class MapPickerPanel : Panel
     {
         var col = new VBoxContainer
         {
-            CustomMinimumSize = new Vector2(400, 0),
+            // 右列加宽:内容区(原 TabContainer 页) + 右侧 150px 纵向页签条。
+            CustomMinimumSize = new Vector2(560, 0),
             SizeFlagsHorizontal = SizeFlags.ShrinkEnd,
         };
         col.AddThemeConstantOverride("separation", 8);
@@ -360,12 +364,39 @@ public sealed partial class MapPickerPanel : Panel
         frame.AddChild(_preview);
         col.AddChild(frame);
 
-        // 设置选项卡(原版 GameSettingsTabs:Map / Player / Game Type)
-        var tabs = new TabContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
-        tabs.AddChild(BuildTabScroll(BuildMapTab(), "Map"));
-        tabs.AddChild(BuildTabScroll(BuildPlayerTab(), "Player"));
-        tabs.AddChild(BuildTabScroll(BuildGameTypeTab(), "Game Type"));
-        col.AddChild(tabs);
+        // 设置区(原版 GameSettingsPanel+GameSettingsTabs:内容在左,纵向页签条
+        // 贴右缘——A28 gamesetup 的 centerRightPanel 布局;页签"贴图"见 VerticalTabStrip)。
+        _tabPages = new Control[] { BuildMapTab(), BuildPlayerTab(), BuildGameTypeTab() };
+        var settingsRow = new HBoxContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
+        settingsRow.AddThemeConstantOverride("separation", 8);
+        // PanelContainer 宿主:只排可见页,最小尺寸随当前页(裸 Control 宿主最小尺寸为 0,
+        // 会把外层 ScrollContainer 的整页布局压塌)。
+        _pageHost = new PanelContainer
+        {
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+        };
+        _pageHost.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
+        for (int i = 0; i < _tabPages.Length; i++)
+        {
+            _tabPages[i].Visible = i == 0;
+            _pageHost.AddChild(_tabPages[i]);
+        }
+        settingsRow.AddChild(_pageHost);
+        _tabStrip = new VerticalTabStrip(new[]
+            { Localization.Tr("Map"), Localization.Tr("Player"), Localization.Tr("Game Type") })
+        {
+            CustomMinimumSize = new Vector2(150, 0),
+            SizeFlagsHorizontal = SizeFlags.ShrinkEnd,
+            SizeFlagsVertical = SizeFlags.ShrinkBegin,
+        };
+        _tabStrip.TabSelected += idx =>
+        {
+            for (int i = 0; i < _tabPages.Length; i++)
+                _tabPages[i].Visible = i == idx;
+        };
+        settingsRow.AddChild(_tabStrip);
+        col.AddChild(settingsRow);
 
         // 地图描述(原版 GameDescription:右列设置列表下方,白字多行)
         _nameLabel = new Label { Text = "" };
@@ -384,14 +415,8 @@ public sealed partial class MapPickerPanel : Panel
         return col;
     }
 
-    /// <summary>页签内容包滚动(小窗口可滚;Name 即页签名)。
-    /// 注意 Godot ScrollContainer 按子节点最小尺寸布局——VBox 页须显式给
-    /// Vertical ExpandFill 之外的宽度约束,这里直接命名页并返回。</summary>
-    private static Control BuildTabScroll(Control content, string name)
-    {
-        content.Name = Localization.Tr(name);
-        return content;
-    }
+    /// <summary>dev 截图钩子:切到指定页签(ZEROAD_MATCH_TAB=0/1/2)。</summary>
+    public void DevSelectTab(int idx) => _tabStrip.Select(idx);
 
     // ══════════ Map 页签(原版 GameSettingsLayout 第一段)══════════
     private Control BuildMapTab()
