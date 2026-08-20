@@ -1310,7 +1310,9 @@ public sealed partial class HUD : CanvasLayer
         var tex = (stats != null ? LoadPortraitFromIcon(stats.Icon) : null)
                   ?? LoadPortraitForTemplate(template);
         string t = template; // 闭包捕获迭代变量
-        AddCmdButton(tex, text, () => _main.TrainUnit(t, Input.IsKeyPressed(Key.Shift)));
+        // 批量提示进 tooltip(原版训练按钮提示 "Shift = 5 个一批");按下瞬间取 Shift。
+        var btn = AddCmdButton(tex, text, () => _main.TrainUnit(t, _shiftHeldAtMouseDown));
+        btn.TooltipText += " — Shift+click: train 5 at once";
     }
 
     /// <summary>前置科技全满足?(原版训练/建造面板的阶段过滤:requirements 未满足
@@ -1454,6 +1456,13 @@ public sealed partial class HUD : CanvasLayer
 
         btn.TooltipText = text.Replace("\n", " ");
         btn.Pressed += onPressed;
+        // 修饰键在按下瞬间捕获(原版在 mouse-down 读 Shift;Pressed 要等松开,
+        // 用户先松 Shift 再松鼠标就丢批量)。
+        btn.GuiInput += ev =>
+        {
+            if (ev is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Left)
+                _shiftHeldAtMouseDown = mb.ShiftPressed;
+        };
 
         var label = new Label
         {
@@ -1481,6 +1490,10 @@ public sealed partial class HUD : CanvasLayer
     }
 
     private record struct ResourceCounter(Control Root, Label Count, Label Stats);
+
+    /// <summary>鼠标按下瞬间的 Shift 状态（AddCmdButton GuiInput 捕获;
+    /// 批量训练/批量卸载等修饰语义在 mouse-down 判定,同原版）。</summary>
+    private bool _shiftHeldAtMouseDown;
 
     private IReadOnlySet<EntityId> _lastSelection = new HashSet<EntityId>();
 

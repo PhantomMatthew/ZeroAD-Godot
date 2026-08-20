@@ -477,6 +477,11 @@ public sealed partial class Main : Node3D
 		if (System.Environment.GetEnvironmentVariable("ZEROAD_AUTOBUILD") == "1")
 			AutobuildDeferred();
 
+		// dev 自检钩子:ZEROAD_AUTOTRAIN=1 时开局 ~6s 起对 CC 连下两批 5 个村民
+		// (批量训练链路验证:队列叠加/批次完成/人口增长)。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_AUTOTRAIN") == "1")
+			AutotrainDeferred();
+
 		// dev 截图钩子:ZEROAD_SHOT_SESSION=<秒[,秒...]> 开局 N 秒后视口截图存
 		// user://session_shot_<N>s.png(不退出;窗口无需前台,后台可截)。
 		foreach (var part in (System.Environment.GetEnvironmentVariable("ZEROAD_SHOT_SESSION") ?? "")
@@ -585,6 +590,47 @@ public sealed partial class Main : Node3D
 			await ToSignal(GetTree().CreateTimer(0.5), SceneTreeTimer.SignalName.Timeout);
 		}
 	found: ;
+	}
+
+	/// <summary>dev 钩子:对本地 CC 连下两批 5 个单位,随后报队列/人口状态。</summary>
+	private async void AutotrainDeferred()
+	{
+		await ToSignal(GetTree().CreateTimer(6.0), SceneTreeTimer.SignalName.Timeout);
+		int lp = (int)_sim.LocalPlayerId;
+		ZeroAD.Sim.EntityId cc = default;
+		string civ = "athen";
+		bool found = false;
+		foreach (var e in _sim.Sim.AllEntities)
+		{
+			var own = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.OwnershipComponent>(e);
+			if (own == null || own.PlayerId != lp) continue;
+			var id = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(e);
+			if (id == null || !id.TemplateName.Contains("/civil_centre")) continue;
+			civ = id.TemplateName.Split('/')[1];
+			cc = e; found = true; break;
+		}
+		if (!found)
+		{
+			ZeroAD.Sim.Diag.Err("Autotrain", "no CC found");
+			return;
+		}
+		string unit = $"units/{civ}/support_civilian";
+		// 先塞资源排除经济拒绝,纯验证批量队列机制(dev 钩子专用)。
+		var p0 = _sim.Sim.Players.GetPlayerEntity(lp);
+		if (p0 != null) { p0.Food = 5000; p0.Wood = 5000; p0.Stone = 5000; p0.Metal = 5000; }
+		_sim.CommandTrain(cc, unit, batch: true);
+		_sim.CommandTrain(cc, unit, batch: true);
+		ZeroAD.Sim.Diag.Log("Autotrain", $"queued 2×5 {unit}");
+
+		for (int i = 0; i < 6; i++)
+		{
+			await ToSignal(GetTree().CreateTimer(5.0), SceneTreeTimer.SignalName.Timeout);
+			var queue = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.ProductionQueue>(cc);
+			var player = _sim.Sim.Players.GetPlayerEntity(lp);
+			ZeroAD.Sim.Diag.Log("Autotrain",
+				$"t+{(i + 1) * 5 + 6}s queue={queue?.QueueCount ?? -1} progress={queue?.Progress ?? -1:F1} " +
+				$"popUsed={player?.PopUsed ?? -1} popLimit={player?.PopulationLimit ?? -1} food={player?.Food ?? -1}");
+		}
 	}
 
 	/// <summary>dev 钩子:找本地玩家的 CC + 一个工人,在 CC 旁下个住宅建造令。</summary>
