@@ -134,6 +134,12 @@ Entity templates (data, consumed as-is by the rewrite): `binaries/data/mods/publ
 
 ## Things to verify before claiming done
 
-- `dotnet build` on the changed `.csproj` exits 0 (remember: warnings fail the build).
+**Compile gate (mandatory after EVERY edit, not just before commit):**
+
+- Run `dotnet build` on **every** project you touched and confirm `0 Error(s)`:
+  - `dotnet build src/ZeroAD.Sim/ZeroAD.Sim.csproj` for kernel changes,
+  - `dotnet build godot/GodotProject.csproj` for anything under `godot/`.
+- Check the **error/warning counts in the summary lines** (`0 Warning(s)  0 Error(s)`), never just the last lines of output — an error scrolled out of a short `tail` still fails the build. Grep for `error` explicitly when in doubt: `dotnet build ... 2>&1 | grep -E "error|Error\(s\)"`.
+- Do this after **each** edit batch, before moving on. Do not assume a small edit compiles; do not commit or push a tree that doesn't build.
 - `dotnet test src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj` passes — `DeterminismTests` is the canary for cross-platform hash stability.
 - Any change touching `src/ZeroAD.Sim/` must not introduce `float`/`double` or `Godot.*` references into the kernel.
