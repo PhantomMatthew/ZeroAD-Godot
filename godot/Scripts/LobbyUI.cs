@@ -1017,6 +1017,15 @@ public sealed partial class LobbyUI : CanvasLayer
                 box.ButtonPressed = o.VictoryConditions.Contains(id);
     }
 
+    /// <summary>dev 截图钩子:预选大厅 Map Type(0=random/1=skirmish/2=scenario)——
+    /// 程序化 Selected 不发 ItemSelected,须手动 RefillLobbyMaps。</summary>
+    public void DevShowMapType(int idx)
+    {
+        if (_lobbyMapTypeOpt == null) return;
+        _lobbyMapTypeOpt.Selected = idx;
+        RefillLobbyMaps();
+    }
+
     private void RefillLobbyMaps()
     {
         string type = _lobbyMapTypeOpt.Selected switch

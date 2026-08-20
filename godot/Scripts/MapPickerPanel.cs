@@ -652,6 +652,16 @@ public sealed partial class MapPickerPanel : Panel
         }
     }
 
+    /// <summary>dev 截图钩子:预选 Map Type(0=random/1=skirmish/2=scenario)并打开
+    /// 地图浏览器展示该类型完整列表(程序化 Selected 不发 ItemSelected,须手动 Refill)。</summary>
+    public void DevShowMapType(int idx)
+    {
+        _mapTypeOpt.Selected = idx;
+        Refill();
+        if (_filtered.Count > 0) Select(_filtered[0]);
+        OpenBrowser();
+    }
+
     private void Refill()
     {
         string type = _mapTypeOpt?.Selected switch

@@ -76,6 +76,14 @@ public sealed partial class MainMenu : Control
 						((TabContainer)node).CurrentTab = tabIdx;
 						break;
 					}
+				// dev 配合:ZEROAD_MATCH_MAPTYPE=0/1/2 预选 Map Type 并展开地图浏览器再截。
+				if (int.TryParse(OS.GetEnvironment("ZEROAD_MATCH_MAPTYPE"), out int mtIdx))
+					foreach (var node in GetChildren())
+						if (node is MapPickerPanel pickerNode)
+						{
+							pickerNode.DevShowMapType(mtIdx);
+							break;
+						}
 				break;
 			default: return;
 		}
