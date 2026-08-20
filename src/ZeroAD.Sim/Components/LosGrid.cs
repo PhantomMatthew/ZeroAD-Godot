@@ -84,6 +84,19 @@ public sealed class LosGrid
     /// the caller then re-adds every seer to rebuild counts deterministically.</summary>
     public void RebuildCountsClear() => _counts = new ushort[MaxPlayers + 1][];
 
+    /// <summary>把整张图对该玩家标为已探索（gamesetup "Explored Map"：
+    /// 迷雾全开但无实时视野）。与视野圈共存——可见区仍由 counts 驱动。</summary>
+    public void ExploreAll(int player)
+    {
+        if (player < 1 || player > MaxPlayers) return;
+        int shift = Shift(player);
+        uint exploredBit = 1u << shift;
+        int n = VerticesPerSide * VerticesPerSide;
+        for (int idx = 0; idx < n; idx++)
+            _state[idx] |= exploredBit;
+        _explored[player] = _totalInworld;
+    }
+
     // --- Circle rasterization ---
 
     private void UpdateCircle(int player, Fixed x, Fixed z, Fixed range, bool adding)

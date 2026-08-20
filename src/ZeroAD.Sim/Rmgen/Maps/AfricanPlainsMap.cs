@@ -67,8 +67,11 @@ namespace ZeroAD.Sim.Rmgen.Maps
             var clFood = new TileClass(MapSize);
             var clBaseResource = new TileClass(MapSize);
 
-            var (_, playerPosition, _, _) = RmgenCommon.PlayerPlacementCircle(
-                rng, map, NumPlayers, RmgenLibrary.FractionToTiles(0.35, MapSize));
+            // 上游 playerPlacementByPattern(mapSettings.PlayerPlacement, ...)——
+            // 布置模式由 gamesetup 下发;randomAngle 实参抽数位置与上游一致
+            var (_, playerPosition) = RmgenCommon.PlayerPlacementByPattern(
+                rng, map, settings, null, RmgenLibrary.FractionToTiles(0.35, MapSize),
+                rng.RandomAngle());
 
             RmgenCommon.PlacePlayerBases(rng, map, settings, biome.MainTerrain0, ClPlayer, null,
                 playerPosition, biome.MainTerrain0, tCitytiles);

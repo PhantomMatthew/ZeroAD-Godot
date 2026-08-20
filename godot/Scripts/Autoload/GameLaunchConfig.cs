@@ -24,6 +24,36 @@ public partial class GameLaunchConfig : Node
     public int CeasefireMinutes;
     public System.Collections.Generic.IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? Slots;
 
+    // ── gamesetup 选项（对齐原版;仅 random 图生效的项在 skirmish/scenario 被忽略）──
+    /// <summary>地图尺寸(Tiny 128 … Giant 512;原版默认 Normal 256)。0 = 不改(192)。</summary>
+    public int MapSize;
+    /// <summary>biome 选择("random" = 图内随机,同上游;"" = 未设置)。</summary>
+    public string BiomeId = "";
+    /// <summary>玩家布置(circle/river/groupedLines/randomGroup/stronghold;"" = 图脚本默认)。</summary>
+    public string PlayerPlacement = "";
+    /// <summary>起始资源(四项同值;原版 Low=300 默认)。0 = 模板默认(300/300/200/100)。</summary>
+    public int StartingResources;
+    /// <summary>人口上限(每玩家;0 = 默认 300)。</summary>
+    public int PopulationCap;
+    /// <summary>游戏速度倍率(原版默认 1.0;0 = 不改)。</summary>
+    public float GameSpeed;
+    /// <summary>Nomad(无 CC 开局,仅起始单位)。</summary>
+    public bool Nomad;
+    /// <summary>宝藏(原版默认开;当前 rmgen 图内宝藏暂不随此项开关,仅记录)。</summary>
+    public bool Treasures = true;
+    /// <summary>已探索(开局全图进入 explored 迷雾态)。</summary>
+    public bool ExploredMap;
+    /// <summary>全图揭示(无迷雾)。</summary>
+    public bool RevealedMap;
+    /// <summary>盟友视野共享(开局即共享 LOS)。</summary>
+    public bool AlliedView;
+    /// <summary>锁定队伍(禁改外交)。</summary>
+    public bool LockedTeams;
+    /// <summary>作弊(当前无作弊指令实现,仅记录)。</summary>
+    public bool Cheats;
+    /// <summary>胜利条件(原版 victory_conditions 名;空 = ["conquest"] 默认征服)。</summary>
+    public System.Collections.Generic.List<string> VictoryConditions = new();
+
     /// <summary>开始新一局前重置为大厅默认(避免上一局残留 Mode 触发错误启动)。</summary>
     public void Reset()
     {
@@ -35,5 +65,19 @@ public partial class GameLaunchConfig : Node
         MapPath = "";
         CeasefireMinutes = 0;
         Slots = null;
+        MapSize = 0;
+        BiomeId = "";
+        PlayerPlacement = "";
+        StartingResources = 0;
+        PopulationCap = 0;
+        GameSpeed = 0;
+        Nomad = false;
+        Treasures = true;
+        ExploredMap = false;
+        RevealedMap = false;
+        AlliedView = false;
+        LockedTeams = false;
+        Cheats = false;
+        VictoryConditions = new();
     }
 }

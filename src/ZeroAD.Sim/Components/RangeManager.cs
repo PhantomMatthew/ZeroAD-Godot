@@ -184,16 +184,22 @@ namespace ZeroAD.Sim.Components
         // SetSharedLos → m_SharedLosMask, which merges ally vision at the LOS-grid count
         // level. Owner first, allies in ascending id order (deterministic). Empty (owner
         // only) when diplomacy is unset or the player has no allies.
+        /// <summary>gamesetup "Allied View" 开关——关闭时盟友不再共享视野
+        /// （原版默认开;SP 1v1 无盟友无影响）。</summary>
+        public static bool AlliedVisionEnabled = true;
+
         private IEnumerable<int> SeerPlayers(int owner)
         {
             yield return owner;
-            foreach (var ally in _cm.Players.GetMutualAllies(owner)) yield return ally;
+            if (AlliedVisionEnabled)
+                foreach (var ally in _cm.Players.GetMutualAllies(owner)) yield return ally;
         }
 
         private uint OwnerPlusAlliesDirty(int owner)
         {
             uint mask = DirtyBit(owner);
-            foreach (var ally in _cm.Players.GetMutualAllies(owner)) mask |= DirtyBit(ally);
+            if (AlliedVisionEnabled)
+                foreach (var ally in _cm.Players.GetMutualAllies(owner)) mask |= DirtyBit(ally);
             return mask;
         }
 

@@ -58,6 +58,16 @@ public sealed partial class MainMenu : Control
 		{
 			case "hotkeys": OnHotkeys(); break;
 			case "options": OnOptions(); break;
+			case "matches":
+				OnSinglePlayer();
+				// dev 配合:ZEROAD_MATCH_TAB=1/2 选 Player/Game Type 页签再截。
+				if (int.TryParse(OS.GetEnvironment("ZEROAD_MATCH_TAB"), out int tabIdx))
+					foreach (var node in this.FindChildren("*", "TabContainer", true, false))
+					{
+						((TabContainer)node).CurrentTab = tabIdx;
+						break;
+					}
+				break;
 			default: return;
 		}
 		ScreenshotAndQuit(shot);
@@ -416,7 +426,7 @@ public sealed partial class MainMenu : Control
 		// 选图面板(对齐原版 gamesetup 地图浏览器):SP 不再硬编码 arcadia——
 		// random(MapRegistry)/skirmish/scenario 全目录可选,种子仅对 random 生效。
 		string? dataRoot = _binDir == null ? null : Path.Combine(_binDir, "data", "mods", "public");
-		var picker = new MapPickerPanel(MapCatalog.Scan(dataRoot));
+		var picker = new MapPickerPanel(MapCatalog.Scan(dataRoot), dataRoot);
 		picker.OnStart += (map, seed, slots) =>
 		{
 			_cfg.Reset();
@@ -424,7 +434,7 @@ public sealed partial class MainMenu : Control
 			_cfg.MapPath = map.RelPath;
 			_cfg.Seed = seed;
 			_cfg.Slots = slots;   // 面板配好的槽位表(You/AI/文明/队伍);本地玩家 = Human 槽
-			_cfg.CeasefireMinutes = picker.SelectedCeasefireMinutes;
+			picker.WriteOptions(_cfg);   // gamesetup 全部选项(尺寸/biome/资源/人口/速度/停战/胜利条件…)
 			GotoSession();
 		};
 		picker.OnCancelled += () => picker.QueueFree();

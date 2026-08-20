@@ -6,6 +6,56 @@ public static class UITheme
 {
     private static Theme? _theme;
 
+    /// <summary>复选框图标（默认主题的 checked 贴图在高分屏被拉成条——自绘 16px
+    /// 金边暗盒 + 金勾，观感对齐原版 Modern checkbox）。</summary>
+    private static Texture2D? _checkboxChecked, _checkboxUnchecked;
+
+    public static Texture2D CheckboxChecked => (_checkboxChecked ??= BuildCheckbox(true));
+    public static Texture2D CheckboxUnchecked => (_checkboxUnchecked ??= BuildCheckbox(false));
+
+    /// <summary>给 CheckBox 套自绘图标（checked/unchecked/radio/disabled 全覆），
+    /// 并清空 Button 系 stylebox——否则勾选态按 Button.pressed 渲染成整条石纹按钮。</summary>
+    public static void ApplyCheckboxIcons(CheckBox box)
+    {
+        box.AddThemeIconOverride("checked", CheckboxChecked);
+        box.AddThemeIconOverride("unchecked", CheckboxUnchecked);
+        box.AddThemeIconOverride("radio_checked", CheckboxChecked);
+        box.AddThemeIconOverride("radio_unchecked", CheckboxUnchecked);
+        box.AddThemeIconOverride("checked_disabled", CheckboxChecked);
+        box.AddThemeIconOverride("unchecked_disabled", CheckboxUnchecked);
+        var empty = new StyleBoxEmpty();
+        box.AddThemeStyleboxOverride("normal", empty);
+        box.AddThemeStyleboxOverride("pressed", empty);
+        box.AddThemeStyleboxOverride("hover", empty);
+        box.AddThemeStyleboxOverride("disabled", empty);
+        box.AddThemeStyleboxOverride("focus", empty);
+    }
+
+    private static Texture2D BuildCheckbox(bool check)
+    {
+        const int s = 16;
+        var img = Image.CreateEmpty(s, s, false, Image.Format.Rgba8);
+        var bg = new Color(0.10f, 0.09f, 0.07f);
+        var border = new Color(0.72f, 0.60f, 0.35f);
+        var gold = new Color(0.90f, 0.78f, 0.45f);
+        img.Fill(bg);
+        for (int i = 0; i < s; i++)
+        {
+            img.SetPixel(i, 0, border); img.SetPixel(i, s - 1, border);
+            img.SetPixel(0, i, border); img.SetPixel(s - 1, i, border);
+        }
+        if (check)
+            // 金勾:短边 (3,8)→(6,11),长边 (6,11)→(12,4),2px 粗
+            for (int t = -1; t <= 1; t++)
+            {
+                for (int k = 0; k <= 3; k++)
+                    img.SetPixel(3 + k, 8 + k + t, gold);
+                for (int k = 0; k <= 7; k++)
+                    img.SetPixel(6 + k, 11 - k + t, gold);
+            }
+        return ImageTexture.CreateFromImage(img);
+    }
+
     public static Theme GetTheme()
     {
         if (_theme != null) return _theme;

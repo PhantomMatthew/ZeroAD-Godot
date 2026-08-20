@@ -459,6 +459,12 @@ public sealed partial class Main : Node3D
 			_sim.Sim.EndGame.StartCeasefire(_sim.Sim);
 		}
 
+		// gamesetup 其余选项(对齐原版 gamesettings 应用点):
+		// StartingResources——四项资源同值覆盖(原版 helpers/Player.js:settings.StartingResources
+		// 逐项改写);PopulationCap——PlayerComponent.MaxPopCap;GameSpeed——sim 倍率;
+		// RevealedMap/ExploredMap——LOS;AlliedView——盟友共享视野总开关;胜利条件集合。
+		ApplyMatchOptions(launchCfg);
+
 		// 世界已完整:放行回合推进(SimBridge._Process 闸门)。分阶段加载在 Init 与本阶段
 		// 之间让帧,此间回合必须冻结,否则 TickVictory 在空世界判全员 0 实体→进场即 Defeat。
 		_sim.StartRecording();  // 自动录像：开局后立即开始录制（回放模式不录，见 AutoReplay）
@@ -514,6 +520,50 @@ public sealed partial class Main : Node3D
 		string p = $"user://session_shot_{seconds}s.png";
 		img.SavePng(p);
 		ZeroAD.Sim.Diag.Log("Shot", $"saved {p}");
+	}
+
+	/// <summary>应用 gamesetup 选项（世界建成后、放行回合前调用）。</summary>
+	private void ApplyMatchOptions(GameLaunchConfig cfg)
+	{
+		// 胜利条件(EndGameManager;空列表 = 默认征服)
+		if (cfg.VictoryConditions.Count > 0)
+			_sim.Sim.EndGame.SetVictoryConditions(cfg.VictoryConditions);
+
+		// 游戏速度倍率(SimBridge 累加器;1.0 默认)
+		if (cfg.GameSpeed > 0)
+			_sim.SpeedMultiplier = cfg.GameSpeed;
+
+		// 盟友视野共享总开关(原版 Allied View 默认开)
+		ZeroAD.Sim.Components.RangeManager.AlliedVisionEnabled = cfg.AlliedView;
+
+		foreach (var ent in _sim.Sim.AllEntities)
+		{
+			var pc = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.PlayerComponent>(ent);
+			if (pc == null) continue;
+			// 起始资源(原版 settings.StartingResources:四项同值覆盖)
+			if (cfg.StartingResources > 0)
+			{
+				pc.Wood = cfg.StartingResources;
+				pc.Food = cfg.StartingResources;
+				pc.Stone = cfg.StartingResources;
+				pc.Metal = cfg.StartingResources;
+			}
+			// 人口上限
+			if (cfg.PopulationCap > 0)
+				pc.MaxPopCap = cfg.PopulationCap;
+		}
+
+		// 迷雾:RevealedMap 全图可见;ExploredMap 全图已探索(迷雾仍在)
+		if (cfg.RevealedMap || cfg.ExploredMap)
+		{
+			for (int p = 1; p <= ZeroAD.Sim.Components.LosGrid.MaxPlayers; p++)
+			{
+				if (cfg.RevealedMap)
+					_sim.Range.SetLosRevealAll(p, true);
+				else
+					_sim.Range.Los.ExploreAll(p);
+			}
+		}
 	}
 
 	/// <summary>dev 钩子:轮询直到 sim 里出现地基实体,镜头对准(持续跟随到完工,
@@ -1100,7 +1150,8 @@ public sealed partial class Main : Node3D
 		ZeroAD.Sim.Diag.Log("Main", $"Generating random map: {mapName}");
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		uint seed = cfg.Seed;
-		int mapSize = 192;
+		// gamesetup Map Size 下拉(原版默认 Normal 256);cfg.MapSize=0 = 未显式设置(ZEROAD_MAP 等旁路)
+		int mapSize = cfg.MapSize > 0 ? cfg.MapSize : 256;
 
 		var rng = new ZeroAD.Sim.RmgenMath.RmgenRng(seed);
 		var settings = new ZeroAD.Sim.Rmgen.Common.MapSettings
@@ -1109,7 +1160,14 @@ public sealed partial class Main : Node3D
 			Seed = seed,
 			CircularMap = false,
 			DataRoot = FindDataRoot(),   // biome JSON(rmbiome/generic/*.json)经 junction 读取
+			// gamesetup 选项:Nomad/PlayerPlacement(biome 在 BiomeLoader 处经 BiomeData 下发)
+			Nomad = cfg.Nomad,
+			PlayerPlacement = cfg.PlayerPlacement.Length > 0 ? cfg.PlayerPlacement : "circle",
 		};
+		// gamesetup Biome 下拉:非 random 时预解析(覆盖图内随机自选,同上游 gamesetup biome 语义)
+		if (cfg.BiomeId.Length > 0 && cfg.BiomeId != "random")
+			settings.BiomeData = ZeroAD.Sim.Rmgen.Common.BiomeLoader.Load(
+				settings.DataRoot, cfg.BiomeId, rng);
 		// 玩家 civ 列表:gaia + 冻结槽位表(MP 双端同表 → 同图;SP 来自选图面板/默认 1v1)。
 		// 原硬编码 gaia/athen/spart 会让 gaul 玩家的出生基地按 spart 生成。
 		settings.PlayerData.Add(new ZeroAD.Sim.Rmgen.Common.PlayerData { Civ = "gaia" });

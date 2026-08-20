@@ -1,35 +1,64 @@
 using Godot;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using ZeroAD.Sim.Net;
 
 namespace ZeroAD.Godot;
 
 /// <summary>对局设置面板(SP "Matches" 入口;布局/样式对齐原版 gamesetup GameSetupPage):
 /// 左列 = 玩家面板(整行玩家色背景,PlayersPanel.xml 同款)+ 地图描述;右列 = 地图预览 +
-/// 设置列表(Map Type/玩家数/种子)+ Cancel/Start Game!(StoneButton 风格)。地图浏览是
+/// 设置选项卡(Map/Player/Game Type 三页签,控件与选项表逐一对齐原版
+/// GameSettingsLayout)+ Cancel/Start Game!(StoneButton 风格)。地图浏览是
 /// 设置页内覆盖页(原版 MapBrowserPage)。槽位数:skirmish/scenario 取 ScriptSettings.
-/// PlayerData,random 1-4 可选。OnStart(MapEntry, seed, slots)。</summary>
+/// PlayerData,random 1-8 可选(原版 g_MaxPlayers=8)。OnStart(MapEntry, seed, slots) +
+/// WriteOptions(cfg) 把 gamesetup 选项写进 GameLaunchConfig。</summary>
 public sealed partial class MapPickerPanel : Panel
 {
     public event System.Action<MapEntry, uint, IReadOnlyList<PlayerSlotSetup>>? OnStart;
     public event System.Action? OnCancelled;
 
     private readonly List<MapEntry> _maps;
+    private readonly string? _dataRoot;
     private List<MapEntry> _filtered = new();
     private ItemList _list = null!;
     private Label _nameLabel = null!;
     private Label _descLabel = null!;
     private TextureRect _preview = null!;
-    private LineEdit _seedEdit = null!;
     private Button _startBtn = null!;
+
+    // ── Map 页签 ──
     private OptionButton _mapTypeOpt = null!;
-    private OptionButton _ceasefireOpt = null!;
-    /// <summary>原版 gamesetup 的停战分钟档。</summary>
-    private static readonly int[] CeasefireChoices = { 0, 5, 10, 15, 20, 30, 40, 45, 60 };
-    /// <summary>选中的停战分钟(0=关)。MainMenu 的 OnStart 读进 GameLaunchConfig。</summary>
-    public int SelectedCeasefireMinutes => CeasefireChoices[_ceasefireOpt.Selected];
-    private SpinBox _playerCount = null!;
+    private OptionButton _mapSelectOpt = null!;
+    private OptionButton _mapSizeOpt = null!;
+    private OptionButton _placementOpt = null!;
+    private OptionButton _biomeOpt = null!;
+    private Control _biomeRow = null!;
+    private readonly List<string> _biomeIds = new();
+    private CheckBox _nomadBox = null!;
+    private CheckBox _treasuresBox = null!;
+    private CheckBox _exploredBox = null!;
+    private CheckBox _revealedBox = null!;
+    private CheckBox _alliedViewBox = null!;
+
+    // ── Player 页签 ──
+    private OptionButton _playerCountOpt = null!;
+    private OptionButton _popCapTypeOpt = null!;
+    private HSlider _popCapSlider = null!;
+    private Label _popCapValue = null!;
+    private OptionButton _startResOpt = null!;
+    private CheckBox _spiesBox = null!;
+    private CheckBox _cheatsBox = null!;
+
+    // ── Game Type 页签 ──
+    private readonly Dictionary<string, CheckBox> _victoryBoxes = new();
+    private OptionButton _gameSpeedOpt = null!;
+    private HSlider _ceasefireSlider = null!;
+    private Label _ceasefireValue = null!;
+    private CheckBox _lockedTeamsBox = null!;
+    private CheckBox _lastManBox = null!;
+
     private VBoxContainer _slotRows = null!;
     private PanelContainer _browser = null!;
     private MapEntry? _selected;
@@ -52,6 +81,54 @@ public sealed partial class MapPickerPanel : Panel
     // 原版 player_defaults.json 的逐槽默认文明(athen/cart/gaul/iber…),不是全 Random。
     private static readonly string[] DefaultCivs = { "athen", "cart", "gaul", "iber" };
 
+    // 原版 map_sizes.json(Tiles 即尺寸;Normal=256 默认)。
+    private static readonly (string Name, int Tiles)[] MapSizes =
+    {
+        ("Tiny", 128), ("Small", 192), ("Normal", 256), ("Medium", 320),
+        ("Large", 384), ("Very Large", 448), ("Giant", 512),
+    };
+    private const int DefaultMapSizeIndex = 2;   // Normal
+
+    // 原版 player_placements.json。
+    private static readonly (string Id, string Name)[] Placements =
+    {
+        ("circle", "Circle"), ("river", "River"), ("groupedLines", "Grouped Lines"),
+        ("randomGroup", "Random Group"), ("stronghold", "Stronghold"),
+    };
+
+    // 原版 population_capacities.json(Type)与滑条公式(linearToLogarythmic)。
+    private static readonly (string Id, string Title, int Factor)[] PopCapTypes =
+    {
+        ("player", "Player Population", 300),
+        ("team", "Team Population", 400),
+        ("world", "World Population", 600),
+    };
+
+    // 原版 starting_resources.json(Low=300 默认)。
+    private static readonly (string Name, int Amount)[] StartResources =
+    {
+        ("Very Low", 100), ("Low", 300), ("Medium", 500),
+        ("High", 1000), ("Very High", 3000), ("Deathmatch", 50000),
+    };
+    private const int DefaultStartResIndex = 1;   // Low
+
+    // 原版 game_speeds.json(1.0 默认)。
+    private static readonly float[] GameSpeeds =
+        { 0.1f, 0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 5f, 10f, 20f };
+    private const int DefaultGameSpeedIndex = 4;   // 1.0
+
+    // 原版 victory_conditions/*(默认 conquest 单选;wonder 等可叠加)。
+    private static readonly (string Id, string Name, bool Default)[] VictoryChoices =
+    {
+        ("conquest", "Conquest", true),
+        ("wonder", "Wonder Victory", false),
+        ("capture_the_relic", "Capture the Relic", false),
+        ("regicide", "Regicide", false),
+        ("conquest_civic_centers", "Conquest Civic Centers", false),
+        ("conquest_structures", "Conquest Structures", false),
+        ("conquest_units", "Conquest Units", false),
+    };
+
     // 原版 gamesetup 玩家行底色:玩家色暗化(实测截图 P1 亮蓝 ×0.40 ≈ 行底深蓝;
     // 100% 原色太刺眼,C++ 观感是深色可辨色相的行)。colors = player_defaults.json。
     private static Color Darkened(byte r, byte g, byte b) =>
@@ -63,11 +140,16 @@ public sealed partial class MapPickerPanel : Panel
         Darkened(150, 20, 20),    // P2 red
         Darkened(86, 180, 31),    // P3 green
         Darkened(231, 200, 5),    // P4 yellow
+        Darkened(150, 20, 150),   // P5 purple
+        Darkened(20, 160, 200),   // P6 cyan
+        Darkened(230, 120, 20),   // P7 orange
+        Darkened(200, 80, 120),   // P8 pink
     };
 
-    public MapPickerPanel(List<MapEntry> maps)
+    public MapPickerPanel(List<MapEntry> maps, string? dataRoot)
     {
         _maps = maps;
+        _dataRoot = dataRoot;
     }
 
     public override void _Ready()
@@ -90,7 +172,7 @@ public sealed partial class MapPickerPanel : Panel
         title.AddThemeFontSizeOverride("font_size", 22);
         vbox.AddChild(title);
 
-        // ── 主体两列(对齐原版:左 = 玩家面板+描述;右 = 预览+设置)──
+        // ── 主体两列(对齐原版:左 = 玩家面板+描述;右 = 预览+设置选项卡)──
         var cols = new HBoxContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
         cols.AddThemeConstantOverride("separation", 16);
         vbox.AddChild(cols);
@@ -113,6 +195,39 @@ public sealed partial class MapPickerPanel : Panel
         Refill();
         if (_filtered.Count > 0)
             Select(_filtered[0]);
+    }
+
+    /// <summary>把 gamesetup 选项写进 GameLaunchConfig(MainMenu 的 OnStart 里调用)。</summary>
+    public void WriteOptions(GameLaunchConfig cfg)
+    {
+        bool isRandom = _selected?.MapType == "random";
+        cfg.MapSize = isRandom ? MapSizes[_mapSizeOpt.Selected].Tiles : 0;
+        cfg.BiomeId = isRandom && _biomeRow.Visible && _biomeOpt.Selected > 0
+            ? _biomeIds[_biomeOpt.Selected]
+            : "";
+        cfg.PlayerPlacement = isRandom ? Placements[_placementOpt.Selected].Id : "";
+        cfg.StartingResources = StartResources[_startResOpt.Selected].Amount;
+        cfg.PopulationCap = ReadPopCap();
+        cfg.GameSpeed = GameSpeeds[_gameSpeedOpt.Selected];
+        cfg.CeasefireMinutes = (int)_ceasefireSlider.Value;
+        cfg.Nomad = isRandom && _nomadBox.ButtonPressed;
+        cfg.Treasures = _treasuresBox.ButtonPressed;
+        cfg.ExploredMap = _exploredBox.ButtonPressed;
+        cfg.RevealedMap = _revealedBox.ButtonPressed;
+        cfg.AlliedView = _alliedViewBox.ButtonPressed;
+        cfg.LockedTeams = _lockedTeamsBox.ButtonPressed;
+        cfg.Cheats = _cheatsBox.ButtonPressed;
+        cfg.VictoryConditions = _victoryBoxes
+            .Where(kv => kv.Value.ButtonPressed).Select(kv => kv.Key).ToList();
+    }
+
+    private int ReadPopCap()
+    {
+        double v = _popCapSlider.Value;
+        if (v >= 0.995) return 0;   // 滑到最右 = Unlimited(0 表示不改,用模板默认)
+        // 原版 linearToLogarythmic:round((1/(1-v) + 28v/(1+5v)) * Factor/6),再 10 取整
+        double factor = PopCapTypes[_popCapTypeOpt.Selected].Factor;
+        return (int)System.Math.Round((1 / (1 - v) + 28 * v / (1 + 5 * v)) * factor / 6 / 10) * 10;
     }
 
     /// <summary>Start Game! 按钮(原版 StoneButton 米金风格 + tooltip)。</summary>
@@ -143,7 +258,8 @@ public sealed partial class MapPickerPanel : Panel
         btn.Pressed += () =>
         {
             if (_selected == null) return;
-            uint seed = uint.TryParse(_seedEdit.Text, out var s) ? s : 42;
+            // 原版 gamesetup 无种子 UI——每局随机摇(菜单侧随机;sim 种子由此下发)。
+            uint seed = (uint)GD.RandRange(0, 999999);
             var slots = BuildSlots();
             if (slots != null) OnStart?.Invoke(_selected, seed, slots);
         };
@@ -172,24 +288,13 @@ public sealed partial class MapPickerPanel : Panel
         playersInner.AddThemeConstantOverride("separation", 4);
         playersBox.AddChild(playersInner);
 
-        var header = new HBoxContainer();
-        header.AddThemeConstantOverride("separation", 10);
         var headerLabel = new Label
         {
             Text = Localization.Tr("Players"),
             VerticalAlignment = VerticalAlignment.Center,
         };
         headerLabel.AddThemeFontSizeOverride("font_size", 16);
-        header.AddChild(headerLabel);
-        _playerCount = new SpinBox
-        {
-            MinValue = 1, MaxValue = 4, Value = 2, Step = 1,
-            CustomMinimumSize = new Vector2(70, 28),
-            TooltipText = Localization.Tr("Number of Players"),
-        };
-        _playerCount.ValueChanged += _ => RebuildSlotRows();
-        header.AddChild(_playerCount);
-        playersInner.AddChild(header);
+        playersInner.AddChild(headerLabel);
 
         // 列标题行(原版 PlayersPanel.xml 顶部 heading:黑底灰白小字)
         var gridHeader = new PanelContainer();
@@ -226,7 +331,7 @@ public sealed partial class MapPickerPanel : Panel
         return col;
     }
 
-    /// <summary>右列:地图预览(上)+ 设置列表(中)+ 描述(下)。宽 ~400(原版 402px)。</summary>
+    /// <summary>右列:地图预览(上)+ 设置选项卡(中)+ 描述(下)。宽 ~400(原版 402px)。</summary>
     private Control BuildRightColumn()
     {
         var col = new VBoxContainer
@@ -255,43 +360,12 @@ public sealed partial class MapPickerPanel : Panel
         frame.AddChild(_preview);
         col.AddChild(frame);
 
-        // 设置列表(原版 GameSettingsPanel:每项 = 标签 + 控件横排,行距紧凑)
-        var settings = new VBoxContainer();
-        settings.AddThemeConstantOverride("separation", 4);
-        col.AddChild(settings);
-
-        _mapTypeOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        foreach (var f in new[] { "Random", "Skirmish", "Scenario" })
-            _mapTypeOpt.AddItem(Localization.Tr(f));
-        _mapTypeOpt.Selected = 0;
-        _mapTypeOpt.TooltipText = "Select a map type.";
-        _mapTypeOpt.ItemSelected += _ => { Refill(); if (_filtered.Count > 0) Select(_filtered[0]); };
-        settings.AddChild(MakeSettingRow("Map Type", _mapTypeOpt));
-
-        var browseBtn = new Button
-        {
-            Text = Localization.Tr("Browse Maps"),
-            SizeFlagsHorizontal = SizeFlags.ExpandFill,
-            TooltipText = "Press to open the map browser.",
-        };
-        browseBtn.Pressed += OpenBrowser;
-        settings.AddChild(MakeSettingRow("Map", browseBtn));
-
-        _seedEdit = new LineEdit
-        {
-            Text = ((uint)GD.RandRange(0, 999999)).ToString(),
-            SizeFlagsHorizontal = SizeFlags.ExpandFill,
-            TooltipText = "随机种子:同图同种子 = 同布局;每次打开本面板自动摇新",
-        };
-        settings.AddChild(MakeSettingRow("Seed", _seedEdit));
-
-        // 停战时长(原版 gamesetup 的 Ceasefire 下拉):>0 分钟时开局全体非 gaia
-        // 互置中立,倒计时结束恢复外交。
-        _ceasefireOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        foreach (var m in CeasefireChoices) _ceasefireOpt.AddItem(m == 0 ? Localization.Tr("Off") : $"{m} min");
-        _ceasefireOpt.Selected = 0;
-        _ceasefireOpt.TooltipText = "Ceasefire duration — players can't attack each other until it expires.";
-        settings.AddChild(MakeSettingRow("Ceasefire", _ceasefireOpt));
+        // 设置选项卡(原版 GameSettingsTabs:Map / Player / Game Type)
+        var tabs = new TabContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
+        tabs.AddChild(BuildTabScroll(BuildMapTab(), "Map"));
+        tabs.AddChild(BuildTabScroll(BuildPlayerTab(), "Player"));
+        tabs.AddChild(BuildTabScroll(BuildGameTypeTab(), "Game Type"));
+        col.AddChild(tabs);
 
         // 地图描述(原版 GameDescription:右列设置列表下方,白字多行)
         _nameLabel = new Label { Text = "" };
@@ -310,6 +384,199 @@ public sealed partial class MapPickerPanel : Panel
         return col;
     }
 
+    /// <summary>页签内容包滚动(小窗口可滚;Name 即页签名)。
+    /// 注意 Godot ScrollContainer 按子节点最小尺寸布局——VBox 页须显式给
+    /// Vertical ExpandFill 之外的宽度约束,这里直接命名页并返回。</summary>
+    private static Control BuildTabScroll(Control content, string name)
+    {
+        content.Name = Localization.Tr(name);
+        return content;
+    }
+
+    // ══════════ Map 页签(原版 GameSettingsLayout 第一段)══════════
+    private Control BuildMapTab()
+    {
+        var page = new VBoxContainer();
+        page.AddThemeConstantOverride("separation", 4);
+
+        _mapTypeOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        foreach (var f in new[] { "Random", "Skirmish", "Scenario" })
+            _mapTypeOpt.AddItem(Localization.Tr(f));
+        _mapTypeOpt.Selected = 0;
+        _mapTypeOpt.TooltipText = "Select a map type.";
+        _mapTypeOpt.ItemSelected += _ =>
+        {
+            Refill();
+            if (_filtered.Count > 0) Select(_filtered[0]);
+        };
+        page.AddChild(MakeSettingRow("Map Type", _mapTypeOpt));
+
+        // 地图选择下拉框(原版 MapSelection——当前类型全部地图按名列出)
+        _mapSelectOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _mapSelectOpt.TooltipText = "Select a map.";
+        _mapSelectOpt.ItemSelected += idx =>
+        {
+            if (idx >= 0 && idx < _filtered.Count) Select(_filtered[(int)idx]);
+        };
+        page.AddChild(MakeSettingRow("Map Selection", _mapSelectOpt));
+
+        var browseBtn = new Button
+        {
+            Text = Localization.Tr("Browse Maps"),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            TooltipText = "Press to open the map browser.",
+        };
+        browseBtn.Pressed += OpenBrowser;
+        page.AddChild(MakeSettingRow("Map Browser", browseBtn));
+
+        _mapSizeOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        foreach (var (name, tiles) in MapSizes)
+            _mapSizeOpt.AddItem($"{Localization.Tr(name)} ({tiles})");
+        _mapSizeOpt.Selected = DefaultMapSizeIndex;
+        _mapSizeOpt.TooltipText = "Map size in tiles (bigger maps fit more players).";
+        page.AddChild(MakeSettingRow("Map Size", _mapSizeOpt));
+
+        _placementOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        foreach (var (_, name) in Placements) _placementOpt.AddItem(Localization.Tr(name));
+        _placementOpt.Selected = 0;
+        _placementOpt.TooltipText = "How players are placed on the map.";
+        page.AddChild(MakeSettingRow("Player Placement", _placementOpt));
+
+        // Biome(原版:图支持 biome 才显示;首项 Random)
+        _biomeOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _biomeOpt.TooltipText = "The flora/fauna/terrain set the map is generated with.";
+        _biomeRow = MakeSettingRow("Biome", _biomeOpt);
+        page.AddChild(_biomeRow);
+
+        _nomadBox = AddCheck(page, "Nomad", "Start without a civic center — only units.");
+        _treasuresBox = AddCheck(page, "Treasures", "Place collectible treasures on the map.");
+        _treasuresBox.ButtonPressed = true;   // 原版默认开
+        _exploredBox = AddCheck(page, "Explored Map", "The map starts explored (fog of war remains).");
+        _revealedBox = AddCheck(page, "Revealed Map", "No fog of war — everything is visible.");
+        _alliedViewBox = AddCheck(page, "Allied View", "Allies share their vision.");
+        _alliedViewBox.ButtonPressed = true;  // 原版默认开
+
+        return page;
+    }
+
+    // ══════════ Player 页签 ══════════
+    private Control BuildPlayerTab()
+    {
+        var page = new VBoxContainer();
+        page.AddThemeConstantOverride("separation", 4);
+
+        // 玩家数(原版 PlayerCount:g_MaxPlayers=8)
+        _playerCountOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        for (int n = 1; n <= 8; n++) _playerCountOpt.AddItem(n.ToString());
+        _playerCountOpt.Selected = 1;   // 默认 2 人局
+        _playerCountOpt.TooltipText = "Number of players on the map.";
+        _playerCountOpt.ItemSelected += _ => RebuildSlotRows();
+        page.AddChild(MakeSettingRow("Number of Players", _playerCountOpt));
+
+        _popCapTypeOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        foreach (var (_, title, _) in PopCapTypes) _popCapTypeOpt.AddItem(Localization.Tr(title));
+        _popCapTypeOpt.Selected = 0;
+        _popCapTypeOpt.TooltipText = "How the population cap is distributed.";
+        _popCapTypeOpt.ItemSelected += _ => UpdatePopCapLabel();
+        page.AddChild(MakeSettingRow("Population Cap Type", _popCapTypeOpt));
+
+        // 原版 PopulationCap 滑条(对数 0..1,最右 Unlimited)
+        var capRow = new HBoxContainer();
+        capRow.AddThemeConstantOverride("separation", 8);
+        var capLabel = new Label
+        {
+            Text = Localization.Tr("Player Population Cap"),
+            CustomMinimumSize = new Vector2(110, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        capLabel.AddThemeFontSizeOverride("font_size", 13);
+        capLabel.Modulate = new Color(1, 1, 1, 0.75f);
+        capRow.AddChild(capLabel);
+        _popCapSlider = new HSlider
+        {
+            MinValue = 0, MaxValue = 1, Step = 0.01, Value = 0.5,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            TooltipText = "Choose the population cap (rightmost = Unlimited).",
+        };
+        _popCapSlider.ValueChanged += _ => UpdatePopCapLabel();
+        capRow.AddChild(_popCapSlider);
+        _popCapValue = new Label { Text = "300", CustomMinimumSize = new Vector2(64, 0) };
+        _popCapValue.AddThemeFontSizeOverride("font_size", 13);
+        capRow.AddChild(_popCapValue);
+        page.AddChild(capRow);
+
+        _startResOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        foreach (var (name, amount) in StartResources)
+            _startResOpt.AddItem($"{Localization.Tr(name)} ({amount})");
+        _startResOpt.Selected = DefaultStartResIndex;
+        _startResOpt.TooltipText = "Resources each player starts with.";
+        page.AddChild(MakeSettingRow("Starting Resources", _startResOpt));
+
+        _spiesBox = AddCheck(page, "Spies", "Allow training spy units.");
+        _cheatsBox = AddCheck(page, "Cheats", "Enable cheat codes in this match.");
+
+        return page;
+    }
+
+    // ══════════ Game Type 页签 ══════════
+    private Control BuildGameTypeTab()
+    {
+        var page = new VBoxContainer();
+        page.AddThemeConstantOverride("separation", 4);
+
+        foreach (var (id, name, def) in VictoryChoices)
+        {
+            var box = AddCheck(page, name, $"Victory condition: {name}.");
+            box.ButtonPressed = def;
+            _victoryBoxes[id] = box;
+        }
+
+        _gameSpeedOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        foreach (var s in GameSpeeds) _gameSpeedOpt.AddItem($"{s:0.##}×");
+        _gameSpeedOpt.Selected = DefaultGameSpeedIndex;
+        _gameSpeedOpt.TooltipText = "Game speed multiplier.";
+        page.AddChild(MakeSettingRow("Game Speed", _gameSpeedOpt));
+
+        // 原版 Ceasefire 滑条(0..45 分钟)
+        var cfRow = new HBoxContainer();
+        cfRow.AddThemeConstantOverride("separation", 8);
+        var cfLabel = new Label
+        {
+            Text = Localization.Tr("Ceasefire"),
+            CustomMinimumSize = new Vector2(110, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        cfLabel.AddThemeFontSizeOverride("font_size", 13);
+        cfLabel.Modulate = new Color(1, 1, 1, 0.75f);
+        cfRow.AddChild(cfLabel);
+        _ceasefireSlider = new HSlider
+        {
+            MinValue = 0, MaxValue = 45, Step = 1, Value = 0,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            TooltipText = "Ceasefire duration — players can't attack each other until it expires.",
+        };
+        _ceasefireSlider.ValueChanged += v =>
+            _ceasefireValue.Text = v < 0.5 ? Localization.Tr("Off") : $"{(int)v} min";
+        cfRow.AddChild(_ceasefireSlider);
+        _ceasefireValue = new Label { Text = Localization.Tr("Off"), CustomMinimumSize = new Vector2(64, 0) };
+        _ceasefireValue.AddThemeFontSizeOverride("font_size", 13);
+        cfRow.AddChild(_ceasefireValue);
+        page.AddChild(cfRow);
+
+        _lockedTeamsBox = AddCheck(page, "Locked Teams", "Players can't change diplomacy mid-game.");
+        _lastManBox = AddCheck(page, "Last Man Standing", "Allied victory is disabled — only one winner.");
+
+        return page;
+    }
+
+    private CheckBox AddCheck(Control parent, string text, string tooltip)
+    {
+        var box = new CheckBox { Text = Localization.Tr(text), TooltipText = tooltip };
+        UITheme.ApplyCheckboxIcons(box);
+        parent.AddChild(box);
+        return box;
+    }
+
     /// <summary>设置行:左标签 + 右控件(原版 GameSettingsPanel 逐项格式)。</summary>
     private static Control MakeSettingRow(string label, Control widget)
     {
@@ -326,6 +593,12 @@ public sealed partial class MapPickerPanel : Panel
         row.AddChild(l);
         row.AddChild(widget);
         return row;
+    }
+
+    private void UpdatePopCapLabel()
+    {
+        int cap = ReadPopCap();
+        _popCapValue.Text = cap <= 0 ? Localization.Tr("Unlimited") : cap.ToString();
     }
 
     /// <summary>地图浏览覆盖页(原版 MapBrowserPage):列表 + Back。</summary>
@@ -391,8 +664,14 @@ public sealed partial class MapPickerPanel : Panel
         _filtered = _maps.Where(m => m.MapType == type).ToList();
 
         _list.Clear();
+        _mapSelectOpt?.Clear();
         foreach (var m in _filtered)
+        {
             _list.AddItem(m.DisplayName);
+            _mapSelectOpt?.AddItem(m.DisplayName);
+        }
+        if (_mapSelectOpt != null && _filtered.Count > 0)
+            _mapSelectOpt.Selected = 0;
     }
 
     private void Select(MapEntry? m)
@@ -401,11 +680,17 @@ public sealed partial class MapPickerPanel : Panel
         _startBtn.Disabled = m == null;
         _nameLabel.Text = m?.DisplayName ?? "";
         _descLabel.Text = m?.Description ?? "";
-        // 种子/玩家数仅对 random 图有意义(scenario/skirmish 地形与槽位来自 pmp)。
+        int idx = m != null ? _filtered.IndexOf(m) : -1;
+        if (idx >= 0) _mapSelectOpt.Selected = idx;
+
+        // random 图才有尺寸/布置/biome/玩家数等生成选项(scenario/skirmish 全来自 pmp)。
         bool isRandom = m?.MapType == "random";
-        _seedEdit.Editable = isRandom;
-        _seedEdit.Modulate = new Color(1, 1, 1, isRandom ? 1f : 0.4f);
-        _playerCount.Editable = isRandom;
+        _mapSizeOpt.Disabled = !isRandom;
+        _placementOpt.Disabled = !isRandom;
+        _playerCountOpt.Disabled = !isRandom;
+        _nomadBox.Disabled = !isRandom;
+        RebuildBiomeOptions(m);
+
         // 预览图
         if (m?.PreviewPath != null)
         {
@@ -419,9 +704,87 @@ public sealed partial class MapPickerPanel : Panel
         RebuildSlotRows();
     }
 
+    /// <summary>按图的 SupportedBiomes 填 biome 下拉(首项 Random;无 biome 支持则隐藏行)。
+    /// 读 maps/random/{name}.json 的 settings.SupportedBiomes,标题取 rmbiome 各 JSON
+    /// 的 Description.Title(同原版 biome 下拉)。</summary>
+    private void RebuildBiomeOptions(MapEntry? m)
+    {
+        _biomeOpt.Clear();
+        _biomeIds.Clear();
+        bool visible = false;
+        if (m?.MapType == "random" && _dataRoot != null)
+        {
+            var entries = LoadSupportedBiomes(m.RelPath.Substring("random/".Length));
+            if (entries.Count > 0)
+            {
+                _biomeOpt.AddItem(Localization.Tr("Random"));
+                _biomeIds.Add("random");
+                foreach (var (id, title) in entries)
+                {
+                    _biomeOpt.AddItem(Localization.Tr(title));
+                    _biomeIds.Add(id);
+                }
+                _biomeOpt.Selected = 0;
+                visible = true;
+            }
+        }
+        _biomeRow.Visible = visible;
+    }
+
+    private List<(string Id, string Title)> LoadSupportedBiomes(string mapName)
+    {
+        var result = new List<(string, string)>();
+        string jsonPath = Path.Combine(_dataRoot!, "maps", "random", mapName + ".json");
+        try
+        {
+            if (!File.Exists(jsonPath)) return result;
+            using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
+            if (!doc.RootElement.TryGetProperty("settings", out var settings) ||
+                !settings.TryGetProperty("SupportedBiomes", out var sb))
+                return result;
+
+            if (sb.ValueKind == JsonValueKind.String)
+            {
+                // "generic/" / "alpine/" —— 目录下全部 biome JSON
+                string dir = sb.GetString() ?? "";
+                string absDir = Path.Combine(_dataRoot!, "maps", "random", "rmbiome",
+                    dir.TrimEnd('/'));
+                if (Directory.Exists(absDir))
+                    foreach (var file in Directory.GetFiles(absDir, "*.json").OrderBy(f => f, System.StringComparer.Ordinal))
+                        result.Add((dir + Path.GetFileNameWithoutExtension(file), BiomeTitle(file)));
+            }
+            else if (sb.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in sb.EnumerateArray())
+                {
+                    string id = item.GetString() ?? "";
+                    if (id.Length == 0) continue;
+                    string file = Path.Combine(_dataRoot!, "maps", "random", "rmbiome",
+                        id + ".json");
+                    result.Add((id, File.Exists(file) ? BiomeTitle(file) : id));
+                }
+            }
+        }
+        catch { /* 读不到即无 biome 行 */ }
+        return result;
+    }
+
+    private static string BiomeTitle(string jsonFile)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(jsonFile));
+            if (doc.RootElement.TryGetProperty("Description", out var d) &&
+                d.TryGetProperty("Title", out var t))
+                return t.GetString() ?? Path.GetFileNameWithoutExtension(jsonFile);
+        }
+        catch { }
+        return Path.GetFileNameWithoutExtension(jsonFile);
+    }
+
     /// <summary>按当前地图重建槽位行。原版样式:整行玩家色底 + 白字(PlayersPanel 的
     /// playerBackgroundColor)。skirmish/scenario 行数 = 地图 PlayerData(pmp 实体按
-    /// player id 绑定,不允许 Closed);random 行数 = SpinBox,允许 Closed。</summary>
+    /// player id 绑定,不允许 Closed);random 行数 = 玩家数下拉,允许 Closed。</summary>
     private void RebuildSlotRows()
     {
         foreach (var c in _slotRows.GetChildren()) c.QueueFree();
@@ -431,7 +794,7 @@ public sealed partial class MapPickerPanel : Panel
         bool isRandom = _selected.MapType == "random";
         bool isScenario = _selected.MapType == "scenario";
         int count = isRandom
-            ? (int)_playerCount.Value
+            ? _playerCountOpt.Selected + 1
             : System.Math.Max(1, _selected.Players.Count);
 
         for (int i = 0; i < count; i++)

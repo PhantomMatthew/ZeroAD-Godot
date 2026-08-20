@@ -17,6 +17,12 @@ namespace ZeroAD.Sim.Rmgen.Common
         public string? DataRoot;
         /// <summary>调用方预解析的 biome(选图 UI 未来可指定);null → 由地图按 SupportedBiomes 自选。</summary>
         public BiomeSet? BiomeData;
+        /// <summary>Nomad 模式(无 CC 开局;原版 g_MapSettings.Nomad——placePlayerBase 直接跳过,
+        /// 只放起始单位)。</summary>
+        public bool Nomad;
+        /// <summary>玩家布置模式(gamesetup PlayerPlacement 下发;"circle" 默认。
+        /// 仅被 playerPlacementByPattern 系地图(arctic_summer/archipelago/african_plains)读取。</summary>
+        public string PlayerPlacement = "circle";
     }
 
     public sealed class PlayerData
@@ -492,6 +498,18 @@ namespace ZeroAD.Sim.Rmgen.Common
             object? cityPatchOuterTerrain, object? cityPatchInnerTerrain,
             double cityPatchRadius, double cityPatchCoherence, double cityPatchSmoothness)
         {
+            // Nomad（上游 placePlayerBase 首行即 return）：无 CC/基地区,
+            // 只放非建筑起始单位（上游 placePlayersNomad 另摇随机点;本版用布置位）。
+            if (settings.Nomad)
+            {
+                var unitsOnly = GetStartingEntities(settings.DataRoot, civ)
+                    .Where(t => !t.Template.StartsWith("structures/", StringComparison.Ordinal))
+                    .ToList();
+                if (unitsOnly.Count > 0)
+                    PlaceStartingEntities(map, pos, playerId, unitsOnly, 6, -SafeMath.PI / 4);
+                return;
+            }
+
             // CityPatch（逐字移植 placePlayerBaseCityPatch）：ClumpPlacer 噪声团块
             // （默认半径 defaultPlayerBaseRadius()/3）+ LayeredPainter 外圈 1 格分层，
             // 不是正圆。TileClassPainter 一并标 playerTileClass（上游 archipelago 等
@@ -578,6 +596,25 @@ namespace ZeroAD.Sim.Rmgen.Common
 
         private static string? s_startEntitiesCacheRoot;
         private static Dictionary<string, List<(string Template, int Count)>>? s_startEntitiesCache;
+
+        /// <summary>playerPlacementByPattern——按布置模式定玩家位置。
+        /// patternName null 时读 settings.PlayerPlacement（gamesetup 下发,"circle" 默认）。
+        /// groupedLines/stronghold/randomGroup 未移植——回退 circle。
+        /// 注意 angle 通常由调用方 randomAngle() 先抽（与上游实参求值一致）。</summary>
+        public static (List<int> playerIDs, List<RmgenVector2D> playerPosition) PlayerPlacementByPattern(
+            RmgenRng rng, RandomMap map, MapSettings settings, string? patternName,
+            double distance, double? angle = null, RmgenVector2D? center = null)
+        {
+            patternName ??= settings.PlayerPlacement;
+            if (patternName == "river")
+                return PlayerPlacementRiver(rng, map, settings, angle ?? rng.RandomAngle(),
+                    distance, center);
+
+            // circle / 未移植模式回退
+            var (ids, pos, _, _) = PlayerPlacementCircle(rng, map, GetNumPlayers(settings),
+                distance, angle, center);
+            return (ids, pos);
+        }
 
         /// <summary>原版 playerPlacementCircle——startAngle 未给定时消耗 1 次 randomAngle(),
         /// 位置按整圆等距分布后 round。</summary>
