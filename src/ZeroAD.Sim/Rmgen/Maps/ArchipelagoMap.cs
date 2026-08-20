@@ -76,7 +76,19 @@ namespace ZeroAD.Sim.Rmgen.Maps
 
             // 上游 CityPatch radius = islandRadius/3（默认半径的 1/3 缩小版）
             RmgenCommon.PlacePlayerBases(rng, map, settings, biome.MainTerrain0, ClPlayer, biome,
-                playerPosition, cityPatchRadius: islandRadius / 3);
+                playerPosition, cityPatchRadius: islandRadius / 3,
+                options: new RmgenCommon.PlayerBaseOptions
+                {
+                    BaseResourceClass = clBaseResource,
+                    StartingAnimal = true,
+                    BerriesTemplate = biome.FruitBush,
+                    Mines = new() { (biome.MetalLarge, (string?)null, (object?)null),
+                                    (biome.StoneLarge, (string?)null, (object?)null) },
+                    Treasures = new() { ("gaia/treasure/wood", 14) },
+                    TreesTemplate = biome.Tree1,
+                    TreesCount = (int)RmgenLibrary.ScaleByMapSize(15, 30, MapSize),
+                    DecorativesTemplate = biome.GrassShort,
+                });
 
             // ── 起伏（限陆地）──
             RmgenLibrary.CreateAreas(rng,

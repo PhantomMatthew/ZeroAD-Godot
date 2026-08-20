@@ -452,7 +452,8 @@ namespace ZeroAD.Sim.Rmgen.Common
         /// （含浆果/矿/初始树线）;本版:CC + 3 村 2 兵 + 基地区刷 roadWild(外)/road(内)
         /// 并标 clPlayer 半径(原版 CityPatch.outerTerrain/innerTerrain 语义——基地区不再长森林/斑块)。</summary>
         public static void PlacePlayerBases(RmgenRng rng, RandomMap map, MapSettings settings,
-            string baseTerrain, TileClass playerTileClass, BiomeSet? biome = null)
+            string baseTerrain, TileClass playerTileClass, BiomeSet? biome = null,
+            PlayerBaseOptions? options = null)
         {
             int numPlayers = GetNumPlayers(settings);
             for (int p = 1; p <= numPlayers; p++)
@@ -464,7 +465,7 @@ namespace ZeroAD.Sim.Rmgen.Common
                 var pos = new RmgenVector2D(x, z);
                 pos.Floor();
                 PlacePlayerBase(map, rng, settings, GetCivCode(settings, p), p, pos, playerTileClass,
-                    biome?.RoadWild, biome?.Road, 0, 0.6, 0.3);
+                    biome?.RoadWild, biome?.Road, 0, 0.6, 0.3, options);
             }
         }
 
@@ -478,7 +479,9 @@ namespace ZeroAD.Sim.Rmgen.Common
             IReadOnlyList<RmgenVector2D> playerPositions,
             object? cityPatchOuterTerrain = null, object? cityPatchInnerTerrain = null,
             IReadOnlyList<int>? playerIDs = null,
-            double cityPatchRadius = 0, double cityPatchCoherence = 0.6, double cityPatchSmoothness = 0.3)
+            double cityPatchRadius = 0, double cityPatchCoherence = 0.6, double cityPatchSmoothness = 0.3,
+            PlayerBaseOptions? options = null,
+            Func<int, PlayerBaseOptions>? optionsFactory = null)
         {
             int numPlayers = GetNumPlayers(settings);
             object? outer = cityPatchOuterTerrain ?? biome?.RoadWild;
@@ -488,15 +491,19 @@ namespace ZeroAD.Sim.Rmgen.Common
                 // 上游 placePlayerBases：PlayerPlacement=[playerIDs, playerPosition] 按序配对
                 int p = playerIDs?[i] ?? (i + 1);
                 var pos = playerPositions[i];
+                // optionsFactory 逐玩家求值（hellas 按所在海拔带选不同动物/树,
+                // 抽数发生在每玩家 args 构建时,与上游一致）
+                var opt = optionsFactory?.Invoke(p) ?? options;
                 PlacePlayerBase(map, rng, settings, GetCivCode(settings, p), p, pos, playerTileClass,
-                    outer, inner, cityPatchRadius, cityPatchCoherence, cityPatchSmoothness);
+                    outer, inner, cityPatchRadius, cityPatchCoherence, cityPatchSmoothness, opt);
             }
         }
 
         private static void PlacePlayerBase(RandomMap map, RmgenRng rng, MapSettings settings,
             string civ, int playerId, RmgenVector2D pos, TileClass playerTileClass,
             object? cityPatchOuterTerrain, object? cityPatchInnerTerrain,
-            double cityPatchRadius, double cityPatchCoherence, double cityPatchSmoothness)
+            double cityPatchRadius, double cityPatchCoherence, double cityPatchSmoothness,
+            PlayerBaseOptions? options)
         {
             // Nomad（上游 placePlayerBase 首行即 return）：无 CC/基地区,
             // 只放非建筑起始单位（上游 placePlayersNomad 另摇随机点;本版用布置位）。
@@ -510,10 +517,17 @@ namespace ZeroAD.Sim.Rmgen.Common
                 return;
             }
 
+            // 上游 placePlayerBase 顺序:placeCivDefaultStartingEntities →
+            // addCivicCenterAreaToClass(半径 5)→ g_PlayerBaseFunctions
+            // [CityPatch, Trees, Mines, Treasures, Berries, StartingAnimal, Decoratives]。
+            PlaceStartingEntities(map, pos, playerId,
+                GetStartingEntities(settings.DataRoot, civ), 6, -SafeMath.PI / 4);
+            playerTileClass.Add(pos);
+            RmgenLibrary.CreateArea(new DiskPlacer(5, pos),
+                new TileClassPainter(playerTileClass), null);
+
             // CityPatch（逐字移植 placePlayerBaseCityPatch）：ClumpPlacer 噪声团块
-            // （默认半径 defaultPlayerBaseRadius()/3）+ LayeredPainter 外圈 1 格分层，
-            // 不是正圆。TileClassPainter 一并标 playerTileClass（上游 archipelago 等
-            // 经 CityPatch.painters 标；mainland 系另有 addCivicCenterAreaToClass 半径 5 圆盘）。
+            // （默认半径 defaultPlayerBaseRadius()/3）+ LayeredPainter 外圈 1 格分层。
             if (cityPatchOuterTerrain != null && cityPatchInnerTerrain != null)
             {
                 double radius = cityPatchRadius > 0
@@ -529,16 +543,31 @@ namespace ZeroAD.Sim.Rmgen.Common
                         new TileClassPainter(playerTileClass),
                     },
                     null);
-                RmgenLibrary.CreateArea(new DiskPlacer(5, pos),
-                    new TileClassPainter(playerTileClass), null);
             }
 
-            // 上游 placeCivDefaultStartingEntities：civ JSON 的 StartEntities 全表——
-            // CC 居中 + 其余按环形布局，统一 BUILDING_ORIENTATION=-π/4 朝向。
-            // 覆盖各族完整起始阵容（germ 的 wagon、maur 的大象、kush 的医师等）。
-            PlaceStartingEntities(map, pos, playerId,
-                GetStartingEntities(settings.DataRoot, civ), 6, -SafeMath.PI / 4);
-            playerTileClass.Add(pos);
+            // 逐基地资源（完整版;options=null 时全跳过,保持旧简化行为）
+            if (options != null)
+            {
+                IConstraint baseResourceConstraint = options.BaseResourceClass != null
+                    ? RmgenLibrary.AvoidClasses(options.BaseResourceClass, 4)
+                    : (IConstraint)new NullConstraint();
+                if (options.ExtraBaseResourceConstraint != null)
+                    baseResourceConstraint = new AndConstraint(new[]
+                        { baseResourceConstraint, options.ExtraBaseResourceConstraint });
+
+                if (options.TreesTemplate != null)
+                    PlacePlayerBaseTrees(rng, map, options, pos, baseResourceConstraint);
+                if (options.Mines != null)
+                    PlacePlayerBaseMines(rng, map, options, pos, baseResourceConstraint);
+                if (options.Treasures != null)
+                    PlacePlayerBaseTreasures(rng, map, options, pos, baseResourceConstraint);
+                if (options.BerriesTemplate != null)
+                    PlacePlayerBaseBerries(rng, map, options, pos, baseResourceConstraint);
+                if (options.StartingAnimal)
+                    PlacePlayerBaseStartingAnimal(rng, map, settings, options, pos, baseResourceConstraint);
+                if (options.DecorativesTemplate != null)
+                    PlacePlayerBaseDecoratives(rng, map, options, pos, baseResourceConstraint);
+            }
         }
 
         /// <summary>civs/{civ}.json 的 StartEntities（上游 g_CivData[civ].StartEntities）。
@@ -596,6 +625,302 @@ namespace ZeroAD.Sim.Rmgen.Common
 
         private static string? s_startEntitiesCacheRoot;
         private static Dictionary<string, List<(string Template, int Count)>>? s_startEntitiesCache;
+
+        // ══════════ 完整版 placePlayerBases 逐基地资源（原版 player.js 的
+        // placePlayerBase{Trees,Mines,Treasures,Berries,StartingAnimal,Decoratives}）══════════
+
+        /// <summary>placePlayerBases 逐基地资源配置（对应上游 playerBaseArgs 的稀疏参数;
+        /// 字段为 null/false = 该项不放）。字段默认值逐一对齐上游各 placePlayerBase* 函数。</summary>
+        public sealed class PlayerBaseOptions
+        {
+            /// <summary>基地资源标记 class（浆果/矿/树线落点互斥 + 约束）。</summary>
+            public TileClass? BaseResourceClass;
+
+            // StartingAnimal（上游 "StartingAnimal": {} 存在即放;count 默认按鸡肉量换算）
+            public bool StartingAnimal;
+            public string StartingAnimalTemplate = "gaia/fauna_chicken";
+            public int StartingAnimalGroupCount = 2;
+            public double StartingAnimalDistance = 9;
+            public int? StartingAnimalCount;
+            public int? StartingAnimalMinGroupCount, StartingAnimalMaxGroupCount;
+            public double StartingAnimalMinGroupDistance = 0, StartingAnimalMaxGroupDistance = 2;
+
+            // Berries
+            public string? BerriesTemplate;
+            public int BerriesMinCount = 5, BerriesMaxCount = 5;
+            public double BerriesDistance = 12;
+
+            // Mines（Type=="stone_formation" 走 createStoneMineFormation）
+            public List<(string Template, string? Type, object? Terrain)>? Mines;
+            public double MinesDistance = 12;
+            public double MinesMinAngle = Math.PI / 6, MinesMaxAngle = Math.PI / 3;
+            /// <summary>矿点附属小件（oasis 的 shuffleArray(...)——调用方用 rng 洗好传入）。</summary>
+            public List<IGroupElement>? MinesGroupElements;
+
+            /// <summary>叠加进 baseResourceConstraint 的额外约束（上游 playerBaseArgs.
+            /// baseResourceConstraint;hellas 的 avoidClasses(clPlayer,4,clWater,1,clCliffs,1)）。</summary>
+            public IConstraint? ExtraBaseResourceConstraint;
+
+            // Trees
+            public string? TreesTemplate;
+            public int? TreesCount;              // null → floor(scaleByMapSize(7, 20))
+            public double TreesMinDist = 11, TreesMaxDist = 13;
+            public double TreesMinDistGroup = 0, TreesMaxDistGroup = 5;
+
+            // Treasures
+            public List<(string Template, int Count)>? Treasures;
+            public double TreasureMinDist = 11, TreasureMaxDist = 13;
+            public double TreasureMinDistGroup = 1, TreasureMaxDistGroup = 3;
+
+            // Decoratives
+            public string? DecorativesTemplate;
+            public int? DecorativesCount;        // null → scaleByMapSize(2, 5)
+            public int DecorativesMinDist = 8, DecorativesMaxDist = 11;
+            public int DecorativesMinCount = 2, DecorativesMaxCount = 5;
+        }
+
+        /// <summary>模板 ResourceSupply.Max（Engine.GetTemplate 语义;沿 parent 上溯,
+        /// Max 缺失取 Amount）。缓存按 dataRoot+template。</summary>
+        private static int GetResourceSupplyMax(string? dataRoot, string template)
+        {
+            if (dataRoot == null) return 100;
+            if (s_supplyMaxCache == null || s_supplyMaxCacheRoot != dataRoot)
+            {
+                s_supplyMaxCacheRoot = dataRoot;
+                s_supplyMaxCache = new Dictionary<string, int>(StringComparer.Ordinal);
+            }
+            if (s_supplyMaxCache.TryGetValue(template, out int cached))
+                return cached;
+
+            int result = 100;
+            string current = template;
+            for (int depth = 0; depth < 8; depth++)
+            {
+                string path = Path.Combine(dataRoot, "simulation", "templates",
+                    current + ".xml");
+                if (!File.Exists(path)) break;
+                try
+                {
+                    var doc = System.Xml.Linq.XDocument.Load(path);
+                    var root = doc.Root!;
+                    var rs = root.Element("ResourceSupply");
+                    var maxStr = rs?.Element("Max")?.Value ?? rs?.Element("Amount")?.Value;
+                    if (maxStr != null && int.TryParse(maxStr, out int v))
+                    {
+                        result = v;
+                        break;
+                    }
+                    string? parent = root.Attribute("parent")?.Value;
+                    if (string.IsNullOrEmpty(parent)) break;
+                    current = parent;
+                }
+                catch { break; }
+            }
+            s_supplyMaxCache[template] = result;
+            return result;
+        }
+
+        private static string? s_supplyMaxCacheRoot;
+        private static Dictionary<string, int>? s_supplyMaxCache;
+
+        /// <summary>placePlayerBaseStartingAnimal（逐字移植;error→return 同上游）。</summary>
+        private static void PlacePlayerBaseStartingAnimal(RmgenRng rng, RandomMap map,
+            MapSettings settings, PlayerBaseOptions opt, RmgenVector2D playerPos, IConstraint constraint)
+        {
+            string template = opt.StartingAnimalTemplate;
+            int count = opt.StartingAnimalCount ??
+                (template == "gaia/fauna_chicken" ? 5 :
+                    (int)SafeMath.Round(5.0 * GetResourceSupplyMax(settings.DataRoot, "gaia/fauna_chicken") /
+                        GetResourceSupplyMax(settings.DataRoot, template)));
+
+            for (int i = 0; i < opt.StartingAnimalGroupCount; ++i)
+            {
+                bool success = false;
+                for (int tries = 0; tries < 30; ++tries)
+                {
+                    var off = new RmgenVector2D(0, opt.StartingAnimalDistance);
+                    off.Rotate(rng.RandomAngle());
+                    var position = RmgenVector2D.Add(off, playerPos);
+                    if (RmgenLibrary.CreateObjectGroup(
+                        new ObjectGroup(new IGroupElement[]
+                        {
+                            new ScatterObject(rng, template,
+                                opt.StartingAnimalMinGroupCount ?? count,
+                                opt.StartingAnimalMaxGroupCount ?? count,
+                                opt.StartingAnimalMinGroupDistance,
+                                opt.StartingAnimalMaxGroupDistance),
+                        }, true, opt.BaseResourceClass, position),
+                        0, constraint))
+                    {
+                        success = true;
+                        break;
+                    }
+                }
+                if (!success)
+                    return;
+            }
+        }
+
+        /// <summary>placePlayerBaseBerries。</summary>
+        private static void PlacePlayerBaseBerries(RmgenRng rng, RandomMap map,
+            PlayerBaseOptions opt, RmgenVector2D playerPos, IConstraint constraint)
+        {
+            for (int tries = 0; tries < 30; ++tries)
+            {
+                var off = new RmgenVector2D(0, opt.BerriesDistance);
+                off.Rotate(rng.RandomAngle());
+                var position = RmgenVector2D.Add(off, playerPos);
+                if (RmgenLibrary.CreateObjectGroup(
+                    new ObjectGroup(new IGroupElement[]
+                    {
+                        new ScatterObject(rng, opt.BerriesTemplate!,
+                            opt.BerriesMinCount, opt.BerriesMaxCount, 1, 3),
+                    }, true, opt.BaseResourceClass, position),
+                    0, constraint))
+                    return;
+            }
+        }
+
+        /// <summary>placePlayerBaseMines（含 stone_formation 支路）。</summary>
+        private static void PlacePlayerBaseMines(RmgenRng rng, RandomMap map,
+            PlayerBaseOptions opt, RmgenVector2D playerPos, IConstraint constraint)
+        {
+            double angleBetweenMines = rng.RandFloat(opt.MinesMinAngle, opt.MinesMaxAngle);
+            int mineCount = opt.Mines!.Count;
+
+            for (int tries = 0; tries < 75; ++tries)
+            {
+                // 先找能放下全部矿的位置
+                RmgenVector2D[]? pos = new RmgenVector2D[mineCount];
+                double startAngle = rng.RandomAngle();
+                for (int i = 0; i < mineCount; ++i)
+                {
+                    double angle = startAngle + angleBetweenMines * (i + (mineCount - 1) / 2.0);
+                    var off = new RmgenVector2D(0, opt.MinesDistance);
+                    off.Rotate(angle);
+                    var p = RmgenVector2D.Add(off, playerPos);
+                    p.Round();
+                    pos[i] = p;
+                    if (!map.ValidTilePassable(p) || !constraint.Allows(p))
+                    {
+                        pos = null;
+                        break;
+                    }
+                }
+                if (pos == null)
+                    continue;
+
+                // 放矿
+                for (int i = 0; i < mineCount; ++i)
+                {
+                    var type = opt.Mines[i];
+                    if (type.Type == "stone_formation")
+                    {
+                        GaiaEntities.CreateStoneMineFormation(rng, map, pos[i],
+                            type.Template, type.Terrain ?? "");
+                        opt.BaseResourceClass?.Add(pos[i]);
+                        continue;
+                    }
+
+                    var objs = new List<IGroupElement>
+                        { new ScatterObject(rng, type.Template, 1, 1, 0, 0) };
+                    if (opt.MinesGroupElements != null)
+                        objs.AddRange(opt.MinesGroupElements);
+                    RmgenLibrary.CreateObjectGroup(
+                        new ObjectGroup(objs, true, opt.BaseResourceClass, pos[i]), 0, null);
+                }
+                return;
+            }
+        }
+
+        /// <summary>placePlayerBaseTrees。</summary>
+        private static void PlacePlayerBaseTrees(RmgenRng rng, RandomMap map,
+            PlayerBaseOptions opt, RmgenVector2D playerPos, IConstraint constraint)
+        {
+            int num = opt.TreesCount ?? (int)Math.Floor(RmgenLibrary.ScaleByMapSize(7, 20, map.GetSize()));
+
+            for (int x = 0; x < 30; ++x)
+            {
+                var off = new RmgenVector2D(0, rng.RandFloat(opt.TreesMinDist, opt.TreesMaxDist));
+                off.Rotate(rng.RandomAngle());
+                var position = RmgenVector2D.Add(off, playerPos);
+                position.Round();
+
+                if (RmgenLibrary.CreateObjectGroup(
+                    new ObjectGroup(new IGroupElement[]
+                    {
+                        new ScatterObject(rng, opt.TreesTemplate!, num, num,
+                            opt.TreesMinDistGroup, opt.TreesMaxDistGroup),
+                    }, false, opt.BaseResourceClass, position),
+                    0, constraint))
+                    return;
+            }
+        }
+
+        /// <summary>placePlayerBaseTreasures。</summary>
+        private static void PlacePlayerBaseTreasures(RmgenRng rng, RandomMap map,
+            PlayerBaseOptions opt, RmgenVector2D playerPos, IConstraint constraint)
+        {
+            foreach (var treasure in opt.Treasures!)
+            {
+                bool success = false;
+                for (int tries = 0; tries < 30; ++tries)
+                {
+                    var off = new RmgenVector2D(0,
+                        rng.RandFloat(opt.TreasureMinDist, opt.TreasureMaxDist));
+                    off.Rotate(rng.RandomAngle());
+                    var position = RmgenVector2D.Add(off, playerPos);
+                    position.Round();
+
+                    if (RmgenLibrary.CreateObjectGroup(
+                        new ObjectGroup(new IGroupElement[]
+                        {
+                            new ScatterObject(rng, treasure.Template, treasure.Count, treasure.Count,
+                                opt.TreasureMinDistGroup, opt.TreasureMaxDistGroup),
+                        }, false, opt.BaseResourceClass, position),
+                        0, constraint))
+                    {
+                        success = true;
+                        break;
+                    }
+                }
+                if (!success)
+                    return;
+            }
+        }
+
+        /// <summary>placePlayerBaseDecoratives（失败不告警,同上游）。</summary>
+        private static void PlacePlayerBaseDecoratives(RmgenRng rng, RandomMap map,
+            PlayerBaseOptions opt, RmgenVector2D playerPos, IConstraint constraint)
+        {
+            int count = opt.DecorativesCount ?? (int)RmgenLibrary.ScaleByMapSize(2, 5, map.GetSize());
+            for (int i = 0; i < count; ++i)
+            {
+                bool success = false;
+                for (int x = 0; x < 30; ++x)
+                {
+                    var off = new RmgenVector2D(0,
+                        rng.RandIntInclusive(opt.DecorativesMinDist, opt.DecorativesMaxDist));
+                    off.Rotate(rng.RandomAngle());
+                    var position = RmgenVector2D.Add(off, playerPos);
+                    position.Round();
+
+                    if (RmgenLibrary.CreateObjectGroup(
+                        new ObjectGroup(new IGroupElement[]
+                        {
+                            new ScatterObject(rng, opt.DecorativesTemplate!,
+                                opt.DecorativesMinCount, opt.DecorativesMaxCount, 0, 1),
+                        }, false, opt.BaseResourceClass, position),
+                        0, constraint))
+                    {
+                        success = true;
+                        break;
+                    }
+                }
+                if (!success)
+                    return;
+            }
+        }
 
         /// <summary>playerPlacementByPattern——按布置模式定玩家位置。
         /// patternName null 时读 settings.PlayerPlacement（gamesetup 下发,"circle" 默认）。

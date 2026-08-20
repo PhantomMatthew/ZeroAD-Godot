@@ -195,6 +195,29 @@ namespace ZeroAD.Sim.Rmgen.Common
                 RmgenLibrary.ScaleByMapSize(1, 8, map.GetSize()) * counts,
                 randomness);
 
+        /// <summary>createStoneMineFormation——环形摆一圈矿（留 1/4 口），
+        /// 底下 ChainPlacer 刷地表。</summary>
+        public static void CreateStoneMineFormation(RmgenRng rng, RandomMap map,
+            RmgenVector2D position, string templateName, object terrain,
+            double radius = 2.5, int count = 8, double? startAngle = null, double maxOffset = 1)
+        {
+            RmgenLibrary.CreateArea(
+                new ChainPlacer(rng, radius / 2, radius, 2, double.PositiveInfinity,
+                    position, 0, new[] { 5 }),
+                new TerrainPainter(terrain, rng), null);
+
+            double angle = startAngle ?? rng.RandomAngle();
+            for (int i = 0; i < count; ++i)
+            {
+                var off = new RmgenVector2D(radius + rng.RandFloat(0, maxOffset), 0);
+                off.Rotate(-angle);
+                var pos = RmgenVector2D.Add(position, off);
+                pos.Round();
+                map.PlaceEntityPassable(templateName, 0, pos, rng.RandomAngle());
+                angle += 3.0 / 2 * SafeMath.PI / count;
+            }
+        }
+
         /// <summary>placeDocks（gaia_entities.js）——陆上随机点找最近大水域，
         /// 朝陆地方向取高度在 [heightMin,heightMax] 的首点放码头；
         /// 朝向 = 到 8 格半径水域平均点方向的反向 + π/2。

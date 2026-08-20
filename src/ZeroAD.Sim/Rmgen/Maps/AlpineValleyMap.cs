@@ -30,12 +30,24 @@ namespace ZeroAD.Sim.Rmgen.Maps
             const double heightMountain = 30;
 
             var clFood = new TileClass(MapSize);
+            var clBaseResource = new TileClass(MapSize);
             var mapCenter = map.GetCenter();
 
             var (_, playerPosition, _, startAngle) = RmgenCommon.PlayerPlacementCircle(
                 rng, map, NumPlayers, RmgenLibrary.FractionToTiles(0.35, MapSize));
 
-            RmgenCommon.PlacePlayerBases(rng, map, settings, biome.MainTerrain0, ClPlayer, biome, playerPosition);
+            RmgenCommon.PlacePlayerBases(rng, map, settings, biome.MainTerrain0, ClPlayer, biome,
+                playerPosition,
+                options: new RmgenCommon.PlayerBaseOptions
+                {
+                    BaseResourceClass = clBaseResource,
+                    StartingAnimal = true,
+                    BerriesTemplate = biome.FruitBush,
+                    Mines = new() { (biome.MetalLarge, (string?)null, (object?)null),
+                                    (biome.StoneLarge, (string?)null, (object?)null) },
+                    TreesTemplate = biome.Tree1,
+                    DecorativesTemplate = biome.GrassShort,
+                });
 
             // ── 山脊（MountainRangeBuilder 图算法）──
             double mountainWidth = RmgenLibrary.ScaleByMapSize(9, 15, MapSize);

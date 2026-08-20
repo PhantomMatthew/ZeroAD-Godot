@@ -49,6 +49,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             const double heightSeaGround = -5;
 
             var clWater = new TileClass(MapSize);
+            var clBaseResource = new TileClass(MapSize);
             var clFood = new TileClass(MapSize);
 
             // playerPlacementByPattern 默认 "circle"（settings 无 PlayerPlacement 字段——
@@ -60,7 +61,20 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 rng.RandomAngle());
 
             RmgenCommon.PlacePlayerBases(rng, map, settings, tPrimary[0], ClPlayer, null,
-                playerPosition, cityPatchOuterTerrain: tPrimary[0], cityPatchInnerTerrain: tSecondary);
+                playerPosition, cityPatchOuterTerrain: tPrimary[0], cityPatchInnerTerrain: tSecondary,
+                options: new RmgenCommon.PlayerBaseOptions
+                {
+                    BaseResourceClass = clBaseResource,
+                    StartingAnimal = true,
+                    StartingAnimalTemplate = oRabbit,
+                    BerriesTemplate = oBerryBush,
+                    Mines = new() { (oMetalLarge, (string?)null, (object?)null),
+                                    (oStoneLarge, (string?)null, (object?)null) },
+                    Treasures = new() { ("gaia/treasure/wood", 10) },
+                    TreesTemplate = oBush,
+                    TreesCount = 20,
+                    TreesMaxDistGroup = 3,
+                });
 
             // ── 冰丘（上游 createHills 默认参数：minSize=1, maxSize=floor(scale(4,6)),
             // spread=floor(scale(16,40)), failFraction=0.5, elevation=18, smoothing=2）──

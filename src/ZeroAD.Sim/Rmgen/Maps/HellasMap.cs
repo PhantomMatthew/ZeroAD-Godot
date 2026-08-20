@@ -220,13 +220,43 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     new SlopeConstraint(map, 2, double.PositiveInfinity),
                 }));
 
-            // ── 玩家基地（上游 placePlayerBase 逐玩家；简化版批量）──
+            // ── 玩家基地（上游逐玩家 placePlayerBase：按所在海拔带选动物/树;
+            // optionsFactory 内 pickRandom 抽树,抽数位置同上游 args 构建）──
             RmgenCommon.PlacePlayerBases(rng, map, settings,
                 biomes.Str("lowlands", "terrains", "main"), ClPlayer, null,
                 playerPosition,
                 biomes.Str("common", "terrains", "roadWild"),
                 biomes.Str("common", "terrains", "road"),
-                playerIDs);
+                playerIDs,
+                optionsFactory: pid =>
+                {
+                    int i = playerIDs.IndexOf(pid);
+                    bool highlands = constraintHighlands.Allows(playerPosition[i]);
+                    string band = highlands ? "highlands" : "lowlands";
+                    return new RmgenCommon.PlayerBaseOptions
+                    {
+                        BaseResourceClass = clBaseResource,
+                        ExtraBaseResourceConstraint = RmgenLibrary.AvoidClasses(
+                            ClPlayer, 4, clWater, 1, clCliffs, 1),
+                        StartingAnimal = true,
+                        StartingAnimalTemplate = biomes.Str(band, "gaia", "fauna", "startingAnimal"),
+                        StartingAnimalGroupCount = 1,
+                        StartingAnimalMinGroupCount = 4,
+                        StartingAnimalMaxGroupCount = 4,
+                        BerriesTemplate = biomes.Str(band, "gaia", "flora", "fruitBush"),
+                        BerriesMinCount = 3,
+                        BerriesMaxCount = 3,
+                        Mines = new()
+                        {
+                            (biomes.Str("common", "gaia", "mines", "metalLarge"), (string?)null, (object?)null),
+                            (biomes.Str("common", "gaia", "mines", "stoneLarge"), (string?)null, (object?)null),
+                        },
+                        MinesMinAngle = SafeMath.PI / 2,
+                        MinesMaxAngle = SafeMath.PI,
+                        TreesTemplate = rng.PickRandom(biomes.StrList(band, "gaia", "flora", "trees")),
+                        TreesCount = 15,
+                    };
+                });
 
             // ── 码头 ──
             GaiaEntities.PlaceDocks(rng, map,

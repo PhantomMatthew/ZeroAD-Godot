@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim.RmgenMath;
 using ZeroAD.Sim.Rmgen.Common;
 
@@ -154,9 +155,26 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     0, null);
             }
 
-            // ── 玩家基地（CityPatch: desert_city_tile）──
+            // ── 玩家基地（CityPatch: desert_city_tile;矿点带棕榈/灌木小件——
+            // 上游 args 构建时 shuffleArray,抽数在 placePlayerBases 前）──
+            var mineExtras = RmgenCommon.ShuffleArray(rng,
+                    new[] { aBushA, aBushB, ePalmShort, ePalmTall })
+                .Select(t => (IGroupElement)new ScatterObject(rng, t, 1, 1, 3, 4))
+                .ToList();
             RmgenCommon.PlacePlayerBases(rng, map, settings, tSand[0], ClPlayer, null,
-                playerPosition, tRoadWild, tRoad);
+                playerPosition, tRoadWild, tRoad,
+                options: new RmgenCommon.PlayerBaseOptions
+                {
+                    BaseResourceClass = clBaseResource,
+                    StartingAnimal = true,
+                    BerriesTemplate = "gaia/fruit/grapes",
+                    Mines = new() { (eMetalMine, (string?)null, (object?)null),
+                                    (eStoneMine, (string?)null, (object?)null) },
+                    MinesDistance = RmgenCommon.DefaultPlayerBaseRadius(MapSize),
+                    MinesMaxAngle = SafeMath.PI / 2,
+                    MinesGroupElements = mineExtras,
+                    // 上游无 Trees 键（"Starting trees were set above"）——不落基地树线
+                });
 
             // ── 中央大绿洲（湖心水 + 棕榈林环）──
             RmgenLibrary.CreateArea(

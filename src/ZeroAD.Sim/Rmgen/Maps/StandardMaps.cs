@@ -28,6 +28,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected TileClass ClDirt = null!;
         protected TileClass ClRock = null!;
         protected TileClass ClMetal = null!;
+        /// <summary>基地资源标记(mainland.js clBaseResource——基地浆果/矿/树线落点互不重叠)。</summary>
+        protected TileClass ClBaseResource = null!;
 
         // 子类覆盖的参数
         protected abstract double HeightLand { get; }
@@ -47,8 +49,10 @@ namespace ZeroAD.Sim.Rmgen.Maps
             InitContext(rng, settings);
             var biome = Biome;
 
-            // 玩家基地(含 CityPatch 基地区刷漆)
-            RmgenCommon.PlacePlayerBases(rng, Map, settings, biome.MainTerrain0, ClPlayer, biome);
+            // 玩家基地(含 CityPatch 基地区刷漆 + 逐基地资源:浆果/矿/树线/起始动物/装饰,
+            // mainland.js 的 placePlayerBases 全参数)
+            RmgenCommon.PlacePlayerBases(rng, Map, settings, biome.MainTerrain0, ClPlayer, biome,
+                BaseOptions(biome));
 
             // 起伏
             RmgenCommon.CreateBumps(rng, Map,
@@ -109,12 +113,26 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ClDirt = new TileClass(MapSize);
             ClRock = new TileClass(MapSize);
             ClMetal = new TileClass(MapSize);
+            ClBaseResource = new TileClass(MapSize);
         }
 
         /// <summary>RandomMap 创建（默认 MainTerrain0 单贴图）。基底为名单的图
         /// （上游 RandomMap 对数组逐图块 pickRandom）覆盖此钩子。</summary>
         protected virtual RandomMap CreateMap(BiomeSet biome)
             => new(Rng, MapSize, HeightLand, biome.MainTerrain0, Settings.CircularMap);
+
+        /// <summary>逐基地资源参数（mainland.js 的 placePlayerBases 全表:
+        /// 起始动物默认鸡 + 浆果 + 金属/石矿 + 树线 + 草饰）。强主题图覆盖。</summary>
+        protected virtual RmgenCommon.PlayerBaseOptions BaseOptions(BiomeSet biome) => new()
+        {
+            BaseResourceClass = ClBaseResource,
+            StartingAnimal = true,
+            BerriesTemplate = biome.FruitBush,
+            Mines = new() { (biome.MetalLarge, (string?)null, (string?)null),
+                            (biome.StoneLarge, (string?)null, (string?)null) },
+            TreesTemplate = biome.Tree1,
+            DecorativesTemplate = biome.GrassShort,
+        };
 
         /// <summary>无 biome 图的前导（arctic_summer 等内联常量图——上游不 LoadLibrary("rmbiome")，
         /// 也就不消耗 biome 选择抽数）。</summary>
@@ -134,6 +152,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ClDirt = new TileClass(MapSize);
             ClRock = new TileClass(MapSize);
             ClMetal = new TileClass(MapSize);
+            ClBaseResource = new TileClass(MapSize);
         }
 
         /// <summary>无 biome + 基底贴图名单版（aegean_sea 等——上游 RandomMap 对名单
@@ -154,6 +173,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ClDirt = new TileClass(MapSize);
             ClRock = new TileClass(MapSize);
             ClMetal = new TileClass(MapSize);
+            ClBaseResource = new TileClass(MapSize);
         }
 
         /// <summary>本图可随机的 biome 白名单(上游 SupportedBiomes;默认全 generic——

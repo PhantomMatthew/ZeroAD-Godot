@@ -74,7 +74,24 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 rng.RandomAngle());
 
             RmgenCommon.PlacePlayerBases(rng, map, settings, biome.MainTerrain0, ClPlayer, null,
-                playerPosition, biome.MainTerrain0, tCitytiles);
+                playerPosition, biome.MainTerrain0, tCitytiles,
+                options: new RmgenCommon.PlayerBaseOptions
+                {
+                    BaseResourceClass = clBaseResource,
+                    StartingAnimal = true,
+                    BerriesTemplate = oBerryBush,
+                    Mines = new()
+                    {
+                        (biome.MetalLarge, (string?)null, (object?)null),
+                        (biome.StoneSmall, "stone_formation", tDirt4),
+                    },
+                    TreesTemplate = oBaobab,
+                    TreesCount = (int)RmgenLibrary.ScaleByMapSize(3, 12, MapSize),
+                    TreesMinDistGroup = 2,
+                    TreesMaxDistGroup = 6,
+                    TreesMinDist = 15,
+                    TreesMaxDist = 16,
+                });
 
             // ── 丘陵 + 水洼（本图特色：密集交错）──
             double nbHills = RmgenLibrary.ScaleByMapSize(6, 16, MapSize);

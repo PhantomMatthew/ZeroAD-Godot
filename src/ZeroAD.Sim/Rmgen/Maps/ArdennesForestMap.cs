@@ -25,6 +25,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
         private static readonly string[] tGrassPatch = { "alpine_grass_d" };
 
         private const string oBoar = "gaia/fauna_boar";
+        private const string oPig = "gaia/fauna_pig";
         private const string oDeer = "gaia/fauna_deer";
         private const string oBear = "gaia/fauna_bear_brown";
         private const string oBerryBush = "gaia/fruit/berry_01";
@@ -145,7 +146,21 @@ namespace ZeroAD.Sim.Rmgen.Maps
             RmgenCommon.PlacePlayerBases(rng, map, settings, tPrimary[0], ClPlayer, null,
                 playerPosition, tCity, tCity,
                 cityPatchRadius: RmgenLibrary.ScaleByMapSize(5, 6, MapSize),
-                cityPatchSmoothness: 0.05);
+                cityPatchSmoothness: 0.05,
+                options: new RmgenCommon.PlayerBaseOptions
+                {
+                    BaseResourceClass = clBaseResource,
+                    StartingAnimal = true,
+                    StartingAnimalTemplate = oPig,
+                    BerriesTemplate = oBerryBush,
+                    BerriesMinCount = 3,
+                    BerriesMaxCount = 3,
+                    Mines = new() { (oMetalLarge, (string?)null, (object?)null),
+                                    (oStoneLarge, (string?)null, (object?)null) },
+                    MinesDistance = 16,
+                    TreesTemplate = oOak,
+                    TreesCount = 2,
+                });
 
             // ── 标玩家领地（ClumpPlacer(250) ≈ 半径 9 圆盘）──
             for (int i = 0; i < NumPlayers; ++i)

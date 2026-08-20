@@ -84,7 +84,18 @@ namespace ZeroAD.Sim.Rmgen.Maps
             var (playerIDs, playerPosition) = RmgenCommon.PlayerPlacementRiver(
                 rng, map, settings, startAngle, RmgenLibrary.FractionToTiles(0.6, mapSize));
             RmgenCommon.PlacePlayerBases(rng, map, settings, tHill[0], ClPlayer, null,
-                playerPosition, tCityPlaza, tCity, playerIDs);
+                playerPosition, tCityPlaza, tCity, playerIDs,
+                options: new RmgenCommon.PlayerBaseOptions
+                {
+                    BaseResourceClass = clBaseResource,
+                    StartingAnimal = true,
+                    BerriesTemplate = oBerryBush,
+                    Mines = new() { (oMetalLarge, (string?)null, (object?)null),
+                                    (oStoneLarge, (string?)null, (object?)null) },
+                    TreesTemplate = oCarob,
+                    TreesCount = 2,
+                    DecorativesTemplate = aBush1,
+                });
 
             // ── 中央海峡（paintRiver：双正弦蜿蜒，deviation=0 仍逐格抽数）──
             var riverStart = new RmgenVector2D(mapCenter.X, mapSize);   // mapBounds.top
