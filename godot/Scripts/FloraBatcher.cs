@@ -34,6 +34,7 @@ public sealed class FloraBatcher
         public Transform3D Base;           // 实体世界变换(恢复可见时用)
         public bool Visible = true;
         public string Template = "";
+        public int Variant;                // 选中的变体索引(id % VariantCount)——诊断用
     }
 
     private readonly Node3D _root;
@@ -55,7 +56,7 @@ public sealed class FloraBatcher
             yield return (g.Key, g.Count(), g.Count(e => e.Visible));
     }
 
-    /// <summary>诊断采样:逐模板前 count 个实体的 Base 平移(世界坐标)——查变换异常。</summary>
+        /// <summary>诊断采样:逐模板前 count 个实体的 Base 平移(世界坐标)——查变换异常。</summary>
     public System.Collections.Generic.IEnumerable<string> SampleBases(int count)
     {
         foreach (var g in _entities.Values.GroupBy(e => e.Template))
@@ -66,6 +67,20 @@ public sealed class FloraBatcher
                 if (i++ >= count) break;
                 yield return $"{g.Key}[{i}] pos={e.Base.Origin}";
             }
+        }
+    }
+
+    /// <summary>诊断:逐实体(变体, 实时变换)对照——dev 诊断。只输出矩形内的实体。</summary>
+    public System.Collections.Generic.IEnumerable<string> SampleVariantsInRect(
+        float minX, float minZ, float maxX, float maxZ)
+    {
+        foreach (var e in _entities.Values)
+        {
+            var o = e.Base.Origin;
+            if (o.X < minX || o.X > maxX || o.Z < minZ || o.Z > maxZ) continue;
+            var t = e.Parts[0].Mm.GetInstanceTransform(e.Slots[0]);
+            yield return $"{e.Template} v{e.Variant} id_slot={e.Slots[0]} base=({o.X:F0},{o.Y:F1},{o.Z:F0}) " +
+                         $"live=({t.Origin.X:F0},{t.Origin.Y:F1},{t.Origin.Z:F0}) scaleX={t.Basis.Scale.X:F2}";
         }
     }
 
@@ -121,6 +136,7 @@ public sealed class FloraBatcher
             Slots = new int[parts.Length],
             Base = new Transform3D(new Basis(Vector3.Up, yaw), pos),
             Template = template,
+            Variant = (int)(id.Value % VariantCount),
         };
         for (int i = 0; i < parts.Length; i++)
         {
@@ -178,8 +194,11 @@ public sealed class FloraBatcher
         return slot;
     }
 
-    /// <summary>取模板的变体桶:actor 实例化 VariantCount 次(不同种子),拍平成
-    /// (mesh, localTransform) 部件表,每部件建一个 MultiMeshInstance3D。</summary>
+        /// <summary>取模板的变体桶:actor 实例化 VariantCount 次(不同种子),拍平成
+        /// (mesh, localTransform) 部件表,每部件建一个 MultiMeshInstance3D。
+        /// 已知问题:部分 actor 在大种子下变体选择的 mesh/贴图组渲染失败(Gold Oasis
+        /// 棕榈 c/d 桶),逐节点路径(种子 0)却稳定可用——合批退化为全部桶共享种子 0
+        /// 网格(多样性暂时让位给可用性,直到变体选择根因查清)。</summary>
     private Part[][] GetVariants(string template)
     {
         if (_buckets.TryGetValue(template, out var cached)) return cached;
@@ -190,8 +209,9 @@ public sealed class FloraBatcher
         {
             for (int v = 0; v < VariantCount; v++)
             {
-                // 种子随变体号走(ActorLoader 按种子选 variant);0.7 灰=无玩家色(gaia 原色)。
-                var node = Actors.ActorLoader.Instance.Instantiate(actorPath, v * 7919 + 17, new Color(0.7f, 0.6f, 0.4f));
+                // 种子固定 0:同非合批路径(ModelLibrary/逐节点渲染验证可用);
+                // 0.7 灰=无玩家色(gaia 原色)。
+                var node = Actors.ActorLoader.Instance.Instantiate(actorPath, 0, new Color(0.7f, 0.6f, 0.4f));
                 if (node == null) continue;
                 var parts = new List<Part>();
                 Flatten(node, Transform3D.Identity, parts);

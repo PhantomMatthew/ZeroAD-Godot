@@ -2595,6 +2595,29 @@ public sealed partial class SimBridge : Node
 	public System.Collections.Generic.IEnumerable<string> FloraReportParts()
 		=> _floraBatch?.ReportParts() ?? System.Linq.Enumerable.Empty<string>();
 
+	/// <summary>合批 flora 矩形内实体(变体, 实时变换)对照——dev 诊断。</summary>
+	public System.Collections.Generic.IEnumerable<string> FloraSampleVariantsInRect(
+		float minX, float minZ, float maxX, float maxZ)
+		=> _floraBatch?.SampleVariantsInRect(minX, minZ, maxX, maxZ) ?? System.Linq.Enumerable.Empty<string>();
+
+	/// <summary>矩形内 gaia 实体的 sim LosVisibility(P1)——诊断雾隐恢复链路。</summary>
+	public System.Collections.Generic.IEnumerable<string> FloraLosInRect(
+		float minX, float minZ, float maxX, float maxZ)
+	{
+		foreach (var (eid, node) in _entityNodes)
+		{
+			var id = _sim.QueryInterface<IdentityComponent>(eid);
+			if (id == null) continue;
+			if (!id.TemplateName.StartsWith("gaia/tree", System.StringComparison.Ordinal)) continue;
+			var pos = _sim.QueryInterface<PositionComponent>(eid);
+			if (pos == null) continue;
+			float x = pos.Position.X.ToFloat(), z = pos.Position.Z.ToFloat();
+			if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+			var vis = _range.GetLosVisibility(eid, 1);
+			yield return $"{id.TemplateName} eid={eid.Value} pos=({x:F0},{z:F0}) los={vis}";
+		}
+	}
+
 	private void CreateVisualFor(EntityId entity, Color color, float size, bool isBuilding = false, bool isGhost = false, string? templateName = null)
 	{
 		var identity = _sim.QueryInterface<IdentityComponent>(entity);
@@ -2609,7 +2632,10 @@ public sealed partial class SimBridge : Node
 		// 按(模板×变体)分桶的 MultiMeshInstance3D,实体只留无网格锚点(选择圈/诊断仍按
 		// EntityNodes 工作;锚点不进 UnitContainer → 不产阴影代理)。mirage 不合批——
 		// 雾中变暗是逐节点材质处理,量小。
-		if (!isGhost && System.Environment.GetEnvironmentVariable("ZEROAD_NO_FLORA_BATCH") == null
+		// 例外:scenario/skirmish 地图(XML 实体)走逐节点路径——合批在这些图上
+		// 存在未查明的实例丢失(Gold Oasis 棕榈),逐节点路径已验证稳定;rmgen 继续合批。
+		bool useFloraBatch = string.IsNullOrEmpty(MapPath) || MapPath.StartsWith("random/", StringComparison.Ordinal);
+		if (!isGhost && useFloraBatch && System.Environment.GetEnvironmentVariable("ZEROAD_NO_FLORA_BATCH") == null
 			&& _sim.QueryInterface<MirageComponent>(entity) == null
 			&& Templates != null && template.StartsWith("gaia/", System.StringComparison.Ordinal))
 		{

@@ -579,7 +579,11 @@ public sealed partial class Main : Node3D
 						ZeroAD.Sim.Diag.Log("FloraDump", s);
 					foreach (var s in floraSim.FloraReportLive())
 						ZeroAD.Sim.Diag.Log("FloraDump", s);
-					foreach (var s in floraSim.FloraReportParts())
+					// 用户白圈区域(P1 西南废墟)逐实体精确诊断。
+					foreach (var s in floraSim.FloraSampleVariantsInRect(440, 170, 540, 270))
+						ZeroAD.Sim.Diag.Log("FloraDump", s);
+					// sim 侧同区域实体的真实 LosVisibility(P1)。
+					foreach (var s in floraSim.FloraLosInRect(440, 170, 540, 270))
 						ZeroAD.Sim.Diag.Log("FloraDump", s);
 					// sim 侧高度探针:绿洲心(512,512)/P1 基地(549,160)/图角(100,900)。
 					var terr = ZeroAD.Sim.Components.SimSystem.Terrain;
