@@ -572,6 +572,23 @@ public sealed partial class Main : Node3D
 		if (OptionsApplier.GetBool("dev.freecamera", false))
 			_camera.FreeFlyEnabled = true;
 
+		// dev 钩子:ZEROAD_SELECT_CC=1 开局自动选中本地玩家的 CC(触发生产面板构建,
+		// 配合 HUD-DIAG 验证时代过滤)。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_SELECT_CC") == "1")
+		{
+			foreach (var e in _sim.Sim.AllEntities)
+			{
+				var id = _sim.Sim.QueryInterface<IdentityComponent>(e);
+				var own = _sim.Sim.QueryInterface<OwnershipComponent>(e);
+				if (id != null && own != null && own.PlayerId == (int)_sim.LocalPlayerId
+					&& id.TemplateName.Contains("civil_centre"))
+				{
+					SelectOnly(new[] { e });
+					break;
+				}
+			}
+		}
+
 		// dev 钩子:ZEROAD_FLORA_DUMP=<秒> 后逐模板打印合批 flora 的(总数/可见数)。
 		if (int.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_FLORA_DUMP"), out int floraDumpSec))
 		{
