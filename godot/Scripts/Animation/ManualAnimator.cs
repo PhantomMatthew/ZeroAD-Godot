@@ -65,7 +65,7 @@ public sealed partial class ManualAnimator : Node
             foreach (var kv in clip.RestRotations)
             {
                 if (_corrections.ContainsKey(kv.Key)) continue;
-                int idx = _skeleton.FindBone(kv.Key);
+                int idx = BoneIdx(kv.Key);   // 前缀不敏感(Biped_ 骨架)
                 if (idx < 0) continue;
                 var meshRest = _skeleton.GetBoneRest(idx).Basis.GetRotationQuaternion();
                 _corrections[kv.Key] = meshRest * kv.Value.Inverse();
@@ -151,8 +151,33 @@ public sealed partial class ManualAnimator : Node
     {
         if (_boneIdx.TryGetValue(name, out var idx)) return idx;
         int found = _skeleton!.FindBone(name);
+        // 缓存反导出的骨架骨骼带 armature 前缀(Biped_hip——Godot 导入 glTF 时把
+        // 骨架名拼进了骨骼名),动画轨道是裸名(hip)。前缀不敏感匹配:裸名找不到时,
+        // 按后缀(StripPrefix)再找一次。缺这层,全部骨骼动画静默失效(骑兵站马背、
+        // 单位不走路)。
+        if (found < 0 && _prefixLookup == null)
+            BuildPrefixLookup();
+        if (found < 0 && _prefixLookup != null && _prefixLookup.TryGetValue(name, out var mapped))
+            found = mapped;
         _boneIdx[name] = found;
         return found;
+    }
+
+    private System.Collections.Generic.Dictionary<string, int>? _prefixLookup;
+
+    /// <summary>剥前缀后的骨骼名 → 骨骼索引(取最长后缀匹配,避免 finger_L 撞
+    /// fingertip_L:先试全名再试去前缀名,后缀带分隔符才认)。</summary>
+    private void BuildPrefixLookup()
+    {
+        _prefixLookup = new System.Collections.Generic.Dictionary<string, int>();
+        int n = _skeleton!.GetBoneCount();
+        for (int i = 0; i < n; i++)
+        {
+            string bn = _skeleton.GetBoneName(i);
+            int sep = bn.IndexOf('_');
+            if (sep <= 0 || sep >= bn.Length - 1) continue;   // 无前缀结构
+            _prefixLookup.TryAdd(bn[(sep + 1)..], i);
+        }
     }
 
     private void ResetToRest()
