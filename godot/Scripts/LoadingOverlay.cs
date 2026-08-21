@@ -177,8 +177,8 @@ public sealed partial class LoadingOverlay : CanvasLayer
         var titleLbl = new Label
         {
             Text = tipTitle,
-            Position = new Vector2(30, 25),
-            Size = new Vector2(348 - 60, 20),
+            AnchorLeft = 0f, AnchorRight = 1f,
+            OffsetLeft = 20, OffsetRight = -20, OffsetTop = 25, OffsetBottom = 45,
             HorizontalAlignment = HorizontalAlignment.Center,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
@@ -205,9 +205,13 @@ public sealed partial class LoadingOverlay : CanvasLayer
         var bodyLbl = new Label
         {
             Text = tipBody,
-            Position = new Vector2(30, 73),
-            Size = new Vector2(348 - 55, 392 - 133),
+            // 锚点定宽(左 30 右 30 于 textArea)而非手动 Size——任何缩放/主题重排下
+            // 宽度都跟随纸张,WordSmart 自动回行不会溢出纸外(羊皮纸原件 318 宽,
+            // 留足左右边距避让装饰边框)。
+            AnchorLeft = 0f, AnchorRight = 1f, AnchorTop = 0f, AnchorBottom = 1f,
+            OffsetLeft = 30, OffsetRight = -30, OffsetTop = 73, OffsetBottom = -60,
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            VerticalAlignment = VerticalAlignment.Top,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         bodyLbl.AddThemeFontSizeOverride("font_size", 14);
