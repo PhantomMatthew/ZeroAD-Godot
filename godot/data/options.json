@@ -2,8 +2,7 @@
 	{
 		"label": "General",
 		"tooltip": "Change general options.",
-		"options":
-		[
+		"options": [
 			{
 				"type": "string",
 				"label": "Player name (single-player)",
@@ -34,8 +33,7 @@
 	{
 		"label": "Graphics (general)",
 		"tooltip": "Set the balance between performance and visual appearance.",
-		"options":
-		[
+		"options": [
 			{
 				"type": "boolean",
 				"label": "Windowed mode",
@@ -50,6 +48,12 @@
 			},
 			{
 				"type": "boolean",
+				"label": "Free Camera (F9)",
+				"tooltip": "Enable free-fly camera (F9 in game): WASD pan, Q/E up/down, Shift boost, wheel speed. For debugging scene issues (occlusion/floating/misplaced models).",
+				"config": "dev.freecamera"
+			},
+			{
+				"type": "boolean",
 				"label": "Post-processing",
 				"tooltip": "Use screen-space post-processing filters (HDR, Bloom, DOF, etc).",
 				"config": "postproc"
@@ -58,29 +62,74 @@
 				"type": "dropdownNumber",
 				"label": "Resolution scale",
 				"tooltip": "A smaller scale makes rendering faster but produces a more blurry picture, a large scale makes rendering slower but produces a better picture.",
-				"dependencies": ["postproc"],
+				"dependencies": [
+					"postproc"
+				],
 				"config": "renderer.scale",
 				"list": [
-					{ "value": 0.5, "label": "50%" },
-					{ "value": 0.75, "label": "75%" },
-					{ "value": 0.875, "label": "87.5%" },
-					{ "value": 1.00, "label": "100%" },
-					{ "value": 1.25, "label": "125%" },
-					{ "value": 1.50, "label": "150%" },
-					{ "value": 1.75, "label": "175%" },
-					{ "value": 2.00, "label": "200%" }
+					{
+						"value": 0.5,
+						"label": "50%"
+					},
+					{
+						"value": 0.75,
+						"label": "75%"
+					},
+					{
+						"value": 0.875,
+						"label": "87.5%"
+					},
+					{
+						"value": 1.0,
+						"label": "100%"
+					},
+					{
+						"value": 1.25,
+						"label": "125%"
+					},
+					{
+						"value": 1.5,
+						"label": "150%"
+					},
+					{
+						"value": 1.75,
+						"label": "175%"
+					},
+					{
+						"value": 2.0,
+						"label": "200%"
+					}
 				]
 			},
 			{
 				"type": "dropdown",
 				"label": "Upscale technique",
 				"tooltip": "Technique defines performance and quality of upscaling process.",
-				"dependencies": ["postproc", { "config": "renderer.scale", "op": "<", "value": 1.0 }],
+				"dependencies": [
+					"postproc",
+					{
+						"config": "renderer.scale",
+						"op": "<",
+						"value": 1.0
+					}
+				],
 				"config": "renderer.upscale.technique",
 				"list": [
-					{ "value": "fsr", "label": "FidelityFX Super Resolution 1.0", "tooltip": "Advanced upscale technique. For better results, use FSR with antialiasing enabled. Using it with the OpenGL backend may have some issues, consider using Vulkan backend instead." },
-					{ "value": "bilinear", "label": "Bilinear", "tooltip": "Bilinear upscale technique. Produces a slightly blurry picture depending on the scale." },
-					{ "value": "pixelated", "label": "Pixelated", "tooltip": "Simplest upscale technique. Used mostly for stylized effect." }
+					{
+						"value": "fsr",
+						"label": "FidelityFX Super Resolution 1.0",
+						"tooltip": "Advanced upscale technique. For better results, use FSR with antialiasing enabled. Using it with the OpenGL backend may have some issues, consider using Vulkan backend instead."
+					},
+					{
+						"value": "bilinear",
+						"label": "Bilinear",
+						"tooltip": "Bilinear upscale technique. Produces a slightly blurry picture depending on the scale."
+					},
+					{
+						"value": "pixelated",
+						"label": "Pixelated",
+						"tooltip": "Simplest upscale technique. Used mostly for stylized effect."
+					}
 				]
 			},
 			{
@@ -131,14 +180,38 @@
 				"config": "gui.scale",
 				"function": "SetGUIScale",
 				"list": [
-					{ "value": 0.75, "label": "75%" },
-					{ "value": 1.00, "label": "100%" },
-					{ "value": 1.25, "label": "125%" },
-					{ "value": 1.50, "label": "150%" },
-					{ "value": 1.75, "label": "175%" },
-					{ "value": 2.00, "label": "200%" },
-					{ "value": 2.25, "label": "225%" },
-					{ "value": 2.50, "label": "250%" }
+					{
+						"value": 0.75,
+						"label": "75%"
+					},
+					{
+						"value": 1.0,
+						"label": "100%"
+					},
+					{
+						"value": 1.25,
+						"label": "125%"
+					},
+					{
+						"value": 1.5,
+						"label": "150%"
+					},
+					{
+						"value": 1.75,
+						"label": "175%"
+					},
+					{
+						"value": 2.0,
+						"label": "200%"
+					},
+					{
+						"value": 2.25,
+						"label": "225%"
+					},
+					{
+						"value": 2.5,
+						"label": "250%"
+					}
 				]
 			},
 			{
@@ -186,16 +259,23 @@
 	{
 		"label": "Graphics (advanced)",
 		"tooltip": "Adjust advanced graphic options.",
-		"options":
-		[
+		"options": [
 			{
 				"type": "dropdown",
 				"label": "Renderer backend",
 				"tooltip": "Choose the renderer's backend. It's recommended to use Vulkan if supported. REQUIRES GAME RESTART",
 				"config": "rendererbackend",
 				"list": [
-					{ "value": "gl", "label": "OpenGL", "tooltip": "Default OpenGL backend with GLSL. REQUIRES GAME RESTART" },
-					{ "value": "vulkan", "label": "Vulkan", "tooltip": "Modern API, requires up-to-date drivers. REQUIRES GAME RESTART" }
+					{
+						"value": "gl",
+						"label": "OpenGL",
+						"tooltip": "Default OpenGL backend with GLSL. REQUIRES GAME RESTART"
+					},
+					{
+						"value": "vulkan",
+						"label": "Vulkan",
+						"tooltip": "Modern API, requires up-to-date drivers. REQUIRES GAME RESTART"
+					}
 				]
 			},
 			{
@@ -220,26 +300,62 @@
 				"type": "dropdown",
 				"label": "Antialiasing",
 				"tooltip": "Reduce aliasing effect on edges.",
-				"dependencies": ["postproc"],
+				"dependencies": [
+					"postproc"
+				],
 				"config": "antialiasing",
 				"list": [
-					{ "value": "disabled", "label": "Disabled", "tooltip": "Do not use antialiasing." },
-					{ "value": "fxaa", "label": "FXAA", "tooltip": "Fast, but simple antialiasing." },
-					{ "value": "msaa2", "label": "MSAA (2×)", "tooltip": "Slow, but high-quality antialiasing, uses two samples per pixel. Supported for GL3.3+." },
-					{ "value": "msaa4", "label": "MSAA (4×)", "tooltip": "Slow, but high-quality antialiasing, uses four samples per pixel. Supported for GL3.3+." },
-					{ "value": "msaa8", "label": "MSAA (8×)", "tooltip": "Slow, but high-quality antialiasing, uses eight samples per pixel. Supported for GL3.3+." },
-					{ "value": "msaa16", "label": "MSAA (16×)", "tooltip": "Slow, but high-quality antialiasing, uses sixteen samples per pixel. Supported for GL3.3+." }
+					{
+						"value": "disabled",
+						"label": "Disabled",
+						"tooltip": "Do not use antialiasing."
+					},
+					{
+						"value": "fxaa",
+						"label": "FXAA",
+						"tooltip": "Fast, but simple antialiasing."
+					},
+					{
+						"value": "msaa2",
+						"label": "MSAA (2×)",
+						"tooltip": "Slow, but high-quality antialiasing, uses two samples per pixel. Supported for GL3.3+."
+					},
+					{
+						"value": "msaa4",
+						"label": "MSAA (4×)",
+						"tooltip": "Slow, but high-quality antialiasing, uses four samples per pixel. Supported for GL3.3+."
+					},
+					{
+						"value": "msaa8",
+						"label": "MSAA (8×)",
+						"tooltip": "Slow, but high-quality antialiasing, uses eight samples per pixel. Supported for GL3.3+."
+					},
+					{
+						"value": "msaa16",
+						"label": "MSAA (16×)",
+						"tooltip": "Slow, but high-quality antialiasing, uses sixteen samples per pixel. Supported for GL3.3+."
+					}
 				]
 			},
 			{
 				"type": "dropdown",
 				"label": "Sharpening",
 				"tooltip": "Reduce blurry effects.",
-				"dependencies": ["postproc"],
+				"dependencies": [
+					"postproc"
+				],
 				"config": "sharpening",
 				"list": [
-					{ "value": "disabled", "label": "Disabled", "tooltip": "Do not use sharpening." },
-					{ "value": "cas", "label": "FidelityFX CAS", "tooltip": "Contrast adaptive sharpening, a fast, contrast based sharpening pass." }
+					{
+						"value": "disabled",
+						"label": "Disabled",
+						"tooltip": "Do not use sharpening."
+					},
+					{
+						"value": "cas",
+						"label": "FidelityFX CAS",
+						"tooltip": "Contrast adaptive sharpening, a fast, contrast based sharpening pass."
+					}
 				]
 			},
 			{
@@ -248,7 +364,11 @@
 				"tooltip": "The sharpness of the chosen pass.",
 				"dependencies": [
 					"postproc",
-					{ "config": "sharpening", "op": "!=", "value": "disabled" }
+					{
+						"config": "sharpening",
+						"op": "!=",
+						"value": "disabled"
+					}
 				],
 				"config": "sharpness",
 				"min": 0,
@@ -260,9 +380,30 @@
 				"tooltip": "Model quality setting.",
 				"config": "max_actor_quality",
 				"list": [
-					{ "value": 100, "label": { "_string": "Low", "context": "Option for the meshes' level of detail." }, "tooltip": "Simpler models for better performance." },
-					{ "value": 150, "label": { "_string": "Medium", "context": "Option for the meshes' level of detail." }, "tooltip": "Average quality and average performance." },
-					{ "value": 200, "label": { "_string": "High", "context": "Option for the meshes' level of detail." }, "tooltip": "High quality models." }
+					{
+						"value": 100,
+						"label": {
+							"_string": "Low",
+							"context": "Option for the meshes' level of detail."
+						},
+						"tooltip": "Simpler models for better performance."
+					},
+					{
+						"value": 150,
+						"label": {
+							"_string": "Medium",
+							"context": "Option for the meshes' level of detail."
+						},
+						"tooltip": "Average quality and average performance."
+					},
+					{
+						"value": 200,
+						"label": {
+							"_string": "High",
+							"context": "Option for the meshes' level of detail."
+						},
+						"tooltip": "High quality models."
+					}
 				]
 			},
 			{
@@ -271,9 +412,30 @@
 				"tooltip": "Randomize the appearance of entities. Disabling gives a small performance improvement.",
 				"config": "variant_diversity",
 				"list": [
-					{ "value": "none", "label": { "_string": "None", "context": "Option for the meshes' amount of variety." }, "tooltip": "Entities will all look the same." },
-					{ "value": "limited", "label": { "_string": "Limited", "context": "Option for the meshes' amount of variety." }, "tooltip": "Entities will be less diverse." },
-					{ "value": "full", "label": { "_string": "Normal", "context": "Option for the meshes' amount of variety." }, "tooltip": "Entities appearance is randomized normally." }
+					{
+						"value": "none",
+						"label": {
+							"_string": "None",
+							"context": "Option for the meshes' amount of variety."
+						},
+						"tooltip": "Entities will all look the same."
+					},
+					{
+						"value": "limited",
+						"label": {
+							"_string": "Limited",
+							"context": "Option for the meshes' amount of variety."
+						},
+						"tooltip": "Entities will be less diverse."
+					},
+					{
+						"value": "full",
+						"label": {
+							"_string": "Normal",
+							"context": "Option for the meshes' amount of variety."
+						},
+						"tooltip": "Entities appearance is randomized normally."
+					}
 				]
 			},
 			{
@@ -294,34 +456,70 @@
 				"type": "dropdown",
 				"label": "Quality",
 				"tooltip": "Shadow map resolution. High values can crash the game when using a graphics card with low memory!",
-				"dependencies": ["shadows"],
+				"dependencies": [
+					"shadows"
+				],
 				"config": "shadowquality",
 				"list": [
-					{ "value": -1, "label": { "_string": "Low", "context": "Option for the shadow quality." } },
-					{ "value": 0, "label": { "_string": "Medium", "context": "Option for the shadow quality." } },
-					{ "value": 1, "label": { "_string": "High", "context": "Option for the shadow quality." } },
-					{ "value": 2, "label": { "_string": "Very High", "context": "Option for the shadow quality." } }
+					{
+						"value": -1,
+						"label": {
+							"_string": "Low",
+							"context": "Option for the shadow quality."
+						}
+					},
+					{
+						"value": 0,
+						"label": {
+							"_string": "Medium",
+							"context": "Option for the shadow quality."
+						}
+					},
+					{
+						"value": 1,
+						"label": {
+							"_string": "High",
+							"context": "Option for the shadow quality."
+						}
+					},
+					{
+						"value": 2,
+						"label": {
+							"_string": "Very High",
+							"context": "Option for the shadow quality."
+						}
+					}
 				]
 			},
 			{
 				"type": "boolean",
 				"label": "Filtering",
 				"tooltip": "Smooth shadows.",
-				"dependencies": ["shadows"],
+				"dependencies": [
+					"shadows"
+				],
 				"config": "shadowpcf"
 			},
 			{
 				"type": "boolean",
 				"label": "Cover whole map",
 				"tooltip": "When ON shadows cover the whole map and shadows cutoff distance is ignored. Useful for making screenshots of a whole map.",
-				"dependencies": ["shadows"],
+				"dependencies": [
+					"shadows"
+				],
 				"config": "shadowscovermap"
 			},
 			{
 				"type": "slider",
 				"label": "Cutoff distance",
 				"tooltip": "Hides shadows beyond a certain distance from a camera.",
-				"dependencies": ["shadows", { "config": "shadowscovermap", "value": "false" }],
+				"dependencies": [
+					"shadows",
+					{
+						"config": "shadowscovermap",
+						"value": "false"
+					}
+				],
 				"config": "shadowscutoffdistance",
 				"min": 100,
 				"max": 1500
@@ -336,28 +534,37 @@
 				"type": "boolean",
 				"label": "High-quality water effects",
 				"tooltip": "Use higher-quality effects for water, rendering coastal waves, shore foam, and ships trails.",
-				"dependencies": ["watereffects"],
+				"dependencies": [
+					"watereffects"
+				],
 				"config": "waterfancyeffects"
 			},
 			{
 				"type": "boolean",
 				"label": "Water reflections",
 				"tooltip": "Allow water to reflect a mirror image.",
-				"dependencies": ["watereffects"],
+				"dependencies": [
+					"watereffects"
+				],
 				"config": "waterreflection"
 			},
 			{
 				"type": "boolean",
 				"label": "Water refraction",
 				"tooltip": "Use a real water refraction map and not transparency.",
-				"dependencies": ["watereffects"],
+				"dependencies": [
+					"watereffects"
+				],
 				"config": "waterrefraction"
 			},
 			{
 				"type": "boolean",
 				"label": "Real water depth",
 				"tooltip": "Use actual water depth in rendering calculations.",
-				"dependencies": ["watereffects", "waterrefraction"],
+				"dependencies": [
+					"watereffects",
+					"waterrefraction"
+				],
 				"config": "waterrealdepth"
 			},
 			{
@@ -366,9 +573,30 @@
 				"tooltip": "Decrease texture quality making them blurrier but increases game performance.",
 				"config": "textures.quality",
 				"list": [
-					{ "value": 0, "label": { "_string": "Low", "context": "Option for the texture quality." }, "tooltip": "Low" },
-					{ "value": 1, "label": { "_string": "Medium", "context": "Option for the texture quality." }, "tooltip": "Medium" },
-					{ "value": 2, "label": { "_string": "High", "context": "Option for the texture quality." }, "tooltip": "High" }
+					{
+						"value": 0,
+						"label": {
+							"_string": "Low",
+							"context": "Option for the texture quality."
+						},
+						"tooltip": "Low"
+					},
+					{
+						"value": 1,
+						"label": {
+							"_string": "Medium",
+							"context": "Option for the texture quality."
+						},
+						"tooltip": "Medium"
+					},
+					{
+						"value": 2,
+						"label": {
+							"_string": "High",
+							"context": "Option for the texture quality."
+						},
+						"tooltip": "High"
+					}
 				]
 			},
 			{
@@ -377,11 +605,31 @@
 				"tooltip": "Makes textures look better, especially terrain. If the anisotropic filter value is unsupported it will be set to the max supported value.",
 				"config": "textures.maxanisotropy",
 				"list": [
-					{ "value": 1, "label": "1x", "tooltip": "Disabled" },
-					{ "value": 2, "label": "2x", "tooltip": "2x" },
-					{ "value": 4, "label": "4x", "tooltip": "4x" },
-					{ "value": 8, "label": "8x", "tooltip": "8x" },
-					{ "value": 16, "label": "16x", "tooltip": "16x" }
+					{
+						"value": 1,
+						"label": "1x",
+						"tooltip": "Disabled"
+					},
+					{
+						"value": 2,
+						"label": "2x",
+						"tooltip": "2x"
+					},
+					{
+						"value": 4,
+						"label": "4x",
+						"tooltip": "4x"
+					},
+					{
+						"value": 8,
+						"label": "8x",
+						"tooltip": "8x"
+					},
+					{
+						"value": 16,
+						"label": "16x",
+						"tooltip": "16x"
+					}
 				]
 			}
 		]
@@ -389,8 +637,7 @@
 	{
 		"label": "Sound",
 		"tooltip": "Make changes to the sound options.",
-		"options":
-		[
+		"options": [
 			{
 				"type": "slider",
 				"label": "Master volume",
@@ -453,8 +700,7 @@
 	{
 		"label": "Game Setup",
 		"tooltip": "Change options relevant on the game setup page.",
-		"options":
-		[
+		"options": [
 			{
 				"type": "boolean",
 				"label": "Enable game setting tips",
@@ -479,12 +725,48 @@
 				"tooltip": "Default difficulty of the AI.",
 				"config": "gui.gamesetup.aidifficulty",
 				"list": [
-					{ "value": 0, "label": { "_string": "Sandbox", "context": "Option for the AI difficulty." }},
-					{ "value": 1, "label": { "_string": "Very Easy", "context": "Option for the AI difficulty." }},
-					{ "value": 2, "label": { "_string": "Easy", "context": "Option for the AI difficulty." }},
-					{ "value": 3, "label": { "_string": "Medium", "context": "Option for the AI difficulty." }},
-					{ "value": 4, "label": { "_string": "Hard", "context": "Option for the AI difficulty." }},
-					{ "value": 5, "label": { "_string": "Very Hard", "context": "Option for the AI difficulty." }}
+					{
+						"value": 0,
+						"label": {
+							"_string": "Sandbox",
+							"context": "Option for the AI difficulty."
+						}
+					},
+					{
+						"value": 1,
+						"label": {
+							"_string": "Very Easy",
+							"context": "Option for the AI difficulty."
+						}
+					},
+					{
+						"value": 2,
+						"label": {
+							"_string": "Easy",
+							"context": "Option for the AI difficulty."
+						}
+					},
+					{
+						"value": 3,
+						"label": {
+							"_string": "Medium",
+							"context": "Option for the AI difficulty."
+						}
+					},
+					{
+						"value": 4,
+						"label": {
+							"_string": "Hard",
+							"context": "Option for the AI difficulty."
+						}
+					},
+					{
+						"value": 5,
+						"label": {
+							"_string": "Very Hard",
+							"context": "Option for the AI difficulty."
+						}
+					}
 				]
 			},
 			{
@@ -493,10 +775,22 @@
 				"tooltip": "Default behavior of the AI.",
 				"config": "gui.gamesetup.aibehavior",
 				"list": [
-					{ "value": "random", "label": "Random" },
-					{ "value": "balanced", "label": "Balanced" },
-					{ "value": "aggressive", "label": "Aggressive" },
-					{ "value": "defensive", "label": "Defensive" }
+					{
+						"value": "random",
+						"label": "Random"
+					},
+					{
+						"value": "balanced",
+						"label": "Balanced"
+					},
+					{
+						"value": "aggressive",
+						"label": "Aggressive"
+					},
+					{
+						"value": "defensive",
+						"label": "Defensive"
+					}
 				]
 			},
 			{
@@ -527,8 +821,7 @@
 	{
 		"label": "Networking / Lobby",
 		"tooltip": "Change multiplayer options.",
-		"options":
-		[
+		"options": [
 			{
 				"type": "number",
 				"label": "Chat backlog",
@@ -554,9 +847,18 @@
 				"tooltip": "Allow everybody or buddies only to join the game as observer after it started.",
 				"config": "network.lateobservers",
 				"list": [
-					{ "value": "everyone", "label": "Everyone" },
-					{ "value": "buddies", "label": "Buddies" },
-					{ "value": "disabled", "label": "Disabled" }
+					{
+						"value": "everyone",
+						"label": "Everyone"
+					},
+					{
+						"value": "buddies",
+						"label": "Buddies"
+					},
+					{
+						"value": "disabled",
+						"label": "Disabled"
+					}
 				]
 			},
 			{
@@ -617,9 +919,21 @@
 				"tooltip": "Show a chat notification when a player sends a flare.",
 				"config": "gui.session.notifications.flare",
 				"list": [
-					{ "value": "never", "label": "Never", "tooltip": "Disable flare chat notifications."},
-					{ "value": "observer", "label": "Only as observer", "tooltip": "Only show flare chat notifications when you are observer."},
-					{ "value": "always", "label": "Always", "tooltip": "Always show flare chat notifications – as player and as observer."}
+					{
+						"value": "never",
+						"label": "Never",
+						"tooltip": "Disable flare chat notifications."
+					},
+					{
+						"value": "observer",
+						"label": "Only as observer",
+						"tooltip": "Only show flare chat notifications when you are observer."
+					},
+					{
+						"value": "always",
+						"label": "Always",
+						"tooltip": "Always show flare chat notifications – as player and as observer."
+					}
 				]
 			},
 			{
@@ -628,9 +942,18 @@
 				"tooltip": "Show a chat notification if you or an ally have started, aborted or completed a new phase, and phases of all players in observer mode.",
 				"config": "gui.session.notifications.phase",
 				"list": [
-					{ "value": "none", "label": "Disable" },
-					{ "value": "completed", "label": "Completed" },
-					{ "value": "all", "label": "All displayed" }
+					{
+						"value": "none",
+						"label": "Disable"
+					},
+					{
+						"value": "completed",
+						"label": "Completed"
+					},
+					{
+						"value": "all",
+						"label": "All displayed"
+					}
 				]
 			}
 		]
@@ -638,8 +961,7 @@
 	{
 		"label": "Display",
 		"tooltip": "Customize the in-game display.",
-		"options":
-		[
+		"options": [
 			{
 				"type": "boolean",
 				"label": "Detailed tooltips",
@@ -686,9 +1008,18 @@
 				"tooltip": "Dynamically sort players in the resources and population tooltip by value.",
 				"config": "gui.session.respoptooltipsort",
 				"list": [
-					{ "value": 0, "label": "Unordered" },
-					{ "value": -1, "label": "Ascending" },
-					{ "value": 1, "label": "Descending" }
+					{
+						"value": 0,
+						"label": "Unordered"
+					},
+					{
+						"value": -1,
+						"label": "Ascending"
+					},
+					{
+						"value": 1,
+						"label": "Descending"
+					}
 				]
 			},
 			{
@@ -788,8 +1119,7 @@
 	{
 		"label": "Gameplay",
 		"tooltip": "Change options affecting the gameplay.",
-		"options":
-		[
+		"options": [
 			{
 				"type": "slider",
 				"label": "Wounded unit health",
@@ -814,7 +1144,6 @@
 				"min": 0.1,
 				"max": 30
 			},
-
 			{
 				"type": "dropdown",
 				"label": "Snap to edges",

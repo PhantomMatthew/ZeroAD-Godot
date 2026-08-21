@@ -4,13 +4,28 @@ namespace ZeroAD.Godot;
 
 public sealed partial class RTSCamera : Camera3D
 {
-    public Vector3? Focus => _focus;
-    public float Yaw => _yaw;
+	public Vector3? Focus => _focus;
+	public float Yaw => _yaw;
 
-    private float _yaw = 0f;
-    private float _pitch = -0.7f;
-    private float _distance = 120f;
-    private Vector3 _focus = new(274f, 27f, 113f);
+	/// <summary>Free camera(自由飞行)模式:开启后 WASD 平移(垂直视角方向)、
+	/// QE 升降、Shift 加速、滚轮调速度;RTS 边缘平移/缩放/地形吸附全停。
+	/// 排查"场景里有什么不该有的东西"(遮挡/漂浮/错位)用。</summary>
+	public bool FreeFlyEnabled
+	{
+		get => _freeFly;
+		set
+		{
+			_freeFly = value;
+			if (!value) UpdateTransform();   // 回 RTS 模式时重建正常机位
+		}
+	}
+	private bool _freeFly;
+	private float _flySpeed = 60f;   // 滚轮调(米/秒,Shift ×4)
+
+	private float _yaw = 0f;
+	private float _pitch = -0.7f;
+	private float _distance = 120f;
+	private Vector3 _focus = new(274f, 27f, 113f);
     // Last seen mouse position. When the mouse hasn't been moved yet, Godot reports
     // (0,0) — including via synthetic MouseMotion events on window creation/focus.
     // Edge-pan is only enabled once we observe a real position change (different from
@@ -41,6 +56,12 @@ public sealed partial class RTSCamera : Camera3D
 
     public override void _Process(double delta)
     {
+        if (_freeFly)
+        {
+            FlyProcess((float)delta);
+            return;
+        }
+
         float dt = (float)delta;
         bool moved = false;
 
@@ -100,6 +121,15 @@ public sealed partial class RTSCamera : Camera3D
     {
         if (@event is InputEventMouseButton mb && mb.Pressed)
         {
+            if (_freeFly)
+            {
+                // 自由模式滚轮 = 调飞行速度(不缩放视距)
+                if (mb.ButtonIndex == MouseButton.WheelUp)
+                    _flySpeed = Mathf.Clamp(_flySpeed * 1.3f, 5f, 2000f);
+                else if (mb.ButtonIndex == MouseButton.WheelDown)
+                    _flySpeed = Mathf.Clamp(_flySpeed / 1.3f, 5f, 2000f);
+                return;
+            }
 			if (mb.ButtonIndex == MouseButton.WheelUp)
 			{
 				if (Input.IsKeyPressed(Key.Shift))
@@ -131,6 +161,26 @@ public sealed partial class RTSCamera : Camera3D
     {
         _distance = Mathf.Clamp(distance, MinDistance, MaxDistance);
         UpdateTransform();
+    }
+
+    /// <summary>Free camera 逐帧移动:WASD 沿视线方向平移(垂直俯仰也参与),
+    /// QE 垂直升降,Shift ×4 加速,滚轮调基准速度。绕开 RTS 的地形吸附/边缘平移。</summary>
+    private void FlyProcess(float dt)
+    {
+        float speed = _flySpeed * (Input.IsKeyPressed(Key.Shift) ? 4f : 1f);
+        Vector3 dir = Vector3.Zero;
+        // 相机朝向的前/右/上(视觉空间)
+        var fwd = -GlobalTransform.Basis.Z;   // 相机前方
+        var right = GlobalTransform.Basis.X;
+        var up = Vector3.Up;
+        if (Input.IsKeyPressed(Key.W)) dir += fwd;
+        if (Input.IsKeyPressed(Key.S)) dir -= fwd;
+        if (Input.IsKeyPressed(Key.A)) dir -= right;
+        if (Input.IsKeyPressed(Key.D)) dir += right;
+        if (Input.IsKeyPressed(Key.Q)) dir -= up;
+        if (Input.IsKeyPressed(Key.E)) dir += up;
+        if (dir != Vector3.Zero)
+            GlobalPosition += dir.Normalized() * speed * dt;
     }
 
     /// <summary>按场景 XML 的作者机位恢复开局视角(原版 GameView 语义:Position +

@@ -568,6 +568,10 @@ public sealed partial class Main : Node3D
 			for (int p = 1; p <= ZeroAD.Sim.Components.LosGrid.MaxPlayers; p++)
 				_sim.Range.Los.ExploreAll(p);
 
+		// 开局按选项恢复 free camera(Graphics → Free Camera;上次 F9 开过则沿用)。
+		if (OptionsApplier.GetBool("dev.freecamera", false))
+			_camera.FreeFlyEnabled = true;
+
 		// dev 钩子:ZEROAD_FLORA_DUMP=<秒> 后逐模板打印合批 flora 的(总数/可见数)。
 		if (int.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_FLORA_DUMP"), out int floraDumpSec))
 		{
@@ -2560,6 +2564,10 @@ public sealed partial class Main : Node3D
 			// 没有这个键就得训练半天才能看到骑手)。
 			if (key.Keycode == Key.F10)
 				DebugSpawnCavalry();
+			// F9:自由飞行相机(free view)——排查场景里不该有的东西(遮挡/漂浮/错位);
+			// 默认按选项 dev.freecamera(持久化);再按 F9 或 RTS 操作(平移/缩放)切回。
+			if (key.Keycode == Key.F9)
+				ToggleFreeFly();
 		}
 
 		if (@event is InputEventMouseButton mb && mb.Pressed)
@@ -3630,6 +3638,18 @@ public sealed partial class Main : Node3D
 		_revealAll = !_revealAll;
 		_sim.Range.SetLosRevealAll((int)_sim.LocalPlayerId, _revealAll);
 		ZeroAD.Sim.Diag.Log("Main", $"reveal-all {(_revealAll ? "ON" : "OFF")} (player {_sim.LocalPlayerId})");
+	}
+
+	/// <summary>F9 调试:自由飞行相机(free view)——排查场景里不该有的东西
+	/// (遮挡/漂浮/错位)。默认按选项 dev.freecamera;再按 F9 或 RTS 操作切回。</summary>
+	private void ToggleFreeFly()
+	{
+		bool on = !_camera.FreeFlyEnabled;
+		_camera.FreeFlyEnabled = on;
+		GetNode<UserConfig>("/root/UserConfig").SetUserValue("dev.freecamera", on ? "true" : "false");
+		ZeroAD.Sim.Diag.Log("Dev", on
+			? "Free camera ON: WASD 平移/QE 升降/Shift 加速/滚轮调速;F9 或 RTS 操作切回"
+			: "Free camera OFF: 回 RTS 视角");
 	}
 
 	/// <summary>F10 调试:在相机焦点(sim 坐标)给本地玩家刷一个本文明骑兵剑士。</summary>
