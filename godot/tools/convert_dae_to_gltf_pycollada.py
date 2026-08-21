@@ -91,6 +91,45 @@ def is_prop_bone(bone_name):
     """Check if bone is a prop attachment point."""
     return bone_name.startswith('prop-') or bone_name.startswith('prop_')
 
+
+# ---- 转换后:1/unit 修正(pycollada 把顶点按 DAE <unit> 换算成了米;C++ 引擎忽略
+# <unit>(CommonConvert 只应用节点矩阵),组合尺寸=裸坐标×节点 scale。故 mesh 节点
+# scale 需 × 1/unit 还原(例:棕榈 38.5 裸坐标 × 0.62 节点 = 23.9m;不修正则 0.6m)。----
+import re as _re2, struct as _struct2, json as _json2
+def _dae_unit2(dae_path):
+    try:
+        _t = open(dae_path, errors='ignore').read()
+        _m = _re2.search(r'<unit[^>]*meter="([\d.eE+-]+)"', _t)
+        return float(_m.group(1)) if _m else 1.0
+    except Exception:
+        return 1.0
+def _fix_unit_scales(glb_path, dae_path):
+    _u = _dae_unit2(dae_path)
+    if abs(_u - 1.0) < 1e-9:
+        return
+    try:
+        with open(glb_path, 'rb') as _f:
+            _d = _f.read()
+        _jl = _struct2.unpack('<I', _d[12:16])[0]
+        _j = _json2.loads(_d[20:20+_jl])
+        _inv = 1.0 / _u
+        _ch = False
+        for _n in _j.get('nodes', []):
+            if 'mesh' not in _n:
+                continue
+            _s = _n.get('scale')
+            _n['scale'] = [v * _inv for v in _s] if _s else [_inv] * 3
+            _ch = True
+        if _ch:
+            _pl = _json2.dumps(_j, separators=(',', ':')).encode()
+            _pl += b' ' * ((4 - len(_pl) % 4) % 4)
+            _rest = _d[20+_jl:]
+            with open(glb_path, 'wb') as _f:
+                _f.write(_struct2.pack('<III', 0x46546C67, 2, 12+8+len(_pl)+len(_rest))
+                         + _struct2.pack('<II', len(_pl), 0x4E4F534A) + _pl + _rest)
+    except Exception:
+        pass
+
 def convert_dae_to_gltf(dae_path, output_dir, remap, input_root=None):
     """Convert a single DAE file to glTF."""
     if input_root:
@@ -198,7 +237,13 @@ def main():
         else:
             failed += 1
 
-    print(f"\nDone: {success} converted, {failed} failed, {len(dae_files)} total")
+    for dae in dae_files:
+        _rel = os.path.relpath(dae, args.input).replace('.dae', '.glb')
+        _out = os.path.join(args.output, _rel)
+        if os.path.exists(_out):
+            _fix_unit_scales(_out, dae)
+
+    print(f"\nDone: {success} converted, {failed} failed, {len(dae_files)} total (unit-scale fixed)")
 
 if __name__ == '__main__':
     main()
