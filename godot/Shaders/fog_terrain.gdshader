@@ -21,8 +21,8 @@ void fragment() {
 	vec3 base = texture(albedo_texture, UV).rgb * albedo_color.rgb;
 	vec2 world_xz = UV / 0.125;
 	float fog = texture(fog_texture, world_xz / world_size).r;
-	// unexplored → near black, explored → ~55%, visible → full (0 A.D.-style).
-	float bright = mix(0.12, 1.0, smoothstep(0.0, 1.0, fog));
+	// unexplored → 58% (暗化可辨,对齐 C++ 观感), explored → ~79%, visible → full。
+	float bright = mix(0.58, 1.0, smoothstep(0.0, 1.0, fog));
 	ALBEDO = base * bright;
 
 	// Territory overlay(与 terrain_splat.gdshader 同逻辑):R=owner id,G=blink。

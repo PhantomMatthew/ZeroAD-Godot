@@ -75,6 +75,18 @@ public static class WaterRenderer
 
     private static Material CreateWaterMaterial(WaterSpec spec)
     {
+        // dev 钩子:ZEROAD_WATER_PLAIN=1 用纯半透明 StandardMaterial(隔离自定义
+        // shader 问题——排查"水面全黑"时用)。
+        if (System.Environment.GetEnvironmentVariable("ZEROAD_WATER_PLAIN") == "1")
+        {
+            return new StandardMaterial3D
+            {
+                AlbedoColor = new Color(spec.Color.R, spec.Color.G, spec.Color.B, 0.75f),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel,
+                Roughness = 0.15f,
+            };
+        }
         var mat = new ShaderMaterial { Shader = _waterShader.Value };
         mat.SetShaderParameter("water_color", spec.Color);
         mat.SetShaderParameter("water_tint", spec.Tint);
