@@ -19,8 +19,9 @@ uniform sampler2D depth_tex : hint_depth_texture;
 void fragment() {
 	vec2 wind = vec2(cos(wind_angle), sin(wind_angle));
 	// 两层不同尺度的波反向流动(覆盖 UV 0..1 = mapSize*1.5;周期 ≈ 90 次/幅)。
-	vec2 uv1 = UV * 90.0 + wind * TIME * 0.028;
-	vec2 uv2 = UV * 127.0 - wind.yx * TIME * 0.021;
+	vec2 wuv = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz * 0.125;
+	vec2 uv1 = wuv * 42.0 + wind * TIME * 0.028;
+	vec2 uv2 = wuv * 59.0 - wind.yx * TIME * 0.021;
 	vec3 n1 = texture(normal_a, uv1).rgb * 2.0 - 1.0;
 	vec3 n2 = texture(normal_b, uv2).rgb * 2.0 - 1.0;
 	vec3 wave = normalize(vec3(n1.xy + n2.xy, 2.0));   // 合并波扰动(切线空间)

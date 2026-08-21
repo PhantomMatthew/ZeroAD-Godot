@@ -48,8 +48,8 @@
 			},
 			{
 				"type": "boolean",
-				"label": "Free Camera (F9)",
-				"tooltip": "Enable free-fly camera (F9 in game): WASD pan, Q/E up/down, Shift boost, wheel speed. For debugging scene issues (occlusion/floating/misplaced models).",
+				"label": "Free Camera (F3)",
+				"tooltip": "Enable free-fly camera (F3 in game): WASD pan, Q/E up/down, Shift boost, wheel speed. For debugging scene issues (occlusion/floating/misplaced models).",
 				"config": "dev.freecamera"
 			},
 			{

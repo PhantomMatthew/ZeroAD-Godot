@@ -568,7 +568,7 @@ public sealed partial class Main : Node3D
 			for (int p = 1; p <= ZeroAD.Sim.Components.LosGrid.MaxPlayers; p++)
 				_sim.Range.Los.ExploreAll(p);
 
-		// 开局按选项恢复 free camera(Graphics → Free Camera;上次 F9 开过则沿用)。
+		// 开局按选项恢复 free camera(Graphics → Free Camera;上次 F3 开过则沿用)。
 		if (OptionsApplier.GetBool("dev.freecamera", false))
 			_camera.FreeFlyEnabled = true;
 
@@ -1273,6 +1273,8 @@ public sealed partial class Main : Node3D
 				float waterHeight = water?.Height ?? -999f;
 				if (water != null)
 				{
+					// 水面只画洼地(需地形采样;TerrainHeightService 已在上方 Set)。
+					WaterRenderer.TerrainHeight = TerrainHeightService.Sample;
 					var waterMesh = WaterRenderer.CreateWaterPlane(water, pmp.MapSizeMeters);
 					_worldRoot.AddChild(waterMesh);
 					ZeroAD.Sim.Diag.Log("Main", $"Water: height={water.Height:F1}m color={water.Color}");
@@ -2564,9 +2566,9 @@ public sealed partial class Main : Node3D
 			// 没有这个键就得训练半天才能看到骑手)。
 			if (key.Keycode == Key.F10)
 				DebugSpawnCavalry();
-			// F9:自由飞行相机(free view)——排查场景里不该有的东西(遮挡/漂浮/错位);
-			// 默认按选项 dev.freecamera(持久化);再按 F9 或 RTS 操作(平移/缩放)切回。
-			if (key.Keycode == Key.F9)
+			// F3:自由飞行相机(free view;F9 被 QuickLoad 占用)——排查场景里不该有
+			// 的东西(遮挡/漂浮/错位);默认按选项 dev.freecamera(持久化)。
+			if (key.Keycode == Key.F3)
 				ToggleFreeFly();
 		}
 

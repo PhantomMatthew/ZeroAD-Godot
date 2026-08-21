@@ -55,20 +55,84 @@ public static class WaterRenderer
     public static MeshInstance3D CreateWaterPlane(float height, Color color, float mapSize) =>
         CreateWaterPlane(new WaterSpec(height, color, color, 6f, 0.9f, 0f, "lake"), mapSize);
 
+    /// <summary>地形高度采样(建水面网格用;Main 在调用前已 Set)。</summary>
+    public static System.Func<float, float, float>? TerrainHeight { get; set; }
+
+    /// <summary>建水面网格:只覆盖地形低于水位的格子(洼地/湖盆),水面高度取 spec.Height。
+    /// 此前是一整块 mapSize×1.5 的巨板——伸出地图外的悬边从高处/平视视角看是
+    /// 一堵"黑墙"挡在天上(Gold Oasis 报告的遮挡物)。对齐 C++:只在地形下方画水。
+    /// 无地形采样(旧调用/测试)时回退整图面板(不超出地图边界)。</summary>
     public static MeshInstance3D CreateWaterPlane(WaterSpec spec, float mapSize)
     {
-        var plane = new PlaneMesh();
-        plane.Size = new Vector2(mapSize * 1.5f, mapSize * 1.5f);
-        plane.Material = CreateWaterMaterial(spec);
+        var material = CreateWaterMaterial(spec);
+        const float cell = 4f;   // 与地形 tile 同步的网格粒度
+        int n = Mathf.Max(1, (int)(mapSize / cell));
 
-        var instance = new MeshInstance3D
+        if (TerrainHeight != null)
+        {
+            // 逐格判定:格子中心地形低于水位 → 该格画水。收集行段(连续格子)拼 quad,
+            // 顶点数远少于逐格独立 quad。
+            var verts = new System.Collections.Generic.List<float>();
+            var indices = new System.Collections.Generic.List<int>();
+            int rowVerts = n + 1;
+            bool[,] wet = new bool[n, n];
+            for (int tz = 0; tz < n; tz++)
+                for (int tx = 0; tx < n; tx++)
+                {
+                    float cx = (tx + 0.5f) * cell, cz = (tz + 0.5f) * cell;
+                    wet[tx, tz] = TerrainHeight(cx, cz) < spec.Height;
+                }
+            for (int tz = 0; tz < n; tz++)
+                for (int tx = 0; tx < n; tx++)
+                {
+                    if (!wet[tx, tz]) continue;
+                    // 该格 quad 的四个顶点(共享行顶点缓冲:顶点按 (tx,tz) 网格索引)
+                    int i00 = tz * rowVerts + tx;
+                    // 段式生成太复杂,直接逐格独立 quad(格子最多 256×256=6.5 万,
+                    // 实际有水的只有洼地几百格——Gold Oasis 盆地 ~100 格)。
+                    int baseIdx = verts.Count / 3;
+                    void V(float x, float z) { verts.Add(x); verts.Add(spec.Height); verts.Add(z); }
+                    V(tx * cell, tz * cell);
+                    V((tx + 1) * cell, tz * cell);
+                    V((tx + 1) * cell, (tz + 1) * cell);
+                    V(tx * cell, (tz + 1) * cell);
+                    indices.Add(baseIdx); indices.Add(baseIdx + 2); indices.Add(baseIdx + 1);
+                    indices.Add(baseIdx); indices.Add(baseIdx + 3); indices.Add(baseIdx + 2);
+                }
+            if (verts.Count == 0)
+            {
+                // 全图无洼地(水位低于所有地形):不画水。
+                return new MeshInstance3D { Mesh = null!, Visible = false };
+            }
+            var st = new SurfaceTool();
+            st.Begin(Mesh.PrimitiveType.Triangles);
+            for (int i = 0; i < verts.Count; i += 3)
+                st.AddVertex(new Vector3(verts[i], verts[i + 1], verts[i + 2]));
+            foreach (int idx in indices)
+                st.AddIndex(idx);
+            var mesh = st.Commit();
+            return new MeshInstance3D { Mesh = mesh, MaterialOverride = material };
+        }
+
+        // 回退:整图面板(不超出地图)
+        var plane = new PlaneMesh();
+        plane.Size = new Vector2(mapSize, mapSize);
+        plane.Material = material;
+        return new MeshInstance3D
         {
             Mesh = plane,
             Position = new Vector3(mapSize * 0.5f, spec.Height, mapSize * 0.5f),
         };
-
-        return instance;
     }
+
+    private static global::Godot.Vector3[] ToVector3s(System.Collections.Generic.List<float> flat)
+    {
+        var arr = new global::Godot.Vector3[flat.Count / 3];
+        for (int i = 0; i < arr.Length; i++)
+            arr[i] = new global::Godot.Vector3(flat[i * 3], flat[i * 3 + 1], flat[i * 3 + 2]);
+        return arr;
+    }
+
 
     private static readonly System.Lazy<Shader> _waterShader =
         new(() => GD.Load<Shader>("res://Shaders/water.gdshader"));
