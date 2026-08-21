@@ -10,13 +10,13 @@ namespace ZeroAD.Godot;
 /// </summary>
 public sealed record MapEnvironment(
     Color SunColor, float SunElevation, float SunRotation,
-    Color AmbientColor, Color FogColor)
+    Color AmbientColor, Color FogColor, float FogFactor, float FogMax)
 {
     /// <summary>无 XML 时的回退:数值取教程图同款(东南天太阳),比硬编码 euler 更接近 C++。</summary>
     public static readonly MapEnvironment Default = new(
         new Color(0.74902f, 0.74902f, 0.74902f), 0.681087f, -0.638136f,
         new Color(0.501961f, 0.501961f, 0.501961f),
-        new Color(0.8f, 0.8f, 0.894118f));
+        new Color(0.8f, 0.8f, 0.894118f), 0.0f, 1.0f);   // 无雾(原版默认 FogFactor=0)
 
     public static MapEnvironment? LoadFromXml(string xmlPath)
     {
@@ -31,8 +31,12 @@ public sealed record MapEnvironment(
             float elev = ReadAngle(env.Element("SunElevation"), Default.SunElevation);
             float rot = ReadAngle(env.Element("SunRotation"), Default.SunRotation);
             Color amb = ReadColor(env.Element("AmbientColor"), Default.AmbientColor);
-            Color fog = ReadColor(env.Element("Fog")?.Element("FogColor"), Default.FogColor);
-            return new MapEnvironment(sun, elev, rot, amb, fog);
+            var fogEl = env.Element("Fog");
+            Color fog = ReadColor(fogEl?.Element("FogColor"), Default.FogColor);
+            // 原版 fog.h:density=FogFactor, maxFog=FogThickness(远处最少保留的本色比例)。
+            float fogFactor = ReadFloat(fogEl?.Element("FogFactor"), Default.FogFactor);
+            float fogMax = ReadFloat(fogEl?.Element("FogThickness"), Default.FogMax);
+            return new MapEnvironment(sun, elev, rot, amb, fog, fogFactor, fogMax);
         }
         catch (System.Exception e)
         {
@@ -50,6 +54,11 @@ public sealed record MapEnvironment(
 
     private static float ReadAngle(System.Xml.Linq.XElement? el, float fallback) =>
         el == null ? fallback : Attr(el, "angle", fallback);
+
+    private static float ReadFloat(System.Xml.Linq.XElement? el, float fallback) =>
+        float.TryParse(el?.Value.Trim(),
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : fallback;
 
     private static float Attr(System.Xml.Linq.XElement el, string name, float fallback) =>
         float.TryParse(el.Attribute(name)?.Value,
@@ -80,5 +89,11 @@ public sealed record MapEnvironment(
         env.AmbientLightColor = AmbientColor;
         env.AmbientLightEnergy = 1.0f;
         env.FogLightColor = FogColor;
+        // 雾密度对齐原版 fog.h:exp2(-(density·z)²·log2e)·(1-maxFog)+maxFog——
+        // C++ 按"世界距离米"平方衰减,Godot FogDensity 按深度线性衰减,数学上不可直通;
+        // 经验换算 FogFactor×0.44 在 z=100..500m 区间与 C++ 本色占比最接近
+        // (0.0025×0.44=0.0011:z=100 本色 90% vs C++ 95%,z=350 68% vs 54%)。
+        // FogMax(远处最少本色)Godot 无对应字段,以密度主项近似。density=0(原版默认)即关雾。
+        env.FogDensity = FogFactor > 0f ? FogFactor * 0.44f : 0.0001f;
     }
 }
