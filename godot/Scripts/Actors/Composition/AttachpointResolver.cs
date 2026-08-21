@@ -43,7 +43,8 @@ public static class AttachpointResolver
             if (found is Node3D n3)
                 return n3;
         }
-        return null;
+        // 兜底:后缀匹配(剥 armature 前缀比对)——Biped_head 之类。
+        return FindBySuffix(root, attachpoint);
     }
 
     private static string[] Candidates(string attachpoint) => new[]
@@ -51,5 +52,28 @@ public static class AttachpointResolver
         attachpoint,
         "prop-" + attachpoint,
         "prop_" + attachpoint,
+        // 缓存反导出的 GLB 里,骨架子节点带骨架名前缀(Biped_head/Biped_prop-head)——
+        // Godot 导入 glTF 骨架时给 BoneAttachment/子节点加了 armature 前缀。挂点
+        // 匹配须前缀不敏感(剥掉 <name>_ 前缀比对),否则村民/士兵的头与手持物全挂不上。
+        "Biped_" + attachpoint,
+        "Biped_prop-" + attachpoint,
+        "Biped_prop_" + attachpoint,
     };
+
+    private static Node3D? FindBySuffix(Node node, string attachpoint)
+    {
+        if (node is Node3D n3)
+        {
+            string n = n3.Name;
+            if (n.EndsWith("-" + attachpoint, StringComparison.OrdinalIgnoreCase) ||
+                n.EndsWith("_" + attachpoint, StringComparison.OrdinalIgnoreCase))
+                return n3;
+        }
+        foreach (var child in node.GetChildren())
+        {
+            var found = FindBySuffix(child, attachpoint);
+            if (found != null) return found;
+        }
+        return null;
+    }
 }
