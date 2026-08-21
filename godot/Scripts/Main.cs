@@ -128,7 +128,9 @@ public sealed partial class Main : Node3D
 		// (Compatibility 渲白、Forward+ 渲深灰),设为 Color 后两个渲染器都出目标蓝。
 		env.BackgroundMode = global::Godot.Environment.BGMode.Color;
 		env.BackgroundColor = new Color(0.45f, 0.65f, 0.9f);
-		env.FogEnabled = true;
+		// 大气雾开关尊重用户选项(Graphics → Fog):此前硬编码 true 会在建世界时
+		// 把用户关掉的雾又改回去(选项里关了但没效果)。
+		env.FogEnabled = OptionsApplier.GetBool("fog", true);
 		env.FogLightColor = new Color(0.5f, 0.7f, 0.95f);
 		env.FogDensity = 0.001f;
 		sky.Environment = env;

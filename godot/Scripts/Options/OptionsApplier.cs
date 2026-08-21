@@ -26,6 +26,16 @@ public static class OptionsApplier
         _worldEnv = env;
     }
 
+    /// <summary>读选项的生效值(用户值优先,否则默认)——场景建世界时用,避免硬编码
+    /// 覆盖用户选择(如 fog 关)。</summary>
+    public static bool GetBool(string configKey, bool fallback)
+    {
+        var tree = (SceneTree)Engine.GetMainLoop();
+        var cfg = tree?.Root.GetNodeOrNull<UserConfig>("/root/UserConfig");
+        if (cfg == null) return fallback;
+        return cfg.GetEffective(configKey) == "true";
+    }
+
     /// <summary>全量重放(启动/Revert/Reset):先建音频总线,再按 catalog 顺序应用全部 96 项。
     /// inGame 决定 adaptivefps 取 session 还是 menu 值(原版分别在局内/菜单限帧)。</summary>
     public static void ApplyAll(UserConfig cfg, SceneTree tree, bool inGame)
