@@ -143,3 +143,32 @@ Entity templates (data, consumed as-is by the rewrite): `binaries/data/mods/publ
 - Do this after **each** edit batch, before moving on. Do not assume a small edit compiles; do not commit or push a tree that doesn't build.
 - `dotnet test src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj` passes — `DeterminismTests` is the canary for cross-platform hash stability.
 - Any change touching `src/ZeroAD.Sim/` must not introduce `float`/`double` or `Godot.*` references into the kernel.
+
+## Asset surgery gate (mandatory before ANY batch edit under `godot/assets/`)
+
+`godot/assets/` is a gitignored build product — git history gives NO rollback for it. A batch
+edit here is an irreversible operation on 5000+ files. The 2026-08-21 regression chain
+(occluders → missing heads → dead animations → giant weapons, each from a批量 scale script
+applied on an unverified rule) came from skipping this gate. Before touching assets:
+
+1. **Snapshot first, always** — one command, before the edit, no exceptions:
+   ```bash
+   rsync -a godot/assets "../asset_backups/assets_$(date +%Y%m%d_%H%M%S)/"
+   ```
+   (`asset_backups/` at repo root is gitignored; keep it outside `godot/` so Godot never imports it.)
+2. **Rollback is then trivial**: `rsync -a --delete <backup-dir>/ godot/assets/`, then
+   `cd godot && /Applications/Godot_mono.app/Contents/MacOS/Godot --headless --path . --import`
+   (or the Blender-equivalent import step on other machines).
+3. **Never apply a blanket rule to many files without measuring first**. Size/scale edits must
+   use the **full span** (`accessor.max − accessor.min` per axis, × node scale) — checking only
+   `max` misses negative extents and under-reports long models by 2-3× (the giant-spear bug).
+4. **Ground truth before scaling**: the DAE corpus is MIXED — some files honor their
+   `<unit meter>` declaration, others are raw meters with a lying unit tag. There is no single
+   conversion rule; verify per-class with an in-game measurement (runtime prop-scale dump or
+   screenshot) before batch-applying. When in doubt, clamp by span class, don't "normalize".
+5. **Repair scripts go in `godot/tools/`** (`fix_glb_unit_node_scale*.py`,
+   `fix_glb_weapon_span.py`, `restore_glb_from_import_cache.gd`,
+   `convert_dae_to_gltf_pycollada.py`) — future rebuilds must be reproducible from committed
+   tools, not from memory. Note: local Blender builds may have no Collada importer (check
+   `bpy.ops.import_scene.collada` exists before planning a Blender-based reconvert; the
+   pycollada converter + import-cache restorer are the fallback pair).
