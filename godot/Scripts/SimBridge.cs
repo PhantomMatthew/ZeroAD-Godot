@@ -1949,6 +1949,7 @@ public sealed partial class SimBridge : Node
 		return eid;
 	}
 
+
 	public EntityId SpawnUnit(float x, float z, bool isVillager = false, bool isSoldier = false,
 		TemplateStats? stats = null, bool isStructure = false, bool isResource = false,
 		bool isFauna = false, string? templateName = null)
