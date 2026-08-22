@@ -68,9 +68,31 @@ python3 "$(dirname "$0")/fix_glb_unit_scale.py" \
 echo ""
 echo ">>> Fixing inch-space fauna animation tracks..."
 python3 "$(dirname "$0")/fix_glb_skeleton_unit_space.py" \
-    --anims-root "$OUT/animations" 2>&1 | grep -E "^(fixed|warn|summary)" || true
+    --anims-root "$OUT/animations" \
+    --dae-root "$SRC/animation" 2>&1 | grep -E "^(fixed|warn|summary)" || true
 
-# ---- 1d. Restore field crop-patch grid ----
+# ---- 1d. Normalize skinned-mesh unit spaces ----
+# 蒙皮资产的统一约定:顶点/骨骼/IBM/动画轨道全部落在游戏米制、节点缩放为 1。
+# 两步:canonicalize 把健康但布局混杂的文件(IBM 携带单位缩放)零变化重表达
+# (逐顶点不变量证明);retarget 修复损坏的文件(审计判定 broken:渲染尺寸偏离
+# DAE 目标 > 15%;C++ 真值规则 = bind_shape × 裸顶点,节点变换忽略——见
+# source/collada/PMDConvert.cpp TransformSkinnedModel 非 XSI 分支)。
+# retarget 自带 1% 跨度验证,写不进目标就拒绝写盘。
+echo ""
+echo ">>> Normalizing skinned-mesh unit spaces..."
+AUDIT_JSON="$(mktemp -t glb_audit).json"
+python3 "$(dirname "$0")/audit_glb_unit_spaces.py" \
+    --meshes-root "$OUT/meshes" \
+    --dae-root "$SRC/meshes" \
+    --report "$AUDIT_JSON" 2>&1 | grep -E "^(canonical|ibm-bridged|node-scaled|broken)" || true
+python3 "$(dirname "$0")/normalize_glb_unit_space.py" \
+    --meshes-root "$OUT/meshes" 2>&1 | grep -E "^(fixed|error|summary)" || true
+python3 "$(dirname "$0")/normalize_glb_unit_space.py" \
+    --meshes-root "$OUT/meshes" \
+    --from-audit "$AUDIT_JSON" 2>&1 | grep -E "^(fixed|error|summary)" || true
+rm -f "$AUDIT_JSON"
+
+# ---- 1e. Restore field crop-patch grid ----
 # Blender 的 glTF 导出会丢掉 field_propped_*8x8.dae 里 64 个 prop-patch_NNN
 # 空节点的 translation,导致农田作物全堆在中心而非 8×8 网格。从 DAE 读回坐标写进 GLB。
 echo ""
@@ -78,6 +100,20 @@ echo ">>> Restoring field crop-patch grid translations..."
 python3 "$(dirname "$0")/fix_glb_field_patches.py" \
     --meshes-root "$OUT/meshes" \
     --dae-root "$SRC/meshes" 2>&1 | grep -E "^  |repaired" || true
+
+# ---- 1f. Bake static-mesh node scales into vertices ----
+# 静态资产的统一约定:顶点即游戏米制、节点缩放为 1(与蒙皮资产同一约定)。
+# 1b 为了修正 <unit> 回归在根节点挂了 39.37 之类的换算缩放;本步把它们(以及
+# 作者缩放)精确烘焙进顶点:均匀缩放与旋转可交换,非均匀缩放仅沿无旋转子链
+# 下推,法线按逆矩阵修正,逐文件做世界包围盒不变量验证(误差 >1e-4 拒绝写盘)。
+# 必须在 1e 之后:农田补丁写入的是 DAE 裸坐标位移,靠尚未烘焙的根缩放换算。
+# 个别文件保持原样并报告:非均匀缩放+旋转子链(剪切风险,约 45 个)、
+# 共享网格、float32 精度不足的微型文件(deer_antlers)。
+echo ""
+echo ">>> Baking static-mesh node scales into vertices..."
+python3 "$(dirname "$0")/normalize_glb_unit_space.py" \
+    --meshes-root "$OUT/meshes" \
+    --bake-statics 2>&1 | grep -E "^(baked|error|skip:blocked|skip:shared|summary)" || true
 
 # ---- 2. Textures ----
 echo ""

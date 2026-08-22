@@ -63,3 +63,12 @@ godot/Scenes/Previews/
 __pycache__/
 *.pyc
 asset_backups/
+
+.cursor/
+.omo/
+.tasks/
+
+binaries
+build
+libraries
+source

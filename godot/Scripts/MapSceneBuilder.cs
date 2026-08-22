@@ -93,9 +93,8 @@ public static class MapSceneBuilder
         var root = new Node3D { Name = rootName };
 
         // 地形(顶点已预翻转为世界坐标,挂根;含 CreateTrimeshCollision 的 StaticBody,
-        // 编辑器里可直接射线点选)。
-        var terrain = TerrainRenderer.CreateFromHeightmap(pmp);
-        terrain.Name = "Terrain";
+        // 编辑器里可直接射线点选)。预览工具不需要 fog/territory,overlay mesh 直接丢弃。
+        var (terrain, _) = TerrainRenderer.CreateFromHeightmap(pmp);
         root.AddChild(terrain);
 
         // 视觉镜像根(与运行时 Main._worldRoot 同约定)。

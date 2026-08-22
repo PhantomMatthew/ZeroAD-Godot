@@ -1256,16 +1256,16 @@ public sealed partial class Main : Node3D
 			try
 			{
 				var pmp = PmpMap.Load(pmpPath);
-				var terrainNode = TerrainRenderer.CreateFromHeightmap(pmp);
+				var (terrainNode, overlayMesh) = TerrainRenderer.CreateFromHeightmap(pmp);
 				// 地形顶点已预翻转为世界坐标(TerrainRenderer 注释):挂场景根(无负 scale),
 				// 两个渲染器都走原生光照/受影;阴影直接自投,无需镜像代理。
 				AddChild(terrainNode);
 				_worldRoot.Position = new Vector3(0f, 0f, pmp.MapSizeMeters);
-				// 雾/领土 overlay:同网格透明 MIX 层(+3cm 防 z-fighting)。地形本体已是
-				// 烘焙 StandardMaterial3D(受影);雾变暗=朝黑 alpha(=乘法),领土=玩家色边界。
+				// 雾/领土 overlay:独立整图 mesh 的透明 MIX 层(+3cm 防 z-fighting)——地形本体
+				// 现在是按 patch 分块的多个 StandardMaterial3D(受影),没有单一 mesh 可复用。
 				var fogOverlay = new MeshInstance3D
 				{
-					Mesh = terrainNode.Mesh,
+					Mesh = overlayMesh,
 					Position = new Vector3(0f, 0.03f, 0f),
 					CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
 					Name = "TerrainFogOverlay",
@@ -1399,13 +1399,13 @@ public sealed partial class Main : Node3D
 		var pmp = PmpMap.FromExport(export);
 
 		// 地形渲染（复用 PMP 路径）
-		var terrainNode = TerrainRenderer.CreateFromHeightmap(pmp);
+		var (terrainNode, overlayMesh) = TerrainRenderer.CreateFromHeightmap(pmp);
 		AddChild(terrainNode);
 		_worldRoot.Position = new Vector3(0f, 0f, pmp.MapSizeMeters);
 
 		var fogOverlay = new MeshInstance3D
 		{
-			Mesh = terrainNode.Mesh,
+			Mesh = overlayMesh,
 			Position = new Vector3(0f, 0.03f, 0f),
 			CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
 			Name = "TerrainFogOverlay",

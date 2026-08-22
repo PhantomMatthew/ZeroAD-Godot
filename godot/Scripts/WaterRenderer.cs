@@ -80,7 +80,13 @@ public static class WaterRenderer
                 for (int tx = 0; tx < n; tx++)
                 {
                     float cx = (tx + 0.5f) * cell, cz = (tz + 0.5f) * cell;
-                    wet[tx, tz] = TerrainHeight(cx, cz) < spec.Height;
+                    // 中心或任一角低于水位都画水——只看中心时,岸边半淹的 4m 格不铺水,
+                    // 底下沙滩/水下贴图会露出一长条楼梯(爱琴海河岸)。
+                    wet[tx, tz] = TerrainHeight(cx, cz) < spec.Height
+                        || TerrainHeight(tx * cell, tz * cell) < spec.Height
+                        || TerrainHeight((tx + 1) * cell, tz * cell) < spec.Height
+                        || TerrainHeight(tx * cell, (tz + 1) * cell) < spec.Height
+                        || TerrainHeight((tx + 1) * cell, (tz + 1) * cell) < spec.Height;
                 }
             for (int tz = 0; tz < n; tz++)
                 for (int tx = 0; tx < n; tx++)

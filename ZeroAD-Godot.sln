@@ -1,0 +1,42 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GodotProject", "godot\GodotProject.csproj", "{F53160EC-6BE0-F008-5D9A-DF365ED17AC8}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZeroAD.Sim", "src\ZeroAD.Sim\ZeroAD.Sim.csproj", "{E43122EA-0AA3-AD69-CE32-05984147CECE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZeroAD.Sim.Tests", "src\ZeroAD.Sim.Tests\ZeroAD.Sim.Tests.csproj", "{D54F9034-D2BA-3AF5-4BA0-C2A0D698AD0B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F53160EC-6BE0-F008-5D9A-DF365ED17AC8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F53160EC-6BE0-F008-5D9A-DF365ED17AC8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F53160EC-6BE0-F008-5D9A-DF365ED17AC8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F53160EC-6BE0-F008-5D9A-DF365ED17AC8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E43122EA-0AA3-AD69-CE32-05984147CECE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E43122EA-0AA3-AD69-CE32-05984147CECE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E43122EA-0AA3-AD69-CE32-05984147CECE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E43122EA-0AA3-AD69-CE32-05984147CECE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D54F9034-D2BA-3AF5-4BA0-C2A0D698AD0B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D54F9034-D2BA-3AF5-4BA0-C2A0D698AD0B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D54F9034-D2BA-3AF5-4BA0-C2A0D698AD0B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D54F9034-D2BA-3AF5-4BA0-C2A0D698AD0B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{E43122EA-0AA3-AD69-CE32-05984147CECE} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{D54F9034-D2BA-3AF5-4BA0-C2A0D698AD0B} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {23C88CA8-55F1-4FEC-AA05-A27E09910EB6}
+	EndGlobalSection
+EndGlobal
