@@ -127,14 +127,15 @@ public sealed class ActorComposer
         {
             // Match the C++ engine: PMDConvert::AddStaticPropPoints decomposes each
             // prop-point's world transform into translation + rotation and DISCARDS the
-            // scale (PropPoint stores only t and q, never scale). So a prop_* node that
-            // carries a non-unity scale (e.g. sparta_civic_center's prop_bush at 2.41x)
-            // must NOT pass that scale on to the attached prop, or trees/shields/flags get
-            // inflated. Force the attachpoint's own scale to 1 (keeps position+rotation)
-            // via the Scale property so it applies regardless of how the transform was
-            // authored, then attach the child at 1:1.
+            // scale (PropPoint stores only t and q, never scale). Zeroing only
+            // attachNode.Scale is not enough when the point is nested under a
+            // scaled mesh node (weap_javelin_shaft_b/c, weap_shaft_wood_*):
+            // jav_blade then inherits [160,100,160] and becomes a ~75m spearhead.
+            // GlobalTransform is unusable here — BuildStructural runs off-tree,
+            // and Godot then treats GlobalTransform as local Transform.
             attachNode.Scale = Vector3.One;
             attachNode.AddChild(childNode);
+            childNode.Scale = ReciprocalScale(ScaleRelativeTo(attachNode, root));
             return true;
         }
 
@@ -309,12 +310,33 @@ public sealed class ActorComposer
     {
         var scene = ModelLibrary.LoadGlb(relGlbPath);
         if (scene == null) return null;
-        // Never rescale here: the original engine ignores DAE <unit> metadata and
-        // treats raw coordinates as game meters. GLBs are repaired to match that
-        // convention by godot/tools/fix_glb_unit_scale.py; runtime scale hacks
-        // reintroduce the proportion bugs that script exists to fix.
+        // Never rescale by unposed AABB. Sheep/chicken verts are ~3 cm after
+        // Blender <unit> while skeleton rest + idle are already meters — ×100
+        // made gaia fauna gigantic (the reverted SkinnedMeshUnitCompensator).
+        // The inverse class (meter verts + inch/cm bones on waypoint/garrison/
+        // target-marker props) is fixed at the source by
+        // tools/fix_glb_skeleton_unit_space.py, wired into run_full_pipeline.sh.
         return scene.Instantiate<Node3D>();
     }
+    /// not including, <paramref name="ancestor"/>. Identity when they are the
+    /// same node or <paramref name="node"/> is not under <paramref name="ancestor"/>.</summary>
+    internal static Vector3 ScaleRelativeTo(Node3D node, Node3D ancestor)
+    {
+        var s = Vector3.One;
+        Node? n = node;
+        while (n != null && n != ancestor)
+        {
+            if (n is Node3D n3)
+                s *= n3.Scale;
+            n = n.GetParent();
+        }
+        return n == ancestor ? s : Vector3.One;
+    }
+
+    internal static Vector3 ReciprocalScale(Vector3 s) => new(
+        Mathf.Abs(s.X) < 1e-8f ? 1f : 1f / s.X,
+        Mathf.Abs(s.Y) < 1e-8f ? 1f : 1f / s.Y,
+        Mathf.Abs(s.Z) < 1e-8f ? 1f : 1f / s.Z);
 
     internal static void TryPlayIdle(Node3D instance)
     {

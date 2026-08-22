@@ -61,7 +61,16 @@ python3 "$(dirname "$0")/fix_glb_unit_scale.py" \
     --meshes-root "$OUT/meshes" \
     --dae-root "$SRC/meshes" 2>&1 | grep -E "^(fixed|would-fix):" || true
 
-# ---- 1c. Restore field crop-patch grid ----
+# ---- 1c. Fix inch-space fauna animation tracks ----
+# deer_* clips leave the antler translation track in inches while deer_mesh is
+# meters. Marker meshes must NOT be vertex-rescaled here — their inverse-bind
+# matrices already carry the unit scale (see the tool's docstring).
+echo ""
+echo ">>> Fixing inch-space fauna animation tracks..."
+python3 "$(dirname "$0")/fix_glb_skeleton_unit_space.py" \
+    --anims-root "$OUT/animations" 2>&1 | grep -E "^(fixed|warn|summary)" || true
+
+# ---- 1d. Restore field crop-patch grid ----
 # Blender 的 glTF 导出会丢掉 field_propped_*8x8.dae 里 64 个 prop-patch_NNN
 # 空节点的 translation,导致农田作物全堆在中心而非 8×8 网格。从 DAE 读回坐标写进 GLB。
 echo ""

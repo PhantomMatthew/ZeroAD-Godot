@@ -17,7 +17,9 @@ public static class MaterialBuilder
     /// <summary>0 A.D. 风摆着色器(shaders/glsl/model_common.vs 的 USE_WIND 移植):
     /// 树/灌木/谷物(basic_trans_wind*.xml)的世界空间微风摆动。逐实例相位 =
     /// fract(世界原点);摆幅按局部顶点位置加权(树冠大、树干小);fakeCos =
-    /// 平滑三角波。位移在世界空间算出后经 transpose(旋转) 落回局部。</summary>
+    /// 平滑三角波。原版把位移加在 instancingTransform 之后(世界米)。
+    /// 回局部必须用 inverse:transpose 带不走缩放,GLB 节点 18–100× 的棕榈/角豆
+    /// 会被平方放大成数米到几十米的甩动。</summary>
     private static Shader BuildWindShader()
     {
         var code = @"
@@ -54,7 +56,10 @@ void vertex() {
 
     vec3 worldDisp = vec3(cosVec.z * limit * clamp(abswind, 1.2, 1.7));
     worldDisp.xz += vec2(diff) + diff2 * windData;
-    VERTEX += transpose(mat3(MODEL_MATRIX)) * worldDisp;
+    // 与原版一致:worldDisp 加在缩放之后。零缩放实例(合批隐藏槽)跳过,避免 inverse 出 NaN。
+    mat3 modelLin = mat3(MODEL_MATRIX);
+    if (abs(determinant(modelLin)) > 1e-8)
+        VERTEX += inverse(modelLin) * worldDisp;
 }
 
 void fragment() {
@@ -79,7 +84,7 @@ void fragment() {
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_lambert, specular_schlick_ggx;
 
-uniform sampler2D baseTex;
+uniform sampler2D baseTex : source_color;
 uniform vec4 playerColor : source_color;
 uniform sampler2D normTex : hint_normal;
 uniform sampler2D specTex;
@@ -201,7 +206,12 @@ void fragment() {
         ImageTexture? specTex,
         Color teamColor)
     {
-        var mat = new StandardMaterial3D();
+        var mat = new StandardMaterial3D
+        {
+            // C++ calculateShading 是 Lambert(texel×(sun·N·L+ambient));Godot 默认
+            // Burley 更暗更灰,和原版鲜艳观感对不上。
+            DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
+        };
         if (baseTex != null)
         {
             mat.AlbedoTexture = baseTex;
@@ -225,6 +235,10 @@ void fragment() {
         {
             // Pragmatic mapping: specTex.R treated as shininess → invert into roughness.
             mat.RoughnessTexture = specTex;
+        }
+        else
+        {
+            mat.SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled;
         }
         return mat;
     }

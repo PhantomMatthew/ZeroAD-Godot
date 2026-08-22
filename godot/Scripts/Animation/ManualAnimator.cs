@@ -34,6 +34,16 @@ public sealed partial class ManualAnimator : Node
     private float _elapsed;
     private float _accum;   // 限频累计(见 _Process)
 
+    // Some infantry meshes (m_tunic_short, m_dress) kept the DAE Z-up hip rest
+    // under a Scene −90°X parent; biped animation GLBs store hip in Y-up
+    // (idle_ready hip ≈ (0.09, 1.93, −0.24)). Writing that key raw drops the
+    // hip from world Y≈2.2 to Y≈−0.24 — legs disappear under the terrain.
+    // Child-bone locals already match; only the root hip is remapped.
+    private int _hipBoneIdx = -1;
+    private HipPosRemap _hipRemap;
+
+    private enum HipPosRemap { None, YupToZup, ZupToYup }
+
     /// <summary>每秒由 SimBridge 聚合打印的动画段耗时(TEMP-PROF)。</summary>
     public static double FrameCostMs;
 
@@ -51,6 +61,7 @@ public sealed partial class ManualAnimator : Node
         foreach (var kv in clips)
             _clips[kv.Key] = kv.Value;
         ComputeCorrections();
+        DetectHipPositionRemap();
     }
 
     /// <summary>For each bone, derives the rotation that maps the DAE skeleton's bone
@@ -128,8 +139,13 @@ public sealed partial class ManualAnimator : Node
         foreach (var kv in clip.Positions)
         {
             int idx = BoneIdx(kv.Key);
-            if (idx >= 0)
-                _skeleton.SetBonePosePosition(idx, InterpVec(kv.Value, _elapsed));
+            if (idx < 0) continue;
+            var p = InterpVec(kv.Value, _elapsed);
+            if (idx == _hipBoneIdx)
+                p = RemapHipPosition(p);
+            else if (NeedsInchToMeter(idx, p))
+                p *= InchToMeter;
+            _skeleton.SetBonePosePosition(idx, p);
         }
         foreach (var kv in clip.Scales)
         {
@@ -146,6 +162,102 @@ public sealed partial class ManualAnimator : Node
         _skeleton.ForceUpdateAllBoneTransforms();
         FrameCostMs += (System.Diagnostics.Stopwatch.GetTimestamp() - _sw) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
     }
+
+    /// <summary>Compares mesh hip rest vs the first clip's hip key. Dominant-axis
+    /// mismatch of ≥0.5 m means the animation is in the other up-convention
+    /// (Y-up keys on a Z-up rest, or the reverse).</summary>
+    private void DetectHipPositionRemap()
+    {
+        _hipBoneIdx = -1;
+        _hipRemap = HipPosRemap.None;
+        if (_skeleton == null) return;
+
+        int hip = FindHipBone();
+        if (hip < 0) return;
+        var meshRest = _skeleton.GetBoneRest(hip).Origin;
+        bool meshZUp = Mathf.Abs(meshRest.Z) > Mathf.Abs(meshRest.Y) + 0.5f;
+        bool meshYUp = Mathf.Abs(meshRest.Y) > Mathf.Abs(meshRest.Z) + 0.5f;
+        if (!meshZUp && !meshYUp) return;
+
+        foreach (var clip in _clips.Values)
+        {
+            if (!TryHipKeys(clip, out var keys) || keys.Count == 0) continue;
+            var anim = keys[0].Value;
+            bool animZUp = Mathf.Abs(anim.Z) > Mathf.Abs(anim.Y) + 0.5f;
+            bool animYUp = Mathf.Abs(anim.Y) > Mathf.Abs(anim.Z) + 0.5f;
+            if (meshZUp && animYUp)
+            {
+                _hipBoneIdx = hip;
+                _hipRemap = HipPosRemap.YupToZup;
+            }
+            else if (meshYUp && animZUp)
+            {
+                _hipBoneIdx = hip;
+                _hipRemap = HipPosRemap.ZupToYup;
+            }
+            return;
+        }
+    }
+
+    private int FindHipBone()
+    {
+        // Exact biped names only. EndsWith("_hip") used to match any fauna
+        // bone that merely contains the syllable; deer/gazelle have none
+        // today, but a future Deer01_hip would remap a meter rest with
+        // inch-or-meter keys and relocate the whole armature.
+        int idx = _skeleton!.FindBone("Biped_hip");
+        if (idx >= 0) return idx;
+        return _skeleton.FindBone("hip");
+    }
+
+    private bool TryHipKeys(AnimClip clip, out List<VecKey> keys)
+    {
+        if (clip.Positions.TryGetValue("hip", out keys!)) return true;
+        if (clip.Positions.TryGetValue("Biped_hip", out keys!)) return true;
+        foreach (var kv in clip.Positions)
+        {
+            if (kv.Key.Equals("hip", StringComparison.OrdinalIgnoreCase)
+                || kv.Key.Equals("Biped_hip", StringComparison.OrdinalIgnoreCase))
+            {
+                keys = kv.Value;
+                return true;
+            }
+        }
+        keys = null!;
+        return false;
+    }
+
+    // DAE <unit meter="0.0254"/>. C++ ignores the tag; Blender-exported
+    // quadraped clips sometimes leave one attach bone (antler / prop-antler)
+    // in inches while the deer_mesh skeleton is already meters. Prefix
+    // matching maps the "antler" track onto prop-antler; writing ~85–92
+    // inches stretches any verts weighted to that joint (~19× vs the 4.4 m
+    // body). The known deer_* clips are fixed at the source by
+    // tools/fix_glb_skeleton_unit_space.py; this magnitude gate stays as a
+    // safety net for any future mixed-unit clip. Infantry hip keys are
+    // ~2 m — below the 8 m gate. Sheep/chicken rests and idle keys are
+    // already meters.
+    private const float InchToMeter = 0.0254f;
+    private const float InchKeyMinMeters = 8f;
+
+    private bool NeedsInchToMeter(int boneIdx, Vector3 key)
+    {
+        if (key.Length() < InchKeyMinMeters) return false;
+        string name = _skeleton!.GetBoneName(boneIdx);
+        if (name.Contains("antler", StringComparison.OrdinalIgnoreCase))
+            return true;
+        var rest = _skeleton.GetBoneRest(boneIdx).Origin;
+        float restLen = rest.Length();
+        if (restLen < 1e-3f || restLen > 3f) return false;
+        return key.Length() / restLen > 15f;
+    }
+
+    private Vector3 RemapHipPosition(Vector3 p) => _hipRemap switch
+    {
+        HipPosRemap.YupToZup => new Vector3(p.X, -p.Z, p.Y),
+        HipPosRemap.ZupToYup => new Vector3(p.X, p.Z, -p.Y),
+        _ => p,
+    };
 
     private int BoneIdx(string name)
     {

@@ -149,8 +149,12 @@ public static class MapGenerator
         var mesh = st.Commit();
 
         var instance = new MeshInstance3D { Mesh = mesh };
-        var mat = new StandardMaterial3D();
-        mat.VertexColorUseAsAlbedo = true;
+        var mat = new StandardMaterial3D
+        {
+            VertexColorUseAsAlbedo = true,
+            DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
+            SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+        };
         // 有光照(收太阳+环境光+阴影,与烘焙 PMP 地形同管线);原 Unshaded 是
         // splat shader 不受影限制下的妥协,烘焙方案落地后无必要。
         mesh.SurfaceSetMaterial(0, mat);

@@ -9,9 +9,8 @@ namespace ZeroAD.Godot;
 
 /// <summary>对局设置面板(SP "Matches" 入口;布局/样式对齐原版 gamesetup GameSetupPage):
 /// 左列 = 玩家面板(整行玩家色背景,PlayersPanel.xml 同款)+ 地图描述;右列 = 地图预览 +
-/// 设置选项卡(Map/Player/Game Type 三页签,控件与选项表逐一对齐原版
-/// GameSettingsLayout)+ Cancel/Start Game!(StoneButton 风格)。地图浏览是
-/// 设置页内覆盖页(原版 MapBrowserPage)。槽位数:skirmish/scenario 取 ScriptSettings.
+/// 设置选项卡(Map/Player/Game Type)+ 右下 Cancel/Start Game!(bottomRightPanel + StoneButton)。
+/// 地图浏览是设置页内覆盖页(原版 MapBrowserPage)。槽位数:skirmish/scenario 取 ScriptSettings.
 /// PlayerData,random 1-8 可选(原版 g_MaxPlayers=8)。OnStart(MapEntry, seed, slots) +
 /// WriteOptions(cfg) 把 gamesetup 选项写进 GameLaunchConfig。</summary>
 public sealed partial class MapPickerPanel : Panel
@@ -162,14 +161,15 @@ public sealed partial class MapPickerPanel : Panel
         AnchorLeft = 0.02f; AnchorRight = 0.98f; AnchorTop = 0.03f; AnchorBottom = 0.97f;
         OffsetLeft = 0; OffsetRight = 0; OffsetTop = 0; OffsetBottom = 0;
 
-        // 整页滚动兜底:窗口不足(原版要求 ≥1024×768)时设置页内部滚动,保证
-        // 按钮/设置永远可达;大窗口无滚动条、观感不变。
+        // 整页滚动兜底:窗口不足(原版要求 ≥1024×768)时设置页内部滚动。底栏
+        // 钉在面板外(原版 centerPanel 底边 100%-64,按钮不进滚动区)。
         var scroll = new ScrollContainer();
         var vbox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         vbox.AddThemeConstantOverride("separation", 8);
         scroll.AddChild(vbox);
         AddChild(scroll);
         scroll.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        scroll.OffsetBottom = -40;
 
         var title = new Label { Text = Localization.Tr("Match Setup"), HorizontalAlignment = HorizontalAlignment.Center };
         title.AddThemeFontSizeOverride("font_size", 22);
@@ -183,16 +183,7 @@ public sealed partial class MapPickerPanel : Panel
         cols.AddChild(BuildLeftColumn());
         cols.AddChild(BuildRightColumn());
 
-        // ── 底部按钮行(原版 bottomPanel:右下 Cancel + Start Game!)──
-        var btnRow = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.End };
-        btnRow.AddThemeConstantOverride("separation", 10);
-        var cancelBtn = new Button { Text = Localization.Tr("Cancel"), CustomMinimumSize = new Vector2(110, 32) };
-        cancelBtn.Pressed += () => OnCancelled?.Invoke();
-        btnRow.AddChild(cancelBtn);
-        _startBtn = BuildStartButton();
-        btnRow.AddChild(_startBtn);
-        vbox.AddChild(btnRow);
-
+        BuildBottomBar();
         BuildBrowser();
 
         Refill();
@@ -233,32 +224,36 @@ public sealed partial class MapPickerPanel : Panel
         return (int)System.Math.Round((1 / (1 - v) + 28 * v / (1 + 5 * v)) * factor / 6 / 10) * 10;
     }
 
-    /// <summary>Start Game! 按钮(原版 StoneButton 米金风格 + tooltip)。</summary>
-    private Button BuildStartButton()
+    /// <summary>原版 GameSetupPage.xml bottomRightPanel:右下 314×32,Cancel 0..140,
+    /// Start Game! 150..290,均 StoneButton。钉在面板上,不进 ScrollContainer。</summary>
+    private void BuildBottomBar()
     {
-        var btn = new Button
-        {
-            Text = Localization.Tr("Start Game!"),
-            CustomMinimumSize = new Vector2(150, 32),
-            TooltipText = "Start a new game with the current settings.",
-        };
-        btn.AddThemeColorOverride("font_color", new Color(0.1f, 0.08f, 0.04f));
-        btn.AddThemeColorOverride("font_hover_color", new Color(0.05f, 0.04f, 0.02f));
-        btn.AddThemeColorOverride("font_pressed_color", new Color(0.05f, 0.04f, 0.02f));
-        btn.AddThemeColorOverride("font_disabled_color", new Color(0.35f, 0.30f, 0.22f));
-        StyleBoxFlat CloneStartStyle(Color bg) => new()
-        {
-            BgColor = bg,
-            BorderWidthTop = 1, BorderWidthBottom = 2, BorderWidthLeft = 1, BorderWidthRight = 1,
-            BorderColor = new Color(0.45f, 0.36f, 0.2f),
-            ContentMarginTop = 4, ContentMarginBottom = 4,
-            ContentMarginLeft = 10, ContentMarginRight = 10,
-        };
-        btn.AddThemeStyleboxOverride("normal", CloneStartStyle(new Color(0.82f, 0.72f, 0.48f)));
-        btn.AddThemeStyleboxOverride("hover", CloneStartStyle(new Color(0.92f, 0.83f, 0.6f)));
-        btn.AddThemeStyleboxOverride("pressed", CloneStartStyle(new Color(0.7f, 0.6f, 0.38f)));
-        btn.AddThemeStyleboxOverride("disabled", CloneStartStyle(new Color(0.5f, 0.46f, 0.36f)));
-        btn.Pressed += () =>
+        var bar = new Control { MouseFilter = MouseFilterEnum.Ignore };
+        bar.SetAnchorsPreset(LayoutPreset.BottomRight);
+        bar.OffsetLeft = -314;
+        bar.OffsetTop = -32;
+        bar.OffsetRight = 0;
+        bar.OffsetBottom = 0;
+        AddChild(bar);
+
+        var cancelBtn = MakeStoneBarButton(Localization.Tr("Cancel"), 140);
+        cancelBtn.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+        cancelBtn.OffsetLeft = 0;
+        cancelBtn.OffsetTop = 0;
+        cancelBtn.OffsetRight = 140;
+        cancelBtn.OffsetBottom = 32;
+        cancelBtn.TooltipText = Localization.Tr("Return to the main menu.");
+        cancelBtn.Pressed += () => OnCancelled?.Invoke();
+        bar.AddChild(cancelBtn);
+
+        _startBtn = MakeStoneBarButton(Localization.Tr("Start Game!"), 140);
+        _startBtn.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+        _startBtn.OffsetLeft = 150;
+        _startBtn.OffsetTop = 0;
+        _startBtn.OffsetRight = 290;
+        _startBtn.OffsetBottom = 32;
+        _startBtn.TooltipText = "Start a new game with the current settings.";
+        _startBtn.Pressed += () =>
         {
             if (_selected == null) return;
             // 原版 gamesetup 无种子 UI——每局随机摇(菜单侧随机;sim 种子由此下发)。
@@ -266,6 +261,17 @@ public sealed partial class MapPickerPanel : Panel
             var slots = BuildSlots();
             if (slots != null) OnStart?.Invoke(_selected, seed, slots);
         };
+        bar.AddChild(_startBtn);
+    }
+
+    private static Button MakeStoneBarButton(string caption, float width)
+    {
+        var btn = new Button
+        {
+            Text = caption,
+            CustomMinimumSize = new Vector2(width, 32),
+        };
+        StoneButtonStyle.Apply(btn, StoneButtonStyle.FindBinariesDir());
         return btn;
     }
 

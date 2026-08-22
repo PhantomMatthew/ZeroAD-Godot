@@ -76,6 +76,7 @@ public static class TerrainRenderer
                 AlbedoTexture = ImageTexture.CreateFromImage(baked),
                 Uv1Scale = new Vector3(uvScale, uvScale, 1f),
                 Roughness = 1f,
+                DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
                 SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             };
@@ -83,7 +84,12 @@ public static class TerrainRenderer
         }
         else
         {
-            var mat = new StandardMaterial3D();
+            var mat = new StandardMaterial3D
+            {
+                DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
+                SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            };
             var tex = LoadTexture("terrain_grass.png");
             if (tex != null)
             {
@@ -93,7 +99,6 @@ public static class TerrainRenderer
             {
                 mat.AlbedoColor = new Color(0.35f, 0.50f, 0.20f);
             }
-            mat.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
             mesh.SurfaceSetMaterial(0, mat);
         }
 
@@ -139,7 +144,11 @@ public static class TerrainRenderer
         st.GenerateNormals();
         var mesh = st.Commit();
 
-        var mat = new StandardMaterial3D();
+        var mat = new StandardMaterial3D
+        {
+            DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
+            SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+        };
         var tex = LoadTexture("terrain_grass.png");
         if (tex != null)
             mat.AlbedoTexture = tex;

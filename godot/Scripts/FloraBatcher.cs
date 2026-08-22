@@ -224,9 +224,14 @@ public sealed class FloraBatcher
         return result;
     }
 
-    /// <summary>拍平 actor 子树:每个 MeshInstance3D → 一个合批部件(记录根相对变换)。</summary>
+    /// <summary>拍平 actor 子树:每个 MeshInstance3D → 一个合批部件(记录根相对变换)。
+    /// <paramref name="acc"/> 是父节点累计变换,不含 <paramref name="node"/> 自己。
+    /// 旧写法先在父循环里把 child.Transform 乘进 acc,到 MeshInstance3D 再乘一次
+    /// mi.Transform:GLB 里带 100× 的网格节点(角豆树冠、花岗岩)会被平方成 10000×,
+    /// 随机图市政厅就会被几百米的树和石头挡住。Scenario 走逐节点路径,所以 Tutorial 上看不出来。</summary>
     private void Flatten(Node node, Transform3D acc, List<Part> parts)
     {
+        Transform3D world = node is Node3D n3 ? acc * n3.Transform : acc;
         if (node is MeshInstance3D mi && mi.Mesh != null && mi.Mesh.GetSurfaceCount() > 0)
         {
             var mm = new MultiMesh
@@ -239,13 +244,9 @@ public sealed class FloraBatcher
             // 材质:actor 组合器可能写了材质覆盖(gaia 一般无,照抄保真)。
             if (mi.MaterialOverride != null) mmi.MaterialOverride = mi.MaterialOverride;
             _root.AddChild(mmi);
-            parts.Add(new Part { Node = mmi, Mm = mm, Local = acc * mi.Transform });
+            parts.Add(new Part { Node = mmi, Mm = mm, Local = world });
         }
         foreach (var child in node.GetChildren())
-        {
-            // 非 Node3D 子节点(少见)不改变累计变换,继续下钻。
-            var childAcc = child is Node3D n3 ? acc * n3.Transform : acc;
-            Flatten(child, childAcc, parts);
-        }
+            Flatten(child, world, parts);
     }
 }
