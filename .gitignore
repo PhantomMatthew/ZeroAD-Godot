@@ -62,3 +62,4 @@ godot/Scenes/Previews/
 # Python bytecode caches — generated on script run (godot/tools/*.py), not source.
 __pycache__/
 *.pyc
+asset_backups/
