@@ -21,6 +21,7 @@ public sealed class TerritoryWorldRenderer
     private ImageTexture? _texture;
     private int _gridSize;
     private int _lastVersion = -1;
+    private int _lastLosVersion = -1;
     private byte[] _buf = System.Array.Empty<byte>();
     private MeshInstance3D? _borderMesh;
     private float _worldSize;
@@ -57,15 +58,18 @@ public sealed class TerritoryWorldRenderer
         _lastVersion = -1;   // 强制下次 Update 全量重建
     }
 
-    /// <summary>按 Version 门控重建领土纹理;网格尺寸变化(SetBounds)时自愈重建。</summary>
+    /// <summary>按 Version 门控重建领土纹理;网格尺寸变化(SetBounds)时自愈重建。
+    /// LOS 版本也参与门控——边线网格按已探索格裁剪,探索推进时须重画。</summary>
     public void Update()
     {
         if (_mat == null || _image == null || _texture == null) return;
         var tm = _sim.Territory;
         int n = tm.GridWidth;
         if (n != _gridSize) EnsureTexture(n);
-        if (tm.Version == _lastVersion) return;
+        int losVersion = _sim.Range.LosVersion;
+        if (tm.Version == _lastVersion && losVersion == _lastLosVersion) return;
         _lastVersion = tm.Version;
+        _lastLosVersion = losVersion;
 
         if (_buf.Length != n * n * 4) _buf = new byte[n * n * 4];
         var owners = new byte[n * n];
@@ -159,6 +163,19 @@ public sealed class TerritoryWorldRenderer
         var verts = new System.Collections.Generic.List<Vector3>();
         var colors = new System.Collections.Generic.List<Color>();
 
+        // LOS 门控(C++ 语义):只有已探索格上的边才画——否则敌方(红色)疆域线
+        // 穿透黑色战争迷雾,泄露全图领土分布。
+        var los = _sim.Range.Los;
+        int lp = (int)_sim.LocalPlayerId;
+        var explored = new bool[n * n];
+        for (int cz = 0; cz < n; cz++)
+            for (int cx = 0; cx < n; cx++)
+            {
+                var (vi, vj) = los.WorldToVertex(
+                    Fixed.FromInt(cx * cell + cell / 2), Fixed.FromInt(cz * cell + cell / 2));
+                explored[cz * n + cx] = los.IsExplored(lp, vi, vj);
+            }
+
         // 画半宽带:边在 (simX0,simZ0)-(simX1,simZ1),owner 色条偏向 dirX/dirZ 侧
         // (法向正方向 = owner 己方格),宽 halfW。gaia(owner 0)跳过。
         void EmitHalfEdge(float simX0, float simZ0, float simX1, float simZ1,
@@ -188,7 +205,7 @@ public sealed class TerritoryWorldRenderer
                 if (cx + 1 < n)
                 {
                     int nb = owners[cz * n + cx + 1];
-                    if (nb != own)
+                    if (nb != own && (explored[cz * n + cx] || explored[cz * n + cx + 1]))
                     {
                         float ex = (cx + 1) * cell;
                         // own 侧偏 -x(法向指向 own 格),nb 侧偏 +x。
@@ -200,7 +217,7 @@ public sealed class TerritoryWorldRenderer
                 if (cz + 1 < n)
                 {
                     int nb = owners[(cz + 1) * n + cx];
-                    if (nb != own)
+                    if (nb != own && (explored[cz * n + cx] || explored[(cz + 1) * n + cx]))
                     {
                         float ez = (cz + 1) * cell;
                         // own 侧偏 -z,nb 侧偏 +z。
