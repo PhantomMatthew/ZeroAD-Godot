@@ -417,7 +417,7 @@ public sealed partial class StructreePanel : ModalPanelBase
         }
         var tex = icon.Length > 0 ? PortraitLoader.Load("technologies/" + icon) : null;
         if (tex == null) return;
-        parent.AddChild(new TextureRect
+        var phaseIcon = new TextureRect
         {
             // ExpandMode 必须先于 Texture/Size 赋值:默认 KeepSize 会把最小尺寸设为贴图
             // 原生尺寸,Control.Size 赋值钳到最小尺寸 → 图标渲染成原图大小。
@@ -426,9 +426,12 @@ public sealed partial class StructreePanel : ModalPanelBase
             Texture = tex,
             Position = new Vector2(x, y),
             Size = new Vector2(size, size),
-            TooltipText = tooltip,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        });
+        };
+        // 内建 TooltipText 画在基础画布层,被 CanvasLayer 55 的面板整层压住(永不可见)
+        // ——走自绘 GameTooltip(高 CanvasLayer 100)。
+        string phaseTip = tooltip;
+        GameTooltip.Attach(phaseIcon, () => phaseTip);
+        parent.AddChild(phaseIcon);
     }
 
     /// <summary>建筑盒(原版 StructBox):ModernDarkBoxGold 底 + 专名标题(0 0 100% 20,
@@ -437,6 +440,7 @@ public sealed partial class StructreePanel : ModalPanelBase
     private Control BuildBuildingBox(TreeEntry bldg, int phaseIdx, int phaseCount, out float boxWidth)
     {
         // 生产项按物品阶段分行:rowIdx = max(0, 物品阶段 − 建筑阶段)。
+        // tip 在此构建完整说明(单位:名称/费用/统计/描述;科技:名称/费用)。
         var rows = new List<List<(Texture2D? Tex, string Tip)>>();
         void AddEntry(Texture2D? tex, string tip, int itemPhase)
         {
@@ -445,10 +449,11 @@ public sealed partial class StructreePanel : ModalPanelBase
             rows[r].Add((tex, tip));
         }
         foreach (var u in bldg.TrainableUnits)
-            AddEntry(PortraitLoader.Load(u.Icon), u.DisplayName, u.PhaseIndex);
+            AddEntry(PortraitLoader.Load(u.Icon), BuildEntityTooltip(u), u.PhaseIndex);
         foreach (var t in bldg.ResearchableTechs)
             if (t.Icon.Length > 0)
-                AddEntry(PortraitLoader.Load("technologies/" + t.Icon), t.DisplayName, t.PhaseIndex);
+                AddEntry(PortraitLoader.Load("technologies/" + t.Icon),
+                    BuildProdTooltip(null, t.DisplayName, null, t), t.PhaseIndex);
 
         float maxRowWidth = rows.Count > 0 ? rows.Max(r => r.Count) * ProdStride + ProdMargin : 0;
         float captionWidth = MeasureCaptionWidth(bldg.DisplayName);
@@ -473,15 +478,17 @@ public sealed partial class StructreePanel : ModalPanelBase
         var tex = PortraitLoader.Load(bldg.Icon);
         if (tex != null)
         {
-            box.AddChild(new TextureRect
+            var bigIcon = new TextureRect
             {
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,   // 见 AddPhaseIcon 注释
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
                 Texture = tex,
                 Position = new Vector2(boxWidth / 2 - BuildingIconSize / 2, BuildingIconY),
                 Size = new Vector2(BuildingIconSize, BuildingIconSize),
-                TooltipText = BuildEntityTooltip(bldg),
-            });
+            };
+            string bigTip = BuildEntityTooltip(bldg);
+            GameTooltip.Attach(bigIcon, () => bigTip);
+            box.AddChild(bigIcon);
         }
 
         for (int r = 0; r < rows.Count; r++)
@@ -494,40 +501,97 @@ public sealed partial class StructreePanel : ModalPanelBase
             float y = IconAndCaptionHeight + ProdRowHeight * r + ProdMargin;
             foreach (var (iconTex, tip) in rows[r])
             {
-                var iconBtn = new Button
+                var prodIcon = new TextureRect
                 {
-                    // 平面按钮当图标:贴图+完整说明弹窗(原版 referenceTooltip:名称/费用/描述)
-                    Icon = iconTex,
-                    ExpandIcon = true,
-                    CustomMinimumSize = new Vector2(ProdIcon, ProdIcon),
-                    Flat = true,
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,   // 见 AddPhaseIcon 注释
+                    StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                    Texture = iconTex,
                     Position = new Vector2(x, y),
                     Size = new Vector2(ProdIcon, ProdIcon),
-                    TooltipText = tip,
                 };
-                box.AddChild(iconBtn);
+                string prodTip = tip;
+                GameTooltip.Attach(prodIcon, () => prodTip);
+                box.AddChild(prodIcon);
                 x += ProdStride;
             }
         }
         return box;
     }
 
-    /// <summary>实体完整说明(原版 EntityBox.compileTooltip):专名/通名 + 费用 +
-    /// 模板描述。TreeEntry 无描述字段,从模板缓存取(Tooltip 字段存在 ParamNode)。</summary>
+    /// <summary>实体完整说明(原版 EntityBox.compileTooltip):通名 + 专名 + 费用 +
+    /// 血量/攻击/速度等统计 + 模板描述(全部从 ParamNode/ExtractStats 读)。</summary>
     private string BuildEntityTooltip(TreeEntry entry)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append(entry.DisplayName);
-        if (_templates != null && _templates.Cache.TryGetValue(entry.Template, out var node))
+        if (_templates == null) return sb.ToString();
+        if (!_templates.Cache.TryGetValue(entry.Template, out var node)) return sb.ToString();
+
+        var identity = node.GetChild("Identity");
+        var specific = identity.GetChild("SpecificName");
+        if (specific.IsOk && specific.ToString().Length > 0)
+            sb.Append('\n').Append(specific);
+        var desc = identity.GetChild("Tooltip");
+        if (desc.IsOk && desc.ToString().Length > 0)
+            sb.Append('\n').Append(desc);
+
+        // 费用(Cost/Resources) + 统计(Health/Attack/Armor/Speed)——ExtractStats 一次取全。
+        try
         {
-            var desc = node.GetChild("Identity").GetChild("Tooltip");
-            if (desc.IsOk && desc.ToString().Length > 0)
-                sb.Append('\n').Append(desc);
-            var specific = node.GetChild("Identity").GetChild("SpecificName");
-            if (specific.IsOk && specific.ToString().Length > 0)
-                sb.Append('\n').Append(specific);
+            var st = _templates.ExtractStats(entry.Template);
+            if (st != null)
+            {
+                var costs = new List<string>();
+                if (st.FoodCost > 0) costs.Add($"{st.FoodCost}F");
+                if (st.WoodCost > 0) costs.Add($"{st.WoodCost}W");
+                if (st.StoneCost > 0) costs.Add($"{st.StoneCost}S");
+                if (st.MetalCost > 0) costs.Add($"{st.MetalCost}M");
+                if (costs.Count > 0) sb.Append('\n').Append(string.Join(' ', costs));
+                var stats = new List<string>();
+                if (st.HasHealth) stats.Add($"HP {st.MaxHealth}");
+                if (st.AttackDamage > 0) stats.Add($"Atk {st.AttackDamage}");
+                if (st.WalkSpeed > 0.01f) stats.Add($"Spd {st.WalkSpeed:F1}");
+                if (stats.Count > 0) sb.Append('\n').Append(string.Join("  ", stats));
+            }
         }
+        catch { /* 统计缺失不阻塞名称/描述 */ }
         return sb.ToString();
+    }
+
+    /// <summary>科技完整说明:名称 + 描述(technology JSON 的 description)。</summary>
+    private string BuildTechTooltip(string techName)
+    {
+        if (_techCatalog != null && _techCatalog.Technologies.TryGetValue(techName, out var tech))
+        {
+            var sb = new System.Text.StringBuilder(tech.GenericName);
+            var costs = new List<string>();
+            if (tech.Food > 0) costs.Add($"{tech.Food}F");
+            if (tech.Wood > 0) costs.Add($"{tech.Wood}W");
+            if (tech.Stone > 0) costs.Add($"{tech.Stone}S");
+            if (tech.Metal > 0) costs.Add($"{tech.Metal}M");
+            if (costs.Count > 0) sb.Append('\n').Append(string.Join(' ', costs));
+            return sb.ToString();
+        }
+        return techName;
+    }
+
+    /// <summary>生产行图标的说明:单位→BuildEntityTooltip(模板名查回);
+    /// 科技(TechEntry 无模板名)→名称(+科技描述需 catalog 名,此处按显示名回退)。</summary>
+    private string BuildProdTooltip(Texture2D? tex, string tip, TreeEntry? unit, TechEntry? tech)
+    {
+        if (unit != null) return BuildEntityTooltip(unit);
+        if (tech != null)
+        {
+            // TechEntry 无原始科技名;用 DisplayName 反查 catalog(名称唯一性足够)。
+            if (_techCatalog != null)
+            {
+                foreach (var kv in _techCatalog.Technologies)
+                    if (kv.Value.GenericName == tech.DisplayName)
+                        return BuildTechTooltip(kv.Key);
+            }
+            return tech.DisplayName;
+        }
+        return tip;
     }
 
     /// <summary>题名宽(EntityBox.captionWidth):12px 字宽;决定盒宽上限之一。</summary>
