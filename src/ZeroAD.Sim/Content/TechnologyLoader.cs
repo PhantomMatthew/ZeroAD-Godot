@@ -22,7 +22,13 @@ public sealed record TechnologyDefinition(
     string? Supersedes,
     IReadOnlyList<string> Replaces,
     /// <summary>JSON icon 字段(如 "town_phase.png";HUD 取 portraits/technologies/ 下同名立绘)。</summary>
-    string Icon = "");
+    string Icon = "",
+    /// <summary>JSON description(长文说明;structree/HUD 科技 tooltip 用)。</summary>
+    string Description = "",
+    /// <summary>JSON tooltip(效果摘要,如 "Workers +5 resource capacity.")。</summary>
+    string Tooltip = "",
+    /// <summary>JSON requirementsTooltip(解锁提示,如 "Unlocked in Town Phase.")。</summary>
+    string RequirementsTooltip = "");
 
 public sealed record TechCatalog(
     IReadOnlyDictionary<string, TechnologyDefinition> Technologies,
@@ -85,7 +91,10 @@ public static class TechnologyLoader
             root.TryGetProperty("replaces", out var re) && re.ValueKind == JsonValueKind.Array
                 ? re.EnumerateArray().Select(e => e.GetString()!).ToList()
                 : (IReadOnlyList<string>)Array.Empty<string>(),
-            root.TryGetProperty("icon", out var ic) && ic.ValueKind == JsonValueKind.String ? ic.GetString()! : "");
+            root.TryGetProperty("icon", out var ic) && ic.ValueKind == JsonValueKind.String ? ic.GetString()! : "",
+            root.TryGetProperty("description", out var de) && de.ValueKind == JsonValueKind.String ? de.GetString()! : "",
+            root.TryGetProperty("tooltip", out var tt) && tt.ValueKind == JsonValueKind.String ? tt.GetString()! : "",
+            root.TryGetProperty("requirementsTooltip", out var rt) && rt.ValueKind == JsonValueKind.String ? rt.GetString()! : "");
     }
 
     /// <summary>requirements 对象的每个键 = 一个条件;多键 AND。</summary>

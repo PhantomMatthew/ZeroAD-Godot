@@ -45,8 +45,9 @@ public sealed partial class GameTooltip : CanvasLayer
         {
             BgColor = new Color(0f, 0f, 0f, 192f / 255f),
             BorderColor = new Color(0.78f, 0.66f, 0.40f),   // 金线(line_*.png 观感)
-            ContentMarginLeft = 4 + 6, ContentMarginRight = 4 + 6,
-            ContentMarginTop = 4 + 4, ContentMarginBottom = 4 + 6,
+            // 原版 buffer_zone=4:文字到边框 4px(此前 10/6 导致卡上下虚高)。
+            ContentMarginLeft = 8, ContentMarginRight = 8,
+            ContentMarginTop = 6, ContentMarginBottom = 6,
         };
         _box.SetBorderWidthAll(1);
         _card.AddThemeStyleboxOverride("panel", _box);
@@ -62,6 +63,10 @@ public sealed partial class GameTooltip : CanvasLayer
         // 原版 tooltip 主字体 sans-14 白字;内容行内另有 bold-16/13 混排(bbcode 控制)。
         _label.AddThemeFontSizeOverride("normal_font_size", 14);
         _label.AddThemeColorOverride("default_color", Colors.White);
+        // 紧凑行距:原版 CTooltip 一行 = 字高(buffer 4),Godot RichTextLabel 默认
+        // 行距偏大导致卡身过高(用户截图实拍对比)。压到 0(行间只有字高本身)。
+        _label.AddThemeConstantOverride("line_separation", 0);
+        _label.AddThemeConstantOverride("paragraph_separation", 0);
         _card.AddChild(_label);
         _card.Visible = false;
         _card.MouseFilter = Control.MouseFilterEnum.Ignore;

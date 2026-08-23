@@ -618,7 +618,8 @@ public sealed partial class StructreePanel : ModalPanelBase
         string Join() => string.Join('\n', lines);
     }
 
-    /// <summary>科技完整说明:名称粗体标题 + Cost: 资源图标行(原版同款布局)。</summary>
+    /// <summary>科技完整说明:标题 + Cost: 图标行 + 研究时间 + 效果摘要(tooltip)
+    /// + 长文说明(description)+ 解锁提示(requirementsTooltip)。</summary>
     private string BuildTechTooltip(string techName)
     {
         if (_techCatalog != null && _techCatalog.Technologies.TryGetValue(techName, out var tech))
@@ -629,6 +630,15 @@ public sealed partial class StructreePanel : ModalPanelBase
                 ("stone", tech.Stone), ("metal", tech.Metal));
             if (res.Length > 0)
                 lines.Add($"{GameTooltip.Header("Cost:")} {res}");
+            if (tech.ResearchTime > 0)
+                lines.Add($"{GameTooltip.Header("Time:")} {GameTooltip.Body($"{tech.ResearchTime:0}s")}");
+            if (tech.Tooltip.Length > 0)
+                lines.Add(GameTooltip.Body(tech.Tooltip));
+            if (tech.Description.Length > 0)
+                lines.Add(GameTooltip.Body(tech.Description));
+            if (tech.RequirementsTooltip.Length > 0)
+                lines.Add(GameTooltip.Body(tech.RequirementsTooltip));
+            lines.Add(GameTooltip.Body("Click for more information."));
             return string.Join('\n', lines);
         }
         return GameTooltip.Title(techName);
