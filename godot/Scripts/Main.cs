@@ -1819,17 +1819,19 @@ public sealed partial class Main : Node3D
 		// AI 水陆区域图(Accessibility)随网格定型重建(Petra 海军/码头选址的前置)。
 		_sim.RefreshAiAccessibility();
 
-		// Fog: sandbox/SP spawns owner-less world-dev entities with no seers, so reveal the map so
-		// the dev world isn't shrouded. MP keeps real fog — each human only sees their own vision.
-		_sim.Range.SetLosRevealAll((int)playerId, isMultiplayer ? false : true);
-
 		if (spawnedFromMap || isRandomMap)
 		{
 			// 地图自带出生点(skirmish 实体 / rmgen 基地):取景本地玩家首个所属实体
-			// (其 CC,同 ColdLoad),而非沙盒固定角落。
+			// (其 CC,同 ColdLoad),而非沙盒固定角落。地图局走真实战争迷雾——
+			// 此前的 SP 全图 reveal-all(沙盒时代遗留)让所有 sim 实体强制 Visible,
+			// 穿透黑色地形雾(用户截图:黑雾中仍有树/建筑可见)。
 			FocusCameraOnLocalPlayer();
 			return;
 		}
+
+		// Fog: sandbox spawns owner-less world-dev entities with no seers, so reveal the map so
+		// the dev world isn't shrouded. MP keeps real fog — each human only sees their own vision.
+		_sim.Range.SetLosRevealAll((int)playerId, isMultiplayer ? false : true);
 
 		// Frame the player's starting town centre so the game opens on their base. StartPositions
 		// is 0-indexed by player id - 1; clamp guards against an out-of-range local player id.
