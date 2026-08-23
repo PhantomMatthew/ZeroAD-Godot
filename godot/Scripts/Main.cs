@@ -2410,6 +2410,63 @@ public sealed partial class Main : Node3D
 
 		// Rally-point marker (flag + path line) is cached across frames — see ReconcileRallyMarker.
 		ReconcileRallyMarker();
+
+		UpdateHoverMarker();
+	}
+
+	/// <summary>Hover 高亮(原版 selection.js onMouseMove:SetHighlight + SetStatusBars):
+	/// 鼠标指向的实体显示白色微光圈 + 状态条——有 Health 画血条(动物/建筑),
+	/// 否则有 ResourceSupply 画资源条(树木/矿石的剩余量,C++ 的 supply 条)。</summary>
+	private Node3D? _hoverMarker;
+	private EntityId _hoverEnt;
+
+	private void UpdateHoverMarker()
+	{
+		var worldPos = ScreenToWorld(GetViewport().GetMousePosition());
+		if (worldPos == null) return;
+		var targets = _sim.GetEntitiesAtPosition(worldPos.Value, 3f);
+		var ent = targets.Count > 0 ? targets[0] : default;
+
+		if (ent == _hoverEnt) return;
+		if (_hoverMarker != null && GodotObject.IsInstanceValid(_hoverMarker))
+			_hoverMarker.QueueFree();
+		if (_hoverExtra != null && GodotObject.IsInstanceValid(_hoverExtra))
+			_hoverExtra.QueueFree();
+		_hoverMarker = null;
+		_hoverExtra = null;
+		_hoverEnt = ent;
+		if (ent == default) return;
+
+		var node = _sim.EntityNodes.GetValueOrDefault(ent);
+		var st = _sim.Gui.GetEntityState(ent);
+		if (node == null || st == null) return;
+
+		// 微光圈(gaia/敌方/己方都用原版高亮白 0.5 透明度,不区分敌我)
+		var ring = SelectionRing.Create(1.6f, new Color(1f, 1f, 1f, 0.5f), new Color(1f, 1f, 1f, 0.5f));
+		node.AddChild(ring);
+		_hoverMarker = ring;
+
+		// 状态条:血条(有 Health)或资源条(树木/矿)
+		if (st.HealthMax > 0 || st.ResourceAmount > 0)
+		{
+			float frac = st.HealthMax > 0
+				? st.HealthFraction
+				: st.ResourceAmount / (float)System.Math.Max(1, MaxSupplyOf(ent));
+			var bar = st.HealthMax > 0
+				? SelectionRing.CreateHealthBar(frac)
+				: SelectionRing.CreateCaptureBar(new List<(float, Color)> { (frac, new Color(0.2f, 0.75f, 0.25f)) });
+			bar.Position = new Vector3(0, BarTopHeight(node), 0);
+			node.AddChild(bar);
+			_hoverExtra = bar;
+		}
+	}
+
+	private Node3D? _hoverExtra;
+
+	private int MaxSupplyOf(EntityId ent)
+	{
+		var supply = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.ResourceSupply>(ent);
+		return supply?.MaxAmount ?? 1;
 	}
 
 	/// <summary>实体头顶条高度(原版状态条悬于模型顶):取首个网格 AABB 顶 + 0.3;
