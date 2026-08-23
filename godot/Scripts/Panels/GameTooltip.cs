@@ -76,7 +76,7 @@ public sealed partial class GameTooltip : CanvasLayer
     public override void _Process(double delta)
     {
         if (_card.Visible && _owner != null)
-            PlaceAt(GetViewport().GetMousePosition());
+            PlaceAt(GetViewport().GetMousePosition(), _card.Size);
     }
 
     /// <summary>给控件挂 tooltip(悬停显示 text,多段用 Header/Body 组好的 bbcode)。</summary>
@@ -141,8 +141,24 @@ public sealed partial class GameTooltip : CanvasLayer
         _owner = owner;
         _label.Clear();
         _label.AppendText(text);
+        // 先定宽再排版:文字换行取决于宽度,必须让 RichTextLabel 在最终宽下
+        // 重排完成后才能量高度(同帧量会拿到旧宽的行数 → 高度爆表,用户截图
+        // 实拍:2 行内容撑满全屏)。延迟一帧排版后再量。
+        _label.CustomMinimumSize = new Vector2(DesiredWidth(text), 0);
         _card.Visible = true;
-        PlaceAt(GetViewport().GetMousePosition());
+        CallDeferred(nameof(PlaceDeferred));
+    }
+
+    private void PlaceDeferred()
+    {
+        if (!_card.Visible) return;
+        // GetContentHeight = 富文本在当前宽下排完的实际内容高。
+        float contentH = _label.GetContentHeight();
+        float w = _label.CustomMinimumSize.X;
+        _card.Size = new Vector2(w + _box.ContentMarginLeft + _box.ContentMarginRight + 2,
+            contentH + _box.ContentMarginTop + _box.ContentMarginBottom + 2);
+        _card.CustomMinimumSize = Vector2.Zero;   // 不留旧尺寸
+        PlaceAt(GetViewport().GetMousePosition(), _card.Size);
     }
 
     private void Hide(Control owner)
@@ -171,24 +187,14 @@ public sealed partial class GameTooltip : CanvasLayer
         return System.Math.Clamp(max + 24, 220f, 480f);
     }
 
-    private void PlaceAt(Vector2 mouse)
+    private void PlaceAt(Vector2 mouse, Vector2 size)
     {
-        // 原版 offset = "16 24"(卡在鼠标右下 16,24);maxwidth 480。
-        // 宽度策略:先按最长行算期望宽(不依赖 FitContent 的最小尺寸——它量不出
-        // 富文本宽度),设置标签最小宽再取整卡实际需要的高度。
-        string txt = _label.Text;
-        float want = DesiredWidth(txt);
-        _label.CustomMinimumSize = new Vector2(want, 0);
-        var size = _card.GetCombinedMinimumSize();
-        // 高度自适应:卡尺寸 = 内容最小尺寸(宽度按 want,高度按富文本排完)。
-        _card.CustomMinimumSize = new Vector2(size.X, size.Y);
-        size = _card.GetCombinedMinimumSize();
+        // 原版 offset = "16 24"(卡在鼠标右下 16,24);避让屏幕边缘。
         float x = mouse.X + 16;
         float y = mouse.Y + 24;
         var vp = GetViewport().GetVisibleRect().Size;
         if (x + size.X > vp.X) x = mouse.X - size.X - 8;
         if (y + size.Y > vp.Y) y = mouse.Y - size.Y - 8;
         _card.Position = new Vector2(MathF.Max(x, 4), MathF.Max(y, 4));
-        _card.Size = size;
     }
 }
