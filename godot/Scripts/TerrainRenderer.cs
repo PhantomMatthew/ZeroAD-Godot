@@ -75,64 +75,53 @@ public static class TerrainRenderer
         // 完全收不到方向光阴影(渲染器限制),烘焙后走标准管线,受影/光照与 C++ 固定管线
         // 等价;雾/领土移到 fog_territory_overlay.gdshader 透明层(Main.SetupTerrain 挂)。
         var ctx = SplatBaker.PrepareBakeContext(map);
+        // dev:A/B 开关——ZEROAD_TERRAIN_LEGACY=1 走无烘焙草地(排除贴图烘焙因素)。
+        if (System.Environment.GetEnvironmentVariable("ZEROAD_TERRAIN_LEGACY") == "1") ctx = null;
         if (ctx != null)
         {
-            // 从整图 mesh 里取出已经算好的位置/法线(GenerateNormals 已跑过一次,逐位对齐
-            // 今天的行为),按 patch 切片复用——相邻 patch 共享边界顶点用的是同一份数组里的
-            // 同一个值,法线两侧完全一致,不会在 patch 缝上出现光照裂缝。
-            var arrays = fullMesh.SurfaceGetArrays(0);
-            var positions = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
-            var normals = arrays[(int)Mesh.ArrayType.Normal].AsVector3Array();
-
-            int patchesPerSide = map.PatchesPerSide;
-            int pxSize = SplatBaker.ComputePatchPixelSize(patchesPerSide);
-            for (int pz = 0; pz < patchesPerSide; pz++)
+            // 生产路径:整图单张烘焙贴图(连续 UV world×0.125)。分块(每 64m 一张)
+            // 会在地图边缘低角度把相邻 4m tile 行的贴图差异拉伸成清晰的"多层带"
+            // (用户截图 + A/B 实证:整图连续 UV 无此现象);整图烘焙保留 C++ 风格的
+            // 混合色,2048-8192px 密度足够。
+            var bakedWhole = SplatBaker.BakeAlbedo(map);
+            if (bakedWhole != null)
             {
-                for (int px = 0; px < patchesPerSide; px++)
+                var mat = new StandardMaterial3D
                 {
-                    var patchMesh = BuildPatchMesh(positions, normals, verts, px, pz);
-                    var baked = SplatBaker.BakeAlbedoPatch(ctx, px, pz, pxSize);
-                    var mat = new StandardMaterial3D
-                    {
-                        AlbedoTexture = ImageTexture.CreateFromImage(baked),
-                        Roughness = 1f,
-                        DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
-                        SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
-                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                        // 不用 Anisotropic:各向异性过滤与 Clamp(TextureRepeat=false)组合在
-                        // 极端斜角会拉出横贯全宽的重复细条纹(地图边缘俯视截图实证);
-                        // 32px/m 的分块密度下双线性+mipmap 已足够锐。
-                        TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps,
-                        // 必须 Clamp:patch 网格在共享边界把 UV 设成 1.0,默认 Repeat
-                        // 会把 1.0 绕回 0.0,整条边采样到对面 64m 外的像素,最后一列
-                        // tile 再把整张 patch 贴图斜插过去——地面就会变成整齐的方格。
-                        TextureRepeat = false,
-                    };
-                    patchMesh.SurfaceSetMaterial(0, mat);
-                    root.AddChild(new MeshInstance3D { Mesh = patchMesh, Name = $"Patch_{px}_{pz}" });
-                }
+                    AlbedoTexture = ImageTexture.CreateFromImage(bakedWhole),
+                    Roughness = 1f,
+                    DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
+                    SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps,
+                    TextureRepeat = true,
+                };
+                fullMesh.SurfaceSetMaterial(0, mat);
+                root.AddChild(new MeshInstance3D { Mesh = fullMesh, Name = "TerrainBaked" });
+                ZeroAD.Sim.Diag.Log("Terrain",
+                    $"Terrain mesh: {verts}x{verts}={verts * verts} verts, single baked albedo " +
+                    $"({bakedWhole.GetWidth()}x{bakedWhole.GetHeight()}px, " +
+                    $"{bakedWhole.GetWidth() / map.MapSizeMeters:F1} texel/m)");
             }
-            ZeroAD.Sim.Diag.Log("Terrain",
-                $"Terrain mesh: {verts}x{verts}={verts * verts} verts across {patchesPerSide * patchesPerSide} " +
-                $"patches ({pxSize}x{pxSize}px/patch, {pxSize / (PmpMap.PatchSize * PmpMap.TileSize):F1} texel/m)");
-        }
-        else
-        {
-            // 无 PMP 贴图数据:不分块,整图一个 mesh(与此前行为一致)。
-            var mat = new StandardMaterial3D
+            bool flattened = bakedWhole != null;
+            if (!flattened)
             {
-                DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
-                SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-            };
-            var tex = LoadTexture("terrain_grass.png");
-            if (tex != null)
-                mat.AlbedoTexture = tex;
-            else
-                mat.AlbedoColor = new Color(0.35f, 0.50f, 0.20f);
-            fullMesh.SurfaceSetMaterial(0, mat);
-            root.AddChild(new MeshInstance3D { Mesh = fullMesh, Name = "TerrainFlat" });
-            ZeroAD.Sim.Diag.Log("Terrain", $"Terrain mesh: {verts}x{verts}={verts * verts} verts, {(verts - 1) * (verts - 1) * 2} tris (no patch textures)");
+                // 无 PMP 贴图数据/烘焙失败:整图一个 mesh(与此前行为一致)。
+                var flatMat = new StandardMaterial3D
+                {
+                    DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
+                    SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                };
+                var tex = LoadTexture("terrain_grass.png");
+                if (tex != null)
+                    flatMat.AlbedoTexture = tex;
+                else
+                    flatMat.AlbedoColor = new Color(0.35f, 0.50f, 0.20f);
+                fullMesh.SurfaceSetMaterial(0, flatMat);
+                root.AddChild(new MeshInstance3D { Mesh = fullMesh, Name = "TerrainFlat" });
+                ZeroAD.Sim.Diag.Log("Terrain", $"Terrain mesh: {verts}x{verts}={verts * verts} verts, {(verts - 1) * (verts - 1) * 2} tris (no baked textures)");
+            }
         }
 
         // 碰撞与可见 patch 解耦:整图只建一份(用今天同一套顶点/索引,不分块),避免 giant
@@ -145,49 +134,7 @@ public static class TerrainRenderer
         return (root, fullMesh);
     }
 
-    /// <summary>从整图位置/法线数组里切出一个 64m patch(17×17 顶点,含共享边界行列)的
-    /// mesh,局部 UV 0..1 对应该 patch 自己的烘焙贴图(与 SplatBaker.BakeAlbedoPatch 的
-    /// 像素→世界映射同一套公式:UV 分量 = patch 内 tile 分数)。边界顶点 UV 恰为 0 或 1,
-    /// 材质必须 Clamp(见上方 TextureRepeat=false),否则 Repeat 把 1 绕成 0,排布错成方格。
-    /// 不调用 GenerateNormals——法线直接取自整图已算好的值,保证与相邻 patch 逐位一致。</summary>
-    private static ArrayMesh BuildPatchMesh(Vector3[] positions, Vector3[] normals, int verticesPerSide,
-        int patchX, int patchZ)
-    {
-        int baseX = patchX * PmpMap.PatchSize;
-        int baseZ = patchZ * PmpMap.PatchSize;
-        const int n = PmpMap.PatchSize + 1; // 17 顶点/边(含共享边界)
 
-        var st = new SurfaceTool();
-        st.Begin(Mesh.PrimitiveType.Triangles);
-
-        for (int lz = 0; lz < n; lz++)
-        {
-            for (int lx = 0; lx < n; lx++)
-            {
-                int gi = (baseZ + lz) * verticesPerSide + (baseX + lx);
-                st.SetNormal(normals[gi]);
-                st.SetUV(new Vector2((float)lx / PmpMap.PatchSize, (float)lz / PmpMap.PatchSize));
-                st.AddVertex(positions[gi]);
-            }
-        }
-
-        for (int lz = 0; lz < n - 1; lz++)
-        {
-            for (int lx = 0; lx < n - 1; lx++)
-            {
-                int i = lz * n + lx;
-                st.AddIndex(i);
-                st.AddIndex(i + n);
-                st.AddIndex(i + 1);
-
-                st.AddIndex(i + 1);
-                st.AddIndex(i + n);
-                st.AddIndex(i + n + 1);
-            }
-        }
-
-        return (ArrayMesh)st.Commit();
-    }
 
     public static MeshInstance3D CreateFlat(int patchesPerSide, float height = 0f)
     {
