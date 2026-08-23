@@ -99,9 +99,10 @@ public static class TerrainRenderer
                         DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
                         SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
                         CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                        // 各向异性:RTS 常见斜俯角下,patch 贴图在远处/斜角仍保持清晰
-                        // (默认双线性+mipmap 在斜角会明显糊,此设置零显存代价)。
-                        TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmapsAnisotropic,
+                        // 不用 Anisotropic:各向异性过滤与 Clamp(TextureRepeat=false)组合在
+                        // 极端斜角会拉出横贯全宽的重复细条纹(地图边缘俯视截图实证);
+                        // 32px/m 的分块密度下双线性+mipmap 已足够锐。
+                        TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps,
                         // 必须 Clamp:patch 网格在共享边界把 UV 设成 1.0,默认 Repeat
                         // 会把 1.0 绕回 0.0,整条边采样到对面 64m 外的像素,最后一列
                         // tile 再把整张 patch 贴图斜插过去——地面就会变成整齐的方格。
