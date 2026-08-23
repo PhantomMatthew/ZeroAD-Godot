@@ -112,16 +112,11 @@ public sealed partial class GameTooltip : CanvasLayer
     private static string Escape(string t) =>
         t.Replace("&", "&amp;").Replace("[", "&#91;").Replace("]", "&#93;");
 
-    /// <summary>资源小图标路径(binaries junction 的绝对路径;RichTextLabel img 吃绝对路径)。</summary>
-    private static string? _iconRoot;
-
-    private static string ResourceIconPath(string code)
-    {
-        _iconRoot ??= Path.Combine(
-            StoneButtonStyle.FindBinariesDir() ?? "",
-            "data", "mods", "public", "art", "textures", "ui", "session", "icons", "resources");
-        return System.IO.Path.Combine(_iconRoot, code + "_small.png");
-    }
+    /// <summary>资源小图标路径(res://assets/ui/resources/*_small.png——图标须在
+    /// res:// 内被 Godot 导入,RichTextLabel 的 [img] 才能加载;binaries 外部路径
+    /// 报 No loader found。图标由资产管线从 session/icons/resources 拷入)。</summary>
+    private static string ResourceIconPath(string code) =>
+        $"res://assets/ui/resources/{code}_small.png";
 
     private void ShowFor(Control owner, string text)
     {
@@ -140,16 +135,37 @@ public sealed partial class GameTooltip : CanvasLayer
         _card.Visible = false;
     }
 
+    /// <summary>tooltip 文本的期望卡宽:最长纯文本行宽 + 边距,clamp [220, 480]
+    /// (原版 maxwidth 480;RichTextLabel 的 FitContent 最小宽会退化到接近 0,
+    /// 把每行文字挤成一列窄条——截图实测根因)。</summary>
+    private float DesiredWidth(string text)
+    {
+        var font = ThemeDB.FallbackFont;
+        float max = 0;
+        foreach (var raw in text.Split('\n'))
+        {
+            // 去掉 bbcode 标签量纯文本(粗略:剥 [..] 段)。
+            string plain = System.Text.RegularExpressions.Regex.Replace(raw, @"\[[^\]]*\]", "");
+            float lineW = font.GetStringSize(plain, HorizontalAlignment.Left, -1, 14).X;
+            // 资源图标行:[img=16] 计入 20px/个。
+            lineW += 20 * System.Text.RegularExpressions.Regex.Matches(raw, @"\[img").Count;
+            max = System.MathF.Max(max, lineW);
+        }
+        return System.Math.Clamp(max + 24, 220f, 480f);
+    }
+
     private void PlaceAt(Vector2 mouse)
     {
-        // 原版 offset = "16 24"(卡在鼠标右下 16,24);maxwidth 480 → 卡最宽 480。
-        _label.CustomMinimumSize = new Vector2(0, 0);
+        // 原版 offset = "16 24"(卡在鼠标右下 16,24);maxwidth 480。
+        // 宽度策略:先按最长行算期望宽(不依赖 FitContent 的最小尺寸——它量不出
+        // 富文本宽度),设置标签最小宽再取整卡实际需要的高度。
+        string txt = _label.Text;
+        float want = DesiredWidth(txt);
+        _label.CustomMinimumSize = new Vector2(want, 0);
         var size = _card.GetCombinedMinimumSize();
-        if (size.X > 480)
-        {
-            _label.CustomMinimumSize = new Vector2(480, 0);
-            size = _card.GetCombinedMinimumSize();
-        }
+        // 高度自适应:卡尺寸 = 内容最小尺寸(宽度按 want,高度按富文本排完)。
+        _card.CustomMinimumSize = new Vector2(size.X, size.Y);
+        size = _card.GetCombinedMinimumSize();
         float x = mouse.X + 16;
         float y = mouse.Y + 24;
         var vp = GetViewport().GetVisibleRect().Size;
