@@ -518,55 +518,104 @@ public sealed partial class StructreePanel : ModalPanelBase
         return box;
     }
 
-    /// <summary>实体完整说明——逐块对齐原版 EntityBox.compileTooltip 的拼装顺序:
-    /// getEntityNamesFormatted(粗体大标题通名,有专名时两行)→ getEntityCostTooltip
-    /// (Cost: 图标数值行)→ getEntityTooltip(描述正文)→ StatsFunctions
-    /// (Health:/攻击/速度等"标题: 值"行)。</summary>
+    /// <summary>实体完整说明——逐块逐序对齐原版 EntityBox.compileTooltip:
+    /// TooltipFunctions = [getEntityNamesFormatted, getEntityCostTooltip,
+    /// getEntityTooltip, getAurasTooltip] + StatsFunctions
+    /// [Dropsite, Health, Attack, Healer, Resistance, Garrison, Turrets,
+    /// Projectiles, Speed, Gather, Supply, Treasure, PopBonus, Trickle,
+    /// Upkeep, Loot] + "\nClick for more information."
+    /// 截图对照(Apothēkē 卡):专名为主名,generic 括注同行;
+    /// Resistance 百分比 = 100 − round(0.9^level×100)(tooltips.js 同款)。</summary>
     private string BuildEntityTooltip(TreeEntry entry)
     {
-        var lines = new List<string>
+        var lines = new List<string>();
+        string? specificName = null;
+        if (_templates != null && _templates.Cache.TryGetValue(entry.Template, out var node))
         {
-            // getEntityNamesFormatted:主名粗体 16;有专名再一行同名粗体(默认设置
-            // generic 为主、specific 为次)。
-            GameTooltip.Title(entry.DisplayName),
-        };
-        if (_templates == null) return string.Join('\n', lines);
-        if (!_templates.Cache.TryGetValue(entry.Template, out var node)) return string.Join('\n', lines);
+            var identity = node.GetChild("Identity");
+            var sp = identity.GetChild("SpecificName");
+            if (sp.IsOk && sp.ToString().Length > 0) specificName = sp.ToString();
+        }
+        // getEntityNamesFormatted:默认 howtoshownames=0 → specific 为主。
+        // 主名 bold-16;有次名时同行 "(generic)"(截图:Apothēkē (Storehouse))。
+        lines.Add(specificName != null
+            ? $"{GameTooltip.Title(specificName)} {GameTooltip.SecondaryInline($"({entry.DisplayName})")}"
+            : GameTooltip.Title(entry.DisplayName));
+        if (_templates == null) return Join();
+        if (!_templates.Cache.TryGetValue(entry.Template, out var node2)) return Join();
 
-        var identity = node.GetChild("Identity");
-        var specific = identity.GetChild("SpecificName");
-        if (specific.IsOk && specific.ToString().Length > 0 && specific.ToString() != entry.DisplayName)
-            lines.Add(GameTooltip.Secondary(specific.ToString()));
-
-        // getEntityCostTooltip:"Cost:" 粗体头 + 资源图标数值行
+        var identity2 = node2.GetChild("Identity");
         try
         {
             var st = _templates.ExtractStats(entry.Template);
-            if (st != null)
+            if (st == null) return Join();
+
+            // getEntityCostTooltip:"Cost:" 粗头 + 图标数值行。
+            var cost = GameTooltip.ResourceRow(
+                ("food", st.FoodCost), ("wood", st.WoodCost),
+                ("stone", st.StoneCost), ("metal", st.MetalCost));
+            if (cost.Length > 0)
+                lines.Add($"{GameTooltip.Header("Cost:")} {cost}");
+
+            // getEntityTooltip:描述正文 13px。
+            var desc = identity2.GetChild("Tooltip");
+            if (desc.IsOk && desc.ToString().Length > 0)
+                lines.Add(GameTooltip.Body(desc.ToString()));
+
+            // getResourceDropsiteTooltip:"Dropsite for:" + 图标行(Types 空格分隔)。
+            if (st.IsDropsite && st.DropsiteTypes.Length > 0)
             {
-                var res = GameTooltip.ResourceRow(
-                    ("food", st.FoodCost), ("wood", st.WoodCost),
-                    ("stone", st.StoneCost), ("metal", st.MetalCost));
-                if (res.Length > 0)
-                    lines.Add($"{GameTooltip.Header("Cost:")} {res}");
-
-                // getEntityTooltip:描述正文(13px)
-                var desc = identity.GetChild("Tooltip");
-                if (desc.IsOk && desc.ToString().Length > 0)
-                    lines.Add(GameTooltip.Body(desc.ToString()));
-
-                // StatsFunctions:getHealthTooltip/getAttackTooltip/getSpeedTooltip
-                // 的"标题: 值"粗头格式。
-                if (st.HasHealth)
-                    lines.Add($"{GameTooltip.Header("Health:")} {GameTooltip.Body(st.MaxHealth.ToString())}");
-                if (st.AttackDamage > 0)
-                    lines.Add($"{GameTooltip.Header("Attack:")} {GameTooltip.Body(st.AttackDamage.ToString())}");
-                if (st.WalkSpeed > 0.01f)
-                    lines.Add($"{GameTooltip.Header("Speed:")} {GameTooltip.Body(st.WalkSpeed.ToString("F1"))}");
+                var icons = new List<string>();
+                foreach (var t in st.DropsiteTypes.Split((char[]?)null,
+                    System.StringSplitOptions.RemoveEmptyEntries))
+                    icons.Add($"[img=16]{GameTooltip.ResourceIconPathOf(t)}[/img]");
+                if (icons.Count > 0)
+                    lines.Add($"{GameTooltip.Header("Dropsite for:")} {string.Join("  ", icons)}");
             }
+
+            // getHealthTooltip
+            if (st.HasHealth)
+                lines.Add($"{GameTooltip.Header("Health:")} {GameTooltip.Body(st.MaxHealth.ToString())}");
+
+            // getResistanceTooltip:"Resistance:" + "Damage: L Hack (P%), ..." 小字百分数。
+            if (st.ResistanceHack != 0 || st.ResistancePierce != 0 || st.ResistanceCrush != 0)
+            {
+                var parts = new List<string>();
+                void Dmg(float lvl, string name)
+                {
+                    if (lvl == 0) return;
+                    int pct = 100 - (int)System.Math.Round(System.Math.Pow(0.9, lvl) * 100);
+                    parts.Add($"{GameTooltip.Unit($"{lvl:F1} {name}")} {GameTooltip.Small($"({pct}%)")}");
+                }
+                Dmg(st.ResistanceHack, "Hack");
+                Dmg(st.ResistancePierce, "Pierce");
+                Dmg(st.ResistanceCrush, "Crush");
+                if (parts.Count > 0)
+                    lines.Add($"{GameTooltip.Header("Resistance:")} {GameTooltip.Header("Damage:")}\n  {string.Join(", ", parts)}");
+            }
+
+            // getAttackTooltip(简化:总伤)
+            if (st.AttackDamage > 0)
+                lines.Add($"{GameTooltip.Header("Attack:")} {GameTooltip.Body(st.AttackDamage.ToString())}");
+
+            // getSpeedTooltip:"Speed: 8.0 / 20.0"(walk/run)。
+            if (st.WalkSpeed > 0.01f)
+                lines.Add($"{GameTooltip.Header("Speed:")} {GameTooltip.Body(st.WalkSpeed.ToString("F1"))}");
+
+            // getLootTooltip:"Loot:" + 图标数值行。
+            var loot = GameTooltip.ResourceRow(
+                ("food", st.LootFood), ("wood", st.LootWood),
+                ("stone", st.LootStone), ("metal", st.LootMetal));
+            if (st.HasLoot && loot.Length > 0)
+                lines.Add($"{GameTooltip.Header("Loot:")} {loot}");
         }
         catch { /* 统计缺失不阻塞名称/描述 */ }
-        return string.Join('\n', lines);
+
+        // getTemplateViewerOnClickTooltip(compileTooltip 尾行,截图实见)。
+        lines.Add(GameTooltip.Body("Click for more information."));
+        return Join();
+
+        string Join() => string.Join('\n', lines);
     }
 
     /// <summary>科技完整说明:名称粗体标题 + Cost: 资源图标行(原版同款布局)。</summary>

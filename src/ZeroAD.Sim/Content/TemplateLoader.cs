@@ -488,7 +488,12 @@ namespace ZeroAD.Sim.Content
 
             var dropsite = node.GetChild("ResourceDropsite");
             if (dropsite.IsOk)
+            {
                 stats.IsDropsite = true;
+                var types = dropsite.GetChild("Types");
+                if (types.IsOk)
+                    stats.DropsiteTypes = types.ToString();
+            }
 
             var production = node.GetChild("ProductionQueue");
             if (production.IsOk)
@@ -1018,6 +1023,9 @@ namespace ZeroAD.Sim.Content
         /// <summary>&lt;Visibility&gt;&lt;RetainInFog&gt;:已探索雾中保持可见(FOGGED)。单位 false,建筑/gaia true。</summary>
         public bool RetainInFog;
         public bool IsDropsite;
+        /// <summary>ResourceDropsite/Types 原文(空格分隔:wood stone metal)——
+        /// structree tooltip 的"Dropsite for:"图标行。</summary>
+        public string DropsiteTypes = "";
         public bool CanTrain;
         public bool CanBuild;
         public bool CanGather;

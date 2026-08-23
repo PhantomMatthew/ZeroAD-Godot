@@ -89,11 +89,21 @@ public sealed partial class GameTooltip : CanvasLayer
     /// <summary>次名称行(nameSecondary:sans-bold-16)。</summary>
     public static string Secondary(string text) => Title(text);
 
+    /// <summary>行内次名(主名后的"(generic)"括注,同 bold-16)。</summary>
+    public static string SecondaryInline(string text) => Title(text);
+
     /// <summary>统计块标题(headerFont:sans-bold-13)。</summary>
     public static string Header(string text) => $"[b][font_size=13]{Escape(text)}[/font_size][/b]";
 
     /// <summary>正文(bodyFont:sans-13)。</summary>
     public static string Body(string text) => $"[font_size=13]{Escape(text)}[/font_size]";
+
+    /// <summary>单位字(unitFont:sans-10 橙色——伤害类型/数值单位)。</summary>
+    public static string Unit(string text) =>
+        $"[color=orange][font_size=10]{Escape(text)}[/font_size][/color]";
+
+    /// <summary>小字括注(原版 '[font="sans-10"](...)' ——抗性百分数等)。</summary>
+    public static string Small(string text) => $"[font_size=10]{Escape(text)}[/font_size]";
 
     /// <summary>资源行:小图标 + 数值(session/icons/resources/*_small.png 16px)。
     /// parts 交替 (资源码, 数值)。</summary>
@@ -115,7 +125,9 @@ public sealed partial class GameTooltip : CanvasLayer
     /// <summary>资源小图标路径(res://assets/ui/resources/*_small.png——图标须在
     /// res:// 内被 Godot 导入,RichTextLabel 的 [img] 才能加载;binaries 外部路径
     /// 报 No loader found。图标由资产管线从 session/icons/resources 拷入)。</summary>
-    private static string ResourceIconPath(string code) =>
+    public static string ResourceIconPath(string code) => ResourceIconPathOf(code);
+
+    public static string ResourceIconPathOf(string code) =>
         $"res://assets/ui/resources/{code}_small.png";
 
     private void ShowFor(Control owner, string text)
