@@ -1,0 +1,182 @@
+# 待移植功能跟踪(PORTING GAPS)
+
+> 对比基准:上游 0 A.D. `0.29.0`(macOS 检出:`/Users/matthew/SourceCode/gitea/0ad`)
+> 盘点日期:2026-08-22 · 方法:三路并行探索(C# 组件逐文件核对 / 基础设施子系统对照 / 表现层对照)
+> 使用方式:完成一项就把 `- [ ]` 改为 `- [x]` 并在行尾追加 `(commit <hash>)`。新增缺口直接往对应表里加行。
+>
+> 配套文档:总体规划见 `godot-rewrite-plan.md`;引擎分析见 `claude-analyze/*.md`。
+
+**图例**:✅ 完整 · 🟡 部分(附缺口)· ❌ 缺失 · 🔵 有等价替代实现
+
+---
+
+## 1. 总览(M0–M10)
+
+| 模块 | 完成度 | 一句话状态 |
+|---|---|---|
+| M0 确定性内核 | ★★★★☆ | 序列化+哈希/OOS+锁步可用;🔴 存在系统性浮点违规(§2) |
+| M2 模拟组件 | ★★★★☆ | 83 JS 组件:22 ✅ / 15 🟡偏完整 / ~11 ❌ |
+| M3 寻路 | ★★★★☆ | 三引擎齐;缺异步任务、增量更新、pass class 数据驱动 |
+| M4 渲染 | ★★★☆☆ | 地形/水/迷雾/领土/血条/集结点线齐;缺粒子、过场、天空、战场贴花 |
+| M5 GUI | ★★★☆☆ | 约 60%;缺 prelobby/campaigns/viewer/credits 等 10+ 页 |
+| M6 网络 | ★★★★☆ | 锁步+OOS+大厅协议齐;缺重连、观战 |
+| M7 存档录像 | ★★★★★ | 双闭环,亮点项 |
+| M8 Petra AI | ★★☆☆☆ | 模块名齐全但约 **20% 体量**(≈5–6k 行 vs 原 ≈26k 行) |
+| M9 rmgen | ★★☆☆☆ | 库核心齐;地图仅移植 ~12/~173(≈7%) |
+| 触发器/教程 | ★★~★★★ | 触发器=骨架(5 条件/6 动作);教程硬编非 JSON |
+
+---
+
+## 2. 🔴 P0:确定性债务(所有联机/OOS 工作的前置)
+
+内核 `src/ZeroAD.Sim/` 大面积使用 `float`/`MathF`/`double`,违反 AGENTS.md「模拟内禁浮点」硬约束。跨平台哈希对拍是定时炸弹。
+
+- [ ] **组件层浮点清零**(实测命中数,含真实代码非注释):
+  - `Components/Formation.cs`(73)、`Components/UnitAI.cs`(69)、`Components/Construction.cs`(25)、`Components/UnitMotion.cs`(20)、`Components/Repairable.cs`(18)、`Components/Trader.cs`(16)、`Components/TerrainComponent.cs`(16)及其余组件零散命中
+  - 方案:改用 `Fixed`/`FixedVector2D`;表现参数(动画/UI)可留 float 但不得参与 sim 判定
+- [ ] **Rmgen 层确定性**(76 处 RmgenCommon + 地图脚本全量):rmgen 结果决定初始状态,不同平台生成不一致 = 开局即 OOS。统一走 `RmgenMath/SafeMath`(已实现确定性三角/Pow/Exp/Log)
+- [ ] **AI 层确定性**(InfoMap 24 处、PetraConfig 17 处等):AI 在回合边界注入命令,必须与人类玩家同通道保持确定
+- [ ] **补 `CFixed::Pow`**(原版 `source/maths/Fixed.h`,科技/加成数值依赖)
+- [ ] Geometry.h 其余函数:`DistanceToSquare`、`PointIsInCircle`、`TestLineInSquare` 等
+- [ ] CI 加 Roslyn Analyzer 或正则门禁:kernel 目录禁 `float|double|MathF`(白名单 Maths/Fixed.cs 内部实现)
+
+---
+
+## 3. M2 模拟组件
+
+### 3A. 完全缺失的 JS 组件(`binaries/data/mods/public/simulation/components/`)
+
+- [ ] ❌ **DeathDamage** — 死亡自爆(攻城单位常见);挂入 DelayedDamage
+- [ ] ❌ **Upkeep** — 生产维护费;ProductionQueue 未挂钩
+- [ ] ❌ **AttackDetection** — 受击→GUI/AI 事件流(Petra 与警报依赖)
+- [ ] ❌ **AlertRaiser** — 受袭报警通知周边单位
+- [ ] ❌ **BattleDetection** — 战区检测
+- [ ] ❌ **AutoBuildable** — 地基自动完工
+- [ ] ❌ **UnitMotionFlying** — 飞行单位运动(当前飞行模板不可用)
+- [ ] 🔵 PopulationCapManager — 职能已折叠进 PlayerComponent.MaxPopCap/PopBonuses(L366–368),无需单独移植
+- [ ] 🔵 Upgrade — 命令层等价已存在(SimCommandExecutor.ApplyUpgrade L561–589);如需原版语义(Upgrade 组件+进度条 UI)再补
+- [ ] ⚪ MotionBall / Settlement — 演示/标记件,不移植
+
+### 3B. 部分实现的补齐点(按影响排序)
+
+| 优先 | 文件(vs 原版) | 缺口 |
+|---|---|---|
+| P1 | **UnitAI.cs**(2684 行 vs 原 6842,~85%) | COMBAT.CHASING/FINDINGNEWTARGET 空状态(L1324–1325);驻军 Pickup 接送(L957);Heal/Treasure 找新目标(L1019/L1208);CancelPack/Unpack 仅 FinishOrder(L889–890);交易取消找替代市场(L1057);编队 Obstruction 控制组切换(L152);炮塔站姿(L117) |
+| P1 | **Combat.cs** | 多攻击类型列表(Melee/Ranged/Stun/Slaughter 分立)、溅射、DeathDamage 联动、Health 再生回血;投射物 delay=0 即时结算(L14,需真弹道延迟) |
+| P1 | **Production.cs** | 批次原子产出 → 原版逐个出兵;autoQueue;Upkeep 挂接 |
+| P1 | **Technology.cs** | 研究队列+取消退款(L195–226);训练列表 requirements 科技门(Production.cs L70–94 只滤存在性) |
+| P1 | **PromotionComponent**(ExtraComponents.cs L63–72) | 数值 stub → 需 ChangeEntityTemplate 升级换模板 |
+| P1 | **BarterSystem.cs** | priceDifferences 恒 0、无每笔漂移、无 per-player BarterMultiplier(L9–11 已列 backlog) |
+| P2 | **UnitMotion.cs**(408 行 vs 原 C++ ~2000) | 异步路径请求架构(现同步解算+0.3s 节流 L41–47)、朝向更新、waypoints 序列化(L38–40 瞬态) |
+| P2 | **UnitSeparation.cs** | pushing-pressure、编队控制组豁免、中途 nudge、per-template weight、CheckMovement 不可通行钳制(TODO L99);O(n²) → 空间分格 |
+| P2 | **Formation.cs** | scatter 队形、双编队合并定时器、编队光环、LoadFormation 换模板、IsRearrangementAllowed(L27–31) |
+| P2 | **Garrison.cs/Turret.cs/GateComponent.cs** | Pickup 接送、外交翻面即时逐出、initGarrison/initTurrets(Garrison L14–18,Turret L13–16);友军接近自动开门、开合动画状态(Gate L5–7) |
+| P2 | **BuildingAI.cs** | attack preference 排序表(L9 取最近敌替代)、手动集火 unitAITarget/focusTargets(L10) |
+| P2 | TerritoryManager.cs | 影响力模型/BFS 连通/blink 为重建式近似(L8–10 自述),建议对照 CCmpTerritoryManager.cpp 校准 |
+| P3 | PathfinderComponent.cs | 增量阻挡更新=全量 RebuildGrid 替代(L118–119,P1);通行类仅 default/ship |
+
+---
+
+## 4. M0/M3/M6 内核基础设施
+
+| 项 | 状态 | 缺口 |
+|---|---|---|
+| 寻路 pass class 数据驱动 | 🟡 | 读 `pathfinder.xml` 全通行类(现仅 default/ship 硬编码) |
+| 寻路异步任务化 | 🟡 | LongPathfinder 线程池模式:请求在回合边界收割,结果确定 |
+| 寻路增量更新 | 🟡 | 阻挡变化局部刷新导航块(现全量重建) |
+| push-out / 圆形障碍 | 🟡 | 对照 CCmpObstructionManager 的 shape 体系补齐 |
+| 序列化类型覆盖 | 🟡 | U64/I64/Float、backref 共享对象;如需与原版存档互通再对齐二进制格式(当前自研格式 v11,可不对齐) |
+| TurnManager 节奏/超时 | 🟡 | 回合超时节奏控制、客户端落后踢出策略 |
+- [ ] 断线重连(NetworkDelayOverlay/NetworkStatusOverlay 无对应)
+- [ ] 观战者/spectator 支持
+- [ ] Templates:`actor|...` 模板装载、template_not_found 占位语义、schema 校验(Xeromyces 对应物)、hotloading
+- [ ] STUN 打洞接入直连流程(StunClient.cs 存在,未确认接线)
+
+---
+
+## 5. M8 Petra AI(~20% 体量,最大单项缺口)
+
+模块骨架齐全(headquarters/attackPlan/baseManager/worker/defense/naval/trade/garrison/queue/research/diplomacy 均有对应),但每个大幅简化。上游:`binaries/data/mods/public/simulation/ai/petra/`(31 个 .js ≈26k 行)。
+
+- [ ] 合并 Managers/PetraManagers **两套疑似重复实现**
+- [ ] attackPlan 完整状态机(原 2000+ 行):多波次编组、围攻路线、撤退判定
+- [ ] headquarters 深度逻辑(原 ≥2400 行,现 <600):基地选址评分、人口规划
+- [ ] worker 精细供给/基址分配逻辑
+- [ ] data.json 配置体系(difficultyLevel 已映射,参数表不全)
+- [ ] mapMask 掩码工具
+- [ ] common-api 补全(AIEntity/EntityCollection/Filters 等全家桶,现只挑了子集)
+
+---
+
+## 6. M9 rmgen / 触发器 / 教程
+
+### rmgen
+- 库核心齐(RandomMap/TileClass/Area/Constraint/Objects/Terrains/Noise/Library/HeightmapLib + SafeMath)
+- [ ] Placers:EntitiesObstructionPlacer、RandomPathPlacer(缺 2/10)
+- [ ] Painters:CityPainter、ElevationBlendingPainter、TerrainTextureArrayPainter(缺 3/13)
+- [ ] library.js 尾量:getObstructionSize、extractHeightmap、convertHeightmap1Dto2D、getDifficulties
+- [ ] **地图脚本批量翻译:~12/~173 张已完成**,剩余按热度排期(Mainland/ Sahara/ Mediterranean 等先做)
+
+### 触发器(Triggers/TriggerSystem.cs,279 行 vs Trigger.js ~1100 行)
+- [ ] 事件类型:5 种条件/6 种动作 → 50+(OnTreasureCollected/OnStructureBuilt/OnDiplomacyChanged…)
+- [ ] 定时器调度(DoAfterDelay/IntervalRepeats;现为纯轮询)
+- [ ] 事件总线(CallEvent)
+- [ ] 触发器状态序列化持久化
+
+### 教程(TutorialEngine.cs,720 行)
+- [ ] 改为读取 `simulation/tutorial/*.json` 数据驱动(现 IntroductoryTutorial 硬编 C#)
+- [ ] goal Delay 计时器(现退化为 Ready 按钮)
+- [ ] TriggerHelper 通用检查函数库成体系
+
+---
+
+## 7. M4 渲染(godot/)
+
+- [ ] **粒子系统**:无任何 GPUParticles 引用;原版 107 个粒子 XML → GPUParticles 映射
+- [ ] **CinemaManager 过场动画**
+- [ ] **天空盒代码**(ProceduralSky/SkyBox 无引用;MapEnvironment 需扩展)
+- [ ] **战场贴花**(血迹/弹孔;注意 Actors 里现有 decal 是材质贴花,不是这个)
+- [ ] CCmpDecay 尸体消融表现
+- [ ] 后处理对齐原版选项(bloom/HQ 2x·4x 上采样/sharpness;已有 Lambert 光照基础)
+- ✅ 已存在勿重复造:单位血条(DrawHealth/HealthBar)、集结点标记+路径线(Main.cs:2482)、投射物视觉池(ProjectilePool/ImpactEffectPool)、迷雾小地图层(FogTextureBuilder)
+
+## 8. M5 GUI / 音频 / 相机 / GuiInterface
+
+### GUI 页面(对照原版 page_*.xml)
+- [ ] prelobby 三页(entrance/login/register)
+- [ ] viewer(actor 查看器)
+- [ ] mapbrowser
+- [ ] campaigns 战役页(依赖触发器成熟)
+- [ ] splashscreen/tips
+- [ ] credits
+- [ ] userreport
+- [ ] locale_advanced(LocalePanel 扩展)
+- [ ] mod 框架对话框全套(modmod/modio/incompatible_mods/termsdialog/msgbox/timedconfirmation/colormixer)
+- [ ] autostart(自动化测试入口,CI 有用)
+- [ ] 收敛 LobbyUI.cs 与 MainMenu.cs 两套主菜单(LobbyUI 部分子项 action=null)
+
+### 音频(AudioManager.cs)
+- [ ] 3D 空间化(无 AudioStreamPlayer3D 引用;现距离衰减靠手动增益)
+
+### 相机(RTSCamera.cs vs GameView.cpp)
+- [ ] 跟随选中单位
+- [ ] 平滑加减速
+- [ ] 俯仰限制、右键 pan 拖拽
+- [ ] 缩放锚定鼠标指向点(现仅改 distance)
+- [ ] 滚轮旋转热键映射对齐(camera.rotate.wheel.cw/ccw)
+
+### GuiInterface(sim→UI 桥)
+- [ ] 覆盖面约原版 1/5;TradePanel/DiplomacyPanel 绕桥直查 SimBridge 组件 → 统一走桥协议
+
+---
+
+## 9. 建议路线(执行顺序)
+
+| 波次 | 内容 | 理由 |
+|---|---|---|
+| **P0** | §2 确定性清理(浮点清零 + Fixed.Pow + 门禁) | 所有联机/OOS 前置,越晚修成本越高 |
+| **P0** | §3A DeathDamage/Upkeep/AttackDetection + §3B Combat 多攻击类型/再生/Promotion 换模板/Barter 漂移/Production 粒度+研究队列 | 单机玩法闭环完整性 |
+| **P1** | UnitMotion 异步架构 + UnitSeparation push-pressure + 寻路增量更新/pass class 数据驱动 | 300 单位性能目标 |
+| **P1** | Petra 深化(先合并双 Manager,再 attackPlan/headquarters/worker) | AI 是"能不能打完一局"的关键 |
+| **P1** | 渲染五件套:粒子/天空盒/3D 音频/(过场、贴花可后置) | 表现力达标 |
+| **P2** | rmgen 地图铺量 + 触发器事件总线 + 教程 JSON 化 + GUI 缺失页面 | 内容与体验对齐 |
