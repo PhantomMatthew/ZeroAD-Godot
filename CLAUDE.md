@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A **Godot 4.7 (.NET) + C# rewrite of 0 A.D.** Two trees coexist:
+A **Godot 4.7.2 (.NET) + C# rewrite of 0 A.D.** Two trees coexist:
 
 - `src/ZeroAD.Sim/` + `godot/` — the active C# rewrite. Edit here.
 - `binaries/` `build/` `libraries/` `source/` — untracked junctions/symlinks into an external 0 A.D. checkout (`<0ad upstream>`: `/Users/matthew/SourceCode/gitea/0ad` on macOS, `C:\SourceCode\0ad` on Windows). The rewrite reads its XML templates and art verbatim; its C++/JS is the authoritative behavioral reference.
@@ -27,7 +27,7 @@ dotnet test  src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj --filter "FullyQualifi
 
 # Presentation layer
 dotnet build godot/GodotProject.csproj
-# Run: open godot/project.godot in Godot 4.7 (.NET) and press Play.
+# Run: open godot/project.godot in Godot 4.7.2 (.NET) and press Play.
 
 # Asset conversion (run from godot/, needs Blender 4.2 LTS via $BLENDER)
 sh tools/run_full_pipeline.sh
@@ -56,7 +56,7 @@ Out-of-session state travels through three autoloads (`GameLaunchConfig`, `Match
 - All player commands enter the sim through the lockstep command path (`SimCommandExecutor`), never by direct component mutation — this is what keeps SP AI and MP hash-identical.
 
 ### Conventions
-- Godot pinned to **4.7**; target framework net8.0 everywhere; `ImplicitUsings` disabled in the kernel (write explicit usings).
+- Godot pinned to **4.7.2** (`Godot.NET.Sdk/4.7.2`); target framework net8.0 everywhere; `ImplicitUsings` disabled in the kernel (write explicit usings).
 - Renderer is **`gl_compatibility`** by design (`project.godot`). Consequences: custom shaders don't receive shadows, and transparent MUL blending is unreliable — terrain shadows come from splat baking, territory from a fog overlay. Don't "fix" this by switching to Forward+/Metal.
 - The C++ world is left-handed relative to Godot's. `_worldRoot` carries `Scale.z = -1`; hang new world visuals under it and keep sim coordinates unmirrored. Only `RTSCamera` and `ScreenToWorld` cross that boundary; the minimap flips z independently.
 

@@ -4,7 +4,7 @@ Guidance for AI agents working in this repo. Every line answers "would an agent 
 
 ## What this repo is
 
-A **Godot 4.7 (.NET) + C# rewrite of 0 A.D.** (the open-source RTS). It is a hybrid repo with two distinct trees — knowing which one you are in is the single most important thing:
+A **Godot 4.7.2 (.NET) + C# rewrite of 0 A.D.** (the open-source RTS). It is a hybrid repo with two distinct trees — knowing which one you are in is the single most important thing:
 
 | Tree | Status | Purpose |
 |---|---|---|
@@ -81,7 +81,7 @@ dotnet test src/ZeroAD.Sim.Tests/ZeroAD.Sim.Tests.csproj --filter "FullyQualifie
 # Godot presentation (requires Godot .NET SDK environment)
 dotnet build godot/GodotProject.csproj
 
-# Run the game: open godot/project.godot in Godot 4.7 (.NET build) and press Play.
+# Run the game: open godot/project.godot in Godot 4.7.2 (.NET build) and press Play.
 ```
 
 ### Warnings are errors (both C# projects)
@@ -125,7 +125,7 @@ Entity templates (data, consumed as-is by the rewrite): `binaries/data/mods/publ
 
 ## Conventions that differ from defaults
 
-- **Godot version is pinned to 4.7** (`Godot.NET.Sdk/4.7.0`, `project.godot` features `4.7`). Don't assume 4.x-generic APIs.
+- **Godot version is pinned to 4.7.2** (`Godot.NET.Sdk/4.7.2`, `project.godot` features `4.7`). Don't assume 4.x-generic APIs. Stay on the 4.7.x maintenance line; don't jump to 4.8 without an explicit decision.
 - **Target framework is net8.0** across all three C# projects.
 - **`ImplicitUsings` disabled** in the kernel — write explicit `using` directives.
 - C# style follows `.claude/rules/csharp/` (nullable on, `record` for value models, `async/await` with `CancellationToken`). Run `dotnet format` if available.
