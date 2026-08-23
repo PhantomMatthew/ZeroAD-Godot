@@ -86,15 +86,18 @@ public static class TerrainRenderer
             var bakedWhole = SplatBaker.BakeAlbedo(map);
             if (bakedWhole != null)
             {
+                // Uv1Scale:网格 UV=world×0.125(1024m 图 → 0..128)压回 0..1,整图
+                // 烘焙贴图与地形一一对应;漏了它整图贴图会平铺 128 次(贴图全错)。
+                float uvScale = 8f / map.MapSizeMeters;
                 var mat = new StandardMaterial3D
                 {
                     AlbedoTexture = ImageTexture.CreateFromImage(bakedWhole),
+                    Uv1Scale = new Vector3(uvScale, uvScale, 1f),
                     Roughness = 1f,
                     DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
                     SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
                     CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                     TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps,
-                    TextureRepeat = true,
                 };
                 fullMesh.SurfaceSetMaterial(0, mat);
                 root.AddChild(new MeshInstance3D { Mesh = fullMesh, Name = "TerrainBaked" });
