@@ -480,7 +480,7 @@ public sealed partial class StructreePanel : ModalPanelBase
                 Texture = tex,
                 Position = new Vector2(boxWidth / 2 - BuildingIconSize / 2, BuildingIconY),
                 Size = new Vector2(BuildingIconSize, BuildingIconSize),
-                TooltipText = bldg.DisplayName,
+                TooltipText = BuildEntityTooltip(bldg),
             });
         }
 
@@ -494,19 +494,40 @@ public sealed partial class StructreePanel : ModalPanelBase
             float y = IconAndCaptionHeight + ProdRowHeight * r + ProdMargin;
             foreach (var (iconTex, tip) in rows[r])
             {
-                box.AddChild(new TextureRect
+                var iconBtn = new Button
                 {
-                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,   // 见 AddPhaseIcon 注释
-                    StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-                    Texture = iconTex,
+                    // 平面按钮当图标:贴图+完整说明弹窗(原版 referenceTooltip:名称/费用/描述)
+                    Icon = iconTex,
+                    ExpandIcon = true,
+                    CustomMinimumSize = new Vector2(ProdIcon, ProdIcon),
+                    Flat = true,
                     Position = new Vector2(x, y),
                     Size = new Vector2(ProdIcon, ProdIcon),
                     TooltipText = tip,
-                });
+                };
+                box.AddChild(iconBtn);
                 x += ProdStride;
             }
         }
         return box;
+    }
+
+    /// <summary>实体完整说明(原版 EntityBox.compileTooltip):专名/通名 + 费用 +
+    /// 模板描述。TreeEntry 无描述字段,从模板缓存取(Tooltip 字段存在 ParamNode)。</summary>
+    private string BuildEntityTooltip(TreeEntry entry)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(entry.DisplayName);
+        if (_templates != null && _templates.Cache.TryGetValue(entry.Template, out var node))
+        {
+            var desc = node.GetChild("Identity").GetChild("Tooltip");
+            if (desc.IsOk && desc.ToString().Length > 0)
+                sb.Append('\n').Append(desc);
+            var specific = node.GetChild("Identity").GetChild("SpecificName");
+            if (specific.IsOk && specific.ToString().Length > 0)
+                sb.Append('\n').Append(specific);
+        }
+        return sb.ToString();
     }
 
     /// <summary>题名宽(EntityBox.captionWidth):12px 字宽;决定盒宽上限之一。</summary>
