@@ -17,9 +17,9 @@ uniform float world_size = 256.0;
 void fragment() {
 	vec2 world_xz = UV / 0.125;
 
-	// 雾:unexplored → 42% 黑(暗化可辨,对齐 C++ 观感),explored → ~21% 黑,visible → 0。
+	// 雾:unexplored → 纯黑(对齐 C++ 完全不可见),explored(0.5) → 50%,visible → 0。
 	float fog = texture(fog_texture, world_xz / world_size).r;
-	float bright = mix(0.58, 1.0, smoothstep(0.0, 1.0, fog));
+	float bright = mix(0.0, 1.0, smoothstep(0.0, 1.0, fog));
 	float a_fog = 1.0 - bright;
 
 	// 领土:4m cell 网格,R = owner id,G = blink 标志;4 邻不同主即边界。
