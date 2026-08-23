@@ -2760,10 +2760,30 @@ public sealed partial class SimBridge : Node
 
 	/// <summary>Fog-of-war on the presentation layer: HIDDEN entities lose their node,
 	/// FOGGED ones (structures/mirages standing in explored fog) stay but ghosted.
-	/// Applied only on transitions (per-player visibility changes are rare per frame).</summary>
+	/// Applied only on transitions (per-player visibility changes are rare per frame).
+	/// 装饰植被(actor| 纯视觉,不进 sim 无 LOS 实体)在此按 LOS 网格显隐:未探索
+	/// tile 的节点 Visible=false——否则它们穿透黑色迷雾浮在地形上(C++ 的 decoratives
+	/// 同样受 LOS 门控)。</summary>
 	private void SyncVisibility()
 	{
 		int lp = (int)LocalPlayerId;
+		// 装饰植被:按网格 explored 位显隐(无实体,查 _range.Los.IsExplored)。
+		if (_decorativeNodes.Count > 0)
+		{
+			var los = _range.Los;
+			for (int i = 0; i < _decorativeNodes.Count; i++)
+			{
+				var d = _decorativeNodes[i];
+				if (!GodotObject.IsInstanceValid(d)) continue;
+				// 节点在视觉空间(visZ = WorldSize − simZ);LOS 网格吃 sim 坐标。
+				var p = d.Position;
+				var (vi, vj) = los.WorldToVertex(
+					ZeroAD.Sim.Maths.Fixed.FromFloat(p.X),
+					ZeroAD.Sim.Maths.Fixed.FromFloat(TerrainHeightService.WorldSize - p.Z));
+				bool explored = los.IsExplored(lp, vi, vj);
+				if (d.Visible != explored) d.Visible = explored;
+			}
+		}
 		foreach (var kvp in _entityNodes)
 		{
 			var vis = _range.GetLosVisibility(kvp.Key, lp);
