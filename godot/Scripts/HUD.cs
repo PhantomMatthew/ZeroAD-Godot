@@ -1348,7 +1348,16 @@ public sealed partial class HUD : CanvasLayer
         var def = tm.GetDefinition(tech);
         if (def == null) return;
         // 原版过滤:requirements 未满足(高阶段科技)→ 不显示(而非置灰)。
-        if (!tm.CanResearch(tech)) return;
+        if (!tm.CanResearch(tech))
+        {
+            // 阶段升级科技前置不足 → 置灰显示(原版研究面板:灰色图标+需求提示),
+            // 其余科技保持隐藏。缺了它开局看不到"升级到城镇时代"的图标。
+            if (!tech.Contains("phase")) return;
+            string hint = tech.Contains("city") ? "需要 3 座 Town 建筑" : "需要 5 座 Village 建筑";
+            var greyTex = def.Icon.Length > 0 ? LoadPortraitFromIcon("technologies/" + def.Icon) : null;
+            AddCmdButton(greyTex, def.GenericName + "\n" + hint, () => { }, enabled: false);
+            return;
+        }
 
         string label = def.GenericName;
         var costs = new List<string>();

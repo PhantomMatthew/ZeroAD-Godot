@@ -573,9 +573,41 @@ public sealed partial class Main : Node3D
 			_camera.FreeFlyEnabled = true;
 
 		// dev 钩子:ZEROAD_SELECT_CC=1 开局自动选中本地玩家的 CC(触发生产面板构建,
-		// 配合 HUD-DIAG 验证时代过滤)。
+		// 配合 HUD-DIAG 验证时代过滤)。ZEROAD_SELECT_TOWER=1 选中/生成己方哨塔
+		// (验证 upgrade_panel 图标)。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_SELECT_TOWER") == "1")
+		{
+			EntityId tower = default;
+			foreach (var e in _sim.Sim.AllEntities)
+			{
+				var id = _sim.Sim.QueryInterface<IdentityComponent>(e);
+				var own = _sim.Sim.QueryInterface<OwnershipComponent>(e);
+				if (id != null && own != null && own.PlayerId == (int)_sim.LocalPlayerId
+					&& id.TemplateName.Contains("sentry_tower"))
+				{
+					tower = e;
+					break;
+				}
+			}
+			if (tower == default && _camera?.Focus is Vector3 f)
+			{
+				tower = _sim.SpawnFromTemplate("structures/athen/sentry_tower", f.X + 20, f.Z + 10);
+				_sim.AssignOwner(tower, (int)_sim.LocalPlayerId);
+			}
+			if (tower != default)
+				SelectOnly(new[] { tower });
+		}
 		if (System.Environment.GetEnvironmentVariable("ZEROAD_SELECT_CC") == "1")
 		{
+			if (int.TryParse(System.Environment.GetEnvironmentVariable("ZEROAD_BUILD_VILLAGE"), out int nHouses))
+			{
+				string civ = _sim.GetPlayer()?.Civ ?? "athen";
+				for (int i = 0; i < nHouses; i++)
+				{
+					var h = _sim.SpawnFromTemplate($"structures/{civ}/house", 530 + i * 12, 130 + i * 8);
+					_sim.AssignOwner(h, (int)_sim.LocalPlayerId);
+				}
+			}
 			foreach (var e in _sim.Sim.AllEntities)
 			{
 				var id = _sim.Sim.QueryInterface<IdentityComponent>(e);
