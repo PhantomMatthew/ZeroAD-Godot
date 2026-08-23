@@ -2775,11 +2775,12 @@ public sealed partial class SimBridge : Node
 			{
 				var d = _decorativeNodes[i];
 				if (!GodotObject.IsInstanceValid(d)) continue;
-				// 节点在视觉空间(visZ = WorldSize − simZ);LOS 网格吃 sim 坐标。
+				// 节点挂在镜像根(UnitContainer)下,local Position 即 sim 坐标
+				//(z 镜像由父节点 Scale.z=−1 在世界变换时施加,local 无需再换算)。
 				var p = d.Position;
 				var (vi, vj) = los.WorldToVertex(
 					ZeroAD.Sim.Maths.Fixed.FromFloat(p.X),
-					ZeroAD.Sim.Maths.Fixed.FromFloat(TerrainHeightService.WorldSize - p.Z));
+					ZeroAD.Sim.Maths.Fixed.FromFloat(p.Z));
 				bool explored = los.IsExplored(lp, vi, vj);
 				if (d.Visible != explored) d.Visible = explored;
 			}
