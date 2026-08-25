@@ -59,16 +59,61 @@ public sealed class PromotionComponent : ComponentBase, IComponentMessageHandler
     public int XP;
     public int Level = 1;
     public int XpNext = 20;
+    /// <summary>Promotion/Entity:晋升目标模板(空 = 无晋升链,如 elite 段/英雄)。</summary>
+    public string PromoteTo = "";
 
-    public void AddXP(int amount)
+    public void AddXP(ComponentManager cm, int amount)
     {
         XP += amount;
-        while (XP >= XpNext)
+        // 原版 Promotion.js:XP ≥ RequiredXp 即 Promote(ChangeEntityTemplate 换模板,
+        // 位置/朝向/属主保持,血量按比例折算,余量 XP 结转新段)。
+        if (PromoteTo.Length > 0 && XP >= XpNext && cm != null)
         {
+            Promote(cm, XP - XpNext);
+            return;
+        }
+        while (XP >= XpNext && PromoteTo.Length == 0)
+        {
+            // 无晋升链(原版到顶):等级继续累计(供表现层军衔条)。
             XP -= XpNext;
             Level++;
             XpNext = (int)(XpNext * 1.5f);
         }
+    }
+
+    /// <summary>旧签名(无 cm):只累计不晋升,行为兼容。</summary>
+    public void AddXP(int amount) => AddXP(null!, amount);
+
+    /// <summary>换模板晋升(原版 ChangeEntityTemplate 语义):同位同向同主重建,
+    /// 血量比例折算,余量 XP 结转。新实体的组件字段由装配器按新模板注入。</summary>
+    private void Promote(ComponentManager cm, int carryXp)
+    {
+        var identity = cm.QueryInterface<IdentityComponent>(Entity);
+        var pos = cm.QueryInterface<PositionComponent>(Entity);
+        var owner = cm.QueryInterface<OwnershipComponent>(Entity);
+        var health = cm.QueryInterface<HealthComponent>(Entity);
+        if (identity == null || pos == null || owner == null) return;
+
+        string target = PromoteTo.Replace("{civ}",
+            cm.GetPlayerEntity(owner.PlayerId)?.Civ ?? "");
+        if (target.Contains('{') || cm.Templates?.TemplateExists(target) != true) return;
+
+        float x = pos.Position.X.ToFloat();
+        float z = pos.Position.Z.ToFloat();
+        var yaw = pos.Rotation.Y;
+        float frac = health != null && health.Max > 0
+            ? (float)health.Current / health.Max : 1f;
+        cm.DestroyEntity(Entity);
+        var promoted = cm.SpawnEntity(target, x, z, owner.PlayerId);
+        var newPos = cm.QueryInterface<PositionComponent>(promoted);
+        if (newPos != null)
+            newPos.Rotation = new Maths.FixedVector3D(pos.Rotation.X, yaw, pos.Rotation.Z);
+        var newHealth = cm.QueryInterface<HealthComponent>(promoted);
+        if (newHealth != null && frac < 1f)
+            newHealth.Current = (int)MathF.Round(newHealth.Max * frac);
+        var newPromotion = cm.QueryInterface<PromotionComponent>(promoted);
+        if (newPromotion != null && carryXp > 0)
+            newPromotion.XP = carryXp;
     }
 
     public override void Serialize(ISerializer s)
@@ -76,6 +121,7 @@ public sealed class PromotionComponent : ComponentBase, IComponentMessageHandler
         s.NumberI32("xp", XP);
         s.NumberI32("lvl", Level);
         s.NumberI32("next", XpNext);
+        s.StringASCII("to", PromoteTo);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -83,6 +129,7 @@ public sealed class PromotionComponent : ComponentBase, IComponentMessageHandler
         XP = d.NumberI32("xp");
         Level = d.NumberI32("lvl");
         XpNext = d.NumberI32("next");
+        PromoteTo = d.StringASCII("to");
     }
 
     public void HandleMessage(IMessage message) { }

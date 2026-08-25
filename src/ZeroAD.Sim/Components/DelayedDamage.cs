@@ -147,7 +147,7 @@ public sealed class DelayedDamage
             if (lootXp > 0)
             {
                 int xp = (int)MathF.Floor(lootXp * (float)dealt / health.Max);
-                if (xp > 0) promotion.AddXP(xp);
+                if (xp > 0) promotion.AddXP(cm, xp);
             }
         }
 

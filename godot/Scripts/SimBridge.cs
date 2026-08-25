@@ -247,6 +247,8 @@ public sealed partial class SimBridge : Node
 		var losComp = new LosManagerComponent();
 		losComp.Attach(_range);
 		_sim.AddComponent(_terrainEntity, losComp);
+		// 易物价差全局状态的存档骑缝(BarterSystem 漂移表 → 状态哈希/存档)。
+		_sim.AddComponent(_terrainEntity, new BarterStateComponent());
 
 		foreach (var slot in slots)
 		{
@@ -702,7 +704,9 @@ public sealed partial class SimBridge : Node
 			Classes = stats?.GetClassList() ?? new List<string> { "Building" }
 		};
 		_sim.AddComponent(entity, identity);
-		_sim.AddComponent(entity, new HealthComponent { Current = stats?.MaxHealth ?? 500, Max = stats?.MaxHealth ?? 500 });
+		_sim.AddComponent(entity, new HealthComponent
+		{ Current = stats?.MaxHealth ?? 500, Max = stats?.MaxHealth ?? 500,
+			RegenRate = stats?.HealthRegenRate ?? 0f, IdleRegenRate = stats?.HealthIdleRegenRate ?? 0f });
 
 		// Population-providing buildings (House etc.) carry their bonus as data so pop-limit
 		// accounting is data-driven via RecomputePlayerPopBonus rather than hardcoded per-template.
@@ -907,7 +911,9 @@ public sealed partial class SimBridge : Node
 		// 原版数据:树木/岩石无 Health(不可攻击),fauna 有(可猎)。9999 硬编码让树
 		// 也有了血条 → 悬停树出剑/可攻击树,与原版相悖。只给模板真声明 <Health> 的装。
 		if (stats != null && stats.HasHealth)
-			_sim.AddComponent(entity, new HealthComponent { Current = stats.MaxHealth, Max = stats.MaxHealth });
+			_sim.AddComponent(entity, new HealthComponent
+			{ Current = stats.MaxHealth, Max = stats.MaxHealth,
+				RegenRate = stats.HealthRegenRate, IdleRegenRate = stats.HealthIdleRegenRate });
 
 		var pos = _sim.QueryInterface<PositionComponent>(entity);
 		if (pos != null)
@@ -1493,7 +1499,11 @@ public sealed partial class SimBridge : Node
 			_sim.QueryInterface<AlertRaiserComponent>(entity)?.Tick(dt);
 			_sim.QueryInterface<AttackDetectionComponent>(entity)?.Tick(dt);
 			_sim.QueryInterface<BattleDetectionComponent>(entity)?.Tick(dt);
+			// Health 再生(原版 Health.js RegenTimer:建筑 5 HP/s 自愈等)。
+			_sim.QueryInterface<HealthComponent>(entity)?.TickRegen(_sim, dt);
 		}
+		// 易物价差回落(原版 Barter.ProgressTimeout:每 5s 向 0 收敛)。
+		BarterSystem.TickRestore(dt);
 	}
 
 	private void TickStatusEffects(float dt)

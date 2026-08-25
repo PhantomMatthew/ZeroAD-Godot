@@ -19,6 +19,33 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
     /// <see cref="ValueModificationApplier.RescaleHealth"/> 按比例缩放 Current。</summary>
     public int BaseMax;
 
+    /// <summary>模板 Health/RegenRate(HP/秒;原版 Health.js Timer 每秒回复)。
+    /// 建筑 template_structure 默认 5,单位基类 0(21 模板自定义)。</summary>
+    public float RegenRate;
+    /// <summary>模板 Health/IdleRegenRate(空闲单位额外回复;单位闲置时生效)。</summary>
+    public float IdleRegenRate;
+    // 小数回复结转(整型 HP 下 sub-1 再生量逐 tick 累积,同 Repairable 模式)。
+    private float _regenCarry;
+
+    /// <summary>每 tick 再生(原版 Health.js RegenTimer:hp += RegenRate[+Idle 若空闲];
+    /// 空闲判定 = 无 UnitAI 当前攻击目标,近似原版 IsIdle)。</summary>
+    public void TickRegen(ComponentManager cm, float dt)
+    {
+        if (IsDead || Current >= Max) { _regenCarry = 0; return; }
+        float rate = RegenRate;
+        if (rate <= 0 && IdleRegenRate <= 0) return;
+        var ai = cm.QueryInterface<UnitAIComponent>(Entity);
+        if (IdleRegenRate > 0 && ai is { IsIdle: true }) rate += IdleRegenRate;
+        if (rate <= 0) return;
+        _regenCarry += rate * dt;
+        int whole = (int)MathF.Floor(_regenCarry);
+        if (whole > 0)
+        {
+            _regenCarry -= whole;
+            Heal(whole);
+        }
+    }
+
     /// <summary>修正值查询用的基值:BaseMax > 0 优先,否则 Max。</summary>
     public int BaseMaxOrMax => BaseMax > 0 ? BaseMax : Max;
 
@@ -57,6 +84,9 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
         s.NumberI32("max", Max);
         s.NumberI32("bmax", BaseMax);
         s.Bool("unhealable", Unhealable);
+        s.NumberFixed("regen", Maths.Fixed.FromFloat(RegenRate));
+        s.NumberFixed("iregen", Maths.Fixed.FromFloat(IdleRegenRate));
+        s.NumberFixed("carry", Maths.Fixed.FromFloat(_regenCarry));
     }
 
     public override void Deserialize(IDeserializer d)
@@ -65,6 +95,9 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
         Max = d.NumberI32("max");
         BaseMax = d.NumberI32("bmax");
         Unhealable = d.Bool("unhealable");
+        RegenRate = d.NumberFixed("regen").ToFloat();
+        IdleRegenRate = d.NumberFixed("iregen").ToFloat();
+        _regenCarry = d.NumberFixed("carry").ToFloat();
     }
 
     public void HandleMessage(IMessage message) { }

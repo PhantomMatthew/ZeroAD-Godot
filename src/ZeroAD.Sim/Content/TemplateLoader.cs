@@ -162,6 +162,11 @@ namespace ZeroAD.Sim.Content
                 stats.HasHealth = true;
                 stats.MaxHealth = health.GetChild("Max").IsOk
                     ? health.GetChild("Max").ToInt() : 100;
+                // RegenRate/IdleRegenRate(原版 Health.js 每秒再生;建筑默认 5)。
+                var regen = health.GetChild("RegenRate");
+                if (regen.IsOk) stats.HealthRegenRate = regen.ToFixed().ToFloat();
+                var idleRegen = health.GetChild("IdleRegenRate");
+                if (idleRegen.IsOk) stats.HealthIdleRegenRate = idleRegen.ToFixed().ToFloat();
             }
 
             var cost = node.GetChild("Cost");
@@ -925,6 +930,18 @@ namespace ZeroAD.Sim.Content
                     stats.FlyingMaxSpeed = flyNode.GetChild("MaxSpeed").ToFixed().ToFloat();
             }
 
+            // Promotion(军衔晋升):Entity = 下一 rank 模板(继承链合并——基类只给
+            // RequiredXp,rank 模板给 Entity;elite 段无 Promotion 即到顶)。
+            var promoNode = node.GetChild("Promotion");
+            if (promoNode.IsOk)
+            {
+                stats.HasPromotion = true;
+                var pEnt = promoNode.GetChild("Entity");
+                if (pEnt.IsOk) stats.PromotionEntity = pEnt.ToString().Trim();
+                var pXp = promoNode.GetChild("RequiredXp");
+                if (pXp.IsOk) stats.PromotionRequiredXp = pXp.ToInt();
+            }
+
             // Loot(战利品;template_unit/gaia 动物等 247 模板):xp + 四资源直子节点。
             var lootNode = node.GetChild("Loot");
             if (lootNode.IsOk)
@@ -1174,6 +1191,15 @@ namespace ZeroAD.Sim.Content
         /// <summary>UnitMotionFlying(鸟群等飞行单位)。</summary>
         public bool HasUnitMotionFlying;
         public float FlyingMaxSpeed = 15f;
+        /// <summary>Promotion(军衔):晋升链(空 = 到顶)与阈值(继承链合并:
+        /// template_unit_infantry 基类 RequiredXp=100,各兵种可覆盖)。</summary>
+        public bool HasPromotion;
+        /// <summary>Health/RegenRate(HP/秒;建筑 template_structure 默认 5)。</summary>
+        public float HealthRegenRate;
+        /// <summary>Health/IdleRegenRate(空闲单位额外再生)。</summary>
+        public float HealthIdleRegenRate;
+        public string PromotionEntity = "";
+        public int PromotionRequiredXp = 100;
         /// <summary>UnitMotion/PassabilityClass("default"/"ship";原版 plane 另有
         /// unrestricted,未移植)。船 = "ship" → 水路寻路 + 水面出生。</summary>
         public string PassabilityClass = "default";

@@ -403,6 +403,8 @@ public static class SimSystem
         _territory = null;
         _net = null;
         _terrain = null;
+        // 易物价差归零(全局静态经济状态;同上——新世界不带旧账)。
+        BarterSystem.Reset();
     }
     public static ComponentManager? Sim => _cm;
     public static ObstructionManager? Obstructions => _obstructions;

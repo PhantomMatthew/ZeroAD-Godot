@@ -44,7 +44,13 @@ namespace ZeroAD.Sim
 
             string name = stats?.Name ?? (isSoldier ? "Soldier" : isVillager ? "Villager" : "Unit");
             int maxHp = stats?.MaxHealth ?? (isSoldier ? 80 : 50);
-            cm.AddComponent(entity, new HealthComponent { Current = maxHp, Max = maxHp });
+            cm.AddComponent(entity, new HealthComponent
+            {
+                Current = maxHp,
+                Max = maxHp,
+                RegenRate = stats?.HealthRegenRate ?? 0f,
+                IdleRegenRate = stats?.HealthIdleRegenRate ?? 0f,
+            });
 
             var identity = new IdentityComponent
             {
@@ -280,6 +286,16 @@ namespace ZeroAD.Sim
             {
                 flyingMotion.IsFlying = true;
                 flyingMotion.Speed = Maths.Fixed.FromFloat(stats.FlyingMaxSpeed);
+            }
+            // Promotion(军衔晋升链):此前从未装配 → XP 从不累计、士兵永不升段。
+            if (stats != null && stats.HasPromotion
+                && cm.QueryInterface<PromotionComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new PromotionComponent
+                {
+                    PromoteTo = stats.PromotionEntity,
+                    XpNext = stats.PromotionRequiredXp,
+                });
             }
 
             // Garrisonable(可驻防;template_unit 默认 Size=1):Garrisonable.js 行为件。
