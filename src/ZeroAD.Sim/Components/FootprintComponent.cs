@@ -73,10 +73,13 @@ namespace ZeroAD.Sim.Components
                 int numPoints = 8 + ring * 4; // more points on outer rings
                 for (int i = 0; i < numPoints; i++)
                 {
-                    // Spawn-time (not per-tick) computation; position is deterministic given i/numPoints.
-                    float a = (float)(2 * Math.PI * i / numPoints);
-                    Fixed sx = cx + Fixed.FromFloat((float)Math.Cos(a)).Multiply(ringDist);
-                    Fixed sz = cz + Fixed.FromFloat((float)Math.Sin(a)).Multiply(ringDist);
+                    // 均匀环采样角:2π·i/numPoints 全程定点(Fixed.Pi 整型常数 +
+                    // Trig.SinCosApprox 五阶近似)——Math.Cos/Sin 属 libm,跨平台
+                    // 低位不同会让出生点漂移 → OOS。
+                    Fixed angle = Fixed.Pi * 2 * i / numPoints;
+                    Trig.SinCosApprox(angle, out Fixed sinA, out Fixed cosA);
+                    Fixed sx = cx + cosA.Multiply(ringDist);
+                    Fixed sz = cz + sinA.Multiply(ringDist);
 
                     var pr = pf.CheckUnitPlacement(sx, sz, spawnedRadius, skipTag, passClass);
                     if (pr == PlacementResult.Success)

@@ -308,7 +308,7 @@ namespace ZeroAD.Sim.Rmgen.Common
             int nbForests = (int)RmgenLibrary.ScaleByMapSize(8, 36, map.GetSize());
             if (nbForests <= 0) return;
             // 上游 numCircles = numberOfTrees/numberOfForests(JS 浮点,for i<numCircles ⇒ ceil)
-            int treesPerForest = (int)System.Math.Ceiling((double)totalNumberOfTrees / nbForests);
+            int treesPerForest = (int)SafeMath.Ceil((double)totalNumberOfTrees / nbForests);
             CreateForests(rng, map, terrainSet, constraint, tileClass, nbForests, treesPerForest);
         }
 
@@ -458,10 +458,11 @@ namespace ZeroAD.Sim.Rmgen.Common
             int numPlayers = GetNumPlayers(settings);
             for (int p = 1; p <= numPlayers; p++)
             {
-                double angle = (double)(p - 1) / numPlayers * 2 * Math.PI;
+                // SafeMath 三角:玩家出生点决定初始实体位置,libm 跨平台差异 → 开局即 OOS。
+                double angle = (double)(p - 1) / numPlayers * 2 * SafeMath.PI;
                 double dist = map.GetSize() * 0.35;
-                double x = map.GetSize() / 2.0 + dist * Math.Cos(angle);
-                double z = map.GetSize() / 2.0 + dist * Math.Sin(angle);
+                double x = map.GetSize() / 2.0 + dist * SafeMath.Cos(angle);
+                double z = map.GetSize() / 2.0 + dist * SafeMath.Sin(angle);
                 var pos = new RmgenVector2D(x, z);
                 pos.Floor();
                 PlacePlayerBase(map, rng, settings, GetCivCode(settings, p), p, pos, playerTileClass,

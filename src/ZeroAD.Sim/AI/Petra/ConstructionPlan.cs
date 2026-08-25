@@ -103,12 +103,14 @@ public sealed class ConstructionPlan : QueuePlan
         }
         if (refPoint == null) return null;
 
-        // 简化：CC 附近 15-30 单位随机位置
+        // 简化：CC 附近 15-30 单位随机位置。角/距走 Rand48 派生(确定);
+        // sincos 用定点近似(AI 选址进 sim 状态,libm 三角跨平台低位不同 → OOS)。
         var rng = gameState.Cm.RNG;
         float angle = (float)(rng.NextDouble() * Math.PI * 2);
         float dist = 15f + (float)(rng.NextDouble() * 15);
-        float x = refPoint.Position2D.X.ToFloat() + dist * MathF.Cos(angle);
-        float z = refPoint.Position2D.Y.ToFloat() + dist * MathF.Sin(angle);
+        Trig.SinCosApprox(Fixed.FromFloat(angle), out Fixed planSin, out Fixed planCos);
+        float x = refPoint.Position2D.X.ToFloat() + dist * planCos.ToFloat();
+        float z = refPoint.Position2D.Y.ToFloat() + dist * planSin.ToFloat();
 
         // base = 第一个 base 的 ID（简化）
         int baseId = 1;

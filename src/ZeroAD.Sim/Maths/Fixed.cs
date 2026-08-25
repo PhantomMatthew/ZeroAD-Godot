@@ -26,9 +26,66 @@ public readonly struct Fixed : IEquatable<Fixed>, IComparable<Fixed>
 
     public static Fixed Zero => new(0);
     public static Fixed Epsilon => new(1);
+    public static Fixed One => new(FractPow2);
+    /// <summary>最大有限值(0x7FFFFFFF ≈ 32767.99998;C++ 同款钳制界)。</summary>
+    public static Fixed MaxValue => new(int.MaxValue);
 
     /// <summary>pi &lt;&lt; 16 = 205887</summary>
     public static Fixed Pi => new(205887);
+
+    /// <summary>整数底整数幂(精确,64 位中间;溢出钳到 MaxValue)。替代 MathF.Pow 的
+    /// 整数指数场景。指数为负时返回倒数幂(除法亦确定)。</summary>
+    public static Fixed Pow(int @base, int exponent)
+    {
+        if (exponent < 0)
+        {
+            Fixed p = Pow(@base, -exponent);
+            return p.IsZero ? MaxValue : One / p;
+        }
+        long acc = 1L << FractBits;   // 1.0 in fixed
+        long b = @base;
+        int e = exponent;
+        while (e > 0)
+        {
+            if ((e & 1) == 1)
+            {
+                acc *= b;
+                if (acc > int.MaxValue) return MaxValue;
+            }
+            e >>= 1;
+            if (e > 0)
+            {
+                b *= b;
+                if (b > int.MaxValue) return MaxValue;
+            }
+        }
+        return new Fixed((int)acc);
+    }
+
+    /// <summary>多工匠建造时间惩罚的确定实现(原版 Repairable.js:
+    /// <c>num &lt; 2 ? 1 : Math.pow(num, 0.7) / num</c>)。num 是小整数(工匠数),
+    /// 0.7 = 7/10 的结果按 Fixed 预计算成查表——全程查表零浮点,跨平台逐位一致
+    /// (Math.Pow 属 libm,各平台低位可能不同,是 OOS 源)。表覆盖 2..64,超出钳到端点。</summary>
+    public static Fixed BuilderTimeMultiplier(int num)
+    {
+        if (num < 2) return One;
+        int idx = num > BuilderPowTable.Length + 1 ? BuilderPowTable.Length + 1 : num;
+        return new Fixed(BuilderPowTable[idx - 2]) / idx;
+    }
+
+    // num^0.7 << 16, num = 2..64(建表:Math.Pow 一次性离线计算后取整,
+    // 运行期只做查表——表值本身成为规范常数,不再依赖任何平台 libm)。
+    private static readonly int[] BuilderPowTable =
+    {
+        106464, 141405, 172951, 202190, 229713, 255887, 280959, 305105,
+        328458, 351119, 373170, 394676, 415690, 436258, 456419, 476205,
+        495645, 514763, 533582, 552120, 570395, 588423, 606217, 623789,
+        641152, 658316, 675290, 692084, 708704, 725159, 741455, 757600,
+        773598, 789455, 805178, 820769, 836235, 851579, 866806, 881919,
+        896921, 911817, 926610, 941301, 955895, 970395, 984802, 999119,
+        1013349, 1027493, 1041555, 1055536, 1069438, 1083263, 1097012, 1110689,
+        1124293, 1137827, 1151293, 1164691, 1178024, 1191292, 1204498,
+    };
 
     public static Fixed FromInt(int n) => new(n << FractBits);
 

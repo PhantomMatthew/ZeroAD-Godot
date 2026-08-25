@@ -355,8 +355,11 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         ang += halfDelta;
         ang += halfDelta;
         float dist = RandRange(cm, 0.5f, 1.5f) * RoamDistance;
-        float tx = pos.Position.X.ToFloat() - 0.5f * MathF.Sin(ang);
-        float tz = pos.Position.Z.ToFloat() - 0.5f * MathF.Cos(ang);
+        _ = dist;   // 原版 target = pos - [sin,cos]·0.5(见下),dist 备将来边长用
+        // 游走方向:定点 sincos(libm 的 Sin/Cos 跨平台低位不同 → 目标点漂移 → OOS)。
+        Trig.SinCosApprox(Maths.Fixed.FromFloat(ang), out Maths.Fixed roamSin, out Maths.Fixed roamCos);
+        float tx = pos.Position.X.ToFloat() - 0.5f * roamSin.ToFloat();
+        float tz = pos.Position.Z.ToFloat() - 0.5f * roamCos.ToFloat();
         // 游走用排队单(Force=false):不抢占受击/逃跑等强制响应。
         PushOrder(new UnitOrder
         {
@@ -2100,7 +2103,9 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         if (formation == null || ctrlPos == null || pos == null) { u.FinishOrder(); return; }
 
         float rot = ctrlPos.Rotation.Y.ToFloat();
-        float sin = MathF.Sin(rot), cos = MathF.Cos(rot);
+        // 定点 sincos(编队偏移目标点 = sim 位置,libm 三角跨平台漂移 → 队形散位 OOS)。
+        Trig.SinCosApprox(Maths.Fixed.FromFloat(rot), out Maths.Fixed fsin, out Maths.Fixed fcos);
+        float sin = fsin.ToFloat(), cos = fcos.ToFloat();
         float tx = ctrlPos.Position.X.ToFloat() + order.OffsetZ * sin + order.OffsetX * cos;
         float tz = ctrlPos.Position.Z.ToFloat() + order.OffsetZ * cos - order.OffsetX * sin;
 

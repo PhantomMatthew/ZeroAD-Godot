@@ -660,11 +660,12 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     // 正弦干涉群岛（任意裁剪窗口陆地占比都落在 ~0.75 附近，
                     // 裁剪验收才能命中）+ 梯田台阶（阶边坡度超 SlopeConstraint(2)，
                     // 悬崖占比检查才能收敛）。确定性、不消耗抽数。
+                    // SafeMath 三角:rmgen 结果进初始状态,libm 跨平台低位不同 → 开局即 OOS。
                     double v = 0.35
-                        + 0.30 * Math.Sin(x * 0.050) * Math.Cos(y * 0.047)
-                        + 0.25 * Math.Sin((x + y) * 0.023)
-                        + 0.20 * Math.Cos((x - y) * 0.031);
-                    v = Math.Floor(Math.Max(0, v) * 8) / 8.0;
+                        + 0.30 * SafeMath.Sin(x * 0.050) * SafeMath.Cos(y * 0.047)
+                        + 0.25 * SafeMath.Sin((x + y) * 0.023)
+                        + 0.20 * SafeMath.Cos((x - y) * 0.031);
+                    v = SafeMath.Floor(SafeMath.Max(0, v) * 8) / 8.0;
                     hm[x][y] = (float)(v * 0xFFFF);
                 }
             }

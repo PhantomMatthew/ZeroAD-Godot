@@ -12,10 +12,6 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
     public string ResultTemplate = "";
     public bool IsBuilt;
 
-    /// <summary>多工人递减指数(原版 buildTimePenalty = 0.7,与 Repairable 同源):
-    /// 10 人合力 = 10^0.7 ≈ 5.01 倍,而非线性 10 倍。</summary>
-    public const float BuildTimePenalty = 0.7f;
-
     // 工人表(EntityId → 最近上报的 rate;原版 Foundation.js this.builders Map)。
     // 键序按 EntityId 排序遍历保确定。
     private readonly Dictionary<EntityId, float> _builders = new();
@@ -48,9 +44,11 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
         return list;
     }
 
-    /// <summary>原版 CalculateBuildMultiplier:num &lt; 2 → 1,否则 num^0.7 / num。</summary>
+    /// <summary>原版 CalculateBuildMultiplier:num &lt; 2 → 1,否则 num^0.7 / num
+    /// (buildTimePenalty=0.7,与 Repairable 同源)。经 Fixed.BuilderTimeMultiplier
+    /// 查表确定化(MathF.Pow 属 libm,跨平台低位可能不同)。</summary>
     public static float CalculateBuildMultiplier(int num) =>
-        num < 2 ? 1f : MathF.Pow(num, BuildTimePenalty) / num;
+        Maths.Fixed.BuilderTimeMultiplier(num).ToFloat();
 
     public void AddBuilder(EntityId builder, float rate)
     {

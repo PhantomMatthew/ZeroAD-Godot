@@ -99,6 +99,249 @@ public static class Geometry
     }
 
     /// <summary>
+    /// Distance from <paramref name="point"/> (relative to the square's center) to the square's
+    /// boundary. Ported from <c>Geometry.cpp:DistanceToSquare</c>: projects onto the square axes
+    /// and handles the B/D/I/A... regions (edge vs corner distance).
+    /// </summary>
+    public static Fixed DistanceToSquare(FixedVector2D point, FixedVector2D u, FixedVector2D v,
+        FixedVector2D halfSize, bool countInsideAsZero = false)
+    {
+        Fixed du = point.Dot(u).Absolute;
+        Fixed dv = point.Dot(v).Absolute;
+
+        Fixed hw = halfSize.X;
+        Fixed hh = halfSize.Y;
+
+        if (du < hw) // regions B, I, G
+        {
+            if (dv < hh) // region I (inside)
+            {
+                if (countInsideAsZero) return Fixed.Zero;
+                Fixed a = hw - du, b = hh - dv;
+                return a < b ? a : b;
+            }
+            return dv - hh; // horizontal edges
+        }
+        if (dv < hh) // regions D, E
+            return du - hw; // vertical edges
+        // regions A, C, F, H: corner distance
+        return new FixedVector2D(du - hw, dv - hh).Length();
+    }
+
+    /// <summary>Same as <see cref="DistanceToSquare"/> but squared (no Length sqrt).
+    /// Ported from <c>Geometry.cpp:DistanceToSquareSquared</c>.</summary>
+    public static Fixed DistanceToSquareSquared(FixedVector2D point, FixedVector2D u, FixedVector2D v,
+        FixedVector2D halfSize, bool countInsideAsZero = false)
+    {
+        Fixed du = point.Dot(u).Absolute;
+        Fixed dv = point.Dot(v).Absolute;
+
+        Fixed hw = halfSize.X;
+        Fixed hh = halfSize.Y;
+
+        if (du < hw)
+        {
+            if (dv < hh)
+            {
+                if (countInsideAsZero) return Fixed.Zero;
+                Fixed a = (hw - du).Square(), b = (hh - dv).Square();
+                return a < b ? a : b;
+            }
+            return (dv - hh).Square();
+        }
+        if (dv < hh)
+            return (du - hw).Square();
+        return (du - hw).Square() + (dv - hh).Square();
+    }
+
+    /// <summary>Nearest point on the square's boundary to <paramref name="point"/> (relative to
+    /// center). Ported from <c>Geometry.cpp:NearestPointOnSquare</c>.</summary>
+    public static FixedVector2D NearestPointOnSquare(FixedVector2D point, FixedVector2D u,
+        FixedVector2D v, FixedVector2D halfSize)
+    {
+        Fixed du = point.Dot(u);
+        Fixed dv = point.Dot(v);
+
+        Fixed hw = halfSize.X;
+        Fixed hh = halfSize.Y;
+        Fixed zero = Fixed.Zero;
+
+        if (-hw < du && du < hw) // regions B, G; or regions D, E inside the square
+        {
+            if (-hh < dv && dv < hh
+                && (du.Absolute - hw).Absolute < (dv.Absolute - hh).Absolute) // regions D, E
+            {
+                return du >= zero
+                    ? u.Multiply(hw) + v.Multiply(dv)
+                    : -u.Multiply(hw) + v.Multiply(dv);
+            }
+            return dv >= zero
+                ? v.Multiply(hh) + u.Multiply(du)
+                : -v.Multiply(hh) + u.Multiply(dv);
+        }
+        if (-hh < dv && dv < hh) // regions D, E outside the square
+        {
+            return du >= zero
+                ? u.Multiply(hw) + v.Multiply(dv)
+                : -u.Multiply(hw) + v.Multiply(dv);
+        }
+        // regions A, C, F, H: nearest corner
+        var corner = FixedVector2D.Zero;
+        if (du < zero) corner -= u.Multiply(hw);
+        else corner += u.Multiply(hw);
+        if (dv < zero) corner -= v.Multiply(hh);
+        else corner += v.Multiply(hh);
+        return corner;
+    }
+
+    /// <summary>Shortest distance between two non-colliding squares; 0 when colliding.
+    /// Ported from <c>Geometry.cpp:DistanceSquareToSquare</c> (8 corner distances + edge ray
+    /// early-out). <paramref name="relativePos"/> = c1 - c0.</summary>
+    public static Fixed DistanceSquareToSquare(FixedVector2D relativePos,
+        FixedVector2D u1, FixedVector2D v1, FixedVector2D halfSize1,
+        FixedVector2D u2, FixedVector2D v2, FixedVector2D halfSize2)
+    {
+        Fixed hw1 = halfSize1.X, hh1 = halfSize1.Y;
+        Fixed hw2 = halfSize2.X, hh2 = halfSize2.Y;
+        if (TestRaySquare(relativePos + u1.Multiply(hw1) + v1.Multiply(hh1),
+                relativePos - u1.Multiply(hw1) + v1.Multiply(hh1), u2, v2, halfSize2)
+            || TestRaySquare(relativePos + u1.Multiply(hw1) + v1.Multiply(hh1),
+                relativePos + u1.Multiply(hw1) - v1.Multiply(hh1), u2, v2, halfSize2))
+            return Fixed.Zero;
+
+        Fixed Min(Fixed a, Fixed b) => a < b ? a : b;
+        return Min(Min(Min(
+                    DistanceToSquare(relativePos + u1.Multiply(hw1) + v1.Multiply(hh1), u2, v2, halfSize2, true),
+                    DistanceToSquare(relativePos + u1.Multiply(hw1) - v1.Multiply(hh1), u2, v2, halfSize2, true)),
+                Min(DistanceToSquare(relativePos - u1.Multiply(hw1) + v1.Multiply(hh1), u2, v2, halfSize2, true),
+                    DistanceToSquare(relativePos - u1.Multiply(hw1) - v1.Multiply(hh1), u2, v2, halfSize2, true))),
+            Min(Min(
+                    DistanceToSquare(relativePos + u2.Multiply(hw2) + v2.Multiply(hh2), u1, v1, halfSize1, true),
+                    DistanceToSquare(relativePos + u2.Multiply(hw2) - v2.Multiply(hh2), u1, v1, halfSize1, true)),
+                Min(DistanceToSquare(relativePos - u2.Multiply(hw2) + v2.Multiply(hh2), u1, v1, halfSize1, true),
+                    DistanceToSquare(relativePos - u2.Multiply(hw2) - v2.Multiply(hh2), u1, v1, halfSize1, true))));
+    }
+
+    /// <summary>Greatest distance from <paramref name="point"/> (relative to center) to the
+    /// square's boundary = distance to the farthest corner. Ported from
+    /// <c>Geometry.cpp:MaxDistanceToSquare</c>.</summary>
+    public static Fixed MaxDistanceToSquare(FixedVector2D point, FixedVector2D u, FixedVector2D v,
+        FixedVector2D halfSize, bool countInsideAsZero = false)
+    {
+        Fixed hw = halfSize.X;
+        Fixed hh = halfSize.Y;
+
+        if (point.Dot(u).Absolute < hw && point.Dot(v).Absolute < hh && countInsideAsZero)
+            return Fixed.Zero;
+
+        Fixed Max(Fixed a, Fixed b) => a > b ? a : b;
+        return Max(Max(
+                (point + u.Multiply(hw) + v.Multiply(hh)).Length(),
+                (point + u.Multiply(hw) - v.Multiply(hh)).Length()),
+            Max(
+                (point - u.Multiply(hw) + v.Multiply(hh)).Length(),
+                (point - u.Multiply(hw) - v.Multiply(hh)).Length()));
+    }
+
+    /// <summary>Greatest of the 16 corner-corner distances between two squares.
+    /// Ported from <c>Geometry.cpp:MaxDistanceSquareToSquare</c>.</summary>
+    public static Fixed MaxDistanceSquareToSquare(FixedVector2D relativePos,
+        FixedVector2D u1, FixedVector2D v1, FixedVector2D halfSize1,
+        FixedVector2D u2, FixedVector2D v2, FixedVector2D halfSize2)
+    {
+        Fixed hw1 = halfSize1.X, hh1 = halfSize1.Y;
+
+        Fixed Max(Fixed a, Fixed b) => a > b ? a : b;
+        return Max(Max(
+                MaxDistanceToSquare(relativePos + u1.Multiply(hw1) + v1.Multiply(hh1), u2, v2, halfSize2, true),
+                MaxDistanceToSquare(relativePos + u1.Multiply(hw1) - v1.Multiply(hh1), u2, v2, halfSize2, true)),
+            Max(MaxDistanceToSquare(relativePos - u1.Multiply(hw1) + v1.Multiply(hh1), u2, v2, halfSize2, true),
+                MaxDistanceToSquare(relativePos - u1.Multiply(hw1) - v1.Multiply(hh1), u2, v2, halfSize2, true)));
+    }
+
+    /// <summary>True if the ray a→b enters the square (centered at origin). Only outside→inside
+    /// transitions count as hits. Ported from <c>Geometry.cpp:TestRaySquare</c> (separating axis
+    /// theorem against the ray's bounding box + line side test).</summary>
+    public static bool TestRaySquare(FixedVector2D a, FixedVector2D b,
+        FixedVector2D u, FixedVector2D v, FixedVector2D halfSize)
+    {
+        Fixed hw = halfSize.X;
+        Fixed hh = halfSize.Y;
+        Fixed zero = Fixed.Zero;
+
+        Fixed au = a.Dot(u);
+        Fixed av = a.Dot(v);
+
+        if (-hw <= au && au <= hw && -hh <= av && av <= hh)
+            return false; // a is inside
+
+        Fixed bu = b.Dot(u);
+        Fixed bv = b.Dot(v);
+
+        if (-hw <= bu && bu <= hw && -hh <= bv && bv <= hh)
+            return true; // a outside, b inside
+
+        if ((au < -hw && bu < -hw) || (au > hw && bu > hw)
+            || (av < -hh && bv < -hh) || (av > hh && bv > hh))
+            return false; // ray entirely to one side
+
+        FixedVector2D abp = (b - a).Perpendicular();
+        Fixed s0 = abp.Dot((u.Multiply(hw) + v.Multiply(hh)) - a);
+        Fixed s1 = abp.Dot((u.Multiply(hw) - v.Multiply(hh)) - a);
+        Fixed s2 = abp.Dot((-u.Multiply(hw) - v.Multiply(hh)) - a);
+        Fixed s3 = abp.Dot((-u.Multiply(hw) + v.Multiply(hh)) - a);
+        if (s0.IsZero || s1.IsZero || s2.IsZero || s3.IsZero)
+            return true; // ray intersects the corner
+
+        bool sign = s0 < zero;
+        return (s1 < zero) != sign || (s2 < zero) != sign || (s3 < zero) != sign;
+    }
+
+    /// <summary>Exactly <see cref="TestRaySquare"/> with u=(1,0), v=(0,1).
+    /// Ported from <c>Geometry.cpp:TestRayAASquare</c>.</summary>
+    public static bool TestRayAASquare(FixedVector2D a, FixedVector2D b, FixedVector2D halfSize)
+    {
+        Fixed hw = halfSize.X;
+        Fixed hh = halfSize.Y;
+        Fixed zero = Fixed.Zero;
+
+        if (-hw <= a.X && a.X <= hw && -hh <= a.Y && a.Y <= hh)
+            return false;
+        if (-hw <= b.X && b.X <= hw && -hh <= b.Y && b.Y <= hh)
+            return true;
+        if ((a.X < -hw && b.X < -hw) || (a.X > hw && b.X > hw)
+            || (a.Y < -hh && b.Y < -hh) || (a.Y > hh && b.Y > hh))
+            return false;
+
+        FixedVector2D abp = (b - a).Perpendicular();
+        Fixed s0 = abp.Dot(new FixedVector2D(hw, hh) - a);
+        Fixed s1 = abp.Dot(new FixedVector2D(hw, -hh) - a);
+        Fixed s2 = abp.Dot(new FixedVector2D(-hw, -hh) - a);
+        Fixed s3 = abp.Dot(new FixedVector2D(-hw, hh) - a);
+        if (s0.IsZero || s1.IsZero || s2.IsZero || s3.IsZero)
+            return true;
+
+        bool sign = s0 < zero;
+        return (s1 < zero) != sign || (s2 < zero) != sign || (s3 < zero) != sign;
+    }
+
+    /// <summary>Shortest distance from <paramref name="point"/> to segment a-b (3-region
+    /// projection split). Ported from <c>Geometry.cpp:DistanceToSegment</c>.</summary>
+    public static Fixed DistanceToSegment(FixedVector2D point, FixedVector2D a, FixedVector2D b)
+    {
+        FixedVector2D dir = b - a;
+        Fixed pointDot = dir.Dot(point);
+        Fixed aDot = dir.Dot(a);
+        if (pointDot <= aDot)
+            return (point - a).Length();
+        Fixed bDot = dir.Dot(b);
+        if (pointDot >= bDot)
+            return (point - b).Length();
+        FixedVector2D normal = dir.Perpendicular().Normalized();
+        return (normal.Dot(a) - normal.Dot(point)).Absolute;
+    }
+
+    /// <summary>
     /// Returns the world-space coordinates of the <paramref name="index"/>-th point walking
     /// the perimeter of a rectangle (expanded by <paramref name="dr"/> rings), starting from
     /// <paramref name="center"/> with axes <paramref name="u"/>/<paramref name="v"/>. Used by

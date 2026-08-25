@@ -15,8 +15,11 @@ public sealed class RepairableComponent : ComponentBase, IComponentMessageHandle
     /// <summary>原版 unrepairable(升级等特殊路径可禁用修理)。</summary>
     public bool Unrepairable;
 
-    /// <summary>多工人递减指数(原版 buildTimePenalty = 0.7):10 人合力 = 10^0.7 ≈ 5.01 倍。</summary>
-    public const float BuildTimePenalty = 0.7f;
+    /// <summary>原版 CalculateBuildMultiplier:num &lt; 2 → 1,否则 num^0.7 / num
+    /// (buildTimePenalty=0.7)。经 Fixed.BuilderTimeMultiplier 查表——MathF.Pow 属
+    /// libm,各平台低位可能不同,是跨平台 OOS 源。</summary>
+    public static float CalculateBuildMultiplier(int num) =>
+        Maths.Fixed.BuilderTimeMultiplier(num).ToFloat();
 
     // 工人表(EntityId → 最近上报的 rate;原版 Map)。键序按 EntityId 排序遍历保确定。
     private readonly Dictionary<EntityId, float> _builders = new();
@@ -39,10 +42,6 @@ public sealed class RepairableComponent : ComponentBase, IComponentMessageHandle
         list.Sort((a, b) => a.Value.CompareTo(b.Value));
         return list;
     }
-
-    /// <summary>原版 CalculateBuildMultiplier:num &lt; 2 → 1,否则 num^0.7 / num。</summary>
-    public static float CalculateBuildMultiplier(int num) =>
-        num < 2 ? 1f : MathF.Pow(num, BuildTimePenalty) / num;
 
     public void AddBuilder(EntityId builder, float rate)
     {

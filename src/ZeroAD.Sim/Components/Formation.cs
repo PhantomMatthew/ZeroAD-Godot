@@ -265,7 +265,9 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
                 float tdx = t.X.ToFloat() - avg.X.ToFloat();
                 float tdz = t.Y.ToFloat() - avg.Y.ToFloat();
                 if (tdx * tdx + tdz * tdz > RotateDistanceThreshold)
-                    newRotation = MathF.Atan2(tdx, tdz);   // 朝向前方 = (sin,cos),见 GetRealOffsetPositions
+                    // 定点 atan2(编队朝向进 sim;libm Atan2 跨平台低位不同 → 队形转向漂移)。
+                    newRotation = Trig.Atan2Approx(
+                        Maths.Fixed.FromFloat(tdx), Maths.Fixed.FromFloat(tdz)).ToFloat();   // 朝向前方 = (sin,cos),见 GetRealOffsetPositions
             }
             if (!DoesAngleDifferenceAllowTurning(newRotation, oldRotation))
                 Offsets = null;
@@ -572,7 +574,9 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
         float px = pos?.Position.X.ToFloat() ?? 0;
         float pz = pos?.Position.Z.ToFloat() ?? 0;
         float rot = pos?.Rotation.Y.ToFloat() ?? 0;
-        float sin = MathF.Sin(rot), cos = MathF.Cos(rot);
+        // 定点 sincos(编队成员世界偏移 = sim 位置;libm 三角跨平台漂移 → 队形散位 OOS)。
+        Trig.SinCosApprox(Maths.Fixed.FromFloat(rot), out Maths.Fixed formSin, out Maths.Fixed formCos);
+        float sin = formSin.ToFloat(), cos = formCos.ToFloat();
         var result = new List<(float X, float Z)>(offsets.Count);
         foreach (var o in offsets)
             result.Add((px + o.Z * sin + o.X * cos, pz + o.Z * cos - o.X * sin));

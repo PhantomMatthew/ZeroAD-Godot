@@ -110,7 +110,7 @@ namespace ZeroAD.Sim.Rmgen
 
                 current = nh;
                 newHeightmap = nh;
-                offset /= Math.Pow(2, smoothness);
+                offset /= SafeMath.Pow(2, smoothness);
             }
 
             // 居中裁剪到目标尺寸

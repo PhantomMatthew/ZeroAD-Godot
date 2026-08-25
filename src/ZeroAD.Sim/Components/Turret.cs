@@ -295,7 +295,9 @@ public sealed class TurretableComponent : ComponentBase, IComponentMessageHandle
         float ox = point?.OffsetX ?? 0f, oz = point?.OffsetZ ?? 0f;
 
         float angle = holderPos.Rotation.Y.ToFloat();
-        float cos = MathF.Cos(angle), sin = MathF.Sin(angle);
+        // 定点 sincos(炮塔位 = sim 位置;libm 三角跨平台低位不同 → 漂移 OOS)。
+        Trig.SinCosApprox(Maths.Fixed.FromFloat(angle), out Maths.Fixed tSin, out Maths.Fixed tCos);
+        float cos = tCos.ToFloat(), sin = tSin.ToFloat();
         var nx = holderPos.Position.X + Fixed.FromFloat(ox * cos + oz * sin);
         var nz = holderPos.Position.Z + Fixed.FromFloat(-ox * sin + oz * cos);
         if (nx == pos.Position.X && nz == pos.Position.Z

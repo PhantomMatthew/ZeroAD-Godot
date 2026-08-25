@@ -266,10 +266,12 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
             {
                 // Fallback: golden-angle ring around the trainer (keeps training working even when
                 // the area is crowded — units may overlap, but they'll disperse via UnitMotion).
+                // 定点 sincos:出生点是 sim 位置,libm 三角跨平台漂移 → OOS。
                 float angle = i * 2.4f;
                 float radius = 6f + (i / 6) * 3f;
-                sx = baseX + MathF.Cos(angle) * radius;
-                sz = baseZ + MathF.Sin(angle) * radius;
+                Trig.SinCosApprox(Maths.Fixed.FromFloat(angle), out Maths.Fixed spSin, out Maths.Fixed spCos);
+                sx = baseX + spCos.ToFloat() * radius;
+                sz = baseZ + spSin.ToFloat() * radius;
             }
             var spawned = cm.SpawnEntity(current.TemplateName, sx, sz, ownerId);
 

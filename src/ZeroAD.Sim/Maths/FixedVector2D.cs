@@ -18,6 +18,8 @@ public readonly struct FixedVector2D : IEquatable<FixedVector2D>
         Y = y;
     }
 
+    public static FixedVector2D Zero => new(Fixed.Zero, Fixed.Zero);
+
     public bool IsZero => X.IsZero && Y.IsZero;
 
     public bool Equals(FixedVector2D other) => X == other.X && Y == other.Y;
