@@ -59,6 +59,7 @@ public sealed partial class StructreePanel : ModalPanelBase
     private Dictionary<string, CivData> _civs = new();
     private TemplateLoader? _templates;
     private TechCatalog? _techCatalog;
+    private AuraCatalog? _auraCatalog;
 
     public StructreePanel(int layer = 58) => Layer = layer;  // 注:ModalPanelBase 默认 55
 
@@ -536,11 +537,8 @@ public sealed partial class StructreePanel : ModalPanelBase
             var sp = identity.GetChild("SpecificName");
             if (sp.IsOk && sp.ToString().Length > 0) specificName = sp.ToString();
         }
-        // getEntityNamesFormatted:默认 howtoshownames=0 → specific 为主。
-        // 主名 bold-16;有次名时同行 "(generic)"(截图:Apothēkē (Storehouse))。
-        lines.Add(specificName != null
-            ? $"{GameTooltip.Title(specificName)} {GameTooltip.SecondaryInline($"({entry.DisplayName})")}"
-            : GameTooltip.Title(entry.DisplayName));
+        // getEntityNamesFormatted:默认 howtoshownames → specific 为主、generic 为次。
+        lines.Add(GameTooltip.NamesFormatted(specificName, entry.DisplayName));
         if (_templates == null) return Join();
         if (!_templates.Cache.TryGetValue(entry.Template, out var node2)) return Join();
 
@@ -550,17 +548,36 @@ public sealed partial class StructreePanel : ModalPanelBase
             var st = _templates.ExtractStats(entry.Template);
             if (st == null) return Join();
 
-            // getEntityCostTooltip:"Cost:" 粗头 + 图标数值行。
+            // getEntityCostTooltip:getCostTypes 顺序 = 四资源 + population + time,
+            // 各 [icon] 值;time = ⌈BuildTime⌉(structree 无批量训练乘数,entity=null)。
             var cost = GameTooltip.ResourceRow(
                 ("food", st.FoodCost), ("wood", st.WoodCost),
-                ("stone", st.StoneCost), ("metal", st.MetalCost));
+                ("stone", st.StoneCost), ("metal", st.MetalCost),
+                ("population", st.PopulationCost),
+                ("time", System.MathF.Ceiling(st.BuildTime)));
             if (cost.Length > 0)
                 lines.Add($"{GameTooltip.Header("Cost:")} {cost}");
 
-            // getEntityTooltip:描述正文 13px。
+            // getEntityTooltip:Identity/Tooltip 正文。
             var desc = identity2.GetChild("Tooltip");
             if (desc.IsOk && desc.ToString().Length > 0)
                 lines.Add(GameTooltip.Body(desc.ToString()));
+
+            // getAurasTooltip:每光环 "名: 描述 [Range: N meters]"(英雄卡)。
+            // Range 标签原版无 headerFont(纯 13px),单位橙 10px;多光环换行。
+            if (_auraCatalog != null && st.Auras.Length > 0)
+            {
+                foreach (var token in st.Auras.Split((char[]?)null,
+                    System.StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (!_auraCatalog.Auras.TryGetValue(token, out var aura)) continue;
+                    var auraLine =
+                        $"{GameTooltip.Header($"{aura.AuraName}:")} {GameTooltip.Body(aura.AuraDescription)}";
+                    if (aura.Radius > 0)
+                        auraLine += $" Range: {aura.Radius:0} {GameTooltip.Unit(aura.Radius == 1 ? "meter" : "meters")}";
+                    lines.Add(auraLine);
+                }
+            }
 
             // getResourceDropsiteTooltip:"Dropsite for:" + 图标行(Types 空格分隔)。
             if (st.IsDropsite && st.DropsiteTypes.Length > 0)
@@ -568,7 +585,7 @@ public sealed partial class StructreePanel : ModalPanelBase
                 var icons = new List<string>();
                 foreach (var t in st.DropsiteTypes.Split((char[]?)null,
                     System.StringSplitOptions.RemoveEmptyEntries))
-                    icons.Add($"[img=16]{GameTooltip.ResourceIconPathOf(t)}[/img]");
+                    icons.Add($"[img=16]{GameTooltip.IconPath(t)}[/img]");
                 if (icons.Count > 0)
                     lines.Add($"{GameTooltip.Header("Dropsite for:")} {string.Join("  ", icons)}");
             }
@@ -577,35 +594,170 @@ public sealed partial class StructreePanel : ModalPanelBase
             if (st.HasHealth)
                 lines.Add($"{GameTooltip.Header("Health:")} {GameTooltip.Body(st.MaxHealth.ToString())}");
 
-            // getResistanceTooltip:"Resistance:" + "Damage: L Hack (P%), ..." 小字百分数。
-            if (st.ResistanceHack != 0 || st.ResistancePierce != 0 || st.ResistanceCrush != 0)
+            // getAttackTooltip:逐型 "AttackName: 效果, Range: N meters, Interval: N second(s)",
+            // 效果序 = Capture → Hack/Pierce/Crush/Fire(attackEffectsDetails 同序);
+            // 型间换行,4 空格缩进(g_Indent)。攻击附带 ApplyStatus 仅 3 模板,略。
+            if (st.AttackTypes.Count > 0)
             {
-                var parts = new List<string>();
-                void Dmg(float lvl, string name)
+                const string indent = "    ";
+                var typeLines = new List<string>();
+                foreach (var atk in st.AttackTypes)
+                {
+                    var segs = new List<string>();
+                    var effects = new List<string>();
+                    if (atk.Capture > 0)
+                        effects.Add($"{atk.Capture:F1} {GameTooltip.Unit("Capture")}");
+                    if (atk.Hack > 0)
+                        effects.Add($"{atk.Hack:F1} {GameTooltip.Unit("Hack")}");
+                    if (atk.Pierce > 0)
+                        effects.Add($"{atk.Pierce:F1} {GameTooltip.Unit("Pierce")}");
+                    if (atk.Crush > 0)
+                        effects.Add($"{atk.Crush:F1} {GameTooltip.Unit("Crush")}");
+                    if (atk.Fire > 0)
+                        effects.Add($"{atk.Fire:F1} {GameTooltip.Unit("Fire")}");
+                    if (effects.Count > 0) segs.Add(string.Join(", ", effects));
+                    if (atk.MaxRange > 0)
+                    {
+                        // rangeDetails:整型;min>0 → "2 to 10 meters"。
+                        int minR = (int)System.Math.Round(atk.MinRange);
+                        int maxR = (int)System.Math.Round(atk.MaxRange);
+                        string unit = minR > 0 ? "meters" : (maxR == 1 ? "meter" : "meters");
+                        string range = minR > 0
+                            ? $"{minR} to {maxR}"
+                            : $"{maxR}";
+                        segs.Add($"{GameTooltip.Header("Range:")} {range} {GameTooltip.Unit(unit)}");
+                    }
+                    if (atk.RepeatTimeMs > 0)
+                    {
+                        // attackRateDetails → getSecondsString:原值(1 / 1.5)+ second/seconds。
+                        float secs = atk.RepeatTimeMs / 1000f;
+                        segs.Add($"{GameTooltip.Header("Interval:")} {secs:0.###} {GameTooltip.Unit(secs == 1 ? "second" : "seconds")}");
+                    }
+                    if (segs.Count > 0)
+                        typeLines.Add($"{GameTooltip.Header(atk.AttackName)}: {string.Join(", ", segs)}");
+                }
+                if (typeLines.Count > 0)
+                    lines.Add($"{GameTooltip.Header("Attack:")}\n{indent}{string.Join($"\n{indent}", typeLines)}");
+            }
+
+            // getHealerTooltip:"Heal: 5 Health, Range: 20 meters, Interval: 1 second"。
+            if (st.HasHeal)
+            {
+                var segs = new List<string>
+                {
+                    $"{GameTooltip.Header("Heal:")} {st.HealAmount:0.#} {GameTooltip.Unit("Health")}",
+                    $"{GameTooltip.Header("Range:")} {st.HealRange:0.#} {GameTooltip.Unit(st.HealRange == 1 ? "meter" : "meters")}",
+                    $"{GameTooltip.Header("Interval:")} {st.HealInterval:0.#} {GameTooltip.Unit(st.HealInterval == 1 ? "second" : "seconds")}",
+                };
+                lines.Add(string.Join(", ", segs));
+            }
+
+            // getResistanceTooltip:"Resistance:" + 缩进子行 Damage(含 Fire)/ Capture;
+            // 百分数 = 100 − round(0.9^level×100)(resistanceLevelToPercentageString)。
+            {
+                var resParts = new List<string>();
+                var dmgParts = new List<string>();
+                void RDmg(float lvl, string name)
                 {
                     if (lvl == 0) return;
                     int pct = 100 - (int)System.Math.Round(System.Math.Pow(0.9, lvl) * 100);
-                    parts.Add($"{GameTooltip.Unit($"{lvl:F1} {name}")} {GameTooltip.Small($"({pct}%)")}");
+                    dmgParts.Add($"{lvl:F1} {GameTooltip.Unit(name)} {GameTooltip.Small($"({pct}%)")}");
                 }
-                Dmg(st.ResistanceHack, "Hack");
-                Dmg(st.ResistancePierce, "Pierce");
-                Dmg(st.ResistanceCrush, "Crush");
-                if (parts.Count > 0)
-                    lines.Add($"{GameTooltip.Header("Resistance:")} {GameTooltip.Header("Damage:")}\n  {string.Join(", ", parts)}");
+                RDmg(st.ResistanceHack, "Hack");
+                RDmg(st.ResistancePierce, "Pierce");
+                RDmg(st.ResistanceCrush, "Crush");
+                RDmg(st.ResistanceFire, "Fire");
+                if (dmgParts.Count > 0)
+                    resParts.Add($"{GameTooltip.Header("Damage:")} {string.Join(", ", dmgParts)}");
+                if (st.ResistanceCapture != 0)
+                {
+                    int capPct = 100 - (int)System.Math.Round(System.Math.Pow(0.9, st.ResistanceCapture) * 100);
+                    resParts.Add($"{GameTooltip.Header("Capture:")} {st.ResistanceCapture:F1} {GameTooltip.Unit("Capture")} {GameTooltip.Small($"({capPct}%)")}");
+                }
+                if (resParts.Count > 0)
+                    lines.Add($"{GameTooltip.Header("Resistance:")}\n    {string.Join("\n    ", resParts)}");
             }
 
-            // getAttackTooltip(简化:总伤)
-            if (st.AttackDamage > 0)
-                lines.Add($"{GameTooltip.Header("Attack:")} {GameTooltip.Body(st.AttackDamage.ToString())}");
+            // getGarrisonTooltip:Garrison Limit(+Heal 行)/ Garrison Size,换行联接
+            // (原版 commaFont 联接结果被丢弃,实际 "\n")。
+            {
+                var garSegs = new List<string>();
+                if (st.HasGarrisonHolder)
+                {
+                    garSegs.Add($"{GameTooltip.Header("Garrison Limit:")} {st.GarrisonCapacity}");
+                    if (st.GarrisonHolderBuffHeal > 0)
+                        garSegs.Add($"{GameTooltip.Header("Heal:")} {System.Math.Round(st.GarrisonHolderBuffHeal):0} {GameTooltip.Unit("Health")} / {GameTooltip.Unit("second")}");
+                }
+                if (st.GarrisonableSize > 1)
+                    garSegs.Add($"{GameTooltip.Header("Garrison Size:")} {st.GarrisonableSize}");
+                if (garSegs.Count > 0)
+                    lines.Add(string.Join("\n", garSegs));
+            }
 
-            // getSpeedTooltip:"Speed: 8.0 / 20.0"(walk/run)。
-            if (st.WalkSpeed > 0.01f)
-                lines.Add($"{GameTooltip.Header("Speed:")} {GameTooltip.Body(st.WalkSpeed.ToString("F1"))}");
+            // getTurretsTooltip
+            if (st.HasTurretHolder)
+                lines.Add($"{GameTooltip.Header("Turret Positions:")} {st.TurretPoints.Count}");
 
-            // getLootTooltip:"Loot:" + 图标数值行。
+            // getProjectilesTooltip(须同时有 GarrisonHolder + BuildingAI):
+            // "Projectile Limit: N, Default: N, Per Unit: M"(M = 加箭倍率 F2)。
+            if (st.HasGarrisonHolder && st.HasBuildingAI)
+            {
+                int projLimit = System.Math.Min(
+                    st.MaxArrowCount > 0 ? st.MaxArrowCount : int.MaxValue,
+                    st.DefaultArrowCount + (int)System.Math.Round(st.GarrisonArrowMultiplier * st.GarrisonCapacity));
+                if (projLimit > 0)
+                    lines.Add(
+                        $"{GameTooltip.Header("Projectile Limit:")} {projLimit}, " +
+                        $"{GameTooltip.Header("Default:")} {st.DefaultArrowCount}, " +
+                        $"{GameTooltip.Header("Per Unit:")} {st.GarrisonArrowMultiplier:0.00}");
+            }
+
+            // getSpeedTooltip:"Speed: 8.0 Walk, 13.4 Run, 35.0 Acceleration"
+            // (run = walk × RunMultiplier;建筑无 UnitMotion → 不显示)。
+            if (st.HasUnitMotion && (st.WalkSpeed > 0 || st.WalkSpeed * st.RunMultiplier > 0))
+            {
+                float run = st.WalkSpeed * st.RunMultiplier;
+                lines.Add(
+                    $"{GameTooltip.Header("Speed:")} {st.WalkSpeed:F1} {GameTooltip.Unit("Walk")}, " +
+                    $"{run:F1} {GameTooltip.Unit("Run")}, " +
+                    $"{st.Acceleration:F1} {GameTooltip.Unit("Acceleration")}");
+            }
+
+            // getGatherTooltip:"Gather Rates: [subtype图标] 率(F2)…"(率 = Rates × BaseSpeed)。
+            if (st.GatherRates.Count > 0)
+            {
+                var gatherParts = new List<string>();
+                foreach (var kv in st.GatherRates)
+                    gatherParts.Add($"[img=16]{GameTooltip.IconPath(kv.Key)}[/img] {kv.Value:F2}");
+                lines.Add($"{GameTooltip.Header("Gather Rates:")} {string.Join("  ", gatherParts)}");
+            }
+
+            // getResourceSupplyTooltip/getTreasureTooltip:仅 gaia,structree 不出现,略。
+
+            // getPopulationBonusTooltip
+            if (st.PopulationBonus > 0)
+                lines.Add($"{GameTooltip.Header("Population Bonus:")} {st.PopulationBonus}");
+
+            // getResourceTrickleTooltip:"Resource Trickle: [icon] 率 / N second(s)"(奇观)。
+            if (st.HasResourceTrickle)
+            {
+                var tr = GameTooltip.ResourceRow(
+                    ("food", st.TrickleFood), ("wood", st.TrickleWood),
+                    ("stone", st.TrickleStone), ("metal", st.TrickleMetal));
+                if (tr.Length > 0)
+                {
+                    float secs = st.TrickleIntervalMs / 1000f;
+                    lines.Add($"{GameTooltip.Header("Resource Trickle:")} {tr} / {secs:0.###} {GameTooltip.Unit(secs == 1 ? "second" : "seconds")}");
+                }
+            }
+
+            // getUpkeepTooltip:当前数据集无 Upkeep 模板,略。
+
+            // getLootTooltip:四资源 + xp(GetCodes().concat(["xp"]),xp 图标殿后)。
             var loot = GameTooltip.ResourceRow(
                 ("food", st.LootFood), ("wood", st.LootWood),
-                ("stone", st.LootStone), ("metal", st.LootMetal));
+                ("stone", st.LootStone), ("metal", st.LootMetal),
+                ("xp", st.LootXp));
             if (st.HasLoot && loot.Length > 0)
                 lines.Add($"{GameTooltip.Header("Loot:")} {loot}");
         }
@@ -625,13 +777,13 @@ public sealed partial class StructreePanel : ModalPanelBase
         if (_techCatalog != null && _techCatalog.Technologies.TryGetValue(techName, out var tech))
         {
             var lines = new List<string> { GameTooltip.Title(tech.GenericName) };
+            // getEntityCostTooltip 同款:四资源 + time 图标(⌈秒⌉)同行,无独立 Time 头。
             var res = GameTooltip.ResourceRow(
                 ("food", tech.Food), ("wood", tech.Wood),
-                ("stone", tech.Stone), ("metal", tech.Metal));
+                ("stone", tech.Stone), ("metal", tech.Metal),
+                ("time", System.MathF.Ceiling(tech.ResearchTime)));
             if (res.Length > 0)
                 lines.Add($"{GameTooltip.Header("Cost:")} {res}");
-            if (tech.ResearchTime > 0)
-                lines.Add($"{GameTooltip.Header("Time:")} {GameTooltip.Body($"{tech.ResearchTime:0}s")}");
             if (tech.Tooltip.Length > 0)
                 lines.Add(GameTooltip.Body(tech.Tooltip));
             if (tech.Description.Length > 0)
@@ -691,6 +843,8 @@ public sealed partial class StructreePanel : ModalPanelBase
         _templates = new TemplateLoader(templatesPath);
         _templates.LoadAllTemplates();
         _techCatalog = TechnologyLoader.LoadAll(techsPath);
+        // 光环目录(getAurasTooltip:英雄卡的 Auras 段数据源)。
+        _auraCatalog = AuraLoader.LoadAll(Path.Combine(dataRoot, "simulation", "data", "auras"));
         ZeroAD.Sim.Diag.Log("Structree", $"loaded {_civs.Count} civs, {_templates.Cache.Count} templates, {_techCatalog.Technologies.Count} techs");
     }
 }

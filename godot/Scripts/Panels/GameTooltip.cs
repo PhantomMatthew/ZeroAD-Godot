@@ -88,14 +88,23 @@ public sealed partial class GameTooltip : CanvasLayer
 
     // ── 内容构造助手(对齐 g_TooltipTextFormats)──
 
-    /// <summary>主名称行(namePrimaryBig:sans-bold-16)。</summary>
+    /// <summary>标题行(namePrimaryBig:sans-bold-16)。</summary>
     public static string Title(string text) => $"[b][font_size=16]{Escape(text)}[/font_size][/b]";
 
-    /// <summary>次名称行(nameSecondary:sans-bold-16)。</summary>
-    public static string Secondary(string text) => Title(text);
-
-    /// <summary>行内次名(主名后的"(generic)"括注,同 bold-16)。</summary>
-    public static string SecondaryInline(string text) => Title(text);
+    /// <summary>实体名行(getEntityNamesFormatted,默认 specific 主名 + generic 次名):
+    /// 首字符 sans-bold-16 + 其余大写 sans-bold-12,次名 "(generic)" sans-bold-16。
+    /// 无次名/同名 → 整名 bold-16(原版单样式分支)。specific 为空 → generic 整名。</summary>
+    public static string NamesFormatted(string? specific, string generic)
+    {
+        if (string.IsNullOrEmpty(specific))
+            return Title(generic);
+        if (specific == generic)
+            return Title(specific);
+        string first = Escape(specific.Substring(0, 1));
+        string rest = Escape(specific.Substring(1).ToUpperInvariant());
+        return $"[b][font_size=16]{first}[/font_size][font_size=12]{rest}[/font_size][/b]" +
+            $" [b][font_size=16]({Escape(generic)})[/font_size][/b]";
+    }
 
     /// <summary>统计块标题(headerFont:sans-bold-13)。</summary>
     public static string Header(string text) => $"[b][font_size=13]{Escape(text)}[/font_size][/b]";
@@ -110,16 +119,17 @@ public sealed partial class GameTooltip : CanvasLayer
     /// <summary>小字括注(原版 '[font="sans-10"](...)' ——抗性百分数等)。</summary>
     public static string Small(string text) => $"[font_size=10]{Escape(text)}[/font_size]";
 
-    /// <summary>资源行:小图标 + 数值(session/icons/resources/*_small.png 16px)。
-    /// parts 交替 (资源码, 数值)。</summary>
-    public static string ResourceRow(params (string Code, int Amount)[] parts)
+    /// <summary>资源行:小图标 + 数值(session/icons/resources/*_small.png 16px——与原版
+    /// icon_* sprite size="16 16" 一致)。parts 交替 (图标码, 数值);码除四资源外含
+    /// population/time/xp(getEntityCostComponentsTooltipString 的全部费用类型)。</summary>
+    public static string ResourceRow(params (string Code, float Amount)[] parts)
     {
         var sb = new System.Text.StringBuilder();
         foreach (var (code, amount) in parts)
         {
             if (amount <= 0) continue;
             if (sb.Length > 0) sb.Append("  ");
-            sb.Append($"[img=16]{ResourceIconPath(code)}[/img] {amount}");
+            sb.Append($"[img=16]{IconPath(code)}[/img] {amount:0.###}");
         }
         return sb.ToString();
     }
@@ -127,13 +137,34 @@ public sealed partial class GameTooltip : CanvasLayer
     private static string Escape(string t) =>
         t.Replace("&", "&amp;").Replace("[", "&#91;").Replace("]", "&#93;");
 
-    /// <summary>资源小图标路径(res://assets/ui/resources/*_small.png——图标须在
-    /// res:// 内被 Godot 导入,RichTextLabel 的 [img] 才能加载;binaries 外部路径
-    /// 报 No loader found。图标由资产管线从 session/icons/resources 拷入)。</summary>
-    public static string ResourceIconPath(string code) => ResourceIconPathOf(code);
+    /// <summary>图标码 → res:// 路径。资源/费用类直接映射 population/time 等小图;
+    /// 采集子类型("food.meat" 等)映射 gui/common/resources/{subtype}.xml 声明的贴图
+    /// (food_meat→meat_small、wood_tree→wood_small…),xp 用 icons/promote.png。
+    /// 图标须在 res:// 内被 Godot 导入,RichTextLabel 的 [img] 才能加载;由
+    /// godot/tools/copy_ui_icons.py 从 binaries 拷入(assets/ 为 gitignored 构建产物)。</summary>
+    public static string IconPath(string code) =>
+        $"res://assets/ui/resources/{IconFile(code)}";
 
-    public static string ResourceIconPathOf(string code) =>
-        $"res://assets/ui/resources/{code}_small.png";
+    private static string IconFile(string code) => code switch
+    {
+        "population" => "population_small.png",
+        "time" => "time_small.png",
+        "xp" => "xp.png",
+        // 采集子类型 → 原版 resourceIcon 的 icon_{code},贴图见 resources/*.xml。
+        "food.fruit" => "fruit_small.png",
+        "food.grain" => "grain_small.png",
+        "food.meat" => "meat_small.png",
+        "food.rice" => "rice_small.png",
+        "food.fish" => "fish_small.png",
+        "wood.tree" or "stone.rock" or "metal.ore"
+            => code.Split('.')[0] + "_small.png",
+        _ => code + "_small.png",
+    };
+
+    /// <summary>资源小图标路径(旧四资源码用;新码走 IconPath)。</summary>
+    public static string ResourceIconPath(string code) => IconPath(code);
+
+    public static string ResourceIconPathOf(string code) => IconPath(code);
 
     private void ShowFor(Control owner, string text)
     {

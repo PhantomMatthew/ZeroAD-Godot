@@ -402,6 +402,37 @@ namespace ZeroAD.Sim.Content
                     var capRestr = captureType.GetChild("RestrictedClasses");
                     if (capRestr.IsOk) stats.AttackCaptureRestrictedClasses = capRestr.ToString();
                 }
+
+                // 逐型 tooltip 记录(getAttackTooltip 遍历同款):Melee/Ranged/Capture
+                // 各一条,Slaughter 剔除,AttackName 缺省回落类型名。
+                foreach (var (typeName, typeNode) in attack.Children)
+                {
+                    if (typeName.StartsWith('@')) continue;
+                    if (typeName == "Slaughter") continue;
+                    var info = new AttackTypeInfo
+                    {
+                        TypeName = typeName,
+                        AttackName = typeNode.GetChild("AttackName").IsOk
+                            ? typeNode.GetChild("AttackName").ToString() : typeName,
+                    };
+                    var infoDmg = typeNode.GetChild("Damage");
+                    if (infoDmg.IsOk)
+                    {
+                        if (infoDmg.GetChild("Hack").IsOk) info.Hack = infoDmg.GetChild("Hack").ToFixed().ToFloat();
+                        if (infoDmg.GetChild("Pierce").IsOk) info.Pierce = infoDmg.GetChild("Pierce").ToFixed().ToFloat();
+                        if (infoDmg.GetChild("Crush").IsOk) info.Crush = infoDmg.GetChild("Crush").ToFixed().ToFloat();
+                        if (infoDmg.GetChild("Fire").IsOk) info.Fire = infoDmg.GetChild("Fire").ToFixed().ToFloat();
+                    }
+                    var infoCap = typeNode.GetChild("Capture");
+                    if (infoCap.IsOk) info.Capture = infoCap.ToFixed().ToFloat();
+                    var repeat = typeNode.GetChild("RepeatTime");
+                    if (repeat.IsOk) info.RepeatTimeMs = repeat.ToInt();
+                    var maxR = typeNode.GetChild("MaxRange");
+                    if (maxR.IsOk) info.MaxRange = maxR.ToFixed().ToFloat();
+                    var minR = typeNode.GetChild("MinRange");
+                    if (minR.IsOk) info.MinRange = minR.ToFixed().ToFloat();
+                    stats.AttackTypes.Add(info);
+                }
             }
 
             // Resistance: per-type damage reduction. Read from Resistance/Entity/Damage/{type}
@@ -457,9 +488,17 @@ namespace ZeroAD.Sim.Content
             var unitMotion = node.GetChild("UnitMotion");
             if (unitMotion.IsOk)
             {
+                // 建筑无 UnitMotion(getSpeedTooltip 不显示 Speed 行)——不设此旗的
+                // 模板 WalkSpeed 保持字段默认 8,不能作为显示依据。
+                stats.HasUnitMotion = true;
                 var walkSpeed = unitMotion.GetChild("WalkSpeed");
                 if (walkSpeed.IsOk)
                     stats.WalkSpeed = walkSpeed.ToFixed().ToFloat();
+                // RunMultiplier/Acceleration(getSpeedTooltip 的 Run/Acceleration 段)。
+                var runMult = unitMotion.GetChild("RunMultiplier");
+                if (runMult.IsOk) stats.RunMultiplier = runMult.ToFixed().ToFloat();
+                var accel = unitMotion.GetChild("Acceleration");
+                if (accel.IsOk) stats.Acceleration = accel.ToFixed().ToFloat();
                 // PassabilityClass(原版:default/ship;plane 的 unrestricted 未移植)——
                 // 船走水路寻路、水面出生;陆军走陆地。
                 var passClass = unitMotion.GetChild("PassabilityClass");
@@ -505,7 +544,23 @@ namespace ZeroAD.Sim.Content
 
             var gatherer = node.GetChild("ResourceGatherer");
             if (gatherer.IsOk)
+            {
                 stats.CanGather = true;
+                // Rates × BaseSpeed = 原版 GetTemplateData 的 resourceGatherRates
+                // (getGatherTooltip 数据源);*.ruins 原版明确忽略。
+                float baseSpeed = gatherer.GetChild("BaseSpeed").IsOk
+                    ? gatherer.GetChild("BaseSpeed").ToFixed().ToFloat() : 1f;
+                var rates = gatherer.GetChild("Rates");
+                if (rates.IsOk)
+                {
+                    foreach (var (rateKey, rateNode) in rates.Children)
+                    {
+                        if (rateKey.StartsWith('@')) continue;
+                        if (rateKey.EndsWith(".ruins", System.StringComparison.Ordinal)) continue;
+                        stats.GatherRates[rateKey] = rateNode.ToFixed().ToFloat() * baseSpeed;
+                    }
+                }
+            }
 
             var garrisonHolder = node.GetChild("GarrisonHolder");
             if (garrisonHolder.IsOk)
@@ -1014,6 +1069,21 @@ namespace ZeroAD.Sim.Content
         /// <summary>BuildingAI/GarrisonArrowClasses:计入加箭的类别(tokens,如 "Infantry"/"Soldier")。</summary>
         public string GarrisonArrowClasses = "";
         public float WalkSpeed = 8f;
+        /// <summary>模板声明 &lt;UnitMotion&gt;(单位/船;建筑无 → 不显示 Speed 行)。</summary>
+        public bool HasUnitMotion;
+        /// <summary>UnitMotion/RunMultiplier(template_unit 默认 1.67,继承合并后可读)。
+        /// Run 速度 = WalkSpeed × RunMultiplier(getSpeedTooltip 同式)。</summary>
+        public float RunMultiplier = 1f;
+        /// <summary>UnitMotion/Acceleration(template_unit 默认 35;tooltip 用)。</summary>
+        public float Acceleration;
+        /// <summary>ResourceGatherer/Rates × BaseSpeed(原版 GetTemplateData 的
+        /// resourceGatherRates 同式)。键为 subtype 原文("food.meat"…;*.ruins 已剔除)。
+        /// 空 = 无采集率(getGatherTooltip 不显示)。</summary>
+        public Dictionary<string, float> GatherRates = new(System.StringComparer.Ordinal);
+        /// <summary>Attack 逐型 tooltip 记录(Melee/Ranged/Capture;Slaughter 剔除)。
+        /// 与上方 Attack* 合计字段并存——合计供 AttackComponent/HUD,逐型供
+        /// getAttackTooltip 格式化。</summary>
+        public List<AttackTypeInfo> AttackTypes = new();
         /// <summary>UnitMotion/PassabilityClass("default"/"ship";原版 plane 另有
         /// unrestricted,未移植)。船 = "ship" → 水路寻路 + 水面出生。</summary>
         public string PassabilityClass = "default";
@@ -1223,5 +1293,21 @@ namespace ZeroAD.Sim.Content
         public float? Angle;      // 弧度(模板为度,解析时换算)
         public string Template;
         public bool Ejectable;
+    }
+
+    /// <summary>单个攻击型的 tooltip 数据(原版 getAttackTooltip 遍历 Attack 子节点;
+    /// Damage 四型 + Capture + RepeatTime/MaxRange/MinRange)。</summary>
+    public sealed class AttackTypeInfo
+    {
+        /// <summary>类型名:Melee / Ranged / Capture(Slaughter 解析期已剔除)。</summary>
+        public string TypeName = "";
+        /// <summary>AttackName(原版 attackLabel 数据源;缺省回落类型名)。</summary>
+        public string AttackName = "";
+        public float Hack, Pierce, Crush, Fire;
+        public float Capture;
+        /// <summary>RepeatTime 毫秒;0 = 无间隔段。</summary>
+        public int RepeatTimeMs;
+        /// <summary>MaxRange/MinRange 米;0 = 无该段。</summary>
+        public float MaxRange, MinRange;
     }
 }
