@@ -1267,12 +1267,49 @@ public sealed partial class HUD : CanvasLayer
                         var player = _sim.Sim.GetPlayerEntity(owner.PlayerId);
                         if (player != null) ownerCiv = player.Civ;
                     }
+                    // 原版 Researcher.GetTechnologiesList 的 supersedes 折叠:supersedes 目标
+                    // 同在列表的科技(如 phase_city→phase_town)不作独立图标,只登记进链;
+                    // 顶层项已研究/进行中时沿链走到下一个未研究项(按钮原位"变形"为下一
+                    // 阶段)——每条链同时只显示一个图标(C++ 实测:村庄期只见 Town Phase,
+                    // 研究完 Town 后同一位置变 City Phase,不会两个时代并排)。
+                    var tokens = new List<string>();
                     foreach (var raw in rstats.ResearchableTechnologies.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
                     {
                         string tech = raw;
                         if (rstats.Civ.Length > 0) tech = tech.Replace("{native}", rstats.Civ);
                         if (ownerCiv.Length > 0) tech = tech.Replace("{civ}", ownerCiv);
                         if (tech.Contains('{')) continue;
+                        // phase 归一(无特制文件的文明回落 *_generic),须在存在性过滤前。
+                        if (tech.Contains("phase_") && tm.GetDefinition(tech) == null)
+                        {
+                            if (tech.StartsWith("phase_town_", System.StringComparison.Ordinal))
+                                tech = "phase_town_generic";
+                            else if (tech.StartsWith("phase_city_", System.StringComparison.Ordinal))
+                                tech = "phase_city_generic";
+                        }
+                        if (tm.GetDefinition(tech) == null) continue;   // 该文明不可研究(原版 DeriveRequirements 过滤)
+                        tokens.Add(tech);
+                    }
+                    var inList = new HashSet<string>(tokens, System.StringComparer.Ordinal);
+                    var superseded = new Dictionary<string, string>(System.StringComparer.Ordinal);   // 被取代者 → 取代者
+                    var topLevel = new List<string>();
+                    foreach (var t in tokens)
+                    {
+                        var def = tm.GetDefinition(t)!;
+                        if (def.Supersedes != null && inList.Contains(def.Supersedes))
+                            superseded[def.Supersedes] = t;
+                        else
+                            topLevel.Add(t);
+                    }
+                    var researcherComp = _sim.Sim.QueryInterface<ResearcherComponent>(researcher.Value);
+                    foreach (var head in topLevel)
+                    {
+                        string tech = head;
+                        // 已研究/本建筑进行中 → 沿链取下一个(原版 IsTechnologyResearchedOrInProgress)。
+                        while (tech.Length > 0
+                               && (tm.IsResearched(tech) || (researcherComp?.CurrentTech != null && researcherComp.CurrentTech == tech)))
+                            tech = superseded.TryGetValue(tech, out var next) ? next : "";
+                        if (tech.Length == 0) continue;
                         AddResearchButton(tech, tm);
                     }
                 }
