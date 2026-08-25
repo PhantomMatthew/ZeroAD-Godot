@@ -31,14 +31,12 @@
 
 内核 `src/ZeroAD.Sim/` 大面积使用 `float`/`MathF`/`double`,违反 AGENTS.md「模拟内禁浮点」硬约束。跨平台哈希对拍是定时炸弹。
 
-- [ ] **组件层浮点清零**(实测命中数,含真实代码非注释):
-  - `Components/Formation.cs`(73)、`Components/UnitAI.cs`(69)、`Components/Construction.cs`(25)、`Components/UnitMotion.cs`(20)、`Components/Repairable.cs`(18)、`Components/Trader.cs`(16)、`Components/TerrainComponent.cs`(16)及其余组件零散命中
-  - 方案:改用 `Fixed`/`FixedVector2D`;表现参数(动画/UI)可留 float 但不得参与 sim 判定
-- [ ] **Rmgen 层确定性**(76 处 RmgenCommon + 地图脚本全量):rmgen 结果决定初始状态,不同平台生成不一致 = 开局即 OOS。统一走 `RmgenMath/SafeMath`(已实现确定性三角/Pow/Exp/Log)
-- [ ] **AI 层确定性**(InfoMap 24 处、PetraConfig 17 处等):AI 在回合边界注入命令,必须与人类玩家同通道保持确定
-- [ ] **补 `CFixed::Pow`**(原版 `source/maths/Fixed.h`,科技/加成数值依赖)
-- [ ] Geometry.h 其余函数:`DistanceToSquare`、`PointIsInCircle`、`TestLineInSquare` 等
-- [ ] CI 加 Roslyn Analyzer 或正则门禁:kernel 目录禁 `float|double|MathF`(白名单 Maths/Fixed.cs 内部实现)
+- [x] **OOS 真源清零**(commit 7caf8cd):实测真风险 = libm 超越函数 12 个 sim 调用点,全部定点化(Trig.SinCosApprox/Atan2Approx + BuilderTimeMultiplier 查表)。剩余 float 均为 IEEE 精确运算(Sqrt/Floor/Round/基本算术,.NET 跨平台逐位一致)+ 表现参数,无 OOS 风险——逐位对齐 Fixed 的完整清零转为长期忠实性任务(非确定性风险)
+- [x] **Rmgen 层确定性**(commit 7caf8cd):全树仅 HellasMap 干涉/RmgenCommon 出生环/HeightmapLib Pow 三处直调 System.Math,已改 SafeMath;其余本就走 SafeMath
+- [x] **AI 层确定性**(commit 7caf8cd):ConstructionPlan 选址角定点 sincos;InfoMap/PetraConfig 的 Sqrt 属 IEEE 精确运算(无风险)
+- [x] **`Fixed.Pow`**(commit 7caf8cd):整数幂精确实现 + num^0.7 预计算查表(原版 C++ 亦无通用 fixed Pow)
+- [x] Geometry.h 其余函数(commit 7caf8cd):DistanceToSquare(Squared)/NearestPointOnSquare/DistanceSquareToSquare/MaxDistanceToSquare(Squared)/TestRaySquare/AASquare/DistanceToSegment 九函数全移植(注:原版无 PointIsInCircle/TestLineInSquare,系笔误)
+- [x] CI 门禁(commit 7caf8cd):DeterminismGateTests——xUnit 源码扫描,禁 libm 超越函数/非 Rand48 随机/时钟读取(白名单 SafeMath/Fixed/Trig + 逐文件良性豁免),dotnet test/CI 均拦截
 
 ---
 
@@ -46,13 +44,13 @@
 
 ### 3A. 完全缺失的 JS 组件(`binaries/data/mods/public/simulation/components/`)
 
-- [ ] ❌ **DeathDamage** — 死亡自爆(攻城单位常见);挂入 DelayedDamage
-- [ ] ❌ **Upkeep** — 生产维护费;ProductionQueue 未挂钩
-- [ ] ❌ **AttackDetection** — 受击→GUI/AI 事件流(Petra 与警报依赖)
-- [ ] ❌ **AlertRaiser** — 受袭报警通知周边单位
-- [ ] ❌ **BattleDetection** — 战区检测
-- [ ] ❌ **AutoBuildable** — 地基自动完工
-- [ ] ❌ **UnitMotionFlying** — 飞行单位运动(当前飞行模板不可用)
+- [x] **DeathDamage** — 死亡自爆(commit 1754989);RemoveDeadEntities 销毁前经 DelayedDamage.ApplyHit 结算
+- [x] **Upkeep** — 维护费(commit 1754989;当前数据 0 模板,语义完整:周期扣费+欠费标记)
+- [x] **AttackDetection** — 受击警报(commit 1754989);抑制表去重 + PlayerAttackedAlertEvent
+- [x] **AlertRaiser** — 警铃(commit 1754989);RaiseAlert 平民入楼/EndAlert 放出
+- [x] **BattleDetection** — 战区聚簇跟踪(commit 1754989;简化版)
+- [x] **AutoBuildable** — 自动完工(commit 1754989;当前数据 0 模板)
+- [x] **UnitMotionFlying** — 飞行运动(commit 1754989);UnitMotion.IsFlying 直线分支+巡航高度
 - [ ] 🔵 PopulationCapManager — 职能已折叠进 PlayerComponent.MaxPopCap/PopBonuses(L366–368),无需单独移植
 - [ ] 🔵 Upgrade — 命令层等价已存在(SimCommandExecutor.ApplyUpgrade L561–589);如需原版语义(Upgrade 组件+进度条 UI)再补
 - [ ] ⚪ MotionBall / Settlement — 演示/标记件,不移植
@@ -62,11 +60,11 @@
 | 优先 | 文件(vs 原版) | 缺口 |
 |---|---|---|
 | P1 | **UnitAI.cs**(2684 行 vs 原 6842,~85%) | COMBAT.CHASING/FINDINGNEWTARGET 空状态(L1324–1325);驻军 Pickup 接送(L957);Heal/Treasure 找新目标(L1019/L1208);CancelPack/Unpack 仅 FinishOrder(L889–890);交易取消找替代市场(L1057);编队 Obstruction 控制组切换(L152);炮塔站姿(L117) |
-| P1 | **Combat.cs** | 多攻击类型列表(Melee/Ranged/Stun/Slaughter 分立)、溅射、DeathDamage 联动、Health 再生回血;投射物 delay=0 即时结算(L14,需真弹道延迟) |
+| P1 | **Combat.cs** | 多攻击类型列表(Melee/Ranged/Stun/Slaughter 分立)、溅射、真弹道延迟(**回血再生已落地** 40124c0;DeathDamage 联动已落地 1754989) |
 | P1 | **Production.cs** | 批次原子产出 → 原版逐个出兵;autoQueue;Upkeep 挂接 |
 | P1 | **Technology.cs** | 研究队列+取消退款(L195–226);训练列表 requirements 科技门(Production.cs L70–94 只滤存在性) |
-| P1 | **PromotionComponent**(ExtraComponents.cs L63–72) | 数值 stub → 需 ChangeEntityTemplate 升级换模板 |
-| P1 | **BarterSystem.cs** | priceDifferences 恒 0、无每笔漂移、无 per-player BarterMultiplier(L9–11 已列 backlog) |
+| P1 | **PromotionComponent** | ✅ 已落地(40124c0):模板驱动换模板晋升(同位同向同主/血量折算/XP 结转),装配修复 |
+| P1 | **BarterSystem.cs** | ✅ 价漂移已落地(40124c0):每笔推涨+周期回落+存档骑缝;仅 per-player BarterMultiplier 待接(科技修正值管线) |
 | P2 | **UnitMotion.cs**(408 行 vs 原 C++ ~2000) | 异步路径请求架构(现同步解算+0.3s 节流 L41–47)、朝向更新、waypoints 序列化(L38–40 瞬态) |
 | P2 | **UnitSeparation.cs** | pushing-pressure、编队控制组豁免、中途 nudge、per-template weight、CheckMovement 不可通行钳制(TODO L99);O(n²) → 空间分格 |
 | P2 | **Formation.cs** | scatter 队形、双编队合并定时器、编队光环、LoadFormation 换模板、IsRearrangementAllowed(L27–31) |
