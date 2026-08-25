@@ -227,6 +227,61 @@ namespace ZeroAD.Sim
                 });
             }
 
+            // ── P0 补齐件(§3A):DeathDamage/Upkeep/AutoBuildable/AlertRaiser/飞行标记 ──
+            if (stats != null && stats.HasDeathDamage
+                && cm.QueryInterface<DeathDamageComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new DeathDamageComponent
+                {
+                    Range = stats.DeathDamageRange,
+                    FriendlyFire = stats.DeathDamageFriendlyFire,
+                    Damage = new DamageBlock
+                    {
+                        Amounts =
+                        {
+                            [DamageType.Hack] = stats.DeathDamageHack,
+                            [DamageType.Pierce] = stats.DeathDamagePierce,
+                            [DamageType.Crush] = stats.DeathDamageCrush,
+                            [DamageType.Fire] = stats.DeathDamageFire,
+                        },
+                    },
+                });
+            }
+            if (stats != null && stats.HasUpkeep
+                && cm.QueryInterface<UpkeepComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new UpkeepComponent
+                {
+                    IntervalMs = stats.UpkeepIntervalMs,
+                    Food = stats.UpkeepFood,
+                    Wood = stats.UpkeepWood,
+                    Stone = stats.UpkeepStone,
+                    Metal = stats.UpkeepMetal,
+                });
+            }
+            if (stats != null && stats.HasAutoBuildable
+                && cm.QueryInterface<AutoBuildableComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new AutoBuildableComponent { Rate = stats.AutoBuildRate });
+            }
+            if (stats != null && stats.HasAlertRaiser
+                && cm.QueryInterface<AlertRaiserComponent>(entity) == null)
+            {
+                cm.AddComponent(entity, new AlertRaiserComponent
+                {
+                    List = stats.AlertRaiserList,
+                    RaiseAlertRange = stats.AlertRaiseRange,
+                    EndOfAlertRange = stats.AlertEndRange,
+                    SearchRange = stats.AlertSearchRange,
+                });
+            }
+            if (stats != null && stats.HasUnitMotionFlying
+                && cm.QueryInterface<UnitMotion>(entity) is { } flyingMotion)
+            {
+                flyingMotion.IsFlying = true;
+                flyingMotion.Speed = Maths.Fixed.FromFloat(stats.FlyingMaxSpeed);
+            }
+
             // Garrisonable(可驻防;template_unit 默认 Size=1):Garrisonable.js 行为件。
             if (stats != null && stats.GarrisonableSize > 0
                 && cm.QueryInterface<GarrisonableComponent>(entity) == null)

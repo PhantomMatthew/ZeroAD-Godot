@@ -125,6 +125,18 @@ namespace ZeroAD.Sim.Events
         public bool IsRanged;
     }
 
+    /// <summary>玩家受击警报(原版 MT_MinimapPing + AttackDetection 抑制后的报警;
+    /// AttackDetection.js OnGlobalAttacked → AttackAlert)。表现层:小地图 ping + 警报音。</summary>
+    public sealed class PlayerAttackedAlertEvent
+    {
+        public int PlayerId;
+        public EntityId Target;
+        public EntityId Attacker;
+        public float X, Z;
+        /// <summary>家畜目标(原版低优先级通知,可被普通警报覆盖)。</summary>
+        public bool TargetIsDomesticAnimal;
+    }
+
     /// <summary>聊天消息（本地展示 sink）。Kind=Message 来自玩家输入（SP 本地回显或 MP ReceiveChat 转发），
     /// Kind=System 来自游戏事件（PlayerDefeated 等，无 sender）。MP 传输走 MultiplayerController RPC，
     /// 不进锁步（匹配原版 NMT_CHAT：直接 multicast，不经模拟/turn manager）。</summary>
@@ -229,6 +241,7 @@ namespace ZeroAD.Sim.Events
         public event Action<EntityKilledEvent>? EntityKilled;
         public event Action<TradeIncomeEvent>? TradeIncome;
         public event Action<TributeEvent>? Tribute;
+        public event Action<PlayerAttackedAlertEvent>? PlayerAttackedAlert;
 
         public void RaisePlayerCommand(PlayerCommandEvent e) => PlayerCommand?.Invoke(e);
         public void RaiseTrainingQueued(TrainingQueuedEvent e) => TrainingQueued?.Invoke(e);
@@ -241,6 +254,7 @@ namespace ZeroAD.Sim.Events
         public void RaiseEntityCreated(EntityCreatedEvent e) => EntityCreated?.Invoke(e);
         public void RaiseAttackLanded(AttackLandedEvent e) => AttackLanded?.Invoke(e);
         public void RaiseAttackLaunched(AttackLaunchedEvent e) => AttackLaunched?.Invoke(e);
+        public void RaisePlayerAttackedAlert(PlayerAttackedAlertEvent e) => PlayerAttackedAlert?.Invoke(e);
         public void RaiseChatMessage(ChatMessageEvent e) => ChatMessage?.Invoke(e);
         public void RaisePlayerDefeated(PlayerDefeatedEvent e) => PlayerDefeated?.Invoke(e);
         public void RaisePlayerWon(PlayerWonEvent e) => PlayerWon?.Invoke(e);

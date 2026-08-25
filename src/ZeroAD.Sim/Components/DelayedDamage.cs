@@ -171,8 +171,29 @@ public sealed class DelayedDamage
             DamageDealt = final.TotalPhysical,
             CaptureDealt = captureDealt.ToFloat(),
         });
+
+        // 玩家级受击分发(原版 MT_Attacked 广播 → 各玩家 AttackDetection/BattleDetection
+        // 过滤己方目标):受害方玩家得警报(抑制去重)与战区更新。
+        if (final.TotalPhysical > 0 && health != null)
+        {
+            int victimOwner = cm.QueryInterface<OwnershipComponent>(target)?.PlayerId ?? -1;
+            if (victimOwner > 0
+                && cm.Players.GetPlayerEntityId(victimOwner) is { } victimPlayerEntity)
+            {
+                cm.QueryInterface<AttackDetectionComponent>(victimPlayerEntity)
+                    ?.OnAttacked(cm, target, attacker);
+                cm.QueryInterface<BattleDetectionComponent>(victimPlayerEntity)
+                    ?.OnAttacked(cm, target, attacker);
+            }
+        }
     }
 
     /// <summary>Number of hits still queued (for debugging/testing).</summary>
     public int PendingCount => _pending.Count;
+
+    /// <summary>直接结算一次命中(抗性→扣血→事件)。DeathDamage 的圆形溅射逐目标
+    /// 走此入口,与排队命中同管线(原版 CauseDamageOverArea → Hit)。</summary>
+    public static void ApplyHit(ComponentManager cm, EntityId attacker, EntityId target,
+        DamageBlock raw, Components.StatusEffectSpec? status) =>
+        ApplyDirect(cm, attacker, target, raw, status);
 }

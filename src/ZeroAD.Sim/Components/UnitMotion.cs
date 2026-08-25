@@ -10,6 +10,19 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
 {
     public Fixed Speed;
     public Fixed CurrentSpeed;
+    /// <summary>飞行运动(UnitMotionFlying):MoveToPoint 直线飞抵,不走寻路;
+    /// 巡航高度 MaintainFlyingAltitude 维持(gaia 鸟群等装饰单位)。</summary>
+    public bool IsFlying;
+    public float FlyingHeight = 30f;
+
+    private void MaintainFlyingAltitude()
+    {
+        var pos = SimSystem.GetComponent<PositionComponent>(Entity);
+        if (pos == null) return;
+        var alt = Fixed.FromFloat(FlyingHeight);
+        if (pos.Position.Y != alt)
+            pos.Position = new Maths.FixedVector3D(pos.Position.X, alt, pos.Position.Z);
+    }
     public FixedVector2D TargetPos;
     public bool HasMoveTarget;
 
@@ -73,6 +86,17 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     {
         TargetPos = target;
         HasMoveTarget = true;
+
+        // 飞行运动(UnitMotionFlying.js 简化):直线飞抵目标,不走寻路/不受地形阻挡;
+        // 高度维持固定巡航高(鸟群装饰;原版有起飞/降落速率,装饰单位不建模)。
+        if (IsFlying)
+        {
+            _waypoints.Clear();
+            _currentWaypoint = 0;
+            _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+            MaintainFlyingAltitude();
+            return;
+        }
 
         // Throttle: if we already solved a path recently toward ~the same goal, keep walking
         // it instead of re-running A*. See the field doc above for the failure mode this fixes.
@@ -182,6 +206,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     public void Tick(float dt)
     {
         _pathAge += dt;
+        if (IsFlying) MaintainFlyingAltitude();
         if (!HasMoveTarget || _currentWaypoint >= _waypoints.Count)
         {
             // 侧绕点走完 → 自动重解原目标(缓释 B 的续程;_mitigationAttempted 保持,

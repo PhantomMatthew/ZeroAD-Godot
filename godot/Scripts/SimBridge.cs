@@ -255,6 +255,9 @@ public sealed partial class SimBridge : Node
 			var playerEntity = _sim.CreateEntity();
 			_sim.AddComponent(playerEntity, new PlayerComponent { Civ = slot.Civ });
 			_sim.AddComponent(playerEntity, new DiplomacyComponent());
+			// 受击警报 + 战区跟踪(原版挂 template_player 的 AttackDetection/BattleDetection)。
+			_sim.AddComponent(playerEntity, new AttackDetectionComponent());
+			_sim.AddComponent(playerEntity, new BattleDetectionComponent());
 			var techMgr = new TechnologyManager();
 			_sim.AddComponent(playerEntity, techMgr);
 			_sim.AddComponent(playerEntity, new OwnershipComponent { PlayerId = pid });
@@ -437,6 +440,9 @@ public sealed partial class SimBridge : Node
 				});
 				_sim.AddComponent(enemy, new OwnershipComponent { PlayerId = pd.PlayerId });
 				_sim.AddComponent(enemy, new DiplomacyComponent());
+				// 受击警报 + 战区跟踪(与 P1 玩家实体同款)。
+				_sim.AddComponent(enemy, new AttackDetectionComponent());
+				_sim.AddComponent(enemy, new BattleDetectionComponent());
 				// 注册玩家实体到 PlayerManager(原版 player registration):此前漏了 →
 				// GetNonGaiaPlayerIds 不含 P2 → RangeManager.UpdateVisibilityData 的评估
 				// 循环从不评估任何实体对 P2 的可见性 → P2 视野圆加了但 P1 对 P2 的缓存
@@ -1235,6 +1241,7 @@ public sealed partial class SimBridge : Node
 		T("turrets", () => TickTurrets(dt));
 		// 资源涓流(原版 ResourceTrickle 定时器的回合制近似:奇观/牲口棚等按间隔发资源)。
 		T("trickle", () => TickResourceTrickles(dt));
+		T("closure", () => TickGameplayClosure(dt));
 		// 状态效果(原版 StatusEffectsReceiver 定时器):周期伤害/捕获经 DelayedDamage
 		// 本回合结算(排在其 TickPending 前),时限到撤修饰。
 		T("status", () => TickStatusEffects(dt));
@@ -1371,6 +1378,9 @@ public sealed partial class SimBridge : Node
 				// Pop accounting: dying means the entity leaves its owner. Mirrors how Player.js
 				// reacts to MT_OwnershipChanged (To = INVALID_PLAYER).
 				_sim.ApplyOwnershipPopChange(entity, fromPlayer, -1);
+				// 死亡自爆(DeathDamage.js:OnDied → CauseDeathDamage):销毁前结算,
+				// 否则位置/阻挡已拆,溅射找不到源。
+				_sim.QueryInterface<DeathDamageComponent>(entity)?.CauseDeathDamage(_sim);
 				// 驻军持有者被毁兜底:逐出可逐类别,其余随主同灭(原版 EjectOrKill;
 				// EjectHealth 阈值内的通常已被 Tick 提前逐出)。
 				_sim.QueryInterface<GarrisonHolderComponent>(entity)?.EjectOrKillAll(_sim);
@@ -1469,6 +1479,20 @@ public sealed partial class SimBridge : Node
 		{
 			var trickle = _sim.QueryInterface<ResourceTrickleComponent>(entity);
 			trickle?.Tick(_sim, dt);
+		}
+	}
+
+	/// <summary>P0 补齐件 tick:Upkeep 扣费 / AutoBuildable 自建 / AlertRaiser 时基 /
+	/// AttackDetection 抑制表过期 / BattleDetection 战区衰减。</summary>
+	private void TickGameplayClosure(float dt)
+	{
+		foreach (var entity in GetAllEntitiesSnapshot())
+		{
+			_sim.QueryInterface<UpkeepComponent>(entity)?.Tick(_sim, dt);
+			_sim.QueryInterface<AutoBuildableComponent>(entity)?.Tick(_sim, dt);
+			_sim.QueryInterface<AlertRaiserComponent>(entity)?.Tick(dt);
+			_sim.QueryInterface<AttackDetectionComponent>(entity)?.Tick(dt);
+			_sim.QueryInterface<BattleDetectionComponent>(entity)?.Tick(dt);
 		}
 	}
 

@@ -856,6 +856,75 @@ namespace ZeroAD.Sim.Content
                 if (garrisonMult.IsOk) stats.TraderGarrisonGainMultiplier = garrisonMult.ToFixed().ToFloat();
             }
 
+            // Upkeep(生产维护费;Upkeep.js)。
+            var upkeepNode = node.GetChild("Upkeep");
+            if (upkeepNode.IsOk)
+            {
+                stats.HasUpkeep = true;
+                var uIvl = upkeepNode.GetChild("Interval");
+                if (uIvl.IsOk) stats.UpkeepIntervalMs = uIvl.ToFixed().ToFloat();
+                var uRates = upkeepNode.GetChild("Rates");
+                if (uRates.IsOk)
+                {
+                    if (uRates.GetChild("food").IsOk) stats.UpkeepFood = uRates.GetChild("food").ToInt();
+                    if (uRates.GetChild("wood").IsOk) stats.UpkeepWood = uRates.GetChild("wood").ToInt();
+                    if (uRates.GetChild("stone").IsOk) stats.UpkeepStone = uRates.GetChild("stone").ToInt();
+                    if (uRates.GetChild("metal").IsOk) stats.UpkeepMetal = uRates.GetChild("metal").ToInt();
+                }
+            }
+
+            // AlertRaiser(CC/货栈/粮仓/市场;警铃范围参数)。
+            var alertNode = node.GetChild("AlertRaiser");
+            if (alertNode.IsOk)
+            {
+                stats.HasAlertRaiser = true;
+                var aList = alertNode.GetChild("List");
+                if (aList.IsOk) stats.AlertRaiserList = aList.ToString().Trim();
+                if (alertNode.GetChild("RaiseAlertRange").IsOk)
+                    stats.AlertRaiseRange = alertNode.GetChild("RaiseAlertRange").ToFixed().ToFloat();
+                if (alertNode.GetChild("EndOfAlertRange").IsOk)
+                    stats.AlertEndRange = alertNode.GetChild("EndOfAlertRange").ToFixed().ToFloat();
+                if (alertNode.GetChild("SearchRange").IsOk)
+                    stats.AlertSearchRange = alertNode.GetChild("SearchRange").ToFixed().ToFloat();
+            }
+
+            // DeathDamage(死亡自爆;fireship/flamethrower)。
+            var deathNode = node.GetChild("DeathDamage");
+            if (deathNode.IsOk)
+            {
+                stats.HasDeathDamage = true;
+                if (deathNode.GetChild("Range").IsOk)
+                    stats.DeathDamageRange = deathNode.GetChild("Range").ToFixed().ToFloat();
+                var ff = deathNode.GetChild("FriendlyFire");
+                if (ff.IsOk) stats.DeathDamageFriendlyFire = ff.ToBool();
+                var dd = deathNode.GetChild("Damage");
+                if (dd.IsOk)
+                {
+                    if (dd.GetChild("Hack").IsOk) stats.DeathDamageHack = dd.GetChild("Hack").ToInt();
+                    if (dd.GetChild("Pierce").IsOk) stats.DeathDamagePierce = dd.GetChild("Pierce").ToInt();
+                    if (dd.GetChild("Crush").IsOk) stats.DeathDamageCrush = dd.GetChild("Crush").ToInt();
+                    if (dd.GetChild("Fire").IsOk) stats.DeathDamageFire = dd.GetChild("Fire").ToInt();
+                }
+            }
+
+            // AutoBuildable(自动完工;Rate)。
+            var autoNode = node.GetChild("AutoBuildable");
+            if (autoNode.IsOk)
+            {
+                stats.HasAutoBuildable = true;
+                if (autoNode.GetChild("Rate").IsOk)
+                    stats.AutoBuildRate = autoNode.GetChild("Rate").ToFixed().ToFloat();
+            }
+
+            // UnitMotionFlying(飞行单位;MaxSpeed)。
+            var flyNode = node.GetChild("UnitMotionFlying");
+            if (flyNode.IsOk)
+            {
+                stats.HasUnitMotionFlying = true;
+                if (flyNode.GetChild("MaxSpeed").IsOk)
+                    stats.FlyingMaxSpeed = flyNode.GetChild("MaxSpeed").ToFixed().ToFloat();
+            }
+
             // Loot(战利品;template_unit/gaia 动物等 247 模板):xp + 四资源直子节点。
             var lootNode = node.GetChild("Loot");
             if (lootNode.IsOk)
@@ -1084,6 +1153,27 @@ namespace ZeroAD.Sim.Content
         /// 与上方 Attack* 合计字段并存——合计供 AttackComponent/HUD,逐型供
         /// getAttackTooltip 格式化。</summary>
         public List<AttackTypeInfo> AttackTypes = new();
+
+        // ── P0 补齐件(PORTING-GAPS §3A)──
+        /// <summary>DeathDamage(火船/喷火器):死亡自爆。</summary>
+        public bool HasDeathDamage;
+        public float DeathDamageRange = 20f;
+        public bool DeathDamageFriendlyFire;
+        public int DeathDamageHack, DeathDamagePierce, DeathDamageCrush, DeathDamageFire;
+        /// <summary>AutoBuildable(自动完工;当前数据 0 模板)。</summary>
+        public bool HasAutoBuildable;
+        public float AutoBuildRate = 1f;
+        /// <summary>Upkeep(维护费;当前数据 0 模板)。</summary>
+        public bool HasUpkeep;
+        public float UpkeepIntervalMs = 10000f;
+        public int UpkeepFood, UpkeepWood, UpkeepStone, UpkeepMetal;
+        /// <summary>AlertRaiser(CC/货栈/粮仓/市场的警铃)。</summary>
+        public bool HasAlertRaiser;
+        public string AlertRaiserList = "Civilian";
+        public float AlertRaiseRange = 120f, AlertEndRange = 180f, AlertSearchRange = 100f;
+        /// <summary>UnitMotionFlying(鸟群等飞行单位)。</summary>
+        public bool HasUnitMotionFlying;
+        public float FlyingMaxSpeed = 15f;
         /// <summary>UnitMotion/PassabilityClass("default"/"ship";原版 plane 另有
         /// unrestricted,未移植)。船 = "ship" → 水路寻路 + 水面出生。</summary>
         public string PassabilityClass = "default";
