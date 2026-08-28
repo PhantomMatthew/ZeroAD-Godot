@@ -141,7 +141,7 @@ public sealed class StatusEffectsReceiverComponent : ComponentBase, IComponentMe
             {
                 DelayedDamage.ScheduleHit(cm, status.SourceEntity, Entity,
                     new DamageBlock { Amounts = new Dictionary<DamageType, int>(status.Damage.Amounts),
-                        Capture = status.Capture }, delayTurns: 0);
+                        Capture = status.Capture }, delaySeconds: 0f);
             }
 
             if (status.DurationMs <= 0) continue;

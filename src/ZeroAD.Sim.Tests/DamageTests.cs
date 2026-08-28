@@ -81,7 +81,7 @@ public sealed class DamageTests
         cm.AddComponent(target, res);
 
         var raw = new DamageBlock(DamageType.Hack, 100);
-        DelayedDamage.ScheduleHit(cm, attacker, target, raw, delayTurns: 0);
+        DelayedDamage.ScheduleHit(cm, attacker, target, raw, delaySeconds: 0f);
 
         // No delay → settles on next TickPending (same turn).
         cm.DelayedDamage.TickPending(cm);
@@ -99,19 +99,19 @@ public sealed class DamageTests
         var target = cm.CreateEntity();
         cm.AddComponent(target, new HealthComponent { Current = 100, Max = 100 });
 
-        DelayedDamage.ScheduleHit(cm, attacker, target, new DamageBlock(DamageType.Hack, 40), delayTurns: 2);
+        DelayedDamage.ScheduleHit(cm, attacker, target, new DamageBlock(DamageType.Hack, 40), delaySeconds: 0.2f);
 
-        // Turn 0: not yet.
+        // 0.0s: not yet.
         cm.DelayedDamage.TickPending(cm);
         Assert.Equal(100, cm.QueryInterface<HealthComponent>(target)!.Current);
         cm.DelayedDamage.AdvanceTurn();
 
-        // Turn 1: not yet.
+        // 0.1s: not yet.
         cm.DelayedDamage.TickPending(cm);
         Assert.Equal(100, cm.QueryInterface<HealthComponent>(target)!.Current);
         cm.DelayedDamage.AdvanceTurn();
 
-        // Turn 2: settles now.
+        // 0.2s: settles now.
         cm.DelayedDamage.TickPending(cm);
         Assert.Equal(60, cm.QueryInterface<HealthComponent>(target)!.Current);
     }
@@ -125,7 +125,7 @@ public sealed class DamageTests
         cm.AddComponent(target, new HealthComponent { Current = 100, Max = 100 });
         cm.AddComponent(target, new ResistanceComponent { Invulnerable = true });
 
-        DelayedDamage.ScheduleHit(cm, attacker, target, new DamageBlock(DamageType.Hack, 999), delayTurns: 0);
+        DelayedDamage.ScheduleHit(cm, attacker, target, new DamageBlock(DamageType.Hack, 999), delaySeconds: 0f);
         cm.DelayedDamage.TickPending(cm);
 
         Assert.Equal(100, cm.QueryInterface<HealthComponent>(target)!.Current);

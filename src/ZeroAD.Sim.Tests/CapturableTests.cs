@@ -277,7 +277,7 @@ public sealed class CapturableTests
 
         // 捕获通道:raw 10 → hp 放大 10/0.55 ≈ 18.18。
         DelayedDamage.ScheduleHit(cm, soldier, building,
-            new DamageBlock { Capture = F(10) }, delayTurns: 0);
+            new DamageBlock { Capture = F(10) }, delaySeconds: 0f);
         cm.DelayedDamage.TickPending(cm);
 
         Assert.Equal(50, health.Current);                       // 无物理伤害
@@ -295,7 +295,7 @@ public sealed class CapturableTests
         var soldier = AddSoldier(cm, owner: 2);
 
         DelayedDamage.ScheduleHit(cm, soldier, building,
-            new DamageBlock { Capture = F(600) }, delayTurns: 0);   // 超量 → 抽干即翻面
+            new DamageBlock { Capture = F(600) }, delaySeconds: 0f);   // 超量 → 抽干即翻面
         cm.DelayedDamage.TickPending(cm);
 
         Assert.Equal(2, cm.QueryInterface<OwnershipComponent>(building)!.PlayerId);
@@ -445,6 +445,7 @@ public sealed class CapturableTests
         for (int i = 0; i < 30; i++)
         {
             ai.Tick(0.1f, cm);
+            cm.DelayedDamage.AdvanceTurn();
             cm.DelayedDamage.TickPending(cm);
         }
 

@@ -211,7 +211,7 @@ public sealed class StatusRepairLootTrickleTests
         // 经 DelayedDamage 结算击杀(组件管理器自带队列 → 排入后本回合结算)。
         int m0 = cm.Players.GetPlayerEntity(1)!.Metal;
         DelayedDamage.ScheduleHit(cm, killer, victim,
-            new DamageBlock(DamageType.Hack, 10), delayTurns: 0);
+            new DamageBlock(DamageType.Hack, 10), delaySeconds: 0f);
         cm.DelayedDamage.TickPending(cm);
 
         Assert.True(cm.QueryInterface<HealthComponent>(victim)!.IsDead);
@@ -387,6 +387,7 @@ public sealed class StatusRepairLootTrickleTests
 
         atk.Target = victim;
         atk.PerformAttack(cm);
+        cm.DelayedDamage.AdvanceTurn();
         cm.DelayedDamage.TickPending(cm);
 
         Assert.True(receiver.ActiveStatuses.ContainsKey("Burning"));
@@ -413,6 +414,7 @@ public sealed class StatusRepairLootTrickleTests
 
         atk.Target = victim;
         atk.PerformAttack(cm);
+        cm.DelayedDamage.AdvanceTurn();
         cm.DelayedDamage.TickPending(cm);
 
         Assert.Empty(receiver.ActiveStatuses);

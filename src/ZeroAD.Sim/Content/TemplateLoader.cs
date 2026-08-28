@@ -466,6 +466,23 @@ namespace ZeroAD.Sim.Content
                             break;   // 原版 oneOrMore,单效果
                         }
                     }
+                    // 逐型 Splash(范围伤害;原版 Attack/*/Splash 块,圆形衰减)。
+                    var splash = typeNode.GetChild("Splash");
+                    if (splash.IsOk)
+                    {
+                        if (splash.GetChild("Range").IsOk)
+                            info.SplashRange = splash.GetChild("Range").ToFixed().ToFloat();
+                        var ff = splash.GetChild("FriendlyFire");
+                        if (ff.IsOk) info.SplashFriendlyFire = ff.ToBool();
+                        var sd = splash.GetChild("Damage");
+                        if (sd.IsOk)
+                        {
+                            if (sd.GetChild("Hack").IsOk) info.SplashHack = sd.GetChild("Hack").ToFixed().ToFloat();
+                            if (sd.GetChild("Pierce").IsOk) info.SplashPierce = sd.GetChild("Pierce").ToFixed().ToFloat();
+                            if (sd.GetChild("Crush").IsOk) info.SplashCrush = sd.GetChild("Crush").ToFixed().ToFloat();
+                            if (sd.GetChild("Fire").IsOk) info.SplashFire = sd.GetChild("Fire").ToFixed().ToFloat();
+                        }
+                    }
                     stats.AttackTypes.Add(info);
                 }
             }
@@ -1458,6 +1475,10 @@ namespace ZeroAD.Sim.Content
         /// <summary>逐型 RestrictedClasses/PreferredClasses(原版 AttackType 门/偏好)。</summary>
         public string RestrictedClasses = "";
         public string PreferredClasses = "";
+        /// <summary>逐型 Splash(范围伤害;0 = 无溅射)。</summary>
+        public float SplashRange;
+        public bool SplashFriendlyFire;
+        public float SplashHack, SplashPierce, SplashCrush, SplashFire;
         /// <summary>逐型 ApplyStatus(攻击附带状态;空名 = 无)。</summary>
         public string StatusEffectName = "";
         public float StatusEffectDurationMs, StatusEffectIntervalMs;

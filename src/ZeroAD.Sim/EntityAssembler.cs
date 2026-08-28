@@ -128,7 +128,13 @@ namespace ZeroAD.Sim
                             StatusEffectDmgPierce = t.StatusEffectDmgPierce,
                             StatusEffectDmgCrush = t.StatusEffectDmgCrush,
                             StatusEffectDmgFire = t.StatusEffectDmgFire,
+                            SplashRange = t.SplashRange,
+                            SplashFriendlyFire = t.SplashFriendlyFire,
                         };
+                        if (t.SplashHack > 0) spec.SplashDamage.Amounts[Components.DamageType.Hack] = (int)t.SplashHack;
+                        if (t.SplashPierce > 0) spec.SplashDamage.Amounts[Components.DamageType.Pierce] = (int)t.SplashPierce;
+                        if (t.SplashCrush > 0) spec.SplashDamage.Amounts[Components.DamageType.Crush] = (int)t.SplashCrush;
+                        if (t.SplashFire > 0) spec.SplashDamage.Amounts[Components.DamageType.Fire] = (int)t.SplashFire;
                         if (t.Hack > 0) spec.Damage.Amounts[Components.DamageType.Hack] = (int)t.Hack;
                         if (t.Pierce > 0) spec.Damage.Amounts[Components.DamageType.Pierce] = (int)t.Pierce;
                         if (t.Crush > 0) spec.Damage.Amounts[Components.DamageType.Crush] = (int)t.Crush;

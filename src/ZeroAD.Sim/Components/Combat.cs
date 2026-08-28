@@ -128,6 +128,10 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         public float StatusEffectDurationMs, StatusEffectIntervalMs;
         public string StatusEffectStackability = "Ignore";
         public int StatusEffectDmgHack, StatusEffectDmgPierce, StatusEffectDmgCrush, StatusEffectDmgFire;
+        /// <summary>逐型溅射(范围伤害;0 = 无溅射;原版 Attack/*/Splash,圆形衰减)。</summary>
+        public float SplashRange;
+        public bool SplashFriendlyFire;
+        public DamageBlock SplashDamage = new();
 
         public bool HasDamage => Damage.TotalPhysical > 0;
 
@@ -140,6 +144,9 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
             s.StringASCII(p + "restr", RestrictedClasses);
             s.StringASCII(p + "pref", PreferredClasses);
             s.StringASCII(p + "status", StatusEffectName);
+            s.NumberFixed(p + "splash", Maths.Fixed.FromFloat(SplashRange));
+            s.Bool(p + "ff", SplashFriendlyFire);
+            SplashDamage.Serialize(s, p + "sdmg");
         }
 
         public static AttackTypeSpec Deserialize(IDeserializer d, string p)
@@ -153,6 +160,9 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
                 RestrictedClasses = d.StringASCII(p + "restr"),
                 PreferredClasses = d.StringASCII(p + "pref"),
                 StatusEffectName = d.StringASCII(p + "status"),
+                SplashRange = d.NumberFixed(p + "splash").ToFloat(),
+                SplashFriendlyFire = d.Bool(p + "ff"),
+                SplashDamage = DamageBlock.Deserialize(d, p + "sdmg"),
             };
             return t;
         }
@@ -487,7 +497,7 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
             // 修正值路径对齐原版 GetAttackEffectsData("Attack/Capture"):Attack/Capture/Capture。
             float cap = cm.Modifiers.Apply("Attack/Capture/Capture", CaptureStrength.ToFloat(), Entity);
             DelayedDamage.ScheduleHit(cm, Entity, Target.Value,
-                new DamageBlock { Capture = Maths.Fixed.FromFloat(cap) }, delayTurns: 0);
+                new DamageBlock { Capture = Maths.Fixed.FromFloat(cap) }, delaySeconds: 0f);
             Cooldown = 1.0f / CaptureRate;
             return;
         }
@@ -498,12 +508,68 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         foreach (var kv in type.Damage.Amounts.OrderBy(k => (int)k.Key)) // 排序保确定
             mod.Amounts[kv.Key] = (int)MathF.Round(
                 cm.Modifiers.Apply(prefix + kv.Key, kv.Value, Entity), MidpointRounding.AwayFromZero);
-        DelayedDamage.ScheduleHit(cm, Entity, Target.Value, mod, delayTurns: 0,
+        // 弹道延迟(原版 CCmpProjectileManager 连续飞行计时;0.01s 恒同拍落地——
+        // PerformAttack 当拍 TickPending 即清,测试/玩法语义与原版一致;远程命中
+        // 顺序仍按发射先后确定)。
+        const float delay = 0.01f;
+        DelayedDamage.ScheduleHit(cm, Entity, Target.Value, mod, delaySeconds: delay,
             status: BuildStatusSpec());
-        // 攻击发射事件（表现层生成飞行投射物）。纯视觉——伤害已瞬间结算（原版 CCmpProjectileManager 同架构）。
+        // 溅射(原版 Attack/*/Splash:主目标全额,范围内其余按 (1-d²/r²) 衰减;
+        // 投射体发射时即记,命中与主击同回合落地)。
+        if (type.SplashRange > 0)
+            ScheduleSplash(cm, type, delay);
+        // 攻击发射事件（表现层生成飞行投射物）。纯视觉——伤害已由 DelayedDamage 排队结算。
         cm.Events.RaiseAttackLaunched(new Events.AttackLaunchedEvent
         { Attacker = Entity, Target = Target.Value, IsRanged = type.Name == "Ranged" });
         Cooldown = 1.0f / type.Rate;
+    }
+
+    /// <summary>溅射排期(原版 AttackHelper.CauseDamageOverArea 圆形衰减;主目标跳过——
+    /// 已走主击全额,溅射只打范围内其余)。</summary>
+    private void ScheduleSplash(ComponentManager cm, AttackTypeSpec type, float delay)
+    {
+        if (Target == null) return;
+        var myPos = cm.QueryInterface<PositionComponent>(Entity);
+        var targetPos = cm.QueryInterface<PositionComponent>(Target.Value);
+        var range = SimSystem.Range;
+        if (myPos == null || targetPos == null || range == null) return;
+
+        int attackerOwner = cm.QueryInterface<OwnershipComponent>(Entity)?.PlayerId ?? -1;
+        float originX = targetPos.Position.X.ToFloat();
+        float originZ = targetPos.Position.Z.ToFloat();
+        float r = type.SplashRange;
+        float r2 = r * r;
+
+        foreach (var ent in range.ExecuteQuery(Target.Value, Maths.Fixed.Zero,
+            Maths.Fixed.FromFloat(r)))
+        {
+            if (ent == Target.Value) continue;   // 主目标全额,溅射不重复
+            if (!type.SplashFriendlyFire && attackerOwner >= 0)
+            {
+                var eOwner = cm.QueryInterface<OwnershipComponent>(ent)?.PlayerId ?? -1;
+                if (eOwner == attackerOwner) continue;
+                if (eOwner >= 0 && !cm.Players.IsEnemy(attackerOwner, eOwner)) continue;
+            }
+            var ePos = cm.QueryInterface<PositionComponent>(ent);
+            if (ePos == null) continue;
+            float dx = ePos.Position.X.ToFloat() - originX;
+            float dz = ePos.Position.Z.ToFloat() - originZ;
+            float d2 = dx * dx + dz * dz;
+            if (d2 >= r2) continue;
+            float mult = 1f - d2 / r2;   // 二次衰减(原版 Circular 同款)
+            if (mult <= 0) continue;
+
+            var splash = new DamageBlock();
+            foreach (var kv in type.SplashDamage.Amounts.OrderBy(k => (int)k.Key))
+            {
+                float v = cm.Modifiers.Apply(
+                    type.ModifierPath + kv.Key, kv.Value * mult, Entity);
+                int iv = (int)MathF.Round(v, MidpointRounding.AwayFromZero);
+                if (iv > 0) splash.Amounts[kv.Key] = iv;
+            }
+            if (splash.TotalPhysical > 0)
+                DelayedDamage.ScheduleHit(cm, Entity, ent, splash, delaySeconds: delay);
+        }
     }
 
     public void Tick(float dt, ComponentManager cm)

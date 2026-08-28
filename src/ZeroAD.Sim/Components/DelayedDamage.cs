@@ -18,12 +18,14 @@ namespace ZeroAD.Sim;
 // indirection and the delay seam in place so ranged projectiles slot in later without
 // rewiring combat.
 
-/// <summary>System-level delayed-damage queue. Tick once per sim turn from the presentation layer.</summary>
+/// <summary>System-level delayed-damage queue. Tick once per sim turn from the presentation layer.
+/// 时间轴 = 累计模拟秒(原版 CCmpProjectileManager 连续计时的回合粒度对应);
+/// 旧签名 AdvanceTurn() 保兼容(等价 AdvanceTurn(0.1f),一拍 0.1s 基准)。</summary>
 public sealed class DelayedDamage
 {
     private struct PendingHit
     {
-        public int TriggerTurn;        // settle when current turn >= this
+        public float TriggerTime;      // settle when current sim-time >= this
         public EntityId Attacker;
         public EntityId Target;
         public DamageBlock Damage;
@@ -31,25 +33,26 @@ public sealed class DelayedDamage
     }
 
     private readonly List<PendingHit> _pending = new();
-    private int _currentTurn;
+    private float _currentTime;
 
-    /// <summary>Advance the current turn counter. Call once per sim turn, before TickPending.</summary>
-    public void AdvanceTurn() => _currentTurn++;
+    /// <summary>推进时基(秒;原版计时器连续,回合粒度按 dt 折中)。</summary>
+    public void AdvanceTurn(float dt) => _currentTime += dt;
+    /// <summary>旧签名(0.1s 基准拍;测试/旧调用方兼容)。</summary>
+    public void AdvanceTurn() => _currentTime += 0.1f;
 
-    /// <summary>Queue a damage event to settle after a number of turns (0 = same turn, next Tick).</summary>
+    /// <summary>Queue a damage event to settle after a number of seconds (0 = same tick).</summary>
     public static void ScheduleHit(ComponentManager cm, EntityId attacker, EntityId target,
-        DamageBlock damage, int delayTurns, Components.StatusEffectSpec? status = null)
+        DamageBlock damage, float delaySeconds, Components.StatusEffectSpec? status = null)
     {
         var dd = cm.DelayedDamage;
         if (dd == null)
         {
-            // No delay system wired (pure determinism tests): apply instantly through Resistance.
             ApplyDirect(cm, attacker, target, damage, status);
             return;
         }
         dd._pending.Add(new PendingHit
         {
-            TriggerTurn = dd._currentTurn + delayTurns,
+            TriggerTime = dd._currentTime + delaySeconds,
             Attacker = attacker,
             Target = target,
             Damage = damage,
@@ -64,7 +67,7 @@ public sealed class DelayedDamage
         int write = 0;
         for (int read = 0; read < _pending.Count; read++)
         {
-            if (_pending[read].TriggerTurn <= _currentTurn)
+            if (_pending[read].TriggerTime <= _currentTime)
             {
                 var hit = _pending[read];
                 ApplyDirect(cm, hit.Attacker, hit.Target, hit.Damage, hit.Status);
