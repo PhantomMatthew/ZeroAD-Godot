@@ -33,7 +33,8 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
             WoodCost = woodCost,
             FoodCost = foodCost,
             BuildTime = buildTime,
-            Count = count
+            Count = count,
+            OriginalCount = count,
         });
     }
 
@@ -54,6 +55,13 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
     /// defeated/...;成功时清 null)。执行端据此发 train-rejected 事件给 GUI 弹提示——
     /// 原版训练失败有红字反馈,不能静默。只读诊断,不影响判定。</summary>
     public string? LastRejectionReason { get; private set; }
+
+    /// <summary>autoQueue(原版 ProductionQueue.autoqueuing):队列空时自动重排同款
+    /// 头项(重排会多耗一拍才开工——原版注释:比手动略亏)。</summary>
+    public bool AutoQueueing;
+
+    public void EnableAutoQueue() => AutoQueueing = true;
+    public void DisableAutoQueue() => AutoQueueing = false;
 
     /// <summary>Trainer/Entities 合并原文(空格分隔 tokens,含 {civ}/{native} 占位;
     /// 由 SimBridge 装配自模板 stats.TrainableEntities)。空 = 旧装配路径(SpawnBuilding
@@ -160,6 +168,7 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
             PopulationCost = stats.PopulationCost,
             BuildTime = buildTime,
             Count = count,
+            OriginalCount = count,
             TrainingCategory = stats.TrainingCategory
         });
 
@@ -207,44 +216,75 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
     /// TrainingFinished. This replaces the legacy SimBridge spawn-after-tick path so the whole
     /// train→spawn loop is replayable and OOS-safe.
     /// </summary>
+    /// <summary>
+    /// Advance the queue by <paramref name="dt"/> seconds. 逐单位出货(原版 Trainer.Item.
+    /// Finish:每拍 Spawn 一只,count-- 未空则保留;BuildTime 为单只时间)。队列溢出
+    /// 时间自动转给下一项(原版 ProgressTimeout 的 while(time>0) 分配语义)。
+    /// </summary>
     public void Tick(float dt, ComponentManager cm)
     {
         if (_queue.Count == 0) return;
 
-        var current = _queue[0];
         _progress += dt;
-
-        if (_progress < current.BuildTime) return;
-
-        // Head item finished: spawn Count units around the trainer, then dequeue.
-        _queue.RemoveAt(0);
-        _progress = 0;
 
         var trainerPos = cm.QueryInterface<PositionComponent>(Entity);
         var owner = cm.QueryInterface<OwnershipComponent>(Entity);
         var rally = cm.QueryInterface<RallyPointComponent>(Entity);
+        var footprint = cm.QueryInterface<FootprintComponent>(Entity);
         int ownerId = owner?.PlayerId ?? -1;
 
-        if (trainerPos == null)
+        while (_queue.Count > 0)
         {
-            // No position to spawn at — still notify so GUI can react, but no entities appear.
-            cm.Events.RaiseTrainingFinished(new Events.TrainingFinishedEvent
-            {
-                TrainerEntity = Entity,
-                UnitTemplate = current.TemplateName
-            });
-            return;
-        }
+            var current = _queue[0];
+            float unitTime = current.BuildTime / Math.Max(1, current.OriginalCount);
+            if (_progress < unitTime) break;
+            _progress -= unitTime;
 
+            if (trainerPos == null)
+            {
+                cm.Events.RaiseTrainingFinished(new Events.TrainingFinishedEvent
+                {
+                    TrainerEntity = Entity,
+                    UnitTemplate = current.TemplateName
+                });
+                current.Count--;
+            }
+            else
+            {
+                SpawnOne(cm, current, trainerPos, footprint, rally, ownerId);
+                cm.Events.RaiseTrainingFinished(new Events.TrainingFinishedEvent
+                {
+                    TrainerEntity = Entity,
+                    UnitTemplate = current.TemplateName
+                });
+                current.Count--;
+            }
+
+            if (current.Count <= 0)
+            {
+                _queue.RemoveAt(0);
+                if (AutoQueueing && _queue.Count == 0)
+                {
+                    // 原版 AddItem 校验(资源/上限);失败即 DisableAutoQueue。
+                    if (!EnqueueTraining(current.TemplateName, current.OriginalCount, cm))
+                        DisableAutoQueue();
+                    _progress = 0;   // 重排项本拍不开工(原版:比手动略亏)
+                    return;
+                }
+                if (_queue.Count == 0) { _progress = 0; return; }
+            }
+        }
+    }
+
+    /// <summary>单只出货(原版 Trainer.Item.Spawn 每周期一单位):Footprint 出生点
+    /// → 黄金角环回退;集结点走 UnitAI.Walk 指令。</summary>
+    private void SpawnOne(ComponentManager cm, ProductionItem current,
+        PositionComponent trainerPos, FootprintComponent? footprint,
+        RallyPointComponent? rally, int ownerId)
+    {
         float baseX = trainerPos.Position.X.ToFloat();
         float baseZ = trainerPos.Position.Z.ToFloat();
-        // Footprint-driven spawn: ask the trainer's FootprintComponent for a free slot just outside
-        // its footprint, validated by the Pathfinder so the unit doesn't appear on water / inside
-        // another building. Falls back to a simple ring if no Footprint or no free slot is found.
-        var footprint = cm.QueryInterface<FootprintComponent>(Entity);
         Fixed spawnedRadius = Fixed.FromFloat(1.0f);
-        // 被训单位的通行类(船="ship" → 出生点必须在水面;原版 CheckUnitPlacement 按
-        // passClass 判地形)。解析失败回退陆地类(旧行为)。
         string spawnPassClass = "default";
         try
         {
@@ -253,46 +293,32 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         }
         catch { }
 
-        for (int i = 0; i < current.Count; i++)
+        int batchIndex = current.OriginalCount - current.Count;
+        float sx, sz;
+        var spawn = footprint?.PickSpawnPoint(spawnedRadius, spawnPassClass);
+        if (spawn != null && spawn.Value.X.ToFloat() >= 0)
         {
-            float sx, sz;
-            var spawn = footprint?.PickSpawnPoint(spawnedRadius, spawnPassClass);
-            if (spawn != null && spawn.Value.X.ToFloat() >= 0)
-            {
-                sx = spawn.Value.X.ToFloat();
-                sz = spawn.Value.Z.ToFloat();
-            }
-            else
-            {
-                // Fallback: golden-angle ring around the trainer (keeps training working even when
-                // the area is crowded — units may overlap, but they'll disperse via UnitMotion).
-                // 定点 sincos:出生点是 sim 位置,libm 三角跨平台漂移 → OOS。
-                float angle = i * 2.4f;
-                float radius = 6f + (i / 6) * 3f;
-                Trig.SinCosApprox(Maths.Fixed.FromFloat(angle), out Maths.Fixed spSin, out Maths.Fixed spCos);
-                sx = baseX + spCos.ToFloat() * radius;
-                sz = baseZ + spSin.ToFloat() * radius;
-            }
-            var spawned = cm.SpawnEntity(current.TemplateName, sx, sz, ownerId);
-
-            // Rally point: issue a real Walk order through UnitAI. A raw UnitMotion
-            // MoveToPoint only sets the motion goal and leaves the FSM in IDLE, so the
-            // freshly-trained unit glides to the rally without a walk animation
-            // (ResolveAnimationState keys off the FSM state). Walk pushes Order.Walk,
-            // which StartMovingTo-s the destination AND transitions to WALKING —
-            // matching the original ProductionQueue issuing a Walk order on spawn.
-            if (rally != null && !rally.Position.IsZero)
-            {
-                var ai = cm.QueryInterface<UnitAIComponent>(spawned);
-                ai?.Walk(new Maths.FixedVector2D(rally.Position.X, rally.Position.Y));
-            }
+            sx = spawn.Value.X.ToFloat();
+            sz = spawn.Value.Z.ToFloat();
         }
-
-        cm.Events.RaiseTrainingFinished(new Events.TrainingFinishedEvent
+        else
         {
-            TrainerEntity = Entity,
-            UnitTemplate = current.TemplateName
-        });
+            // Fallback: golden-angle ring around the trainer (keeps training working even when
+            // the area is crowded — units may overlap, but they'll disperse via UnitMotion).
+            // 定点 sincos:出生点是 sim 位置,libm 三角跨平台漂移 → OOS。
+            float angle = batchIndex * 2.4f;
+            float radius = 6f + (batchIndex / 6) * 3f;
+            Trig.SinCosApprox(Maths.Fixed.FromFloat(angle), out Maths.Fixed spSin, out Maths.Fixed spCos);
+            sx = baseX + spCos.ToFloat() * radius;
+            sz = baseZ + spSin.ToFloat() * radius;
+        }
+        var spawned = cm.SpawnEntity(current.TemplateName, sx, sz, ownerId);
+
+        if (rally != null && !rally.Position.IsZero)
+        {
+            var ai = cm.QueryInterface<UnitAIComponent>(spawned);
+            ai?.Walk(new Maths.FixedVector2D(rally.Position.X, rally.Position.Y));
+        }
     }
 
     public override void Serialize(ISerializer s)
@@ -301,6 +327,7 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         s.NumberFixed("progress", ZeroAD.Sim.Maths.Fixed.FromFloat(_progress));
         s.StringASCII("trainToks", TrainableTokens);
         s.StringASCII("nativeCiv", NativeCiv);
+        s.Bool("autoq", AutoQueueing);
         foreach (var item in _queue)
         {
             s.StringASCII("tmpl", item.TemplateName);
@@ -321,6 +348,7 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         _progress = d.NumberFixed("progress").ToFloat();
         TrainableTokens = d.StringASCII("trainToks");
         NativeCiv = d.StringASCII("nativeCiv");
+        AutoQueueing = d.Bool("autoq");
         _queue.Clear();
         for (int i = 0; i < count; i++)
         {
@@ -333,6 +361,7 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
                 MetalCost = d.NumberI32("metal"),
                 PopulationCost = d.NumberI32("pop"),
                 Count = d.NumberI32("batch"),
+                OriginalCount = d.NumberI32("batch"),
                 TrainingCategory = d.StringASCII("cat"),
                 BuildTime = d.NumberFixed("time").ToFloat()
             });
@@ -351,7 +380,10 @@ public sealed class ProductionItem
     public int MetalCost;
     public int PopulationCost;
     public float BuildTime;
+    /// <summary>剩余未出的单位数(逐单位出货递减;原版 Trainer.Item.count)。</summary>
     public int Count = 1;
+    /// <summary>入队时的批大小(出货角序/autoQueue 重排用;原版 Item 原批参数)。</summary>
+    public int OriginalCount = 1;
     public string TrainingCategory = "";
 }
 
