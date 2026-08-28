@@ -107,13 +107,19 @@ public sealed class WorkerAI
         if (ent.ResourceCarrying > 0)
         {
             var carryType = ent.CarryType;
-            // TODO: 找最近的 dropsite 并下达 returnResource 命令
-            // 简化版：检查是否有可用 dropsite
             var dropsites = gameState.GetOwnDropsites(carryType.ToString().ToLowerInvariant());
             if (!dropsites.HasEntities())
             {
                 // 无 dropsite → 重新分配
                 gameState.Metadata.Set(ent.Id, "subrole", WorkerRoles.SubroleIdle);
+            }
+            else
+            {
+                // 找最近投放站并下达 ReturnResource(原版 worker.update 的携带满回送)。
+                var nearest = dropsites.FilterNearest(ent.Position2D, 1);
+                if (nearest.HasEntities())
+                    gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.ReturnResource(
+                        (uint)gameState.PlayerId, (uint)ent.Id, (uint)nearest.Values().First().Id));
             }
         }
     }
@@ -130,8 +136,11 @@ public sealed class WorkerAI
             // 地基完成或消失 → 回 idle
             gameState.Metadata.Remove(ent.Id, "target-foundation");
             gameState.Metadata.Set(ent.Id, "subrole", WorkerRoles.SubroleIdle);
+            return;
         }
-        // TODO: 下达 repair/gather 命令（需 NetCommand.Repair）
+        // 继续建造(原版 builder 分支的 repair 命令;Repair 驱动建造进度)。
+        gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Repair(
+            (uint)gameState.PlayerId, (uint)ent.Id, (uint)foundationId));
     }
 
     /// <summary>完成中行为（原版 SUBROLE_COMPLETING 分支）。</summary>
@@ -274,7 +283,10 @@ public sealed class BaseManager
         gameState.Metadata.Set(worker.Id, "subrole", WorkerRoles.SubroleGatherer);
         gameState.Metadata.Set(worker.Id, "supply", supply.Id);
         gameState.Metadata.Set(worker.Id, "gather-type", preferredType);
-        // TODO: 下达 gather 命令（需 NetCommand.Gather + SubmitAiCommand）
+        // 下达 gather 命令(NetCommand.Gather → UnitAI GATHER 订单;AI 锁步通道,
+        // 与人手同路径同延迟)。此前只分配元数据不下令 → AI 工人分配后永不动。
+        gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Gather(
+            (uint)gameState.PlayerId, (uint)worker.Id, (uint)supply.Id));
     }
 
     /// <summary>分配实体到此 base（原版 assignEntity）。</summary>
