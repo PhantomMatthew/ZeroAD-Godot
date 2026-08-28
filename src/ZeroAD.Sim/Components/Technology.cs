@@ -184,58 +184,89 @@ public sealed class TechnologyManager : ComponentBase, IComponentMessageHandler
 [Component("Researcher", "Researcher")]
 public sealed class ResearcherComponent : ComponentBase, IComponentMessageHandler
 {
-    private string? _currentTech;
-    private float _progress;
+    private readonly Queue<(string Tech, float Progress)> _queue = new();
 
-    public bool IsResearching => _currentTech != null;
-    public string? CurrentTech => _currentTech;
-    public float Progress => _progress;
+    public bool IsResearching => _queue.Count > 0;
+    /// <summary>当前在研科技(队列头;空 = null)。</summary>
+    public string? CurrentTech => _queue.Count > 0 ? _queue.Peek().Tech : null;
+    public float Progress => _queue.Count > 0 ? _queue.Peek().Progress : 0f;
+    /// <summary>队列深度(含在研)。</summary>
+    public int QueueCount => _queue.Count;
 
-    /// <summary>开始研究:校验 CanResearch(前置/pair/重复)+ 四资源扣费。</summary>
+    /// <summary>开始研究(入队;原版 Researcher.QueueTechnology):校验 CanResearch
+    /// (前置/pair/重复)+ 四资源扣费。同一建筑可排多科技依次研究——原版
+    /// ProductionQueue 的 Research 路径同款(此前我们拒绝第二项,队列=1)。</summary>
     public bool StartResearch(string techName, TechnologyManager techMgr, PlayerComponent player)
     {
-        if (_currentTech != null) return false;
         if (!techMgr.CanResearch(techName)) return false;
+        // 队列内重复拒(原版 IsTechnologyQueued 去重)。
+        foreach (var it in _queue)
+            if (it.Tech == techName) return false;
         var tech = techMgr.GetDefinition(techName);
         if (tech == null) return false;
 
         if (!player.CanAfford(tech.Wood, tech.Food, tech.Stone, tech.Metal)) return false;
         player.Spend(tech.Wood, tech.Food, tech.Stone, tech.Metal);
-        _currentTech = techName;
-        _progress = 0;
+        _queue.Enqueue((techName, 0f));
+        return true;
+    }
+
+    /// <summary>取消研究(原版 StopResearching):全额退款,清出队列。
+    /// 取消头项时进度清零。</summary>
+    public bool CancelResearch(string techName, TechnologyManager techMgr, PlayerComponent player)
+    {
+        var items = _queue.ToArray();
+        int idx = -1;
+        for (int i = 0; i < items.Length; i++)
+            if (items[i].Tech == techName) { idx = i; break; }
+        if (idx < 0) return false;
+        var tech = techMgr.GetDefinition(techName);
+        if (tech != null)
+            player.Refund(tech.Wood, tech.Food, tech.Stone, tech.Metal);
+        _queue.Clear();
+        foreach (var it in items)
+            if (it.Tech != techName) _queue.Enqueue(it);
         return true;
     }
 
     /// <summary>推进研究;完成时落地(ApplyResearch)并返回科技名,否则 null。</summary>
     public string? Tick(float dt, TechnologyManager techMgr, ComponentManager cm)
     {
-        if (_currentTech == null) return null;
-        var tech = techMgr.GetDefinition(_currentTech);
-        if (tech == null) { _currentTech = null; _progress = 0; return null; }
+        if (_queue.Count == 0) return null;
+        var head = _queue.Dequeue();
+        var tech = techMgr.GetDefinition(head.Tech);
+        if (tech == null) return null;
 
-        _progress += dt;
-        if (_progress >= tech.ResearchTime)
+        float progress = head.Progress + dt;
+        if (progress >= tech.ResearchTime)
         {
-            techMgr.ApplyResearch(_currentTech, cm);
-            string done = _currentTech;
-            _currentTech = null;
-            _progress = 0;
-            return done;
+            techMgr.ApplyResearch(head.Tech, cm);
+            return head.Tech;
         }
+        // 进度回队头(FIFO 保序)。
+        var next = _queue.ToArray();
+        _queue.Clear();
+        _queue.Enqueue((head.Tech, progress));
+        foreach (var it in next) _queue.Enqueue(it);
         return null;
     }
 
     public override void Serialize(ISerializer s)
     {
-        s.StringASCII("tech", _currentTech ?? "");
-        s.NumberFixed("prog", Maths.Fixed.FromFloat(_progress));
+        s.NumberI32("q", _queue.Count);
+        foreach (var (tech, progress) in _queue)
+        {
+            s.StringASCII("tech", tech);
+            s.NumberFixed("prog", Maths.Fixed.FromFloat(progress));
+        }
     }
 
     public override void Deserialize(IDeserializer d)
     {
-        _currentTech = d.StringASCII("tech");
-        if (string.IsNullOrEmpty(_currentTech)) _currentTech = null;
-        _progress = d.NumberFixed("prog").ToFloat();
+        _queue.Clear();
+        int n = d.NumberI32("q");
+        for (int i = 0; i < n; i++)
+            _queue.Enqueue((d.StringASCII("tech"), d.NumberFixed("prog").ToFloat()));
     }
 
     public void HandleMessage(IMessage message) { }

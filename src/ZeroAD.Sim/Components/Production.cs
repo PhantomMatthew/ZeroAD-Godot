@@ -490,6 +490,15 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         Metal -= metal;
     }
 
+    /// <summary>全额退款(研究取消/生产取消;原版 RefundResources)。</summary>
+    public void Refund(int wood, int food, int stone, int metal)
+    {
+        Wood += wood;
+        Food += food;
+        Stone += stone;
+        Metal += metal;
+    }
+
     public void AddResource(ResourceType type, int amount)
     {
         switch (type)
