@@ -103,28 +103,62 @@ namespace ZeroAD.Sim
             if (isSoldier || (stats != null && (stats.AttackDamage > 0
                 || stats.AttackCaptureStrength > Maths.Fixed.Zero)))
             {
-                // Build the multi-type damage block from template stats (physical only;
-                // Capture 攻击类型独立成组件字段,一次命中只用一型——对齐原版)。
-                var dmg = new Components.DamageBlock();
-                if (stats != null)
+                var attack = new AttackComponent
                 {
-                    if (stats.AttackHack > 0) dmg.Amounts[Components.DamageType.Hack] = stats.AttackHack;
-                    if (stats.AttackPierce > 0) dmg.Amounts[Components.DamageType.Pierce] = stats.AttackPierce;
-                    if (stats.AttackCrush > 0) dmg.Amounts[Components.DamageType.Crush] = stats.AttackCrush;
-                    if (stats.AttackFire > 0) dmg.Amounts[Components.DamageType.Fire] = stats.AttackFire;
+                    HasRangeOverlay = stats?.HasRangeOverlay ?? false,
+                };
+                if (stats != null && stats.AttackTypes.Count > 0)
+                {
+                    // 逐型装配(原版 Attack 组件的 Melee/Ranged slot;Capture 走独立字段)。
+                    foreach (var t in stats.AttackTypes)
+                    {
+                        if (t.TypeName == "Capture") continue;   // Capture 走组件字段
+                        var spec = new AttackComponent.AttackTypeSpec
+                        {
+                            Name = t.TypeName,
+                            MaxRange = t.MaxRange > 0 ? t.MaxRange : 3f,
+                            Rate = t.RepeatTimeMs > 0 ? 1000f / t.RepeatTimeMs : 1f,
+                            RestrictedClasses = t.RestrictedClasses,
+                            PreferredClasses = t.PreferredClasses,
+                            StatusEffectName = t.StatusEffectName,
+                            StatusEffectDurationMs = t.StatusEffectDurationMs,
+                            StatusEffectIntervalMs = t.StatusEffectIntervalMs,
+                            StatusEffectStackability = t.StatusEffectStackability,
+                            StatusEffectDmgHack = t.StatusEffectDmgHack,
+                            StatusEffectDmgPierce = t.StatusEffectDmgPierce,
+                            StatusEffectDmgCrush = t.StatusEffectDmgCrush,
+                            StatusEffectDmgFire = t.StatusEffectDmgFire,
+                        };
+                        if (t.Hack > 0) spec.Damage.Amounts[Components.DamageType.Hack] = (int)t.Hack;
+                        if (t.Pierce > 0) spec.Damage.Amounts[Components.DamageType.Pierce] = (int)t.Pierce;
+                        if (t.Crush > 0) spec.Damage.Amounts[Components.DamageType.Crush] = (int)t.Crush;
+                        if (t.Fire > 0) spec.Damage.Amounts[Components.DamageType.Fire] = (int)t.Fire;
+                        if (spec.HasDamage) attack.Types.Add(spec);
+                    }
                 }
                 else
                 {
-                    dmg.Amounts[Components.DamageType.Hack] = 20; // default melee damage
+                    // 无逐型数据(默认路径/测试):单近战型兜底。
+                    var spec = new AttackComponent.AttackTypeSpec
+                    {
+                        Name = stats?.AttackIsRanged == true ? "Ranged" : "Melee",
+                        MaxRange = stats?.AttackRange ?? 3.0f,
+                        Rate = stats?.AttackRate ?? 1.0f,
+                    };
+                    if (stats != null)
+                    {
+                        if (stats.AttackHack > 0) spec.Damage.Amounts[Components.DamageType.Hack] = stats.AttackHack;
+                        if (stats.AttackPierce > 0) spec.Damage.Amounts[Components.DamageType.Pierce] = stats.AttackPierce;
+                        if (stats.AttackCrush > 0) spec.Damage.Amounts[Components.DamageType.Crush] = stats.AttackCrush;
+                        if (stats.AttackFire > 0) spec.Damage.Amounts[Components.DamageType.Fire] = stats.AttackFire;
+                    }
+                    else
+                    {
+                        spec.Damage.Amounts[Components.DamageType.Hack] = 20; // default melee damage
+                    }
+                    if (spec.HasDamage) attack.Types.Add(spec);
                 }
-                cm.AddComponent(entity, new AttackComponent
-                {
-                    Damage = dmg,
-                    Range = stats?.AttackRange ?? 3.0f,
-                    Rate = stats?.AttackRate ?? 1.0f,
-                    IsRanged = stats?.AttackIsRanged ?? false,
-                    HasRangeOverlay = stats?.HasRangeOverlay ?? false
-                });
+                cm.AddComponent(entity, attack);
                 if (stats != null)
                 {
                     var atk = cm.QueryInterface<AttackComponent>(entity)!;
@@ -132,8 +166,12 @@ namespace ZeroAD.Sim
                     atk.CaptureRange = stats.AttackCaptureRange;
                     atk.CaptureRate = stats.AttackCaptureRate;
                     atk.CaptureRestrictedClasses = stats.AttackCaptureRestrictedClasses;
-                    atk.PreferredClasses = stats.AttackPreferredClasses;
-                    atk.PhysicalRestrictedClasses = stats.AttackPhysicalRestrictedClasses;
+                    // 组件级偏好/限制 = 首个物理型的(兼容面;逐型在 Types 里各有一份)。
+                    if (atk.Types.Count > 0)
+                    {
+                        atk.PreferredClasses = atk.Types[0].PreferredClasses;
+                        atk.PhysicalRestrictedClasses = atk.Types[0].RestrictedClasses;
+                    }
                     // ApplyStatus(攻击附带状态效果;火攻船 Burning 等)。
                     atk.StatusEffectName = stats.StatusEffectName;
                     atk.StatusEffectDurationMs = stats.StatusEffectDurationMs;

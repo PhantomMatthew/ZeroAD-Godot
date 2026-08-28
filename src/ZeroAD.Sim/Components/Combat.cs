@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim.Serialization;
 
@@ -106,21 +107,174 @@ public sealed class HealthComponent : ComponentBase, IComponentMessageHandler
 [Component("Attack", "Attack")]
 public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
 {
-    // Per-type raw damage (pre-resistance). Populated from the template's Attack/Melee/Damage node.
-    public DamageBlock Damage = new();
-    // 默认值活在字段初始化器(OnInit 不覆写,同 HealthComponent 修复模式):
-    // `new AttackComponent { Range = ... }` 调用方在 AddComponent 后保值。
-    public float Range = 3.0f;
+    /// <summary>单个攻击型的完整参数(原版 Attack 组件的逐型 slot:Melee/Ranged/
+    /// Slaughter 各自独立 Damage/Range/Rate/Restricted/Preferred)。原版一实体可
+    /// Melee+Ranged 并存各用各的射程;此前合并为单字段,近战长枪兵会拿近战射程
+    /// 硬打远程目标。</summary>
+    public sealed class AttackTypeSpec
+    {
+        /// <summary>类型名:Melee / Ranged(Slaughter 解析期已剔除)。</summary>
+        public string Name = "Melee";
+        /// <summary>修正值路径段(原版 GetAttackEffectsData "Attack/{Name}/Damage/...")。</summary>
+        public string ModifierPath => "Attack/" + Name + "/Damage/";
+        public DamageBlock Damage = new();
+        public float MaxRange = 3f;
+        /// <summary>射速(次/秒;模板 RepeatTime 毫秒 → 1000/ms)。</summary>
+        public float Rate = 1f;
+        public string RestrictedClasses = "";
+        public string PreferredClasses = "";
+        /// <summary>攻击附带状态(原版逐型 ApplyStatus;空名 = 无)。</summary>
+        public string StatusEffectName = "";
+        public float StatusEffectDurationMs, StatusEffectIntervalMs;
+        public string StatusEffectStackability = "Ignore";
+        public int StatusEffectDmgHack, StatusEffectDmgPierce, StatusEffectDmgCrush, StatusEffectDmgFire;
+
+        public bool HasDamage => Damage.TotalPhysical > 0;
+
+        public void Serialize(ISerializer s, string p)
+        {
+            s.StringASCII(p + "name", Name);
+            Damage.Serialize(s, p + "dmg");
+            s.NumberFixed(p + "range", Maths.Fixed.FromFloat(MaxRange));
+            s.NumberFixed(p + "rate", Maths.Fixed.FromFloat(Rate));
+            s.StringASCII(p + "restr", RestrictedClasses);
+            s.StringASCII(p + "pref", PreferredClasses);
+            s.StringASCII(p + "status", StatusEffectName);
+        }
+
+        public static AttackTypeSpec Deserialize(IDeserializer d, string p)
+        {
+            var t = new AttackTypeSpec
+            {
+                Name = d.StringASCII(p + "name"),
+                Damage = DamageBlock.Deserialize(d, p + "dmg"),
+                MaxRange = d.NumberFixed(p + "range").ToFloat(),
+                Rate = d.NumberFixed(p + "rate").ToFloat(),
+                RestrictedClasses = d.StringASCII(p + "restr"),
+                PreferredClasses = d.StringASCII(p + "pref"),
+                StatusEffectName = d.StringASCII(p + "status"),
+            };
+            return t;
+        }
+    }
+
+    /// <summary>逐型列表(模板 Melee/Ranged 各一条;原版 Attack 组件同款)。</summary>
+    public List<AttackTypeSpec> Types = new();
+    /// <summary>当前目标选中的物理型(原版 order.data.attackType;Capture 路径不变)。
+    /// 攻击中切换目标/射程不足时由 GetBestAttackAgainst 重选。</summary>
+    public int CurrentTypeIndex = -1;
+
+    /// <summary>当前选中的物理型(无 → 空对象,值为回退默认,仅供判读)。</summary>
+    public AttackTypeSpec? CurrentPhysical =>
+        CurrentTypeIndex >= 0 && CurrentTypeIndex < Types.Count ? Types[CurrentTypeIndex] : null;
+
+    // ── 兼容面(旧调用方读单型;语义 = 当前选中型,未选则取首个有伤害型)──
+    /// <summary>物理伤害块(选中型;未选 → 聚合各型最大)。getter 始终回引用
+    /// (无伤害型时惰性建默认 Melee 型并置为选中)——保证 `Damage.Amounts[..]=x`
+    /// 与 `Damage = block` 双路径都落地。setter 写入同一引用型。</summary>
+    public DamageBlock Damage
+    {
+        get
+        {
+            var t = CurrentPhysical ?? Types.FirstOrDefault(x => x.HasDamage);
+            if (t == null)
+            {
+                t = new AttackTypeSpec { Name = "Melee" };
+                Types.Add(t);
+                if (CurrentTypeIndex < 0) CurrentTypeIndex = Types.Count - 1;
+            }
+            return t.Damage;
+        }
+        set => Damage_Set(value);
+    }
+
+    private void Damage_Set(DamageBlock value)
+    {
+        var t = CurrentPhysical ?? Types.FirstOrDefault(x => x.HasDamage);
+        if (t == null)
+        {
+            t = new AttackTypeSpec { Name = "Melee" };
+            Types.Add(t);
+            if (CurrentTypeIndex < 0) CurrentTypeIndex = Types.Count - 1;
+        }
+        t.Damage = value;
+    }
+    /// <summary>射程(选中型;未选 → 惰性建默认 Melee 型并置为选中,与 Damage 同款)。
+    /// setter 写入同一引用型。</summary>
+    public float Range
+    {
+        get
+        {
+            var t = CurrentPhysical ?? Types.FirstOrDefault(x => x.HasDamage);
+            if (t == null)
+            {
+                t = new AttackTypeSpec { Name = "Melee" };
+                Types.Add(t);
+                if (CurrentTypeIndex < 0) CurrentTypeIndex = Types.Count - 1;
+            }
+            return t.MaxRange;
+        }
+        set => Range_Set(value);
+    }
+
+    private void Range_Set(float value)
+    {
+        var t = CurrentPhysical ?? Types.FirstOrDefault(x => x.HasDamage);
+        if (t == null)
+        {
+            t = new AttackTypeSpec { Name = "Melee" };
+            Types.Add(t);
+            if (CurrentTypeIndex < 0) CurrentTypeIndex = Types.Count - 1;
+        }
+        t.MaxRange = value;
+    }
+
+    public float Rate
+    {
+        get
+        {
+            var t = CurrentPhysical ?? Types.FirstOrDefault(x => x.HasDamage);
+            if (t == null) return 1f;
+            return t.Rate;
+        }
+        set => Rate_Set(value);
+    }
+
+    private void Rate_Set(float value)
+    {
+        var t = CurrentPhysical ?? Types.FirstOrDefault(x => x.HasDamage);
+        if (t == null)
+        {
+            t = new AttackTypeSpec { Name = "Melee" };
+            Types.Add(t);
+            if (CurrentTypeIndex < 0) CurrentTypeIndex = Types.Count - 1;
+        }
+        t.Rate = value;
+    }
+
+    public bool IsRanged
+    {
+        get => (CurrentPhysical ?? Types.FirstOrDefault(x => x.HasDamage))
+            ?.Name == "Ranged";
+        set
+        {
+            var t = CurrentPhysical ?? Types.FirstOrDefault(x => x.HasDamage);
+            if (t == null)
+            {
+                t = new AttackTypeSpec { Name = "Melee" };
+                Types.Add(t);
+                if (CurrentTypeIndex < 0) CurrentTypeIndex = Types.Count - 1;
+            }
+            t.Name = value ? "Ranged" : "Melee";
+        }
+    }
+
     /// <summary>模板 Attack/Ranged/RangeOverlay 存在——选中时表现层画射程圈(对齐
     /// 原版 RangeOverlayManager;CC/箭塔有,近战无)。装配时写入。</summary>
     public bool HasRangeOverlay;
-    public float Rate = 1.0f;
     public float Cooldown;
     public EntityId? Target;
     public AttackState State;
-    /// <summary>远程单位 = true,决定修正值路径前缀(Attack/Ranged vs Attack/Melee)。
-    /// 装配时由模板 Attack/Ranged 节点存在性推导(TemplateStats.AttackIsRanged)。</summary>
-    public bool IsRanged;
 
     // --- Capture 攻击类型(原版 Attack/Capture 顶层元素;CaptureStrength=0 = 无此类型) ---
     /// <summary>模板 Attack/Capture/Capture 值(小数:步兵 2.5/骑兵 1.75)。</summary>
@@ -131,16 +285,37 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
     /// 如 "Field Palisade Wall")。</summary>
     public string CaptureRestrictedClasses = "";
     /// <summary>物理类型(Melee|Ranged)RestrictedClasses token 串(原版逐型 CanAttack
-    /// 门:命中即不可用此型攻击,如冲车 "Field Organic"、猎犬 "Structure Ship Siege")。</summary>
-    public string PhysicalRestrictedClasses = "";
+    /// 门:命中即不可用此型攻击,如冲车 "Field Organic"、猎犬 "Structure Ship Siege")。
+    /// setter 同步写入全部物理型(测试/旧码直设;逐型 RestrictedClasses 优先取型内)。</summary>
+    public string PhysicalRestrictedClasses
+    {
+        get => _physRestr.Length > 0 ? _physRestr
+            : Types.Count > 0 ? Types[0].RestrictedClasses : "";
+        set
+        {
+            _physRestr = value;
+            foreach (var t in Types) t.RestrictedClasses = value;
+        }
+    }
+    private string _physRestr = "";
     /// <summary>物理类型(Melee|Ranged)PreferredClasses token 串
-    /// (GetBestAttackAgainst 偏好 +2 判定,如 "Unit+!Ship")。</summary>
-    public string PreferredClasses = "";
+    /// (GetBestAttackAgainst 偏好 +2 判定,如 "Unit+!Ship")。setter 同步写入全部物理型。</summary>
+    public string PreferredClasses
+    {
+        get => _prefCls.Length > 0 ? _prefCls
+            : Types.Count > 0 ? Types[0].PreferredClasses : "";
+        set
+        {
+            _prefCls = value;
+            foreach (var t in Types) t.PreferredClasses = value;
+        }
+    }
+    private string _prefCls = "";
     /// <summary>当前目标使用的攻击类型(true=Capture 型)。原版存 order.data.attackType
     /// (Order.Attack 时 GetBestAttackAgainst 选一次);我们挂组件,AttackTarget 重选,等价。</summary>
     public bool CurrentAttackIsCapture;
 
-    // --- ApplyStatus(原版攻击附带状态效果;空名 = 无)---
+    // --- ApplyStatus(组件级兼容面;逐型数据在 AttackTypeSpec 里各有一份)---
     /// <summary>效果名(Burning/Poisoned;对应 data/status_effects/*.json code)。</summary>
     public string StatusEffectName = "";
     public float StatusEffectDurationMs;
@@ -180,37 +355,45 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         Cooldown = 0;
     }
 
-    /// <summary>对齐原版 Attack.GetBestAttackAgainst:过滤 CanAttack 的类型按偏好公式
-    /// 取最大(原版 sort 升序 .pop):pref = PreferredClasses 命中(+2,仅物理型有)
-    /// + 指令偏好(+1,allowCapture ? 捕获型 : 物理型);得分 = 类型序号 +
-    /// (pref&gt;0 ? pref + 类型数 : 0);类型序号 Physical=0/Capture=1(原版 g_AttackTypes
-    /// 中 Capture 恒排最后),平手归 Capture(升序尾部)。选不到 → null。</summary>
+    /// <summary>对齐原版 Attack.GetBestAttackAgainst:各物理型(Melee/Ranged)+ Capture
+    /// 全走 CanAttack 过滤,按偏好公式取最优(原版 sort 升序 .pop):pref = 型内
+    /// PreferredClasses 命中(+2)+ 指令偏好(+1,allowCapture ? 捕获型 : 物理型);
+    /// 得分 = 型序号 + (pref>0 ? pref+总数 : 0);型序 = Types 序(Melee 先 Ranged 后,
+    /// Capture 恒排最后),平手归后者(升序 pop)。选不到 → null,并清 CurrentTypeIndex。</summary>
     public AttackChoice? GetBestAttackAgainst(ComponentManager cm, EntityId target, bool allowCapture)
     {
-        bool physicalOk = CanAttackPhysical(cm, target);
-        bool captureOk = CaptureStrength > Maths.Fixed.Zero && CanAttackCapture(cm, target);
-        if (!physicalOk && !captureOk) return null;
-        if (!physicalOk) return AttackChoice.Capture;
-        if (!captureOk) return AttackChoice.Physical;
-
         var identity = cm.QueryInterface<IdentityComponent>(target);
-        bool prefMatch = identity != null
-            && Content.EntityClassHelper.MatchesClassList(identity.Classes, PreferredClasses);
-        int types = 2;
-        int prefP = (prefMatch ? 2 : 0) + (allowCapture ? 0 : 1);
-        int prefC = allowCapture ? 1 : 0;
-        int scoreP = 0 + (prefP > 0 ? prefP + types : 0);
-        int scoreC = 1 + (prefC > 0 ? prefC + types : 0);
-        return scoreC >= scoreP ? AttackChoice.Capture : AttackChoice.Physical;
+        int nTypes = Types.Count + 1;   // 物理型数 + Capture
+        int bestIdx = -1;
+        int bestScore = int.MinValue;
+        for (int i = 0; i < Types.Count; i++)
+        {
+            var t = Types[i];
+            if (!CanAttackPhysical(cm, target, t)) continue;
+            bool prefMatch = identity != null && t.PreferredClasses.Length > 0
+                && Content.EntityClassHelper.MatchesClassList(identity.Classes, t.PreferredClasses);
+            int pref = (prefMatch ? 2 : 0) + (allowCapture ? 0 : 1);
+            int score = i + (pref > 0 ? pref + nTypes : 0);
+            if (score >= bestScore) { bestScore = score; bestIdx = i; }
+        }
+        bool captureOk = CaptureStrength > Maths.Fixed.Zero && CanAttackCapture(cm, target);
+        int capScore = int.MinValue;
+        if (captureOk)
+        {
+            int pref = allowCapture ? 1 : 0;
+            capScore = Types.Count + (pref > 0 ? pref + nTypes : 0);
+        }
+        CurrentTypeIndex = bestIdx;
+        if (bestIdx < 0 && !captureOk) return null;
+        return capScore >= bestScore && captureOk ? AttackChoice.Capture : AttackChoice.Physical;
     }
 
-    /// <summary>原版 CanAttack 的非捕获型分支:外交敌对 + 目标有 Health 且 hp&gt;0
-    /// + RestrictedClasses 不命中 + 本组件确有物理伤害(原版该型不存在即跳过;
-    /// 我们的 AttackComponent 恒代表物理型,零伤害=型不存在)。
-    /// 记录在案:无 OwnershipComponent 的目标不拦(P0 旧语义,gaia 资源可打)。</summary>
-    private bool CanAttackPhysical(ComponentManager cm, EntityId target)
+    /// <summary>原版 CanAttack 的物理型分支(逐型):外交敌对 + 目标有 Health 且 hp&gt;0
+    /// + 该型 RestrictedClasses 不命中 + 该型确有伤害。记录在案:无 OwnershipComponent
+    /// 的目标不拦(P0 旧语义,gaia 资源可打)。</summary>
+    private bool CanAttackPhysical(ComponentManager cm, EntityId target, AttackTypeSpec type)
     {
-        if (Damage.TotalPhysical <= 0) return false;
+        if (type.Damage.TotalPhysical <= 0) return false;
         var health = cm.QueryInterface<HealthComponent>(target);
         if (health == null || health.Current <= 0) return false;
         var own = cm.QueryInterface<OwnershipComponent>(Entity);
@@ -218,7 +401,17 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         if (own != null && targetOwn != null
             && !cm.Players.IsEnemy(own.PlayerId, targetOwn.PlayerId))
             return false;
-        if (PhysicalRestrictedClasses.Length > 0)
+        if (type.RestrictedClasses.Length > 0)
+        {
+            var identity = cm.QueryInterface<IdentityComponent>(target);
+            if (identity != null
+                && Content.EntityClassHelper.MatchesClassList(identity.Classes, type.RestrictedClasses))
+            {
+                return false;
+            }
+        }
+        // 组件级兼容面(测试/旧码直设 PhysicalRestrictedClasses):型内空时回落。
+        else if (PhysicalRestrictedClasses.Length > 0)
         {
             var identity = cm.QueryInterface<IdentityComponent>(target);
             if (identity != null
@@ -227,9 +420,8 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
                 return false;
             }
         }
-        // 高度差门(原版 Attack.js CanAttack:|Δh| > 该型射程上限 → 永不可达,
-        // 近战够不着悬崖上的单位;远程射程大通常不受影响)。
-        if (!InHeightRange(cm, target, Range)) return false;
+        // 高度差门(原版 Attack.js CanAttack:|Δh| > 该型射程上限 → 永不可达)。
+        if (!InHeightRange(cm, target, type.MaxRange)) return false;
         return true;
     }
 
@@ -264,19 +456,29 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         return dh <= Maths.Fixed.FromFloat(range);
     }
 
-    /// <summary>攻击附带状态效果(原版 Attack/*.xml 的 ApplyStatus 块):无配置返回 null。</summary>
-    private StatusEffectSpec? BuildStatusSpec() =>
-        StatusEffectName.Length > 0
-            ? new StatusEffectSpec(StatusEffectName, StatusEffectDurationMs, StatusEffectIntervalMs,
-                StatusEffectStackability, StatusEffectDmgHack, StatusEffectDmgPierce,
-                StatusEffectDmgCrush, StatusEffectDmgFire)
-            : null;
+    /// <summary>攻击附带状态效果:选中物理型优先(原版逐型 ApplyStatus);型内无配置
+    /// 时回落组件级字段(测试/旧码直设兼容面)。</summary>
+    private StatusEffectSpec? BuildStatusSpec()
+    {
+        var t = CurrentPhysical;
+        if (t != null && t.StatusEffectName.Length > 0)
+            return new StatusEffectSpec(t.StatusEffectName, t.StatusEffectDurationMs,
+                t.StatusEffectIntervalMs, t.StatusEffectStackability,
+                t.StatusEffectDmgHack, t.StatusEffectDmgPierce,
+                t.StatusEffectDmgCrush, t.StatusEffectDmgFire);
+        if (StatusEffectName.Length == 0) return null;
+        return new StatusEffectSpec(StatusEffectName, StatusEffectDurationMs,
+            StatusEffectIntervalMs, StatusEffectStackability,
+            StatusEffectDmgHack, StatusEffectDmgPierce,
+            StatusEffectDmgCrush, StatusEffectDmgFire);
+    }
 
     /// <summary>Perform one attack hit against the current target. Routes through DelayedDamage
     /// so resistance is applied and (for ranged) travel latency is honoured. Called by UnitAI's
     /// COMBAT.ATTACKING state on each attack cycle. Damage passes the modifier pipeline here
     /// (tech effects on Attack/{Melee|Ranged}/Damage/{type}), so research applies at hit time.
-    /// 物理/捕获互斥(对齐原版:一次命中只用一种攻击类型,Capture 模板无 Damage 元素)。</summary>
+    /// 物理/捕获互斥(对齐原版:一次命中只用一种攻击类型,Capture 模板无 Damage 元素)。
+    /// 逐型:修正值路径/伤害块/速率均取选中物理型。</summary>
     public void PerformAttack(ComponentManager cm)
     {
         if (Target == null) return;
@@ -289,17 +491,19 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
             Cooldown = 1.0f / CaptureRate;
             return;
         }
-        string prefix = IsRanged ? "Attack/Ranged/Damage/" : "Attack/Melee/Damage/";
+        var type = CurrentPhysical;
+        if (type == null) return;
+        string prefix = type.ModifierPath;
         var mod = new DamageBlock();
-        foreach (var kv in Damage.Amounts.OrderBy(k => (int)k.Key)) // 排序保确定
+        foreach (var kv in type.Damage.Amounts.OrderBy(k => (int)k.Key)) // 排序保确定
             mod.Amounts[kv.Key] = (int)MathF.Round(
                 cm.Modifiers.Apply(prefix + kv.Key, kv.Value, Entity), MidpointRounding.AwayFromZero);
         DelayedDamage.ScheduleHit(cm, Entity, Target.Value, mod, delayTurns: 0,
             status: BuildStatusSpec());
         // 攻击发射事件（表现层生成飞行投射物）。纯视觉——伤害已瞬间结算（原版 CCmpProjectileManager 同架构）。
         cm.Events.RaiseAttackLaunched(new Events.AttackLaunchedEvent
-        { Attacker = Entity, Target = Target.Value, IsRanged = IsRanged });
-        Cooldown = 1.0f / Rate;
+        { Attacker = Entity, Target = Target.Value, IsRanged = type.Name == "Ranged" });
+        Cooldown = 1.0f / type.Rate;
     }
 
     public void Tick(float dt, ComponentManager cm)
@@ -327,7 +531,7 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
                 return;
             }
         }
-        else if (!CanAttackPhysical(cm, Target.Value))
+        else if (CurrentPhysical == null || !CanAttackPhysical(cm, Target.Value, CurrentPhysical!))
         {
             StopAttacking();
             return;
@@ -342,7 +546,9 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         float dist = MathF.Sqrt(dx * dx + dz * dz);
 
         var motion = cm.QueryInterface<UnitMotion>(Entity);
-        float range = CurrentAttackIsCapture ? CaptureRange : Range;
+        // 射程取选中型(近战长枪兵不再拿近战射程硬打远程目标)。
+        float range = CurrentAttackIsCapture ? CaptureRange
+            : CurrentPhysical?.MaxRange ?? 3f;
 
         if (dist > range)
         {
@@ -365,6 +571,8 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
 
     public override void Serialize(ISerializer s)
     {
+        // 兼容旧存档:首个字段仍为选中/默认型的聚合(Damage/Range/Rate/IsRanged)。
+        // 读端对无 Types 块的旧档据此重建单型列表(语义 = 合并旧档)。
         Damage.Serialize(s, "dmg");
         s.NumberFixed("range", Maths.Fixed.FromFloat(Range));
         s.NumberFixed("rate", Maths.Fixed.FromFloat(Rate));
@@ -379,24 +587,59 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         s.StringASCII("prefcls", PreferredClasses);
         s.Bool("curcap", CurrentAttackIsCapture);
         s.StringASCII("physrestr", PhysicalRestrictedClasses);
+        // 逐型列表(本周期新增;NTYPES=0 → 旧档,读端走重建)。
+        s.NumberI32("ntypes", Types.Count);
+        for (int i = 0; i < Types.Count; i++)
+            Types[i].Serialize(s, $"t{i}.");
+        s.NumberI32("curtype", CurrentTypeIndex);
     }
 
     public override void Deserialize(IDeserializer d)
     {
-        Damage = DamageBlock.Deserialize(d, "dmg");
-        Range = d.NumberFixed("range").ToFloat();
-        Rate = d.NumberFixed("rate").ToFloat();
+        var dmg = DamageBlock.Deserialize(d, "dmg");
+        float range = d.NumberFixed("range").ToFloat();
+        float rate = d.NumberFixed("rate").ToFloat();
         State = (AttackState)d.NumberI32("state");
         uint tid = d.NumberU32("target");
         Target = tid != 0 ? new EntityId(tid) : null;
-        IsRanged = d.Bool("ranged");
+        bool ranged = d.Bool("ranged");
         CaptureStrength = d.NumberFixed("capstr");
         CaptureRange = d.NumberFixed("caprange").ToFloat();
         CaptureRate = d.NumberFixed("caprate").ToFloat();
         CaptureRestrictedClasses = d.StringASCII("caprestr");
-        PreferredClasses = d.StringASCII("prefcls");
+        // 组件级后备字段(兼容 setter 先行赋值的路径;新档 types 块优先覆盖)。
+        _prefCls = d.StringASCII("prefcls");
         CurrentAttackIsCapture = d.Bool("curcap");
-        PhysicalRestrictedClasses = d.StringASCII("physrestr");
+        _physRestr = d.StringASCII("physrestr");
+        // 逐型块(新档);旧档(NTYPES=0)由聚合字段重建单型。
+        int nTypes = d.NumberI32("ntypes");
+        Types.Clear();
+        for (int i = 0; i < nTypes; i++)
+            Types.Add(AttackTypeSpec.Deserialize(d, $"t{i}."));
+        CurrentTypeIndex = d.NumberI32("curtype");
+        if (nTypes == 0)
+        {
+            // 旧档重建:单型(范围/速率/伤害 = 聚合;限制/偏好取组件级后备)。
+            Types.Add(new AttackTypeSpec
+            {
+                Name = ranged ? "Ranged" : "Melee",
+                Damage = dmg,
+                MaxRange = range,
+                Rate = rate,
+                RestrictedClasses = _physRestr,
+                PreferredClasses = _prefCls,
+            });
+            CurrentTypeIndex = dmg.TotalPhysical > 0 ? 0 : -1;
+        }
+        else
+        {
+            // 新档:型内空时回填组件级后备(逐型优先语义)。
+            foreach (var t in Types)
+            {
+                if (t.RestrictedClasses.Length == 0) t.RestrictedClasses = _physRestr;
+                if (t.PreferredClasses.Length == 0) t.PreferredClasses = _prefCls;
+            }
+        }
     }
 
     public void HandleMessage(IMessage message) { }

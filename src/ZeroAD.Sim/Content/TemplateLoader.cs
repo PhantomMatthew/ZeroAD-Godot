@@ -436,6 +436,36 @@ namespace ZeroAD.Sim.Content
                     if (maxR.IsOk) info.MaxRange = maxR.ToFixed().ToFloat();
                     var minR = typeNode.GetChild("MinRange");
                     if (minR.IsOk) info.MinRange = minR.ToFixed().ToFloat();
+                    // 逐型 Restricted/Preferred 类门(原版 AttackType.CanAttack/偏好 +2)。
+                    var restr = typeNode.GetChild("RestrictedClasses");
+                    if (restr.IsOk) info.RestrictedClasses = restr.ToString().Trim();
+                    var pref = typeNode.GetChild("PreferredClasses");
+                    if (pref.IsOk) info.PreferredClasses = pref.ToString().Trim();
+                    // 逐型 ApplyStatus(攻击附带状态)。
+                    var aps = typeNode.GetChild("ApplyStatus");
+                    if (aps.IsOk)
+                    {
+                        foreach (var (effName, effNode) in aps.Children)
+                        {
+                            if (effName.StartsWith('@')) continue;
+                            info.StatusEffectName = effName;
+                            if (effNode.GetChild("Duration").IsOk)
+                                info.StatusEffectDurationMs = effNode.GetChild("Duration").ToFixed().ToFloat();
+                            if (effNode.GetChild("Interval").IsOk)
+                                info.StatusEffectIntervalMs = effNode.GetChild("Interval").ToFixed().ToFloat();
+                            var st = effNode.GetChild("Stackability");
+                            if (st.IsOk) info.StatusEffectStackability = st.ToString().Trim();
+                            var sd = effNode.GetChild("Damage");
+                            if (sd.IsOk)
+                            {
+                                if (sd.GetChild("Hack").IsOk) info.StatusEffectDmgHack = sd.GetChild("Hack").ToInt();
+                                if (sd.GetChild("Pierce").IsOk) info.StatusEffectDmgPierce = sd.GetChild("Pierce").ToInt();
+                                if (sd.GetChild("Crush").IsOk) info.StatusEffectDmgCrush = sd.GetChild("Crush").ToInt();
+                                if (sd.GetChild("Fire").IsOk) info.StatusEffectDmgFire = sd.GetChild("Fire").ToInt();
+                            }
+                            break;   // 原版 oneOrMore,单效果
+                        }
+                    }
                     stats.AttackTypes.Add(info);
                 }
             }
@@ -1425,5 +1455,13 @@ namespace ZeroAD.Sim.Content
         public int RepeatTimeMs;
         /// <summary>MaxRange/MinRange 米;0 = 无该段。</summary>
         public float MaxRange, MinRange;
+        /// <summary>逐型 RestrictedClasses/PreferredClasses(原版 AttackType 门/偏好)。</summary>
+        public string RestrictedClasses = "";
+        public string PreferredClasses = "";
+        /// <summary>逐型 ApplyStatus(攻击附带状态;空名 = 无)。</summary>
+        public string StatusEffectName = "";
+        public float StatusEffectDurationMs, StatusEffectIntervalMs;
+        public string StatusEffectStackability = "Ignore";
+        public int StatusEffectDmgHack, StatusEffectDmgPierce, StatusEffectDmgCrush, StatusEffectDmgFire;
     }
 }
