@@ -59,10 +59,10 @@
 
 | 优先 | 文件(vs 原版) | 缺口 |
 |---|---|---|
-| P1 | **UnitAI.cs**(2684 行 vs 原 6842,~85%) | COMBAT.CHASING/FINDINGNEWTARGET 空状态(L1324–1325);驻军 Pickup 接送(L957);Heal/Treasure 找新目标(L1019/L1208);CancelPack/Unpack 仅 FinishOrder(L889–890);交易取消找替代市场(L1057);编队 Obstruction 控制组切换(L152);炮塔站姿(L117) |
-| P1 | **Combat.cs** | 多攻击类型列表(Melee/Ranged/Stun/Slaughter 分立)、溅射、真弹道延迟(**回血再生已落地** 40124c0;DeathDamage 联动已落地 1754989) |
-| P1 | **Production.cs** | 批次原子产出 → 原版逐个出兵;autoQueue;Upkeep 挂接 |
-| P1 | **Technology.cs** | 研究队列+取消退款(L195–226);训练列表 requirements 科技门(Production.cs L70–94 只滤存在性) |
+| P1 | **UnitAI.cs** | ✅ CHASING/FINDINGNEWTARGET 实装(16903fa);余缺口:驻军 Pickup 接送、Heal/Treasure 找新目标、CancelPack/Unpack、交易取消找替代市场、编队控制组切换、炮塔站姿 |
+| P1 | **Combat.cs** | ✅ 多攻击类型分立(1bbcffc:AttackTypeSpec 逐型 slot);回血再生(40124c0);DeathDamage 联动(1754989);溅射/真弹道延迟待做 |
+| P1 | **Production.cs** | ✅ 逐个出兵 + autoQueue(ea13f60:逐拍 Spawn,溢出时间续排);Upkeep 挂接待做 |
+| P1 | **Technology.cs** | ✅ 研究队列+取消退款(68f8e24:FIFO 多科技+全额退款);训练列表 requirements 科技门待做 |
 | P1 | **PromotionComponent** | ✅ 已落地(40124c0):模板驱动换模板晋升(同位同向同主/血量折算/XP 结转),装配修复 |
 | P1 | **BarterSystem.cs** | ✅ 价漂移已落地(40124c0):每笔推涨+周期回落+存档骑缝;仅 per-player BarterMultiplier 待接(科技修正值管线) |
 | P2 | **UnitMotion.cs**(408 行 vs 原 C++ ~2000) | 异步路径请求架构(现同步解算+0.3s 节流 L41–47)、朝向更新、waypoints 序列化(L38–40 瞬态) |
