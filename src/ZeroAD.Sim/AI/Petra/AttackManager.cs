@@ -140,23 +140,56 @@ public sealed class AttackPlan
             if (UnitCollection.Count < MaxForces) UnitCollection.Add(s.Id);
     }
 
-    /// <summary>选目标（原版 chooseTarget，~300 行）。
-    /// 简化版：最近的敌方建筑。</summary>
+    /// <summary>选目标（原版 attackPlan.chooseTarget ~300 行的简化评分版）：
+    /// 高分 = 防御建筑(优先拆塔)+ 近我方基地;地基/无位置排除。
+    /// 无建筑 → 打可见敌单位(原版 fallback)。</summary>
     private void ChooseTarget(GameState gameState)
     {
         var enemies = gameState.GetEnemyStructures().Values().ToList();
         if (enemies.Count == 0)
         {
-            // 无建筑 → 打单位
             var enemyUnits = gameState.GetEnemyUnits().Values().ToList();
             if (enemyUnits.Count > 0)
+            {
                 Target = enemyUnits[0].Id;
+                TargetPos = enemyUnits[0].Position2D;
+            }
             return;
         }
-        // 选最近我方基地的敌方建筑
-        // 简化：取第一个
-        Target = enemies[0].Id;
-        TargetPos = enemies[0].Position2D;
+
+        // 我方首个基地(原版 attackPlan 以基地为锚评近)。
+        var homeBase = gameState.GetOwnStructures().Values()
+            .FirstOrDefault(s => s.HasClass("CivilCentre"))
+            ?? gameState.GetOwnStructures().Values().FirstOrDefault();
+        var homePos = homeBase?.Position2D;
+
+        uint bestId = 0;
+        FixedVector2D? bestPos = null;
+        float bestScore = float.MinValue;
+        foreach (var e in enemies)
+        {
+            if (e.Position2D == default) continue;
+            if (e.IsFoundation) continue;   // 原版不打地基
+            float score = 0f;
+            if (e.HasClass("Tower") || e.HasClass("Defense")) score += 1000f;   // 防御建筑优先
+            if (homePos.HasValue)
+            {
+                float dx = e.Position2D.X.ToFloat() - homePos.Value.X.ToFloat();
+                float dz = e.Position2D.Y.ToFloat() - homePos.Value.Y.ToFloat();
+                score -= (dx * dx + dz * dz) * 0.01f;   // 近优先(平方距离惩罚)
+            }
+            if (score > bestScore || bestId == 0 && score == bestScore)
+            {
+                bestScore = score;
+                bestId = e.Id;
+                bestPos = e.Position2D;
+            }
+        }
+        if (bestId != 0)
+        {
+            Target = bestId;
+            TargetPos = bestPos;
+        }
     }
 
     /// <summary>推进/战斗更新（原版 ~600 行）。
