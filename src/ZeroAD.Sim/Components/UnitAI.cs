@@ -1052,7 +1052,17 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                         u.FsmNextState = "HEAL.APPROACHING";
                         break;
                     case HealTickResult.TargetInvalid:
-                        u.FinishOrder();
+                        // 目标不可治疗/补满(原版 FINDINGNEWTARGET):视野内找
+                        // 新伤员(CanHeal 过滤),无则收单。
+                        {
+                            var newTarget = FindNewHealTarget(u, heal, m.Cm!);
+                            if (newTarget.HasValue)
+                            {
+                                u.Heal(newTarget.Value);   // 重发 Heal 指令换目标
+                                break;
+                            }
+                            u.FinishOrder();
+                        }
                         break;
                 }
             })
@@ -1238,7 +1248,17 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 {
                     case CollectTickResult.Done:
                     case CollectTickResult.TargetInvalid:
-                        u.FinishOrder();
+                        // 结算完成/目标失效(原版 FINDINGNEWTARGET):找附近可收宝物,
+                        // 无则收单。
+                        {
+                            var next = FindNewTreasureTarget(u, tc, m.Cm!);
+                            if (next.HasValue)
+                            {
+                                u.CollectTreasure(next.Value);   // 重发 CollectTreasure 换目标
+                                break;
+                            }
+                            u.FinishOrder();
+                        }
                         break;
                     case CollectTickResult.OutOfRange:
                         MoveToTargetEdge(u, t, m.Cm, Fixed.FromFloat(tc.MaxDistance));
@@ -2455,6 +2475,72 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             });
         }
         g.CarryAmount = 0;
+    }
+
+    /// <summary>COLLECTTREASURE 换目标(原版 FINDINGNEWTARGET):视野内找首个可收宝物
+    /// (最近优先,EntityId 序保平手确定)。无 → null(调用方 FinishOrder)。</summary>
+    private static EntityId? FindNewTreasureTarget(UnitAIComponent u,
+        TreasureCollectorComponent tc, ComponentManager cm)
+    {
+        var pos = cm.QueryInterface<PositionComponent>(u.Entity);
+        var range = SimSystem.Range;
+        var vision = cm.QueryInterface<VisionComponent>(u.Entity);
+        if (pos == null || range == null) return null;
+        if (vision == null || vision.Range <= Fixed.Zero) return null;
+
+        EntityId? best = null;
+        float bestDist = float.MaxValue;
+        foreach (var e in range.ExecuteQuery(u.Entity, Fixed.Zero, vision.Range))
+        {
+            if (e == u.Entity) continue;
+            if (!tc.CanCollect(cm, e)) continue;
+            var ep = cm.QueryInterface<PositionComponent>(e);
+            if (ep == null) continue;
+            float dx = ep.Position.X.ToFloat() - pos.Position.X.ToFloat();
+            float dz = ep.Position.Z.ToFloat() - pos.Position.Z.ToFloat();
+            float d2 = dx * dx + dz * dz;
+            if (d2 < bestDist || (d2 == bestDist && e.Value < (best?.Value ?? uint.MaxValue)))
+            {
+                bestDist = d2;
+                best = e;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>HEAL 目标失效后的换目标(原版 FINDINGNEWTARGET):视野内找首个可治疗
+    /// 的己方伤员(最近优先,EntityId 序保平手确定)。无 → null(调用方 FinishOrder)。</summary>
+    private static EntityId? FindNewHealTarget(UnitAIComponent u, HealComponent heal, ComponentManager cm)
+    {
+        var own = cm.QueryInterface<OwnershipComponent>(u.Entity);
+        var pos = cm.QueryInterface<PositionComponent>(u.Entity);
+        var range = SimSystem.Range;
+        var vision = cm.QueryInterface<VisionComponent>(u.Entity);
+        if (own == null || pos == null || range == null) return null;
+        if (vision == null || vision.Range <= Fixed.Zero) return null;
+
+        EntityId? best = null;
+        float bestDist = float.MaxValue;
+        foreach (var e in range.ExecuteQuery(u.Entity, Fixed.Zero, vision.Range))
+        {
+            if (e == u.Entity) continue;
+            var eo = cm.QueryInterface<OwnershipComponent>(e);
+            if (eo == null || eo.PlayerId != own.PlayerId) continue;
+            if (!heal.CanHeal(cm, e)) continue;
+            var h = cm.QueryInterface<HealthComponent>(e);
+            if (h == null || h.IsDead || !h.IsInjured) continue;
+            var ep = cm.QueryInterface<PositionComponent>(e);
+            if (ep == null) continue;
+            float dx = ep.Position.X.ToFloat() - pos.Position.X.ToFloat();
+            float dz = ep.Position.Z.ToFloat() - pos.Position.Z.ToFloat();
+            float d2 = dx * dx + dz * dz;
+            if (d2 < bestDist || (d2 == bestDist && e.Value < (best?.Value ?? uint.MaxValue)))
+            {
+                bestDist = d2;
+                best = e;
+            }
+        }
+        return best;
     }
 
     /// <summary>Port of GARRISONING.enter 的资源交付段:驻军目标是接受所携资源的投放站
