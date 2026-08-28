@@ -131,6 +131,24 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
 
         if (!player.CanAfford(totalWood, totalFood, totalStone, totalMetal)) return Reject("cannot-afford");
 
+        // 前置科技门(原版 RequirementsMet:RequiredTechs 未满足 → 拒训练;
+        // 阶段过滤如 cavalry_archer_b 需 phase_town)。否定 token(-/!)跳过。
+        if (stats.RequiredTechs.Length > 0)
+        {
+            var techMgr = cm.GetPlayerEntityId(owner.PlayerId) is { } peid
+                ? cm.QueryInterface<ZeroAD.Sim.Components.TechnologyManager>(peid)
+                : null;
+            if (techMgr != null)
+            {
+                foreach (var tok in stats.RequiredTechs.Split((char[]?)null,
+                    System.StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (tok.StartsWith("-") || tok.StartsWith("!")) continue;
+                    if (!techMgr.IsResearched(tok)) return Reject("requirements-unmet");
+                }
+            }
+        }
+
         // Pop headroom check (pop is charged immediately on spawn, but we pre-validate to avoid
         // charging resources for a unit that can never appear).
         int popCost = stats.PopulationCost * count;
