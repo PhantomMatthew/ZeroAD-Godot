@@ -449,6 +449,8 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     private EntityId? _isGuardOf;
     /// <summary>巡逻路点已等待秒数(原版 stopSurveying,模板 PatrolWaitTime=1s)。</summary>
     private float _patrolWaitElapsed;
+    /// <summary>COMBAT.CHASING 的 1s 重查节流(原版 StartTimer(1000,1000))。</summary>
+    private float _chaseElapsed;
     /// <summary>WAF/巡逻/护卫的索敌节流器(与 StanceIdleScan 同款 1s)。</summary>
     private float _combatScanElapsed;
 
@@ -1309,7 +1311,17 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                     }
                 }
                 attack.Tick(m.Dt, m.Cm!);
-                if (attack.State == AttackComponent.AttackState.Attacking)
+                if (attack.State == AttackComponent.AttackState.Approaching)
+                {
+                    if (u.CurrentOrder is { Type: "Attack", Force: false }
+                        && u.CurrentStanceFlags.RespondStandGround)
+                    {
+                        u.FinishOrder();
+                        return;
+                    }
+                    u.FsmNextState = "COMBAT.CHASING";
+                }
+                else if (attack.State == AttackComponent.AttackState.Attacking)
                     u.FsmNextState = "COMBAT.ATTACKING";
             });
 
@@ -1318,14 +1330,120 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             .On("Timer", (u, m) =>
             {
                 var attack = m.Cm!.QueryInterface<AttackComponent>(u.Entity);
-                if (attack?.Target == null) { u.FinishOrder(); return; }
+                if (attack?.Target == null)
+                {
+                    // 目标失效(原版 TargetInvalidated):找替代敌,否则收单。
+                    u.FsmNextState = "COMBAT.FINDINGNEWTARGET";
+                    return;
+                }
                 attack.Tick(m.Dt, m.Cm!);
+                // 目标跑出射程(原版 OutOfRange):追击型转 CHASING;站桩门拦下收单
+                // (原版 APPROACHING 的 stance 门同款语义,在超射程处拦截)。
                 if (attack.State == AttackComponent.AttackState.Approaching)
-                    u.FsmNextState = "COMBAT.APPROACHING";
+                {
+                    if (u.CurrentOrder is { Type: "Attack", Force: false }
+                        && u.CurrentStanceFlags.RespondStandGround)
+                    {
+                        u.FinishOrder();
+                        return;
+                    }
+                    u.FsmNextState = "COMBAT.CHASING";
+                }
             });
 
-        spec.State("INDIVIDUAL").State("COMBAT").State("FINDINGNEWTARGET");
-        spec.State("INDIVIDUAL").State("COMBAT").State("CHASING");
+        // COMBAT.FINDINGNEWTARGET(原版):目标失效/不可攻 → 视野内找替代敌
+        // (FindVisibleEnemies = 原版 FindNewTargets 的 losAttackRangeQuery);
+        // 找到即换目标续战,否则收单(原版 FinishOrder;WAF 模式另觅 WAF 目标
+        // 由 FindWalkAndFightTargets 扫描覆盖)。
+        spec.State("INDIVIDUAL").State("COMBAT").State("FINDINGNEWTARGET")
+            .Enter(u =>
+            {
+                var cm = SimSystem.Sim!;
+                var flags = u.CurrentStanceFlags;
+                if (flags.TargetVisibleEnemies)
+                {
+                    var enemies = u.FindVisibleEnemies(cm, flags);
+                    if (enemies.Count > 0)
+                    {
+                        // 换目标续战(原版 AttackEntityInZone → Order.Attack 重发)。
+                        u.Attack(enemies[0]);
+                        return;
+                    }
+                }
+                u.FinishOrder();
+            });
+
+        // COMBAT.CHASING(原版):攻击目标出射程 → 追击至攻击射程内
+        // (MoveToTargetAttackRange 语义);1s 节流重查,追不上放弃
+        // (ShouldAbandonChase:目标消失/不可攻 → FinishOrder)。
+        spec.State("INDIVIDUAL").State("COMBAT").State("CHASING")
+            .Enter(u =>
+            {
+                var cm = SimSystem.Sim!;
+                var attack = cm.QueryInterface<AttackComponent>(u.Entity);
+                var target = attack?.Target;
+                if (attack == null || target == null) { u.FinishOrder(); return; }
+                // 首拍即跑(原版 StartTimer 首个 timeout=0:入态立即一轮确认),
+                // 之后 1s 节流(StartTimer(1000,1000) 的续期)。
+                u._chaseElapsed = 1f;
+            })
+            .On("Timer", (u, m) =>
+            {
+                var attack = m.Cm!.QueryInterface<AttackComponent>(u.Entity);
+                var target = attack?.Target;
+                if (attack == null || target == null) { u.FinishOrder(); return; }
+                u._chaseElapsed += m.Dt;
+                if (u._chaseElapsed < 1f) return;   // 原版 StartTimer(1000,1000)
+                u._chaseElapsed = 0;
+
+                // 追不上(目标死/失效/外交翻非敌)→ 收单(原版 ShouldAbandonChase)。
+                var targetHealth = m.Cm!.QueryInterface<HealthComponent>(target.Value);
+                if (targetHealth == null || targetHealth.IsDead)
+                {
+                    u.FinishOrder();
+                    return;
+                }
+                var own = m.Cm!.QueryInterface<OwnershipComponent>(u.Entity);
+                var targetOwn = m.Cm!.QueryInterface<OwnershipComponent>(target.Value);
+                if (own != null && targetOwn != null
+                    && !m.Cm!.Players.IsEnemy(own.PlayerId, targetOwn.PlayerId))
+                {
+                    u.FinishOrder();
+                    return;
+                }
+
+                // LOS 门(原版 APPROACHING 的 ShouldChaseTargetedEntity 同款;
+                // 追击到视野外即弃——aggressive 目标脱出视野收单,violent 豁免)。
+                if (u.CurrentOrder is { Type: "Attack", Force: false }
+                    && !u.CurrentStanceFlags.RespondChaseBeyondVision
+                    && own != null && SimSystem.Range != null
+                    && SimSystem.Range.GetLosVisibility(target.Value, own.PlayerId) != LosVisibility.Visible)
+                {
+                    u.FinishOrder();
+                    return;
+                }
+
+                // 追击:向目标攻击射程内的可达点走(原版 MoveToTargetAttackRange)。
+                float reach = attack.CurrentAttackIsCapture ? attack.CaptureRange : attack.Range;
+                var myPos = m.Cm!.QueryInterface<PositionComponent>(u.Entity);
+                var tp = m.Cm!.QueryInterface<PositionComponent>(target.Value);
+                if (myPos == null || tp == null) return;
+                float dx = tp.Position.X.ToFloat() - myPos.Position.X.ToFloat();
+                float dz = tp.Position.Z.ToFloat() - myPos.Position.Z.ToFloat();
+                float dist = MathF.Sqrt(dx * dx + dz * dz);
+                if (dist <= reach)
+                {
+                    // 已到射程 → 回 COMBAT.APPROACHING 接管攻击。
+                    u.FsmNextState = "COMBAT.APPROACHING";
+                    return;
+                }
+                // 朝目标走至 reach 距离处(沿连线缩进,不到目标中心)。
+                float t = reach / dist;
+                var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
+                motion?.MoveToPoint(new Maths.FixedVector2D(
+                    Maths.Fixed.FromFloat(myPos.Position.X.ToFloat() + dx * t),
+                    Maths.Fixed.FromFloat(myPos.Position.Z.ToFloat() + dz * t)));
+            });
     }
 
     private static void BuildGatherSubtree(FsmSpec<UnitAIComponent, FsmMessage> spec)
