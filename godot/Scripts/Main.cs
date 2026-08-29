@@ -16,6 +16,10 @@ namespace ZeroAD.Godot;
 public sealed partial class Main : Node3D
 {
 	private RTSCamera _camera = null!;
+	/// <summary>过场动画管理器(原版 graphics/CinemaManager;地图脚本
+	/// PushPathToQueue 按名播放,播完广播事件到触发器)。</summary>
+	private CinemaManager? _cinema;
+	public CinemaManager? Cinema => _cinema;
 	private SimBridge _sim = null!;
 	private Node3D _units = null!;
 	private Node3D _worldRoot = null!;
@@ -115,6 +119,10 @@ public sealed partial class Main : Node3D
 	{
 		_camera = new RTSCamera();
 		AddChild(_camera);
+		// 过场动画管理器(原版 CinemaManager:相机路径队列播放,
+		// 播完广播 OnCinemaPathEnded/OnCinemaQueueEnded)。
+		_cinema = new CinemaManager(_camera);
+		AddChild(_cinema);
 
 		var light = new DirectionalLight3D();
 		light.Rotation = new Vector3(-0.7f, 0.5f, 0);
