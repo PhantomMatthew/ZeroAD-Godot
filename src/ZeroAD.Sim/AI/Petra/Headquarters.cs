@@ -287,15 +287,17 @@ public sealed class Headquarters
 
     private void CheckBaseExpansion(GameState gameState)
     {
-        // 原版 checkBaseExpansion:town+ 且 CanExpand 时扩建新 CC(完整版用
-        // findCCLocation 沿领土边界选址;简化版复用通用选址)。
+        // 原版 checkBaseExpansion:town+ 且 CanExpand 时扩建新 CC。选址经
+        // ConstructionPlan 的 base=-1 + resource 元数据(原版 findEconomicCCLocation
+        // 语义:近资源评分,非"近 CC"默认选址)。
         if (!CanExpand || CurrentPhase < 2) return;
         if (HasPendingPlan("economicBuilding")) return;
         int ccs = CountOwnStructuresByClass(gameState, "CivCentre");
         int ccsWanted = Config.Difficulty >= DifficultyLevel.Hard ? 3 : 2;
         if (ccs >= ccsWanted) return;
         Queues.AddPlan("economicBuilding",
-            new ConstructionPlan(gameState, "structures/{civ}/civil_centre"));
+            new ConstructionPlan(gameState, "structures/{civ}/civil_centre",
+                new Dictionary<string, object> { ["base"] = -1, ["resource"] = "wood" }));
     }
 
     private void CheckPhaseRequirements(GameState gameState)

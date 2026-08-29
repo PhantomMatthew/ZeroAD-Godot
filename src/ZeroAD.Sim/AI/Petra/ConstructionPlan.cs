@@ -69,6 +69,17 @@ public sealed class ConstructionPlan : QueuePlan
                 Access = 0,
             };
         }
+        // 新基地选址(metadata base=-1 + resource:原版 findEconomicCCLocation
+        // 语义——离最近资源评分,非"近 CC"默认选址)。
+        if (pos == null
+            && Metadata.TryGetValue("base", out var bobj)
+            && bobj is int baseId && baseId == -1)
+        {
+            string resource = Metadata.TryGetValue("resource", out var robj)
+                ? robj as string ?? "wood"
+                : "wood";
+            pos = FindEconomicCCLocation(gameState, resource);
+        }
         pos ??= FindGoodPosition(gameState);
         if (pos == null) return;
 
@@ -138,6 +149,78 @@ public sealed class ConstructionPlan : QueuePlan
                     Z = fz,
                     Angle = DefaultPlacementAngle,
                     Base = 1,
+                    Access = access,
+                };
+            }
+        }
+        return best;
+    }
+
+    /// <summary>新基地选址(原版 headquarters.findEconomicCCLocation 核心语义的
+    /// 简化):候选采样评分——近资源(原版"近资源优先扩张")+ 离最近 CC 适中距
+    /// (原版"不太近不太远")+ 土地过滤。基地锚 = 最近同类资源(原版 resource 驱动)。</summary>
+    private BuildPosition? FindEconomicCCLocation(GameState gameState, string resource)
+    {
+        // 资源锚:最近同类资源(原版"靠近资源扩张新基地"语义)。
+        var ccs = gameState.GetOwnStructures().Filter(e => e.HasClass("CivCentre"));
+        var anchorCC = ccs.HasEntities() ? ccs.Values().First() : null;
+        var supplies = gameState.GetResourceSupplies(resource);
+        AIEntity? refPoint = anchorCC;
+        if (supplies.HasEntities() && anchorCC != null)
+        {
+            // 选距 CC 最近的资源(原版"CC 附近资源")。
+            var nearest = supplies.FilterNearest(anchorCC.Position2D, 1);
+            if (nearest.HasEntities())
+                refPoint = nearest.Values().First();
+        }
+        if (refPoint == null)
+            refPoint = anchorCC ?? gameState.GetOwnStructures().Values().FirstOrDefault();
+        if (refPoint == null) return null;
+
+        var rng = gameState.Cm.RNG;
+        const int candidates = 16;
+        BuildPosition? best = null;
+        float bestScore = float.MinValue;
+        ushort access = EntityExtend.GetLandAccess(gameState, refPoint);
+
+        for (int i = 0; i < candidates; i++)
+        {
+            float angle = (float)(rng.NextDouble() * Math.PI * 2);
+            float dist = 25f + (float)(rng.NextDouble() * 25);
+            Trig.SinCosApprox(Fixed.FromFloat(angle), out Fixed sinA, out Fixed cosA);
+            float x = refPoint.Position2D.X.ToFloat() + dist * cosA.ToFloat();
+            float z = refPoint.Position2D.Y.ToFloat() + dist * sinA.ToFloat();
+
+            var fx = Fixed.FromFloat(x);
+            var fz = Fixed.FromFloat(z);
+            var terrain = SimSystem.Terrain;
+            if (terrain != null && !terrain.IsLand(fx, fz)) continue;
+
+            // 评分:离 CC 60-120m 最优(原版扩张偏好;太近挤、太远散);
+            // 距资源锚 <30m 加分(原版近资源)。
+            float score = 0f;
+            if (anchorCC != null)
+            {
+                float ccDx = x - anchorCC.Position2D.X.ToFloat();
+                float ccDz = z - anchorCC.Position2D.Y.ToFloat();
+                float ccDist = MathF.Sqrt(ccDx * ccDx + ccDz * ccDz);
+                if (ccDist >= 60f && ccDist <= 120f) score += 100f;
+                else score -= MathF.Abs(ccDist - 90f) * 0.5f;
+            }
+            float resDx = x - refPoint.Position2D.X.ToFloat();
+            float resDz = z - refPoint.Position2D.Y.ToFloat();
+            float resDist = MathF.Sqrt(resDx * resDx + resDz * resDz);
+            if (resDist < 30f) score += 50f;
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = new BuildPosition
+                {
+                    X = fx,
+                    Z = fz,
+                    Angle = DefaultPlacementAngle,
+                    Base = -1,
                     Access = access,
                 };
             }
