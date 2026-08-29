@@ -274,6 +274,27 @@ public sealed class BaseManager
         if (resources.Food > resources.Wood) preferredType = "wood";
         else if (resources.Wood > resources.Stone) preferredType = "stone";
 
+        // 原版 worker.startGathering:food 类先狩猎(startHunting——肉类资源
+        // 比种田划算,原版"先猎后种"分流)。猎物存在即优先打猎。
+        if (preferredType == "food")
+        {
+            var huntable = gameState.GetHuntableSupplies();
+            if (huntable.HasEntities())
+            {
+                var nearest = huntable.FilterNearest(worker.Position2D, 1);
+                if (nearest.HasEntities())
+                {
+                    var prey = nearest.Values().First();
+                    gameState.Metadata.Set(worker.Id, "subrole", WorkerRoles.SubroleGatherer);
+                    gameState.Metadata.Set(worker.Id, "supply", prey.Id);
+                    gameState.Metadata.Set(worker.Id, "gather-type", "food");
+                    gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Gather(
+                        (uint)gameState.PlayerId, (uint)worker.Id, prey.Id));
+                    return;
+                }
+            }
+        }
+
         ZeroAD.Sim.AI.CommonApi.EntityCollection supplies = gameState.GetResourceSupplies(preferredType);
         if (!supplies.HasEntities()) return;
 
