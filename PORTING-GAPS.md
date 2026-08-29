@@ -96,13 +96,14 @@
 
 模块骨架齐全(headquarters/attackPlan/baseManager/worker/defense/naval/trade/garrison/queue/research/diplomacy 均有对应),但每个大幅简化。上游:`binaries/data/mods/public/simulation/ai/petra/`(31 个 .js ≈26k 行)。
 
-- [ ] 合并 Managers/PetraManagers **两套疑似重复实现**
-- [ ] attackPlan 完整状态机(原 2000+ 行):多波次编组、围攻路线、撤退判定
-- [ ] headquarters 深度逻辑(原 ≥2400 行,现 <600):基地选址评分、人口规划
-- [ ] worker 精细供给/基址分配逻辑
+- [x] 合并 Managers/PetraManagers 判明:AIComponent 只编一套(PetraManagers 全套+Headquarters);Petra/Managers.cs 是游戏层选中的另一套(都活),非真重复——选定统一路径=PetraManagers(2cd3a93 工人命令通道即此路径)
+- [x] attackPlan 深化(a39ed51/9583b8c):集结相 Rallying+参战阈值(不分批送命)、目标评分(拆塔优先/近优先/跳过地基);余缺口:多波次编组、围攻路线、撤退判定
+- [x] headquarters 选址评分(0be4127:土地过滤+CC 适中距);余缺口:基地扩张评分、人口规划
+- [x] worker 供给评分(d5ba82f:价值×剩余量/(1+采集者) 性价比+拥塞+敌领土);余缺口:精细基址分配/种田/狩猎分流
 - [ ] data.json 配置体系(difficultyLevel 已映射,参数表不全)
 - [ ] mapMask 掩码工具
 - [ ] common-api 补全(AIEntity/EntityCollection/Filters 等全家桶,现只挑了子集)
+- [x] researchManager 优先级(a3643df:人口/贸易/wanted/兜底四级,原版 update 核心语义)
 
 ---
 
