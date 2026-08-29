@@ -101,7 +101,7 @@
 - [x] headquarters 选址评分(0be4127 土地过滤+CC 适中距)+基地扩张评分(c45b980 近资源+离 CC 适中距);余缺口:人口规划
 - [x] worker 供给评分(d5ba82f 性价比+拥塞+敌领土)+种田/狩猎分流(1e25ddc 先猎后种);余缺口:精细基址分配(原版 base 驻留/迁移)
 - [x] data.json 配置体系(5075dbb:queues 时间窗阈值+unusedNoAllyTechs 补全;难度/性格/经济/防御/优先级/队列全量)
-- [ ] mapMask 掩码工具
+- [x] mapMask 掩码工具(MapMask.cs 常量 + PetraMapModule.CreateBorderMap:地图外/边界 + 领土窄/宽前线,原版 mapMask.js + createBorderMap 语义)
 - [x] common-api 补全(AIEntity 能力面 19 项+EntityCollection 质心/近似位置/HasEntId;Filters 26/26 全)
 - [x] researchManager 优先级(a3643df:人口/贸易/wanted/兜底四级,原版 update 核心语义)
 

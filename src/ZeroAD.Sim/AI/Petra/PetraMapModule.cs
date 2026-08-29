@@ -42,4 +42,101 @@ public static class PetraMapModule
 
     public static int GetOwnerFromTerritory(byte cellValue) => cellValue & TerritoryPlayerMask;
     public static bool IsBlinking(byte cellValue) => (cellValue & TerritoryBlinkingMask) != 0;
+
+    /// <summary>地图边界/前线图(原版 mapModule.createBorderMap):
+    /// - 地图外(outside)与内侧边界(border):圆形图按半径、方形图按边距
+    ///   (原版 border=80m/cellSize);
+    /// - 领土窄/宽前线(narrow/large frontier):我方领土与非我方/敌的界线内侧
+    ///   (原版 headquarters 的 narrow/large 更新语义)。
+    /// 建造选址/防御选址按 FullBorder/FullFrontier 位与过滤。</summary>
+    public static InfoMap CreateBorderMap(GameState gameState, bool circularMap = true)
+    {
+        var territory = SimSystem.Territory;
+        int w = territory?.GridWidth ?? 1;
+        var map = new InfoMap(w, w, TerritoryManager.CellSize);
+
+        // 1. 地图外 + 内侧边界(原版 createBorderMap 的 outside/border)。
+        int border = (int)System.Math.Round(80f / map.CellSize);
+        if (circularMap)
+        {
+            float ic = (w - 1) / 2f;
+            float radcut = (ic - border) * (ic - border);
+            for (int j = 0; j < map.Length; j++)
+            {
+                int dx = j % w - (int)ic;
+                int dy = j / w - (int)ic;
+                float radius = dx * dx + dy * dy;
+                if (radius < radcut) continue;
+                map.Map[j] = MapMask.Outside;
+                if (radius < (ic + border) * (ic + border))
+                    map.Map[j] = MapMask.Border;
+            }
+        }
+        else
+        {
+            int borderCut = w - border;
+            for (int j = 0; j < map.Length; j++)
+            {
+                int ix = j % w;
+                int iy = j / w;
+                if (ix < border || ix >= borderCut || iy < border || iy >= borderCut)
+                {
+                    map.Map[j] = MapMask.Outside;
+                    if (ix >= border - 1 && ix <= borderCut + 1
+                        && iy >= border - 1 && iy <= borderCut + 1)
+                        map.Map[j] = MapMask.Border;
+                }
+            }
+        }
+
+        // 2. 领土窄/宽前线(原版 headquarters 的 frontier 更新):我方领土
+        // 与非我方/敌邻接的 cell 标 narrow;宽线 = 窄线向外再扩一线(原版
+        // largeFrontier 独立标记,扩张选址区分内外前线)。
+        if (territory != null && territory.GridWidth > 0)
+        {
+            var owners = territory.OwnerGrid;
+            int playerId = gameState.PlayerId;
+            for (int j = 0; j < map.Length; j++)
+            {
+                if ((map.Map[j] & MapMask.Outside) != 0) continue;
+                int ix = j % w;
+                int iy = j / w;
+                bool myTerritory = owners[j] == playerId;
+                // 窄前线:我方领土与非我方邻接。
+                bool narrow = false;
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = ix + (d == 0 ? 1 : d == 1 ? -1 : 0);
+                    int ny = iy + (d == 2 ? 1 : d == 3 ? -1 : 0);
+                    if (nx < 0 || nx >= w || ny < 0 || ny >= w) continue;
+                    if (owners[ny * w + nx] != playerId)
+                    {
+                        narrow = true;
+                        break;
+                    }
+                }
+                if (narrow && myTerritory)
+                    map.Map[j] |= MapMask.NarrowFrontier;
+            }
+            // 宽前线:窄线外侧的非我方 cell(原版 largeFrontier 独立语义)。
+            for (int j = 0; j < map.Length; j++)
+            {
+                if ((map.Map[j] & (MapMask.Outside | MapMask.NarrowFrontier)) != 0) continue;
+                int ix = j % w;
+                int iy = j / w;
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = ix + (d == 0 ? 1 : d == 1 ? -1 : 0);
+                    int ny = iy + (d == 2 ? 1 : d == 3 ? -1 : 0);
+                    if (nx < 0 || nx >= w || ny < 0 || ny >= w) continue;
+                    if ((map.Map[ny * w + nx] & MapMask.NarrowFrontier) != 0)
+                    {
+                        map.Map[j] |= MapMask.LargeFrontier;
+                        break;
+                    }
+                }
+            }
+        }
+        return map;
+    }
 }
