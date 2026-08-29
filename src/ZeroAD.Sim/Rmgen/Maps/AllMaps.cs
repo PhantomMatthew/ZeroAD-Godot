@@ -228,11 +228,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "medit_grass_field";
     }
 
-    public sealed class MediterraneanMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
+
 
     public sealed class MarmaraMap : StandardMap
     {
