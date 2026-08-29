@@ -50,4 +50,51 @@ public sealed class EntityCollection
     /// <summary>冻结（原版 freeze——不再自动添加新实体）。lazy 模式下 no-op。</summary>
     public void Freeze() { /* lazy 模式下无增量维护，freeze 语义自动满足 */ }
     public void Defreeze() { }
+
+    /// <summary>中心点(原版 getCentrePosition:成员位置算术平均;
+    /// 进攻计划队形锚点/基地定位用)。空集 → Zero。</summary>
+    public FixedVector2D GetCentrePosition()
+    {
+        float sx = 0, sz = 0;
+        int n = 0;
+        foreach (var e in _entities)
+        {
+            if (e.Position2D == default) continue;
+            sx += e.Position2D.X.ToFloat();
+            sz += e.Position2D.Y.ToFloat();
+            n++;
+        }
+        if (n == 0) return FixedVector2D.Zero;
+        return new FixedVector2D(
+            Maths.Fixed.FromFloat(sx / n), Maths.Fixed.FromFloat(sz / n));
+    }
+
+    /// <summary>近似位置(原版 getApproximatePosition:抽样样条平均,
+    /// 大集合的廉价质心估计——原版 attackPlan 的 this.position 同款)。</summary>
+    public FixedVector2D GetApproximatePosition(int sample = 10)
+    {
+        var list = ToList();
+        if (list.Count == 0) return FixedVector2D.Zero;
+        int step = Math.Max(1, list.Count / Math.Max(1, sample));
+        float sx = 0, sz = 0;
+        int n = 0;
+        for (int i = 0; i < list.Count; i += step)
+        {
+            if (list[i].Position2D == default) continue;
+            sx += list[i].Position2D.X.ToFloat();
+            sz += list[i].Position2D.Y.ToFloat();
+            n++;
+        }
+        if (n == 0) return FixedVector2D.Zero;
+        return new FixedVector2D(
+            Maths.Fixed.FromFloat(sx / n), Maths.Fixed.FromFloat(sz / n));
+    }
+
+    /// <summary>实体是否在本集合(原版 hasEntId)。</summary>
+    public bool HasEntId(uint id)
+    {
+        foreach (var e in _entities)
+            if (e.Id == id) return true;
+        return false;
+    }
 }

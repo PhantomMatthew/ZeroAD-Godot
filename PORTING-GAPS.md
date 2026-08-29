@@ -97,12 +97,12 @@
 模块骨架齐全(headquarters/attackPlan/baseManager/worker/defense/naval/trade/garrison/queue/research/diplomacy 均有对应),但每个大幅简化。上游:`binaries/data/mods/public/simulation/ai/petra/`(31 个 .js ≈26k 行)。
 
 - [x] 合并 Managers/PetraManagers 判明:AIComponent 只编一套(PetraManagers 全套+Headquarters);Petra/Managers.cs 是游戏层选中的另一套(都活),非真重复——选定统一路径=PetraManagers(2cd3a93 工人命令通道即此路径)
-- [x] attackPlan 深化(a39ed51/9583b8c):集结相 Rallying+参战阈值(不分批送命)、目标评分(拆塔优先/近优先/跳过地基);余缺口:多波次编组、围攻路线、撤退判定
-- [x] headquarters 选址评分(0be4127:土地过滤+CC 适中距);余缺口:基地扩张评分、人口规划
-- [x] worker 供给评分(d5ba82f:价值×剩余量/(1+采集者) 性价比+拥塞+敌领土);余缺口:精细基址分配/种田/狩猎分流
-- [ ] data.json 配置体系(difficultyLevel 已映射,参数表不全)
+- [x] attackPlan 深化(a39ed51/9583b8c/ee5452f):集结相 Rallying+参战阈值+撤退判定(敌优比超限撤基地)+目标评分;余缺口:多波次编组、围攻路线(原版 comportment 全量)
+- [x] headquarters 选址评分(0be4127 土地过滤+CC 适中距)+基地扩张评分(c45b980 近资源+离 CC 适中距);余缺口:人口规划
+- [x] worker 供给评分(d5ba82f 性价比+拥塞+敌领土)+种田/狩猎分流(1e25ddc 先猎后种);余缺口:精细基址分配(原版 base 驻留/迁移)
+- [x] data.json 配置体系(5075dbb:queues 时间窗阈值+unusedNoAllyTechs 补全;难度/性格/经济/防御/优先级/队列全量)
 - [ ] mapMask 掩码工具
-- [ ] common-api 补全(AIEntity/EntityCollection/Filters 等全家桶,现只挑了子集)
+- [x] common-api 补全(AIEntity 能力面 19 项+EntityCollection 质心/近似位置/HasEntId;Filters 26/26 全)
 - [x] researchManager 优先级(a3643df:人口/贸易/wanted/兜底四级,原版 update 核心语义)
 
 ---
