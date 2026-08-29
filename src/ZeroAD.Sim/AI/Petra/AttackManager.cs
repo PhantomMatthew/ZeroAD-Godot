@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim.AI.CommonApi;
@@ -69,7 +70,7 @@ public sealed class AttackPlan
     public readonly string Type;  // Rush/Raid/Attack/HugeAttack/Siege
     public readonly PetraConfig Config;
 
-    public enum AttackState { Unstarted, Completory, Started, Completed, Aborted }
+    public enum AttackState { Unstarted, Completory, Rallying, Started, Completed, Aborted }
     public AttackState State { get; private set; }
 
     // 参与单位
@@ -114,13 +115,25 @@ public sealed class AttackPlan
                 // 检查兵力是否足够
                 if (UnitCollection.Count >= MaxForces || Overran)
                 {
-                    ChooseTarget(gameState);
-                    State = AttackState.Started;
-                    IssueAttackCommands(gameState);   // 首次推进即下攻击移动
+                    // 集结(原版:rallyPoint 从最近基地 anchor 起算,先集结再齐推
+                    // ——散落兵力不分批送命)。
+                    RallyPoint = PickRallyPoint(gameState);
+                    IssueRallyCommands(gameState);
+                    State = AttackState.Rallying;
                 }
                 else
                 {
                     RecruitUnits(gameState, queues);
+                }
+                break;
+
+            case AttackState.Rallying:
+                // 原版 rally 完成判:已就位率 ≥80% 即齐推(剩余落队各自跟进)。
+                if (RallyReachedFraction(gameState) >= 0.8f)
+                {
+                    ChooseTarget(gameState);
+                    State = AttackState.Started;
+                    IssueAttackCommands(gameState);
                 }
                 break;
 
@@ -219,10 +232,19 @@ public sealed class AttackPlan
 
     /// <summary>对参与单位下攻击移动(原版 attackPlan 的 comportment 简化版:
     /// 全军 attack-walk 到目标位置——沿途自动交战、打完继续推进,
-    /// UnitAI WalkAndFight 状态机已承载该语义)。目标无位置(TargetPos 缺失)不下。</summary>
+    /// UnitAI WalkAndFight 状态机已承载该语义)。原版 comportment 核心约束:
+    /// 未达最小参战兵力不推(避免分批送命,Type 阈值照原版 targetSize 近似)。</summary>
     private void IssueAttackCommands(GameState gameState)
     {
         if (!TargetPos.HasValue) return;
+        // 参战阈值(原版 attackPlan 按难度定 targetSize;不足继续集结,
+        // 不下推进令——State 保持 Rallying 等下轮更新)。
+        int minForces = Math.Max(2, MaxForces / 2);
+        if (UnitCollection.Count < minForces)
+        {
+            State = AttackState.Rallying;
+            return;
+        }
         foreach (var id in UnitCollection)
         {
             if (gameState.GetEntityById(id) == null) continue;   // 死单位跳过
@@ -231,6 +253,51 @@ public sealed class AttackPlan
                 ZeroAD.Sim.Maths.Fixed.FromFloat(TargetPos.Value.X.ToFloat()),
                 ZeroAD.Sim.Maths.Fixed.FromFloat(TargetPos.Value.Y.ToFloat())));
         }
+    }
+
+    /// <summary>集结点选取(原版:rallyPoint 从最近基地 anchor 起算;
+    /// 无基地 → 我方任一实体位置)。</summary>
+    private FixedVector2D PickRallyPoint(GameState gameState)
+    {
+        var anchor = gameState.GetOwnStructures().Values()
+            .FirstOrDefault(s => s.HasClass("CivilCentre") && s.Position2D != default)
+            ?? gameState.GetOwnStructures().Values()
+                .FirstOrDefault(s => s.Position2D != default);
+        if (anchor != null) return anchor.Position2D;
+        var ent = gameState.GetOwnEntities().Values().FirstOrDefault(e => e.Position2D != default);
+        return ent?.Position2D ?? FixedVector2D.Zero;
+    }
+
+    /// <summary>集结下令(原版 rallyPoint 未到前不走;单位各自移动到 rallyPoint 15m 内)。</summary>
+    private void IssueRallyCommands(GameState gameState)
+    {
+        if (!RallyPoint.HasValue) return;
+        foreach (var id in UnitCollection)
+        {
+            if (gameState.GetEntityById(id) == null) continue;
+            gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Move(
+                (uint)gameState.PlayerId, id,
+                ZeroAD.Sim.Maths.Fixed.FromFloat(RallyPoint.Value.X.ToFloat()),
+                ZeroAD.Sim.Maths.Fixed.FromFloat(RallyPoint.Value.Y.ToFloat())));
+        }
+    }
+
+    /// <summary>集结完成率(原版 rally 判:单位距 rallyPoint ≤15m 记到位)。</summary>
+    private float RallyReachedFraction(GameState gameState)
+    {
+        if (!RallyPoint.HasValue || UnitCollection.Count == 0) return 0f;
+        int reached = 0, alive = 0;
+        foreach (var id in UnitCollection)
+        {
+            var ent = gameState.GetEntityById(id);
+            if (ent == null || ent.IsDead) continue;
+            alive++;
+            if (ent.Position2D == default) continue;
+            float dx = ent.Position2D.X.ToFloat() - RallyPoint.Value.X.ToFloat();
+            float dz = ent.Position2D.Y.ToFloat() - RallyPoint.Value.Y.ToFloat();
+            if (dx * dx + dz * dz <= 15f * 15f) reached++;
+        }
+        return alive > 0 ? (float)reached / alive : 0f;
     }
 
     /// <summary>释放单位（进攻取消/完成时）。</summary>
