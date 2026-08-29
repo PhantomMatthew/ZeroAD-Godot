@@ -55,6 +55,22 @@ public sealed class PetraConfig
 
     public readonly GarrisonHealthLevelData GarrisonHealthLevel = new();
 
+    /// <summary>队列优先级覆盖(原版 config.queues:按时间窗的资源阈值)。
+    /// QueueManager 按当前时间窗查资源余量时用。</summary>
+    public readonly Dictionary<string, Dictionary<string, int>> Queues = new()
+    {
+        ["firstTurn"] = new() { ["food"] = 10, ["wood"] = 10, ["default"] = 0 },
+        ["short"] = new() { ["food"] = 200, ["wood"] = 200, ["default"] = 100 },
+        ["medium"] = new() { ["default"] = 0 },
+        ["long"] = new() { ["default"] = 0 },
+    };
+
+    /// <summary>无盟友时不研的科技(原版 unusedNoAllyTechs:共享类在无盟友局浪费)。</summary>
+    public readonly List<string> UnusedNoAllyTechs = new()
+    {
+        "Player/sharedLos", "Market/InternationalBonus", "Player/sharedDropsites",
+    };
+
     public readonly List<double> CriticalPopulationFactors = new() { 0.8, 0.8, 0.7, 0.6, 0.5, 0.35 };
     public readonly List<double> CriticalStructureFactors = new() { 0.8, 0.8, 0.7, 0.6, 0.5, 0.35 };
     public readonly List<double> CriticalRootFactors = new() { 0.8, 0.8, 0.67, 0.5, 0.35, 0.2 };
