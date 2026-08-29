@@ -128,8 +128,42 @@ public sealed record MapEnvironment(
         env.AdjustmentContrast = Contrast;
         env.AdjustmentSaturation = Saturation;
 
+        // 后处理对齐原版选项(PORTING-GAPS §7):
+        // bloom(原版 PostprocManager 的高斯模糊 bloom;Godot Glow 同效)
+        // + HQ 上采样(MSAA 3D 2x/4x,原版 HQ 选项)+ sharpness(原版
+        // sharpness 后处理;Godot 无直接字段,AdjustmentContrast 微调近似)。
+        bool bloom = Options.OptionsApplier.GetBool("bloom", true);
+        env.GlowEnabled = bloom;
+        if (bloom)
+        {
+            env.GlowIntensity = 0.4f;
+            env.GlowStrength = 0.9f;
+            env.GlowBloom = 0.1f;
+            env.GlowBlendMode = global::Godot.Environment.GlowBlendModeEnum.Additive;
+        }
+        // HQ 上采样(MSAA 3D 2x/4x,原版 HQ 选项;MSAA 是 Viewport 属性
+        // 非 Environment——Main 建世界后 ApplyViewport 施加)。
+        // sharpness 后处理(原版:锐化滤镜;Godot 无直接字段,AdjustmentContrast
+        // 微抬近似——原版 sharpness 默认小正值)。
+        float sharpness = Options.OptionsApplier.GetFloat("sharpness", 0f);
+        if (sharpness != 0f)
+            env.AdjustmentContrast *= 1f + sharpness * 0.5f;
+
         // 天空盒(原版 <SkySet>:art/textures/skies/{name}/ 5 面贴图装载;
         // 无贴图走程序化天空兜底——原版 C++ SkyBox 的背景替代)。
         SkyBox.Apply(env, SkySet.Length > 0 ? SkyBox.Load(SkySet) : SkyBox.CreateProcedural());
+    }
+
+    /// <summary>HQ 上采样施加到视口(MSAA 是 Viewport 属性非 Environment;
+    /// Main 建世界后调用,2x/4x = 原版 HQ 选项)。</summary>
+    public static void ApplyViewport(Viewport viewport)
+    {
+        string hq = Options.OptionsApplier.GetString("upscale", "off");
+        viewport.Msaa3D = hq switch
+        {
+            "2x" => Viewport.Msaa.Msaa2X,
+            "4x" => Viewport.Msaa.Msaa4X,
+            _ => Viewport.Msaa.Disabled,
+        };
     }
 }

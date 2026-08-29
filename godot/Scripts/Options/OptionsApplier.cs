@@ -36,6 +36,27 @@ public static class OptionsApplier
         return cfg.GetEffective(configKey) == "true";
     }
 
+    /// <summary>读选项生效字符串值(用户值优先,否则默认)。</summary>
+    public static string GetString(string configKey, string fallback)
+    {
+        var tree = (SceneTree)Engine.GetMainLoop();
+        var cfg = tree?.Root.GetNodeOrNull<UserConfig>("/root/UserConfig");
+        if (cfg == null) return fallback;
+        string v = cfg.GetEffective(configKey);
+        return v.Length > 0 ? v : fallback;
+    }
+
+    /// <summary>读选项生效浮点值(用户值优先,否则默认;解析失败回退)。</summary>
+    public static float GetFloat(string configKey, float fallback)
+    {
+        var tree = (SceneTree)Engine.GetMainLoop();
+        var cfg = tree?.Root.GetNodeOrNull<UserConfig>("/root/UserConfig");
+        if (cfg == null) return fallback;
+        return float.TryParse(cfg.GetEffective(configKey),
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : fallback;
+    }
+
     /// <summary>全量重放(启动/Revert/Reset):先建音频总线,再按 catalog 顺序应用全部 96 项。
     /// inGame 决定 adaptivefps 取 session 还是 menu 值(原版分别在局内/菜单限帧)。</summary>
     public static void ApplyAll(UserConfig cfg, SceneTree tree, bool inGame)

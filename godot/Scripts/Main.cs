@@ -1326,6 +1326,8 @@ public sealed partial class Main : Node3D
 				// 地图 Environment 光照(太阳方向/色 + 环境光 + 雾色,公式对齐 CLightEnv);
 				// 镜像世界后太阳必须随之镜像,否则面向相机的坡面整体背光发暗。
 				(MapEnvironment.LoadFromXml(xmlPath) ?? MapEnvironment.Default).Apply(_light, _env);
+				// HQ 上采样(MSAA 3D 2x/4x,原版 HQ 选项;Viewport 属性)。
+				MapEnvironment.ApplyViewport(GetViewport());
 				var water = WaterRenderer.LoadWaterFromXml(xmlPath);
 				float waterHeight = water?.Height ?? -999f;
 				if (water != null)
