@@ -148,3 +148,62 @@ public sealed class ElephantineScript : IMapScriptBehavior
 
     public void Tick(ComponentManager cm, float dt) { }
 }
+
+/// <summary>survivalofthefittest_triggers.js 移植:周期宝物 + 渐强攻击波。
+/// 简化版核心(原版 488 行的波次生成):按宝物/攻击波计时器周期 SpawnEntities
+/// (原版 DoRepeatedly 的周期触发;timer 用 cm 时基累计,锁步确定)。</summary>
+public sealed class SurvivalOfTheFittestScript : IMapScriptBehavior
+{
+    private float _elapsed;
+    private float _nextTreasure = 180f;   // 首个宝物约 3 分钟(原版 treasureTime 3-5 分)
+    private float _nextWave = 270f;       // 首波约 4.5 分钟(原版 firstWaveTime 4-6 分)
+
+    public void OnInit(ComponentManager cm) { }
+
+    public void Tick(ComponentManager cm, float dt)
+    {
+        _elapsed += dt;
+        if (_elapsed >= _nextTreasure)
+        {
+            // 宝物(原版 spawnTreasure:随机宝物模板在随机可通行点)。
+            var sink = cm.Triggers.Sink;
+            if (sink != null)
+            {
+                var pos = RandomPassablePoint(cm);
+                sink.SpawnEntities("gaia/treasure/food_bin", 0, pos.X, pos.Y, 1, 0f);
+            }
+            _nextTreasure += (float)(cm.RNG.NextDouble() * 120 + 180);
+        }
+        if (_elapsed >= _nextWave)
+        {
+            // 攻击波(原版 spawnAttackers:随机进攻模板,按时间渐增数量)。
+            var sink = cm.Triggers.Sink;
+            if (sink != null)
+            {
+                var pos = RandomPassablePoint(cm);
+                // 1.05^minutes 的渐增(原版 percentPerMinute):整次幂
+                // 近似(Math.Pow 属 libm,跨平台低位不同 → 门禁禁;
+                // 分钟级整幂 ≈ 原版连续渐增的分钟粒度)。
+                int minutes = (int)(_elapsed / 60f);
+                double growth = 1.0;
+                for (int m = 0; m < minutes; m++) growth *= 1.05;
+                int count = (int)(5 * growth);
+                sink.SpawnEntities("units/kush/infantry_spearman_b", 0, pos.X, pos.Y,
+                    System.Math.Min(count, 200), 3f);
+            }
+            _nextWave += (float)(cm.RNG.NextDouble() * 120 + 120);
+        }
+    }
+
+    private static (float X, float Y) RandomPassablePoint(ComponentManager cm)
+    {
+        var range = SimSystem.Range;
+        if (range == null) return (0f, 0f);
+        var ents = range.GetNonGaiaEntities();
+        if (ents.Count == 0) return (0f, 0f);
+        var any = ents[cm.RNG.NextInt(0, ents.Count)];
+        var pos = cm.QueryInterface<PositionComponent>(any);
+        return pos == null ? (0f, 0f)
+            : (pos.Position.X.ToFloat(), pos.Position.Z.ToFloat());
+    }
+}
