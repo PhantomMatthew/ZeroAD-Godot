@@ -272,6 +272,70 @@ namespace ZeroAD.Sim.Rmgen
         /// SimBridge 装配 rmgen 管线时注入)。null = 无模板访问(障碍尺寸回退 0)。</summary>
         public static Content.TemplateLoader? Templates { get; set; }
 
+        /// <summary>extractHeightmap(原版 library.js):从高度图取子矩形
+        /// (topLeft 起点,size 边长;行主序 [x][y])。</summary>
+        public static double[][] ExtractHeightmap(double[][] heightmap,
+            (int x, int y) topLeft, int size)
+        {
+            var result = new double[size][];
+            for (int x = 0; x < size; x++)
+            {
+                result[x] = new double[size];
+                for (int y = 0; y < size; y++)
+                    result[x][y] = heightmap[x + topLeft.x][y + topLeft.y];
+            }
+            return result;
+        }
+
+        /// <summary>convertHeightmap1Dto2D(原版 library.js):一维行主序高度图
+        /// → 二维 [x][y](原版行主序索引 y*size+x)。</summary>
+        public static double[][] ConvertHeightmap1Dto2D(double[] heightmap)
+        {
+            int hmSize = (int)SafeMath.Sqrt(heightmap.Length);
+            var result = new double[hmSize][];
+            for (int x = 0; x < hmSize; x++)
+            {
+                result[x] = new double[hmSize];
+                for (int y = 0; y < hmSize; y++)
+                    result[x][y] = heightmap[y * hmSize + x];
+            }
+            return result;
+        }
+
+        /// <summary>getDifficulties(原版 library.js:trigger_difficulties.json 的
+        /// Data 数组;(Difficulty, Name, Title, Tooltip) 元组,缓存按文件)。</summary>
+        public static List<(int Difficulty, string Name, string Title, string Tooltip)>
+            GetDifficulties(string? dataRoot)
+        {
+            if (dataRoot == null) return new List<(int, string, string, string)>();
+            string path = System.IO.Path.Combine(dataRoot,
+                "simulation", "data", "settings", "trigger_difficulties.json");
+            if (!System.IO.File.Exists(path))
+                return new List<(int, string, string, string)>();
+
+            var result = new List<(int, string, string, string)>();
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(
+                    System.IO.File.ReadAllText(path));
+                if (doc.RootElement.TryGetProperty("Data", out var data))
+                    foreach (var item in data.EnumerateArray())
+                    {
+                        int diff = item.TryGetProperty("Difficulty", out var d)
+                            ? d.GetInt32() : 0;
+                        string name = item.TryGetProperty("Name", out var n)
+                            ? n.GetString() ?? "" : "";
+                        string title = item.TryGetProperty("Title", out var t)
+                            ? t.GetString() ?? "" : "";
+                        string tooltip = item.TryGetProperty("Tooltip", out var tt)
+                            ? tt.GetString() ?? "" : "";
+                        result.Add((diff, name, title, tooltip));
+                    }
+            }
+            catch { /* 解析失败回退空表 */ }
+            return result;
+        }
+
         /// <summary>实体模板 Obstruction 尺寸(tile 单位,原版 getObstructionSize):
         /// Static → (depth,width)/TERRAIN_TILE_SIZE + margin×2;Obstructions(门等)
         /// → (max depth, sum width) 同款。无模板/无 Obstruction → (margin×2, margin×2)。</summary>
