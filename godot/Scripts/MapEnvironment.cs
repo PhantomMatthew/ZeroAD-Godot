@@ -12,7 +12,10 @@ namespace ZeroAD.Godot;
 public sealed record MapEnvironment(
     Color SunColor, float SunElevation, float SunRotation,
     Color AmbientColor, Color FogColor, float FogFactor, float FogMax,
-    float Brightness = 0f, float Contrast = 1f, float Saturation = 0.99f)
+    float Brightness = 0f, float Contrast = 1f, float Saturation = 0.99f,
+    /// <summary>SkySet 名(原版 art/environments 的 <SkySet>name</SkySet>;
+    /// art/textures/skies/{name}/ 5 面贴图)。空 = 无天空盒(程序化天空兜底)。</summary>
+    string SkySet = "")
 {
     /// <summary>无 XML 时的回退:数值取教程图同款(东南天太阳),比硬编码 euler 更接近 C++。</summary>
     public static readonly MapEnvironment Default = new(
@@ -43,8 +46,10 @@ public sealed record MapEnvironment(
             float brightness = ReadFloat(post?.Element("Brightness"), Default.Brightness);
             float contrast = ReadFloat(post?.Element("Contrast"), Default.Contrast);
             float saturation = ReadFloat(post?.Element("Saturation"), Default.Saturation);
+            // SkySet(原版 <SkySet>name</SkySet> → art/textures/skies/{name}/)。
+            string skySet = env.Element("SkySet")?.Value.Trim() ?? "";
             return new MapEnvironment(sun, elev, rot, amb, fog, fogFactor, fogMax,
-                brightness, contrast, saturation);
+                brightness, contrast, saturation, skySet);
         }
         catch (System.Exception e)
         {
@@ -122,5 +127,9 @@ public sealed record MapEnvironment(
         env.AdjustmentBrightness = 1f + Brightness;
         env.AdjustmentContrast = Contrast;
         env.AdjustmentSaturation = Saturation;
+
+        // 天空盒(原版 <SkySet>:art/textures/skies/{name}/ 5 面贴图装载;
+        // 无贴图走程序化天空兜底——原版 C++ SkyBox 的背景替代)。
+        SkyBox.Apply(env, SkySet.Length > 0 ? SkyBox.Load(SkySet) : SkyBox.CreateProcedural());
     }
 }
