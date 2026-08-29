@@ -20,6 +20,7 @@ public sealed partial class SimBridge : Node
 	private ReplayDriver? _replayDriver;     // 回放播放：非 null 时每帧注入预录制命令
 	private ProjectilePool? _projectiles;    // 飞行投射物池（ranged 攻击的箭矢）
 	private ImpactEffectPool? _impacts;      // 命中特效池（血雾/扬尘）
+	private BattleDecals? _decals;           // 战场贴花（击杀血斑,原版 blood_*.xml 的 decal 语义）
 	private double _simAccumulator;
 	private const double SimTickRate = 0.1;
 
@@ -219,6 +220,8 @@ public sealed partial class SimBridge : Node
 		// 战斗观感：攻击发射 → 飞行投射物（ranged）；命中 → 血雾/扬尘（AttackLandedEvent 原零订阅，现接入）。
 		_sim.Events.AttackLaunched += OnAttackLaunched;
 		_sim.Events.AttackLanded += OnAttackLanded;
+		_decals ??= new BattleDecals();
+		if (_decals.GetParent() == null) AddChild(_decals);
 
 		int gridSize = 64;
 		float cellSize = 4.0f;
@@ -1020,6 +1023,9 @@ public sealed partial class SimBridge : Node
 		var health = _sim?.QueryInterface<ZeroAD.Sim.Components.HealthComponent>(e.Target);
 		if (health != null) isKill = health.IsDead;
 		_impacts.Spawn(target.Position + Vector3.Up * 0.8f, isKill);
+		// 击杀贴地血斑(原版 blood_*.xml 的 decal 语义:命中迸溅在池里,
+		// 残留血斑在本系统——45s 消融后回收)。
+		if (isKill) _decals?.Spawn(target.Position);
 	}
 
 	public override void _Ready()
