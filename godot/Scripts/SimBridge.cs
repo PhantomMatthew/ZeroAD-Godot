@@ -1632,9 +1632,10 @@ public sealed partial class SimBridge : Node
 				_sim.RecomputePlayerPopBonus(owner.PlayerId);
 
 			// The completed building registered a static obstruction (via SpawnScenarioBuilding →
-			// ObstructionComponent.EnsureRegistered). Rebuild the pathfinder's navcell grid so the
-			// new obstacle blocks pathing. (P0: full rebuild; incremental region update is P1.)
-			_pathfinder.RebuildGrid();
+			// ObstructionComponent.EnsureRegistered). Refresh the pathfinder's navcell grid:
+			// snapshot diff → only the changed region patches (P1; zero-cost when nothing moved,
+			// per-tick safe). Fall back to full RebuildGrid if the grid isn't built yet.
+			_pathfinder.RefreshObstructions();
 
 			AutoAssignIdleBuilders(x, z);
 		}
