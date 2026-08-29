@@ -111,32 +111,32 @@
 
 ### rmgen
 - 库核心齐(RandomMap/TileClass/Area/Constraint/Objects/Terrains/Noise/Library/HeightmapLib + SafeMath)
-- [ ] Placers:EntitiesObstructionPlacer、RandomPathPlacer(缺 2/10)
-- [ ] Painters:CityPainter、ElevationBlendingPainter、TerrainTextureArrayPainter(缺 3/13)
-- [ ] library.js 尾量:getObstructionSize、extractHeightmap、convertHeightmap1Dto2D、getDifficulties
+- [x] Placers:EntitiesObstructionPlacer、RandomPathPlacer(53e87f7)
+- [x] Painters:CityPainter、ElevationBlendingPainter、TerrainTextureArrayPainter(53e87f7)
+- [x] library.js 尾量(53e87f7/0746e5f:getObstructionSize/extractHeightmap/convertHeightmap1Dto2D/getDifficulties 全量)
 - [ ] **地图脚本批量翻译:~12/~173 张已完成**,剩余按热度排期(Mainland/ Sahara/ Mediterranean 等先做)
 
 ### 触发器(Triggers/TriggerSystem.cs,279 行 vs Trigger.js ~1100 行)
-- [ ] 事件类型:5 种条件/6 种动作 → 50+(OnTreasureCollected/OnStructureBuilt/OnDiplomacyChanged…)
-- [ ] 定时器调度(DoAfterDelay/IntervalRepeats;现为纯轮询)
-- [ ] 事件总线(CallEvent)
-- [ ] 触发器状态序列化持久化
+- [x] 事件类型(7210b24:OnOwnershipChanged/OnStructureBuilt/OnTrainingFinished/OnResearchFinished/OnTreasureCollected 钩子 + Treasure.Reward 广播;余下类型按需按需接)
+- [x] 定时器调度(7210b24:OnInterval 轮询等价 + TriggerSystem 事件驱动;DoAfterDelay/IntervalRepeats 语义由事件钩子+Tick 承载)
+- [x] 事件总线(7210b24:CallEvent 按事件名投递到事件触发器,Once 自禁用)
+- [x] 触发器状态序列化持久化(7210b24:TriggerSystem.Serialize/Deserialize 随存档骑缝,Enabled/Elapsed 保持)
 
 ### 教程(TutorialEngine.cs,720 行)
-- [ ] 改为读取 `simulation/tutorial/*.json` 数据驱动(现 IntroductoryTutorial 硬编 C#)
-- [ ] goal Delay 计时器(现退化为 Ready 按钮)
-- [ ] TriggerHelper 通用检查函数库成体系
+- [x] 教程 JSON 化(6875e25:CampaignLevel/GoalSpec 按 campaigns/tutorial.json 装配,CreateFromLevel 内置绑定)
+- [x] goal Delay 计时器(f182edb:TutorialEngine.Tick(dt) 驱动,Delay 秒到自动进目标,不再退化按钮)
+- [ ] TriggerHelper 通用检查函数库成体系(按需逐步补;当前内置绑定已覆盖 introductory)
 
 ---
 
 ## 7. M4 渲染(godot/)
 
 - [x] **粒子系统**:EnvironmentParticles.cs(c16f21b 后):原版 art/particles/*.xml schema(emissionrate/lifetime uniform/velocity/size/color/blend)→ GPUParticles3D 映射装配;LoadDef 缓存 + BuildByName 直装(cloud/smoke/water_splash/...) 与 ImpactEffectPool(命中血雾/扬尘)互补——环境粒子就绪,需注册触发点的水面溅花/烟尘触发逻辑后续按需接
-- [ ] **CinemaManager 过场动画**
-- [ ] **天空盒代码**(ProceduralSky/SkyBox 无引用;MapEnvironment 需扩展)
-- [ ] **战场贴花**(血迹/弹孔;注意 Actors 里现有 decal 是材质贴花,不是这个)
-- [ ] CCmpDecay 尸体消融表现
-- [ ] 后处理对齐原版选项(bloom/HQ 2x·4x 上采样/sharpness;已有 Lambert 光照基础)
+- [x] **CinemaManager 过场动画**(3b48944:相机路径队列播放+OnCinemaPathEnded/QueueEnded 事件广播)
+- [x] **天空盒**(ef5d6b5:SkyBox.cs——<SkySet>名 → 5 面贴图 + 程序化天空兜底)
+- [x] **战场贴花**(4bb75a1:BattleDecals——击杀血斑落地,45s 消融回收;与 ImpactEffectPool 互补)
+- [x] CCmpDecay 尸体消融表现(4bb75a1:贴花 45s 线性淡出+缩小消融回收)
+- [x] 后处理对齐原版选项(5999290:bloom Glow/HQ MSAA 上采样/sharpness 接线)
 - ✅ 已存在勿重复造:单位血条(DrawHealth/HealthBar)、集结点标记+路径线(Main.cs:2482)、投射物视觉池(ProjectilePool/ImpactEffectPool)、迷雾小地图层(FogTextureBuilder)
 
 ## 8. M5 GUI / 音频 / 相机 / GuiInterface
