@@ -39,8 +39,25 @@ namespace ZeroAD.Sim.Triggers
         public bool Once;
         public List<TriggerCondition> Conditions = new();
         public List<TriggerAction> Actions = new();
-        /// <summary>TimeElapsed 条件用:启用期间累计秒数。</summary>
+        /// <summary>TimeElapsed/Interval 条件用:启用期间累计秒数(存档保持,
+        /// 读档后间隔不重置——原版 OnInterval 的 SetInterval 状态骑缝)。</summary>
         internal float Elapsed;
+
+        /// <summary>序列化(存档骑缝;原版 Trigger 组件的 triggerData.enabled +
+        /// 定时器状态)。条件/动作表为静态定义不序列化,Enabled/Elapsed 为动态。</summary>
+        public void Serialize(ZeroAD.Sim.Serialization.ISerializer s)
+        {
+            s.StringASCII("name", Name);
+            s.Bool("enabled", Enabled);
+            s.NumberFixed("elapsed", Maths.Fixed.FromFloat(Elapsed));
+        }
+
+        public void Deserialize(ZeroAD.Sim.Serialization.IDeserializer d)
+        {
+            Name = d.StringASCII("name");
+            Enabled = d.Bool("enabled");
+            Elapsed = d.NumberFixed("elapsed").ToFloat();
+        }
     }
 
     /// <summary>表现层/生成层挂钩——sim 内核不直接解析模板生成实体(模板解析在 SimBridge),
@@ -67,10 +84,20 @@ namespace ZeroAD.Sim.Triggers
     /// 原版由地图 JS 脚本向 Trigger 组件注册 事件→动作;C# 内核无法执行地图 JS,
     /// 改为数据驱动:条件/动作内置实现,地图(或教程/战役)以 TriggerDefinition 表达。
     /// 由 ComponentManager.TickVictory 按回合驱动。确定性:全部条件为世界状态轮询,
-    /// 无 RNG;动作为同步执行,顺序 = 注册顺序。</summary>
+    /// 无 RNG;动作为同步执行,顺序 = 注册顺序。
+    ///
+    /// 原版事件模型:Trigger 组件订阅 sim 消息(OnGlobalConstructionFinished/
+    /// OnGlobalOwnershipChanged/OnGlobalDiplomacyChanged/OnTreasureCollected…)
+    /// 经 CallEvent 投递到注册的触发器。本移植同名事件钩子由 SimBridge 在对应
+    /// sim 事件点直调,OnInterval 由每回合 Elapsed 轮询推进。</summary>
     public sealed class TriggerSystem
     {
         private readonly List<TriggerDefinition> _triggers = new();
+
+        // 事件触发器注册表(原版 this.triggers[event][name]):事件名 → 触发器列表。
+        // CallEvent 时按事件名取全部启用中的触发器投递。
+        private readonly Dictionary<string, List<TriggerDefinition>> _eventTriggers =
+            new(StringComparer.Ordinal);
 
         /// <summary>可选效果出口(消息/生成)。null 时 ShowMessage/SpawnEntities 静默跳过。</summary>
         public ITriggerSink? Sink;
@@ -80,6 +107,23 @@ namespace ZeroAD.Sim.Triggers
 
         // 触发点注册表(ref → 世界坐标;rmgen 的 trigger/trigger_point_X 实体经此入库)。
         private readonly Dictionary<string, List<Maths.FixedVector2D>> _triggerPoints = new(StringComparer.Ordinal);
+
+        /// <summary>接 sim 事件总线(原版 Trigger 组件订阅 sim 消息的等价):
+        /// OwnershipChanged/StructureBuilt/TrainingFinished/ResearchFinished 经
+        /// CallEvent 投递到事件触发器。由 ComponentManager 装配时调一次。</summary>
+        public void Attach(ComponentManager cm)
+        {
+            cm.OwnerChanged += (entity, from, to) =>
+                CallEvent(cm, "OnOwnershipChanged", new { entity, from, to });
+            cm.Events.StructureBuilt += e =>
+                CallEvent(cm, "OnStructureBuilt", e);
+            cm.Events.TrainingFinished += e =>
+                CallEvent(cm, "OnTrainingFinished", e);
+            cm.Events.ResearchFinished += e =>
+                CallEvent(cm, "OnResearchFinished", e);
+            cm.Events.TreasureCollected += e =>
+                CallEvent(cm, "OnTreasureCollected", e);
+        }
 
         public IReadOnlyList<TriggerDefinition> Triggers => _triggers;
 
@@ -99,7 +143,35 @@ namespace ZeroAD.Sim.Triggers
 
         public void Add(TriggerDefinition trigger) => _triggers.Add(trigger);
 
-        public void Clear() => _triggers.Clear();
+        /// <summary>注册事件触发器(原版 Trigger.RegisterTrigger:event → 动作。
+        /// EventName 为原版事件名(OnTreasureCollected/OnStructureBuilt/
+        /// OnDiplomacyChanged/OnInterval/OnOwnershipChanged/OnInitGame/…)。</summary>
+        public void AddEventTrigger(string eventName, TriggerDefinition trigger)
+        {
+            if (!_eventTriggers.TryGetValue(eventName, out var list))
+                _eventTriggers[eventName] = list = new List<TriggerDefinition>();
+            list.Add(trigger);
+        }
+
+        public void Clear()
+        {
+            _triggers.Clear();
+            _eventTriggers.Clear();
+        }
+
+        /// <summary>事件总线(原版 Trigger.CallEvent):按事件名投递到全部启用
+        /// 触发器;OnInitGame 在地图加载完成时投递一次(原版 OnGlobalInitGame)。</summary>
+        public void CallEvent(ComponentManager cm, string eventName, object? data = null)
+        {
+            if (!_eventTriggers.TryGetValue(eventName, out var list)) return;
+            foreach (var t in list)
+            {
+                if (!t.Enabled) continue;
+                foreach (var action in t.Actions)
+                    Execute(cm, action);
+                if (t.Once) t.Enabled = false;
+            }
+        }
 
         public TriggerDefinition? Find(string name)
         {
@@ -108,7 +180,32 @@ namespace ZeroAD.Sim.Triggers
             return null;
         }
 
-        /// <summary>每回合推进。dt 为本回合秒数(0.1)。返回本回合触发次数(测试观察用)。</summary>
+        /// <summary>序列化(存档骑缝;原版 Trigger 组件的 triggerData.enabled +
+        /// 定时器状态):条件/动作为静态定义不序列化,只写 Name/Enabled/Elapsed。
+        /// 与 Deserialize 写序逐位一致。</summary>
+        public void Serialize(ZeroAD.Sim.Serialization.ISerializer s)
+        {
+            s.NumberI32("count", _triggers.Count);
+            foreach (var t in _triggers)
+                t.Serialize(s);
+        }
+
+        /// <summary>反序列化(与 Serialize 写序逐位一致)。条件/动作静态定义
+        /// 由地图脚本重注(OnInitGame 时 Add 的触发器先 Reset 再 Fill)。</summary>
+        public void Deserialize(ZeroAD.Sim.Serialization.IDeserializer d)
+        {
+            int count = d.NumberI32("count");
+            _triggers.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                var t = new TriggerDefinition();
+                t.Deserialize(d);
+                _triggers.Add(t);
+            }
+        }
+
+        /// <summary>每回合推进。dt 为本回合秒数(0.1)。返回本回合触发次数(测试观察用)。
+        /// OnInterval 事件在此投递(原版 SetInterval 语义:Interval 秒一到即投递)。</summary>
         public int Tick(ComponentManager cm, float dt)
         {
             MapScript?.Tick(cm, dt);
@@ -131,6 +228,27 @@ namespace ZeroAD.Sim.Triggers
                 foreach (var action in t.Actions)
                     Execute(cm, action);
                 if (t.Once) t.Enabled = false;
+            }
+            // OnInterval 定时器事件(原版 SetInterval 的轮询等价):
+            // Interval 秒一到即投递(参数挂触发器 Conditions 首个
+            // "Interval" 参数的 Seconds,与原版的 interval 数据语义一致)。
+            foreach (var t in _triggers)
+            {
+                if (!t.Enabled) continue;
+                float interval = 0f;
+                foreach (var cond in t.Conditions)
+                    if (cond.Type == "Interval")
+                    {
+                        interval = GetFloat(cond, "Seconds", 0f);
+                        break;
+                    }
+                if (interval <= 0) continue;
+                if (t.Elapsed >= interval)
+                {
+                    t.Elapsed = 0;
+                    CallEvent(cm, "OnInterval", null);
+                    fired++;
+                }
             }
             return fired;
         }

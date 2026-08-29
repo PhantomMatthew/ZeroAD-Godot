@@ -536,6 +536,10 @@ namespace ZeroAD.Sim
                     comp.Serialize(s);
                 }
             }
+
+            // 触发器系统(非组件系统对象,存档骑缝;原版 Trigger 组件的
+            // triggerData.enabled + 定时器状态):定义表动态部分(Enabled/Elapsed)。
+            Triggers.Serialize(s);
         }
 
         /// <summary>
@@ -591,6 +595,10 @@ namespace ZeroAD.Sim
                     }
                 }
             }
+
+            // 触发器系统(与 SerializeSaveGame 写序逐位一致;Enabled/Elapsed 骑缝,
+            // 条件/动作静态定义由地图脚本重注)。
+            Triggers.Deserialize(d);
         }
     }
 

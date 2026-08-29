@@ -49,6 +49,14 @@ public sealed class TreasureComponent : ComponentBase, IComponentMessageHandler
 
         IsTaken = true;
         cm.DestroyEntity(Entity);
+        // 原版 Trigger.OnTreasureCollected:宝藏结算后广播(地图脚本的
+        // "收集 X 个宝物判胜/解锁"经此驱动)。
+        cm.Events.RaiseTreasureCollected(new ZeroAD.Sim.Events.TreasureCollectedEvent
+        {
+            Collector = collector,
+            Treasure = Entity,
+            PlayerId = own.PlayerId,
+        });
         return true;
     }
 

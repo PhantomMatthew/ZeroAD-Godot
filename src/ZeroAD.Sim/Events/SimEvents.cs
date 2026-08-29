@@ -172,6 +172,15 @@ namespace ZeroAD.Sim.Events
         public string? GenericType;
     }
 
+    /// <summary>宝藏结算(原版 Trigger.OnTreasureCollected 广播):收集者/宝物/属主。
+    /// 地图脚本的"收集 X 个宝物判胜/解锁"经 TriggerSystem.CallEvent 驱动。</summary>
+    public sealed class TreasureCollectedEvent
+    {
+        public EntityId Collector;
+        public EntityId Treasure;
+        public int PlayerId;
+    }
+
     /// <summary>资源花费（建造/训练/科研扣费时）。镜像 Player.js:349 的 IncreaseResourceUsedCounter。</summary>
     public sealed class ResourceSpentEvent
     {
@@ -237,6 +246,7 @@ namespace ZeroAD.Sim.Events
         public event Action<VisibilityChangedEvent>? VisibilityChanged;
         public event Action<MirageSwapBackEvent>? MirageSwapBack;
         public event Action<ResourceGatheredEvent>? ResourceGathered;
+        public event Action<TreasureCollectedEvent>? TreasureCollected;
         public event Action<ResourceSpentEvent>? ResourceSpent;
         public event Action<EntityKilledEvent>? EntityKilled;
         public event Action<TradeIncomeEvent>? TradeIncome;
@@ -264,6 +274,7 @@ namespace ZeroAD.Sim.Events
         public void RaiseVisibilityChanged(VisibilityChangedEvent e) => VisibilityChanged?.Invoke(e);
         public void RaiseMirageSwapBack(MirageSwapBackEvent e) => MirageSwapBack?.Invoke(e);
         public void RaiseResourceGathered(ResourceGatheredEvent e) => ResourceGathered?.Invoke(e);
+        public void RaiseTreasureCollected(TreasureCollectedEvent e) => TreasureCollected?.Invoke(e);
         public void RaiseResourceSpent(ResourceSpentEvent e) => ResourceSpent?.Invoke(e);
         public void RaiseEntityKilled(EntityKilledEvent e) => EntityKilled?.Invoke(e);
         public void RaiseTradeIncome(TradeIncomeEvent e) => TradeIncome?.Invoke(e);

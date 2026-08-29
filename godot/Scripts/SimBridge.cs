@@ -201,6 +201,10 @@ public sealed partial class SimBridge : Node
 		if (auraCatalog != null) _sim.Auras = auraCatalog;
 		SimSystem.Init(_sim);
 		_sim.Triggers.Sink = new BridgeTriggerSink(this);
+		// 触发器事件总线接 sim 事件(原版 Trigger 组件订阅 sim 消息的等价):
+		// OwnershipChanged/StructureBuilt/TrainingFinished/ResearchFinished/
+		// TreasureCollected → TriggerSystem.CallEvent 投递到事件触发器。
+		_sim.Triggers.Attach(_sim);
 		Templates = templates;
 		_templatesPath = templatesPath;
 		LocalPlayerId = localPlayerId;
