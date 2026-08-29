@@ -45,18 +45,18 @@ public sealed class ResearchManager
     }
 
     /// <summary>主更新（原版 update，163-248 行）。
-    /// 简化版：检查人口加成科技 + 经济科技。</summary>
+    /// 优先级:人口加成(Population/Bonus) > 贸易(Trader 速度/增益) >
+    /// wanted techs(解锁冠军/采集率/射程;原版 researchWantedTechs) >
+    /// 第一个可用科技。</summary>
     public void Update(GameState gameState, QueueManager queues)
     {
-        // 简化：每隔几 think 检查可用科技
         var available = gameState.FindAvailableTech();
         if (available.Count == 0) return;
 
-        // 优先人口加成科技（PopBonus class）
+        // 1. 人口加成科技(原版 researchPopulationBonus:含 Population/Bonus 修改)。
         foreach (var tech in available)
         {
             if (!gameState.TechCatalog.Technologies.TryGetValue(tech, out var def)) continue;
-            // 检查 modifications 是否含 Population/Bonus
             bool isPopTech = false;
             foreach (var mod in def.Modifications)
             {
@@ -69,7 +69,73 @@ public sealed class ResearchManager
             }
         }
 
-        // 否则取第一个可用科技
+        // 2. 贸易科技(原版 researchTradeBonus:affects 含 Trader + 修改 UnitMotion/
+        // WalkSpeed 或 Trader/GainMultiplier)。当前 AI 有市场才研(贸易经理活跃判)。
+        bool hasMarket = gameState.GetOwnStructures().Filter(e => e.HasClass("Market")).HasEntities();
+        if (hasMarket)
+        {
+            foreach (var tech in available)
+            {
+                if (!gameState.TechCatalog.Technologies.TryGetValue(tech, out var def)) continue;
+                bool isTradeTech = false;
+                foreach (var mod in def.Modifications)
+                {
+                    if (mod.Path != null && (mod.Path.Contains("UnitMotion/WalkSpeed")
+                        || mod.Path.Contains("Trader/GainMultiplier")))
+                    {
+                        isTradeTech = true;
+                        break;
+                    }
+                }
+                if (isTradeTech)
+                {
+                    queues.AddPlan("minorTech", new ResearchPlan(gameState, tech));
+                    return;
+                }
+            }
+        }
+
+        // 3. wanted techs(原版 researchWantedTechs:采集率/射程/解锁冠军)。
+        // phase1 时检查资源余量(原版 costMax > 10×numWorkers 跳过——养不起不研)。
+        int phase = gameState.CurrentPhase();
+        foreach (var tech in available)
+        {
+            if (!gameState.TechCatalog.Technologies.TryGetValue(tech, out var def)) continue;
+            if (tech.StartsWith("unlock_champion", System.StringComparison.Ordinal))
+            {
+                queues.AddPlan("majorTech", new ResearchPlan(gameState, tech));
+                return;
+            }
+            bool isWanted = false;
+            foreach (var mod in def.Modifications)
+            {
+                if (mod.Path == null) continue;
+                if (mod.Path.StartsWith("ResourceGatherer/Rates/", System.StringComparison.Ordinal)
+                    || mod.Path.StartsWith("ResourceGatherer/Capacities", System.StringComparison.Ordinal)
+                    || mod.Path == "Attack/Ranged/MaxRange")
+                {
+                    isWanted = true;
+                    break;
+                }
+            }
+            if (isWanted)
+            {
+                if (phase == 1)
+                {
+                    var avail = gameState.GetResources();
+                    int numWorkers = gameState.CountOwnEntitiesByRole("worker");
+                    int costMax = System.Math.Max(0, System.Math.Max(
+                        def.Food - avail.Food, System.Math.Max(
+                            def.Wood - avail.Wood, System.Math.Max(
+                                def.Stone - avail.Stone, def.Metal - avail.Metal))));
+                    if (10 * numWorkers < costMax) continue;   // 原版:养不起不研
+                }
+                queues.AddPlan("minorTech", new ResearchPlan(gameState, tech));
+                return;
+            }
+        }
+
+        // 4. 否则取第一个可用科技(原版兜底)。
         queues.AddPlan("minorTech", new ResearchPlan(gameState, available[0]));
     }
 }
