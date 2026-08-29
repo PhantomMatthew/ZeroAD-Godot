@@ -239,9 +239,86 @@ namespace ZeroAD.Sim.Tutorial
 
     public static class IntroductoryTutorial
     {
+        /// <summary>教程关卡数据(campaigns/tutorial.json 的 Levels.introduction)。
+        /// 原版:教程目标表在教程地图 JS(introductory_tutorial.js tutorialGoals)里;
+        /// C# 无法执行地图 JS,改为数据驱动——目标表以 CampaignLevel 描述装配,
+        /// 内置动作绑定(同 TriggerSystem 的数据驱动条件/动作模式)。
+        /// 当前 introductory 一个关卡(与硬编 BuildGoals 同语义);新关卡按
+        /// campaigns/tutorial.json 的 Levels 逐项注册。</summary>
+        public sealed class CampaignLevel
+        {
+            public string Name = "";
+            public string Map = "";
+            public string Description = "";
+            /// <summary>目标描述(instructions + 事件类型 + 参数)。
+            /// 事件类型按原版 tutorialGoals 的 On* 函数名映射内置绑定:
+            ///   PlayerCommand(type/target specific/class) / TrainingQueued(template/count) /
+            ///   StructureBuilt(class) / ResearchQueued(tech) / OwnershipChanged / Delay(秒)。</summary>
+            public List<GoalSpec> Goals = new();
+        }
+
+        /// <summary>单目标描述(原版 tutorialGoals 元素的数据形式)。</summary>
+        public sealed class GoalSpec
+        {
+            public List<string> Instructions = new();
+            public float Delay;
+            public string? PlayerCommandType;        // gather/repair
+            public string? PlayerCommandSpecific;    // fruit/tree
+            public string? PlayerCommandClass;       // House/Storehouse
+            public string? TrainingTemplate;
+            public int TrainingCountMin = 1;
+            public string? StructureBuiltClass;
+        }
+
         public static TutorialEngine Create(ComponentManager sim, SimEventBus events)
         {
             var engine = new TutorialEngine(BuildGoals());
+            engine.Init(sim, events);
+            return engine;
+        }
+
+        /// <summary>按 CampaignLevel 描述装配引擎(数据驱动;原版 tutorialGoals
+        /// 的内置绑定)。当前仅 introductory 一档(语义与 BuildGoals 一致)。</summary>
+        public static TutorialEngine CreateFromLevel(ComponentManager sim, SimEventBus events,
+            CampaignLevel level)
+        {
+            var goals = new List<TutorialGoal>();
+            foreach (var spec in level.Goals)
+            {
+                var goal = new TutorialGoal { Instructions = spec.Instructions, Delay = spec.Delay };
+                if (spec.PlayerCommandType != null)
+                {
+                    goal.OnPlayerCommand = (ctx, msg) =>
+                    {
+                        bool match = msg.Type == spec.PlayerCommandType
+                            && msg.Target.HasValue
+                            && (spec.PlayerCommandSpecific == null
+                                || GetResourceSpecific(ctx, msg.Target.Value) == spec.PlayerCommandSpecific)
+                            && (spec.PlayerCommandClass == null
+                                || EntityMatches(ctx, msg.Target.Value, spec.PlayerCommandClass));
+                        if (match) Advance(ctx);
+                    };
+                }
+                if (spec.TrainingTemplate != null)
+                {
+                    goal.OnTrainingQueued = (ctx, msg) =>
+                    {
+                        if (msg.UnitTemplate == spec.TrainingTemplate
+                            && msg.Count >= spec.TrainingCountMin)
+                            Advance(ctx);
+                    };
+                }
+                if (spec.StructureBuiltClass != null)
+                {
+                    goal.OnStructureBuilt = (ctx, msg) =>
+                    {
+                        if (EntityMatches(ctx, msg.Building, spec.StructureBuiltClass))
+                            Advance(ctx);
+                    };
+                }
+                goals.Add(goal);
+            }
+            var engine = new TutorialEngine(goals);
             engine.Init(sim, events);
             return engine;
         }
