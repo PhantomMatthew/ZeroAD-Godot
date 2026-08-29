@@ -1264,6 +1264,8 @@ public sealed partial class SimBridge : Node
 		// Conquest victory check — runs after dead entities are removed so the RangeManager
 		// index reflects the current survivors.
 		T("victory", () => _sim.TickVictory());
+		// goal Delay 计时器(原版 goal Delay 语义;SimBridge 每回合驱动)。
+		T("tutorial", () => Tutorial?.Tick(dt));
 		// Fog-of-war: recompute per-player visibility for whatever changed this turn
 		// (moved/placed/destroyed seers, ownership flips). Fires VisibilityChanged, which
 		// drives Fogging/Mirage bookkeeping and presentation-layer show/hide. Cheap no-op

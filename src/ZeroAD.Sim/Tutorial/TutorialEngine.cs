@@ -46,6 +46,10 @@ namespace ZeroAD.Sim.Tutorial
         private int _index;
         private bool _waitingReady;
         private bool _leaveOnReady;
+        // goal Delay 计时器(原版 goal Delay 语义:Delay 秒到即进下一目标,
+        // 此前退化为 Ready 按钮——无 Tick 驱动,定时器根本不跑)。
+        private float _delayElapsed;
+        private bool _delayPending;
 
         public bool IsComplete { get; private set; }
         public bool IsActive => _index < _goals.Count && !IsComplete;
@@ -84,6 +88,21 @@ namespace ZeroAD.Sim.Tutorial
                 NextGoal();
         }
 
+        /// <summary>goal Delay 计时器推进(SimBridge 每回合调):Delay 秒到即
+        /// 进下一目标(原版 goal Delay 语义;无 Delay 的事件驱动目标不受影响)。</summary>
+        public void Tick(float dt)
+        {
+            if (!_delayPending) return;
+            _delayElapsed += dt;
+            if (_index - 1 >= 0 && _index - 1 < _goals.Count
+                && _delayElapsed >= _goals[_index - 1].Delay)
+            {
+                _delayPending = false;
+                _delayElapsed = 0;
+                NextGoal();
+            }
+        }
+
         public void AdvanceGoal() => NextGoal();
 
         private void NextGoal(bool deserializing = false)
@@ -111,8 +130,11 @@ namespace ZeroAD.Sim.Tutorial
 
             if (goal.Delay > 0)
             {
-                // Timer-based delay not implemented; show ready button instead.
-                _waitingReady = true;
+                // 计时器驱动(原版 goal Delay):Delay 秒到自动进下一目标,
+                // 不再显示 Ready 按钮(此前退化为按钮——无 Tick 驱动)。
+                _delayPending = true;
+                _delayElapsed = 0;
+                _waitingReady = false;
             }
             else if (needDelay)
             {
