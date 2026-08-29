@@ -263,7 +263,9 @@ public sealed class BaseManager
         }
     }
 
-    /// <summary>分配 worker 到最近的资源点（简化版 gather 分配）。</summary>
+    /// <summary>分配 worker 到资源点（原版 worker.startGathering 的 findSupply 评分版）:
+    /// 候选 supply 按 价值×剩余量/(1+已在场采集者数) 评分,过滤 敌领土/拥塞(人均剩余
+    /// <30)/枯竭。同型内取最高分。</summary>
     private void AssignWorkerToResource(GameState gameState, AIEntity worker)
     {
         // 按当前最缺资源选类型（简化：优先 food → wood → stone → metal）
@@ -272,21 +274,70 @@ public sealed class BaseManager
         if (resources.Food > resources.Wood) preferredType = "wood";
         else if (resources.Wood > resources.Stone) preferredType = "stone";
 
-        // 找最近的该类型资源
-        var supplies = gameState.GetResourceSupplies(preferredType);
-        var nearest = supplies.FilterNearest(worker.Position2D, 1);
-        if (!nearest.HasEntities()) return;
-        var supply = nearest.Values().First();
-        if (supply == null) return;
+        ZeroAD.Sim.AI.CommonApi.EntityCollection supplies = gameState.GetResourceSupplies(preferredType);
+        if (!supplies.HasEntities()) return;
+
+        var territory = SimSystem.Territory;
+        var workerPos = worker.Position2D;
+        uint bestId = 0;
+        AIEntity? best = null;
+        float bestScore = float.MinValue;
+        foreach (var supply in supplies.Values())
+        {
+            if (supply.Position2D == default) continue;
+            var supplyComp = gameState.Cm.QueryInterface<ZeroAD.Sim.Components.ResourceSupply>(new ZeroAD.Sim.EntityId(supply.Id));
+            int amount = supplyComp?.Amount ?? 0;
+            if (amount <= 0) continue;   // 枯竭
+
+            // 敌领土排除(原版:territoryOwner != 0 且非盟友 → 拒)。
+            if (territory != null)
+            {
+                int owner = territory.GetOwner(supply.Position2D.X, supply.Position2D.Y);
+                if (owner != 0 && owner != gameState.PlayerId) continue;
+            }
+
+            // 拥塞控制(原版:人均剩余 <30 → 不加采集者;农场除外——原版
+            // "except for farms",food 类豁免拥塞门槛)。在场采集者数从全图
+            // 采集者 TargetSupply 统计(原版 resourceSupplyNumGatherers 近似)。
+            int numGatherers = CountGatherersAt(gameState, supply.Id);
+            if (preferredType != "food" && amount / (1 + numGatherers) < 30)
+                continue;
+
+            // 评分:剩余量优先 + 近优先(平方距离惩罚;原版 findSupply 的性价比近似)。
+            float dx = supply.Position2D.X.ToFloat() - workerPos.X.ToFloat();
+            float dz = supply.Position2D.Y.ToFloat() - workerPos.Y.ToFloat();
+            float score = amount * 1.0f - (dx * dx + dz * dz) * 0.001f;
+            if (score > bestScore || best == null && score == bestScore)
+            {
+                bestScore = score;
+                best = supply;
+                bestId = supply.Id;
+            }
+        }
+        if (best == null) return;
+        var chosen = best;
 
         // 分配：设 subrole + supply metadata
         gameState.Metadata.Set(worker.Id, "subrole", WorkerRoles.SubroleGatherer);
-        gameState.Metadata.Set(worker.Id, "supply", supply.Id);
+        gameState.Metadata.Set(worker.Id, "supply", chosen.Id);
         gameState.Metadata.Set(worker.Id, "gather-type", preferredType);
         // 下达 gather 命令(NetCommand.Gather → UnitAI GATHER 订单;AI 锁步通道,
         // 与人手同路径同延迟)。此前只分配元数据不下令 → AI 工人分配后永不动。
         gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Gather(
-            (uint)gameState.PlayerId, (uint)worker.Id, (uint)supply.Id));
+            (uint)gameState.PlayerId, (uint)worker.Id, chosen.Id));
+    }
+
+    /// <summary>该 supply 上的在场采集者数(原版 resourceSupplyNumGatherers 近似:
+    /// 全图采集者 TargetSupply 指向该实体的计数)。</summary>
+    private static int CountGatherersAt(GameState gameState, uint supplyId)
+    {
+        int count = 0;
+        foreach (var e in gameState.GetOwnUnits().Values())
+        {
+            var gatherer = gameState.Cm.QueryInterface<ZeroAD.Sim.Components.ResourceGatherer>(new ZeroAD.Sim.EntityId(e.Id));
+            if (gatherer?.TargetSupply?.Value == supplyId) count++;
+        }
+        return count;
     }
 
     /// <summary>分配实体到此 base（原版 assignEntity）。</summary>
