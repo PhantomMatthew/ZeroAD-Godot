@@ -130,7 +130,7 @@
 
 ## 7. M4 渲染(godot/)
 
-- [ ] **粒子系统**:无任何 GPUParticles 引用;原版 107 个粒子 XML → GPUParticles 映射
+- [x] **粒子系统**:EnvironmentParticles.cs(c16f21b 后):原版 art/particles/*.xml schema(emissionrate/lifetime uniform/velocity/size/color/blend)→ GPUParticles3D 映射装配;LoadDef 缓存 + BuildByName 直装(cloud/smoke/water_splash/...) 与 ImpactEffectPool(命中血雾/扬尘)互补——环境粒子就绪,需注册触发点的水面溅花/烟尘触发逻辑后续按需接
 - [ ] **CinemaManager 过场动画**
 - [ ] **天空盒代码**(ProceduralSky/SkyBox 无引用;MapEnvironment 需扩展)
 - [ ] **战场贴花**(血迹/弹孔;注意 Actors 里现有 decal 是材质贴花,不是这个)
