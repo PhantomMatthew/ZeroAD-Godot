@@ -327,12 +327,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "savanna_grass_b_wetseason";
     }
 
-    /// <summary>saharan_oases.js（258 行）。</summary>
-    public sealed class SaharanOasesMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "desert_sand_dunes_100";
-    }
+
 
     /// <summary>deep_forest.js（264 行）。</summary>
     public sealed class DeepForestMap : StandardMap
