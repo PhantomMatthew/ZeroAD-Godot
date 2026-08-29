@@ -267,5 +267,34 @@ namespace ZeroAD.Sim.Rmgen
             get => s_currentMap ?? throw new InvalidOperationException("No active RandomMap");
             set => s_currentMap = value;
         }
+
+        /// <summary>模板加载器(EntitiesObstructionPlacer 等经此查 Obstruction 尺寸;
+        /// SimBridge 装配 rmgen 管线时注入)。null = 无模板访问(障碍尺寸回退 0)。</summary>
+        public static Content.TemplateLoader? Templates { get; set; }
+
+        /// <summary>实体模板 Obstruction 尺寸(tile 单位,原版 getObstructionSize):
+        /// Static → (depth,width)/TERRAIN_TILE_SIZE + margin×2;Obstructions(门等)
+        /// → (max depth, sum width) 同款。无模板/无 Obstruction → (margin×2, margin×2)。</summary>
+        public static RmgenVector2D GetObstructionSize(string templateName, double margin = 0)
+        {
+            double depth = 0, width = 0;
+            if (Templates != null)
+            {
+                try
+                {
+                    var stats = Templates.ExtractStats(templateName);
+                    if (stats != null)
+                    {
+                        depth = stats.ObstructionSize1.ToFloat();
+                        width = stats.ObstructionSize0.ToFloat();
+                    }
+                }
+                catch { /* 模板缺失回退 0 */ }
+            }
+            double m2 = margin * 2;
+            return new RmgenVector2D(
+                depth / RmgenConstants.TERRAIN_TILE_SIZE + m2,
+                width / RmgenConstants.TERRAIN_TILE_SIZE + m2);
+        }
     }
 }

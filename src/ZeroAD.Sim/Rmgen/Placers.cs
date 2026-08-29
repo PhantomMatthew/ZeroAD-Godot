@@ -471,6 +471,108 @@ namespace ZeroAD.Sim.Rmgen
     /// <summary>HeightPlacer（逐字移植 placer/noncentered/HeightPlacer.js）——按高度选择。
     /// 遍历图块 0..size-1（上游 getPointsInBoundingBox([0,0],[size-1,size-1]) 含端点）；
     /// 高度取样于整数图块坐标（corner-based 高度表的前 size×size 项）。</summary>
+    /// <summary>实体障碍放置器(原版 noncentered/EntitiesObstructionPlacer):
+    /// 给定实体的模板障碍框(±margin)在自身位置/朝向上的四角,逐实体取
+    /// ConvexPolygonPlacer 在框内过 constraint 的全部点——建筑间精确避碰。</summary>
+    public sealed class EntitiesObstructionPlacer : IPlacer
+    {
+        private readonly IReadOnlyList<RmgenEntity> _entities;
+        private readonly double _margin, _failFraction;
+
+        public EntitiesObstructionPlacer(IReadOnlyList<RmgenEntity> entities,
+            double margin = 0, double failFraction = 0)
+        { _entities = entities; _margin = margin; _failFraction = failFraction; }
+
+        public List<RmgenVector2D>? Place(IConstraint constraint)
+        {
+            var points = new List<RmgenVector2D>();
+            foreach (var entity in _entities)
+            {
+                var half = RmgenLibrary.GetObstructionSize(entity.TemplateName, _margin);
+                half.X *= 0.5; half.Y *= 0.5;
+
+                var corners = new List<RmgenVector2D>
+                {
+                    new(-half.X, -half.Y),
+                    new(-half.X, +half.Y),
+                    new(+half.X, -half.Y),
+                    new(+half.X, +half.Y),
+                };
+                // 原版:corner.rotate(-rotation.y) 再平移到实体位置。
+                var rotated = new List<RmgenVector2D>();
+                foreach (var c in corners)
+                {
+                    var q = c; q.Rotate(-entity.Orientation);
+                    rotated.Add(RmgenVector2D.Add(entity.Position, q));
+                }
+
+                var sub = new ConvexPolygonPlacer(rotated, _failFraction).Place(constraint);
+                if (sub != null) points.AddRange(sub);
+            }
+            return points;
+        }
+    }
+
+    /// <summary>蜿蜒路径放置器(原版 noncentered/RandomPathPlacer):
+    /// 起终点间随机角步进,每步 DiskPlacer 盖一点(比 sin 形 PathPlacer 更乱;
+    /// offset 内缩起止,blended 加 0.5 偏转向)。</summary>
+    public sealed class RandomPathPlacer : IPlacer
+    {
+        private readonly RmgenVector2D _pathStart, _pathEnd;
+        private readonly double _offsetSquared;
+        private readonly bool _blended;
+        private readonly DiskPlacer _diskPlacer;
+        private readonly RmgenRng _rng;
+        private readonly int _maxPathLength;
+
+        public RandomPathPlacer(RmgenRng rng, RmgenVector2D pathStart, RmgenVector2D pathEnd,
+            double pathWidth, double offset, bool blended)
+        {
+            _rng = rng;
+            _pathEnd = pathEnd;
+            // 原版:pathStart = start + normalize(end-start)*offset,round。
+            var dir = RmgenVector2D.Sub(pathEnd, pathStart);
+            dir.Normalize();
+            var start = RmgenVector2D.Add(pathStart, RmgenVector2D.Mult(dir, offset));
+            start.Round();
+            _pathStart = start;
+            _offsetSquared = offset * offset;
+            _blended = blended;
+            _diskPlacer = new DiskPlacer(pathWidth, start);
+            // 原版 fractionToTiles(2) = mapSize*2。
+            _maxPathLength = RmgenLibrary.CurrentMap.GetSize() * 2;
+        }
+
+        public List<RmgenVector2D>? Place(IConstraint constraint)
+        {
+            int pathLength = 0;
+            var points = new List<RmgenVector2D>();
+            var position = _pathStart;
+
+            while (position.DistanceToSquared(_pathEnd) >= _offsetSquared
+                && pathLength++ < _maxPathLength)
+            {
+                // 原版:step = (1,0).rotate(-getAngle(start,end) + PI/2*(randFloat(-1,1)+blended?0.5:0))。
+                double baseAngle = -SafeMath.Atan2(
+                    _pathEnd.Y - _pathStart.Y, _pathEnd.X - _pathStart.X);
+                double jitter = SafeMath.PI / 2
+                    * (_rng.RandFloat(-1, 1) + (_blended ? 0.5 : 0));
+                var step = new RmgenVector2D(1, 0);
+                step.Rotate(baseAngle + jitter);
+                position.Add(step);
+                position.Round();
+
+                _diskPlacer.SetCenterPosition(position);
+                var disk = _diskPlacer.Place(constraint);
+                if (disk == null) continue;
+                foreach (var p in disk)
+                    if (!points.Any(q => RmgenVector2D.IsEqualTo(q, p)))
+                        points.Add(p);
+            }
+            return points;
+        }
+    }
+
     public sealed class HeightPlacer : IPlacer
     {
         /// <summary>上游 Elevation_* 常量（是否包含 min/max 边界）。</summary>

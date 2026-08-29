@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim.RmgenMath;
 
 namespace ZeroAD.Sim.Rmgen
@@ -461,6 +462,152 @@ namespace ZeroAD.Sim.Rmgen
         public MultiPainter(IEnumerable<IPainter> painters) => _painters = new(painters);
         public MultiPainter(params IPainter[] painters) => _painters = new(painters);
         public void Paint(Area area) { foreach (var p in _painters) p.Paint(area); }
+    }
+
+    /// <summary>ElevationBlendingPainter（原版 painter/ElevationBlendingPainter.js）:
+    /// 区域高度向 targetHeight 按 strength 加权插值。</summary>
+    public sealed class ElevationBlendingPainter : IPainter
+    {
+        private readonly double _targetHeight, _strength;
+        public ElevationBlendingPainter(double targetHeight, double strength)
+        { _targetHeight = targetHeight; _strength = strength; }
+        public void Paint(Area area)
+        {
+            foreach (var point in area.GetPoints())
+                area.Map.SetHeight(point,
+                    _strength * _targetHeight + (1 - _strength) * area.Map.GetHeight(point));
+        }
+    }
+
+    /// <summary>纹理阵列绘制器（原版 painter/TerrainTextureArrayPainter.js）:
+    /// 按一维纹理索引图给区域铺纹理(源尺寸 vs 地图尺寸的 scale 缩放)。</summary>
+    public sealed class TerrainTextureArrayPainter : IPainter
+    {
+        private readonly int[] _textureIDs;
+        private readonly string[] _textureNames;
+        public TerrainTextureArrayPainter(int[] textureIDs, string[] textureNames)
+        { _textureIDs = textureIDs; _textureNames = textureNames; }
+        public void Paint(Area area)
+        {
+            int sourceSize = (int)Math.Sqrt(_textureIDs.Length);
+            double scale = (double)sourceSize / area.Map.GetSize();
+            foreach (var point in area.GetPoints())
+            {
+                int sx = (int)(point.X * scale), sy = (int)(point.Y * scale);
+                if (sx < 0 || sy < 0 || sx >= sourceSize || sy >= sourceSize) continue;
+                area.Map.SetTexture(point, _textureNames[_textureIDs[sx * sourceSize + sy]]);
+            }
+        }
+    }
+
+    /// <summary>城市绘制器（原版 painter/CityPainter.js）:
+    /// 网格扫描区域,按模板列表(maxCount/constraint/painter)摆建筑——
+    /// 障碍框旋转 + 凸多边形避碰,旋转角度对齐 cityAngle + 90° 随机。</summary>
+    public sealed class CityPainter : IPainter
+    {
+        /// <summary>单建筑模板规格(原版 templates 元素:margin/constraints/painters 可选)。</summary>
+        public sealed class CityTemplate
+        {
+            public required string TemplateName;
+            public int MaxCount = int.MaxValue;
+            public double Margin;
+            public IConstraint? Constraint;
+            public IPainter? Painter;
+        }
+
+        private readonly List<CityTemplate> _templates;
+        private readonly double _angle;
+        private readonly int _playerID;
+        private readonly RmgenRng _rng;
+
+        public CityPainter(RmgenRng rng, IEnumerable<CityTemplate> templates,
+            double angle, int playerID)
+        { _rng = rng; _templates = new(templates); _angle = angle; _playerID = playerID; }
+
+        public void Paint(Area area)
+        {
+            var templates = new List<CityTemplate>(_templates);
+            var counts = new Dictionary<string, int>();
+            foreach (var t in templates) counts[t.TemplateName] = 0;
+
+            var map = area.Map;
+            var mapCenter = map.GetCenter();
+            int mapSize = map.GetSize();
+
+            // 已占格跟踪(原版 processed Uint8Array;每实体障碍框经 TileClass 标占)。
+            var tileClass = new TileClass(mapSize);
+            var processed = new bool[mapSize, mapSize];
+
+            for (double x = 0; x < mapSize; x += 0.5)
+            {
+                for (double y = 0; y < mapSize; y += 0.5)
+                {
+                    var point = new RmgenVector2D(x, y);
+                    point.RotateAround(_angle, mapCenter);
+                    point.Round();
+                    if (!area.Contains(point) || processed[(int)point.X, (int)point.Y]
+                        || !map.ValidTilePassable(point))
+                        continue;
+                    processed[(int)point.X, (int)point.Y] = true;
+
+                    // 洗牌后试摆(原版 shuffleArray:失败换下一模板)。
+                    var shuffled = new List<CityTemplate>(templates);
+                    for (int i = shuffled.Count - 1; i > 0; i--)
+                    {
+                        int j = _rng.RandIntExclusive(0, i + 1);
+                        (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
+                    }
+
+                    foreach (var template in shuffled)
+                    {
+                        if (template.Constraint != null && !template.Constraint.Allows(point))
+                            continue;
+
+                        // 障碍框四角(原版 obstructionCorners × rotate(buildingAngle) + point)。
+                        var half = RmgenLibrary.GetObstructionSize(template.TemplateName, template.Margin);
+                        double buildingAngle = _angle + _rng.RandIntInclusive(0, 3) * SafeMath.PI / 2;
+                        var corners = new List<RmgenVector2D>
+                        {
+                            new(0, 0),
+                            new(half.X, 0),
+                            new(0, half.Y),
+                            new(half.X, half.Y),
+                        };
+                        var obstructionCorners = new List<RmgenVector2D>();
+                        foreach (var c in corners)
+                        {
+                            var q = c; q.Rotate(buildingAngle);
+                            obstructionCorners.Add(RmgenVector2D.Add(point, q));
+                        }
+
+                        // 凸多边形避碰(原版:区域内 + 未占 + 可通行)。
+                        var placer = new ConvexPolygonPlacer(obstructionCorners, 0);
+                        var obstructionPoints = placer.Place(
+                            new AndConstraint(
+                                new StayAreasConstraint(new[] { area }),
+                                new AvoidTileClassConstraint(tileClass, 0),
+                                new PassableMapAreaConstraint(map)));
+                        if (obstructionPoints == null || obstructionPoints.Count == 0)
+                            continue;
+
+                        // 实体摆放(原版 placeEntityPassable:中心 = 障碍框均值)。
+                        double cx = 0, cy = 0;
+                        foreach (var c in obstructionCorners) { cx += c.X; cy += c.Y; }
+                        cx /= obstructionCorners.Count; cy /= obstructionCorners.Count;
+                        map.PlaceEntityPassable(template.TemplateName, _playerID,
+                            new RmgenVector2D(cx, cy), -buildingAngle);
+
+                        template.Painter?.Paint(new Area(map, obstructionPoints));
+
+                        foreach (var p in obstructionPoints) tileClass.Add(p);
+
+                        counts[template.TemplateName]++;
+                        templates.RemoveAll(t => counts[t.TemplateName] >= t.MaxCount);
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>RandomElevationPainter（逐字移植 painter/RandomElevationPainter.js）。</summary>
