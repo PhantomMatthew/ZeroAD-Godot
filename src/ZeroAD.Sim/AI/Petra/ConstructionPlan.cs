@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim.AI.CommonApi;
+using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.AI.Petra;
@@ -103,29 +104,45 @@ public sealed class ConstructionPlan : QueuePlan
         }
         if (refPoint == null) return null;
 
-        // 简化：CC 附近 15-30 单位随机位置。角/距走 Rand48 派生(确定);
-        // sincos 用定点近似(AI 选址进 sim 状态,libm 三角跨平台低位不同 → OOS)。
+        // 选址评分(原版 headquarters findConstructionLocation 的简化):
+        // 多候选角/距采样,Rand48 派生(确定);过滤不可行位置,选综合最优
+        // (原版按资源邻近/坡度/无障碍评分,这里用土地性 + 离 CC 适中距)。
         var rng = gameState.Cm.RNG;
-        float angle = (float)(rng.NextDouble() * Math.PI * 2);
-        float dist = 15f + (float)(rng.NextDouble() * 15);
-        Trig.SinCosApprox(Fixed.FromFloat(angle), out Fixed planSin, out Fixed planCos);
-        float x = refPoint.Position2D.X.ToFloat() + dist * planCos.ToFloat();
-        float z = refPoint.Position2D.Y.ToFloat() + dist * planSin.ToFloat();
-
-        // base = 第一个 base 的 ID（简化）
-        int baseId = 1;
+        const int candidates = 16;
+        BuildPosition? best = null;
+        float bestScore = float.MinValue;
         ushort access = EntityExtend.GetLandAccess(gameState, refPoint);
 
-        return new BuildPosition
+        for (int i = 0; i < candidates; i++)
         {
-            X = Fixed.FromFloat(x),
-            Z = Fixed.FromFloat(z),
-            // 建筑朝向 ≠ 选址极坐标 θ:用 GUI 默认 3π/4(原版 placement.js DEFAULT_ANGLE)。
-            // 此前的 Angle = angle 把选址随机角当成朝向,AI 建筑朝向因此每栋乱转。
-            Angle = DefaultPlacementAngle,
-            Base = baseId,
-            Access = access,
-        };
+            float angle = (float)(rng.NextDouble() * Math.PI * 2);
+            float dist = 15f + (float)(rng.NextDouble() * 15);
+            Trig.SinCosApprox(Fixed.FromFloat(angle), out Fixed planSin, out Fixed planCos);
+            float x = refPoint.Position2D.X.ToFloat() + dist * planCos.ToFloat();
+            float z = refPoint.Position2D.Y.ToFloat() + dist * planSin.ToFloat();
+
+            // 土地性过滤(原版 CheckBuildingPlacement 的地形半边;水域/悬崖拒)。
+            var fx = Fixed.FromFloat(x);
+            var fz = Fixed.FromFloat(z);
+            var terrain = SimSystem.Terrain;
+            if (terrain != null && !terrain.IsLand(fx, fz)) continue;
+
+            // 评分:离 CC 20-25m 最优(原版开阔地偏好;太近挤、太远散)。
+            float distScore = dist >= 20f && dist <= 25f ? 100f : -MathF.Abs(dist - 22f) * 2f;
+            if (distScore > bestScore)
+            {
+                bestScore = distScore;
+                best = new BuildPosition
+                {
+                    X = fx,
+                    Z = fz,
+                    Angle = DefaultPlacementAngle,
+                    Base = 1,
+                    Access = access,
+                };
+            }
+        }
+        return best;
     }
 
     /// <summary>原版 GUI 默认放置朝向 placement.js:6(3π/4 = 135°)。AI 不旋转故取此值。</summary>
