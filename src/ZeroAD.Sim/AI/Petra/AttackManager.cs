@@ -205,8 +205,9 @@ public sealed class AttackPlan
         }
     }
 
-    /// <summary>推进/战斗更新（原版 ~600 行）。
-    /// 简化版：无目标 → 完成；兵力耗尽 → 中止。</summary>
+    /// <summary>推进/战斗更新（原版 ~600 行核心决策的简化版）。
+    /// 清理死单位 → 兵力耗尽 Abort → 敌优比超限撤退（原版:1:2 兵力比即不硬拼,
+    /// 逃回最近基地 anchor;Rush 0.8、其余 0.5)→ 目标摧毁换目标 → 完成。</summary>
     private void UpdateStarted(GameState gameState)
     {
         // 清理死单位
@@ -217,6 +218,17 @@ public sealed class AttackPlan
             State = AttackState.Aborted;
             return;
         }
+
+        // 撤退判定（原版 comportment 的兵力比评估简化):
+        // 目标周围 60m 的敌兵 + 敌建筑防御估算 vs 我方在场兵力;劣势即撤
+        // (原版 Abort 的 rallyPoint 同款:撤到最近基地 anchor)。
+        if (ShouldRetreat(gameState))
+        {
+            Retreat(gameState);
+            State = AttackState.Aborted;
+            return;
+        }
+
         if (Target.HasValue)
         {
             var target = gameState.GetEntityById(Target.Value);
@@ -228,6 +240,52 @@ public sealed class AttackPlan
                 else IssueAttackCommands(gameState);   // 换目标后重下推进命令
             }
         }
+    }
+
+    /// <summary>撤退判定（原版 comportment 兵力比评估的简化):目标周围 60m 的
+    /// 敌兵数 ×1 + 敌防御建筑数 ×3(原版防御力估算近似)vs 我方在场兵力。
+    /// 敌优比 > 阈值即撤(Rush 0.8 更怂,其余 0.5)。</summary>
+    private bool ShouldRetreat(GameState gameState)
+    {
+        if (!TargetPos.HasValue) return false;
+        var tp = TargetPos.Value;
+        int enemyStrength = 0;
+        foreach (var e in gameState.GetEnemyUnits().Values())
+        {
+            if (!e.CanAttack || e.Position2D == default) continue;
+            float dx = e.Position2D.X.ToFloat() - tp.X.ToFloat();
+            float dz = e.Position2D.Y.ToFloat() - tp.Y.ToFloat();
+            if (dx * dx + dz * dz <= 60f * 60f) enemyStrength += 1;
+        }
+        foreach (var s in gameState.GetEnemyStructures().Values())
+        {
+            if (!s.CanAttack || s.Position2D == default) continue;
+            float dx = s.Position2D.X.ToFloat() - tp.X.ToFloat();
+            float dz = s.Position2D.Y.ToFloat() - tp.Y.ToFloat();
+            if (dx * dx + dz * dz <= 60f * 60f) enemyStrength += 3;   // 防御建筑≈3 兵
+        }
+        int myForces = UnitCollection.Count;
+        if (myForces == 0) return true;
+        float threshold = Type == "Rush" ? 0.8f : 0.5f;
+        return enemyStrength > myForces / threshold;
+    }
+
+    /// <summary>撤退（原版 Abort 的 rallyPoint 同款):全军移动到最近基地 anchor,
+    /// 单位归位 idle 供其它计划征调。</summary>
+    private void Retreat(GameState gameState)
+    {
+        var rally = PickRallyPoint(gameState);
+        foreach (var id in UnitCollection)
+        {
+            if (gameState.GetEntityById(id) == null) continue;
+            gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Move(
+                (uint)gameState.PlayerId, id,
+                ZeroAD.Sim.Maths.Fixed.FromFloat(rally.X.ToFloat()),
+                ZeroAD.Sim.Maths.Fixed.FromFloat(rally.Y.ToFloat())));
+            gameState.Metadata.Remove(id, "plan");
+            gameState.Metadata.Set(id, "subrole", WorkerRoles.SubroleIdle);
+        }
+        UnitCollection.Clear();
     }
 
     /// <summary>对参与单位下攻击移动(原版 attackPlan 的 comportment 简化版:
