@@ -34,6 +34,14 @@ public sealed partial class MainMenu : Control
 		OptionsApplier.ApplyAll(userCfg, GetTree(), inGame: false);
 		// 音量滑杆改动即时生效(菜单音乐实时调)。具名方法 + _ExitTree 退订防悬垂。
 		userCfg.ConfigChanged += OnUserConfigChangedAudio;
+		// 首运欢迎页(原版 splashscreen:gui.splashscreen.enable 缺省=true,
+		// 首运显示;勾选框持久化,取消勾选后不再显示)。
+		if (SplashscreenPanel.ShouldShowOnFirstRun())
+		{
+			var splash = new SplashscreenPanel();
+			AddChild(splash);
+			splash.Open();
+		}
 		BuildUi();
 		MaybeRunScreenshotHook();
 	}
