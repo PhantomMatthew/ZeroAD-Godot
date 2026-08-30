@@ -132,10 +132,10 @@
 ## 7. M4 渲染(godot/)
 
 - [x] **粒子系统**:EnvironmentParticles.cs(c16f21b 后):原版 art/particles/*.xml schema(emissionrate/lifetime uniform/velocity/size/color/blend)→ GPUParticles3D 映射装配;LoadDef 缓存 + BuildByName 直装(cloud/smoke/water_splash/...) 与 ImpactEffectPool(命中血雾/扬尘)互补——环境粒子就绪,需注册触发点的水面溅花/烟尘触发逻辑后续按需接
-- [x] **CinemaManager 过场动画**(3b48944:相机路径队列播放+OnCinemaPathEnded/QueueEnded 事件广播)
+- [x] **CinemaManager 过场动画**(3b48944+c3947ed:相机路径队列播放+OnCinemaPathEnded/QueueEnded 事件广播;数据驱动地图 <Paths> 段注册+触发器驱动剧情)
 - [x] **天空盒**(ef5d6b5:SkyBox.cs——<SkySet>名 → 5 面贴图 + 程序化天空兜底)
-- [x] **战场贴花**(4bb75a1:BattleDecals——击杀血斑落地,45s 消融回收;与 ImpactEffectPool 互补)
-- [x] CCmpDecay 尸体消融表现(4bb75a1:贴花 45s 线性淡出+缩小消融回收)
+- [x] **战场贴花**(4bb75a1+5c0eea8:BattleDecals——击杀血斑+炮击弹坑/建筑毁坏贴花,45s/90s 消融回收;与 ImpactEffectPool 互补)
+- [x] CCmpDecay 尸体消融表现(4bb75a1:贴花线性淡出+缩小消融回收)
 - [x] 后处理对齐原版选项(5999290:bloom Glow/HQ MSAA 上采样/sharpness 接线)
 - ✅ 已存在勿重复造:单位血条(DrawHealth/HealthBar)、集结点标记+路径线(Main.cs:2482)、投射物视觉池(ProjectilePool/ImpactEffectPool)、迷雾小地图层(FogTextureBuilder)
 
