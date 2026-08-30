@@ -245,6 +245,7 @@ public sealed partial class MainMenu : Control
 			{
 				new("Manual", OnManual),
 				new("Tutorial", OnTutorial),
+				new("Tips and Tricks", OnTips),
 				new("Structure Tree", OnStructree),
 				new("Civilization Overview", OnCivInfo),
 			}),
@@ -463,6 +464,13 @@ public sealed partial class MainMenu : Control
 		picker.OnCancelled += () => picker.QueueFree();
 		AddChild(picker);
 	}
+	private void OnTips()
+	{
+		var panel = new TipsPanel();
+		AddChild(panel);
+		panel.Open();
+	}
+
 	private void OnTutorial() => Start(GameLaunchConfig.LaunchMode.Tutorial);
 
 	// 原版 Multiplayer 子菜单:Host New Game / Connect by IP(gamesetup_mp 入口)。
