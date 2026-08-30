@@ -63,8 +63,10 @@ public sealed partial class LocalePanel : ModalPanelBase
         var buttons = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
         buttons.AddThemeConstantOverride("separation", 12);
         content.AddChild(buttons);
-        AddButton(buttons, "Cancel", CloseRequested, minWidth: 160);
-        AddButton(buttons, "Accept", Apply, minWidth: 160);
+        AddButton(buttons, "Cancel", CloseRequested, minWidth: 140);
+        // 原版 locale 页底部 Advanced(原版:page_locale_advanced 自定义 locale)。
+        AddButton(buttons, "Advanced", OpenAdvanced, minWidth: 140);
+        AddButton(buttons, "Accept", Apply, minWidth: 140);
     }
 
     private void Apply()
@@ -75,6 +77,13 @@ public sealed partial class LocalePanel : ModalPanelBase
         cfg.Save();   // 语言属即时持久化(原版 locale 页 Accept 即写盘)
         Localization.SetLocale(code);
         CloseRequested();
+    }
+
+    private void OpenAdvanced()
+    {
+        var panel = new LocaleAdvancedPanel();
+        GetParent().AddChild(panel);
+        panel.Open();
     }
 
     private void CloseRequested() => QueueFree();
