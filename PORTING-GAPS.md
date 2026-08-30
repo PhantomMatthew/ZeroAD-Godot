@@ -142,14 +142,14 @@
 ## 8. M5 GUI / 音频 / 相机 / GuiInterface
 
 ### GUI 页面(对照原版 page_*.xml)
-- [ ] prelobby 三页(entrance/login/register)
-- [ ] viewer(actor 查看器)
-- [ ] mapbrowser
+- [x] prelobby 三页(entrance/login/register;5d4c2d3)
+- [x] viewer(actor 查看器;fc7637a)
+- [x] mapbrowser(68027b1:网格浏览)
 - [ ] campaigns 战役页(依赖触发器成熟)
-- [ ] splashscreen/tips
-- [ ] credits
-- [ ] userreport
-- [ ] locale_advanced(LocalePanel 扩展)
+- [x] splashscreen/tips(199c7b5/d9216b8)
+- [x] credits(580bc7d)
+- [x] userreport(b5d5a9c)
+- [x] locale_advanced(b5d5a9c:LocalePanel Advanced 按钮 + 自定义 locale)
 - [ ] mod 框架对话框全套(modmod/modio/incompatible_mods/termsdialog/msgbox/timedconfirmation/colormixer)
 - [ ] autostart(自动化测试入口,CI 有用)
 - [ ] 收敛 LobbyUI.cs 与 MainMenu.cs 两套主菜单(LobbyUI 部分子项 action=null)
