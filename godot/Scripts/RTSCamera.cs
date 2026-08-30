@@ -87,8 +87,14 @@ namespace ZeroAD.Godot;
     // (0,0) — including via synthetic MouseMotion events on window creation/focus.
     // Edge-pan is only enabled once we observe a real position change (different from
     // the previous frame), so the camera doesn't drift before the user touches the mouse.
-    private Vector2 _lastMousePos = new(-1, -1);
-    private bool _edgePanEnabled;
+		private Vector2 _lastMousePos = new(-1, -1);
+		private bool _edgePanEnabled;
+
+		// 右键 pan 拖拽(原版 camera.pan:中键按下拖鼠标平移;view.drag.speed/
+		// inverted 选项)。本移植:右键按住拖拽(原版中键在主选右键已占用,
+		// 按用户操作习惯改右键;速度/反向走 OptionsApplier 读用户配置)。
+		private bool _rightDragPanning;
+		private Vector2 _dragLastPos;
 
 		private const float DefaultFov = 45f;
 
@@ -214,37 +220,73 @@ namespace ZeroAD.Godot;
 		}
 	}
 
-    public override void _Input(InputEvent @event)
-    {
-        if (@event is InputEventMouseButton mb && mb.Pressed)
-        {
-            if (_freeFly)
-            {
-                // 自由模式滚轮 = 调飞行速度(不缩放视距)
-                if (mb.ButtonIndex == MouseButton.WheelUp)
-                    _flySpeed = Mathf.Clamp(_flySpeed * 1.3f, 5f, 2000f);
-                else if (mb.ButtonIndex == MouseButton.WheelDown)
-                    _flySpeed = Mathf.Clamp(_flySpeed / 1.3f, 5f, 2000f);
-                return;
-            }
-			if (mb.ButtonIndex == MouseButton.WheelUp)
+	public override void _Input(InputEvent @event)
+	{
+		if (@event is InputEventMouseButton mb)
+		{
+			// 右键 pan 拖拽(原版 camera.pan 中键语义):按下记起点,移动拖拽平移,
+			// 松开结束;拖拽期间打断跟随(原版 Break out of following mode 同款)。
+			if (mb.ButtonIndex == MouseButton.Right)
 			{
-				if (Input.IsKeyPressed(Key.Shift))
-					_yaw += 0.3f;
-				else
-					_distance = Mathf.Max(MinDistance, _distance * 0.85f);
-				UpdateTransform();
+				if (mb.Pressed)
+				{
+					_rightDragPanning = true;
+					_dragLastPos = mb.Position;
+					_followActive = false;
+					_followTarget = null;
+				}
+				else if (_rightDragPanning)
+				{
+					_rightDragPanning = false;
+				}
 			}
-			else if (mb.ButtonIndex == MouseButton.WheelDown)
+			else if (mb.Pressed)
 			{
-				if (Input.IsKeyPressed(Key.Shift))
-					_yaw -= 0.3f;
-				else
-					_distance = Mathf.Min(MaxDistance, _distance * 1.15f);
-				UpdateTransform();
+				if (_freeFly)
+				{
+					// 自由模式滚轮 = 调飞行速度(不缩放视距)
+					if (mb.ButtonIndex == MouseButton.WheelUp)
+						_flySpeed = Mathf.Clamp(_flySpeed * 1.3f, 5f, 2000f);
+					else if (mb.ButtonIndex == MouseButton.WheelDown)
+						_flySpeed = Mathf.Clamp(_flySpeed / 1.3f, 5f, 2000f);
+					return;
+				}
+				if (mb.ButtonIndex == MouseButton.WheelUp)
+				{
+					if (Input.IsKeyPressed(Key.Shift))
+						_smYaw.AddSmoothly(0.3f);
+					else
+						_smDistance.SetValueSmoothly(Mathf.Max(MinDistance, _smDistance.Target * 0.85f));
+					UpdateTransform();
+				}
+				else if (mb.ButtonIndex == MouseButton.WheelDown)
+				{
+					if (Input.IsKeyPressed(Key.Shift))
+						_smYaw.AddSmoothly(-0.3f);
+					else
+						_smDistance.SetValueSmoothly(Mathf.Min(MaxDistance, _smDistance.Target * 1.15f));
+					UpdateTransform();
+				}
 			}
-        }
-    }
+		}
+		else if (@event is InputEventMouseMotion motion && _rightDragPanning)
+		{
+			// 拖拽平移(原版 view.drag.speed × 像素位移;inverted 选项反向)。
+			float speed = Options.OptionsApplier.GetFloat("view.drag.speed", 0.5f);
+			bool inverted = Options.OptionsApplier.GetBool("view.drag.inverted", false);
+			var delta = motion.Position - _dragLastPos;
+			_dragLastPos = motion.Position;
+			float dx = inverted ? -delta.X : delta.X;
+			float dz = inverted ? delta.Y : -delta.Y;   // 屏幕 Y 向下为正:拖上前进
+			Vector3 camDir = new(Mathf.Sin(_yaw), 0f, Mathf.Cos(_yaw));
+			Vector3 right = new(camDir.Z, 0f, camDir.X);
+			Vector3 forward = new(-camDir.X, 0f, camDir.Z);
+			_smFocusX.AddSmoothly((right.X * dx + forward.X * dz) * speed);
+			_smFocusZ.AddSmoothly((right.Z * dx + forward.Z * dz) * speed);
+			_focus.Y = TerrainHeightService.Sample(_focus.X, _focus.Z);
+			UpdateTransform();
+		}
+	}
 
     public void SetFocus(Vector3 focus)
     {
