@@ -22,6 +22,7 @@ public sealed partial class MapPickerPanel : Panel
     private readonly string? _dataRoot;
     private List<MapEntry> _filtered = new();
     private ItemList _list = null!;
+    private GridContainer _gridContainer = null!;
     private Label _nameLabel = null!;
     private Label _descLabel = null!;
     private TextureRect _preview = null!;
@@ -660,7 +661,17 @@ public sealed partial class MapPickerPanel : Panel
         head.AddChild(backBtn);
         vb.AddChild(head);
 
-        _list = new ItemList { SizeFlagsVertical = SizeFlags.ExpandFill };
+        // 网格浏览(原版 MapGridBrowser:预览图格+名称,分页滚轮翻页;
+        // 替代纯列表——原版 gamesetup 的 Select Map 弹窗同款)。
+        var gridScroll = new ScrollContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
+        vb.AddChild(gridScroll);
+        _gridContainer = new GridContainer { Columns = 4, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _gridContainer.AddThemeConstantOverride("h_separation", 12);
+        _gridContainer.AddThemeConstantOverride("v_separation", 12);
+        gridScroll.AddChild(_gridContainer);
+
+        // 列表兜底(无预览图时仍可选;网格与列表并存,网格优先)。
+        _list = new ItemList { SizeFlagsVertical = SizeFlags.ExpandFill, Visible = false };
         _list.ItemSelected += idx =>
         {
             Select(_filtered[(int)idx]);
@@ -706,10 +717,54 @@ public sealed partial class MapPickerPanel : Panel
 
         _list.Clear();
         _mapSelectOpt?.Clear();
+        // 网格填充(原版 MapGridBrowser:预览图格+名称,点击选中)。
+        foreach (var child in _gridContainer.GetChildren()) child.QueueFree();
         foreach (var m in _filtered)
         {
             _list.AddItem(m.DisplayName);
             _mapSelectOpt?.AddItem(m.DisplayName);
+
+            var item = new PanelContainer
+            {
+                CustomMinimumSize = new Vector2(180, 160),
+                MouseFilter = Control.MouseFilterEnum.Stop,
+            };
+            var itemVbox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            itemVbox.AddThemeConstantOverride("separation", 2);
+            item.AddChild(itemVbox);
+
+            var preview = new TextureRect
+            {
+                CustomMinimumSize = new Vector2(170, 120),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+            };
+            if (m.PreviewPath != null)
+            {
+                var img = Image.LoadFromFile(m.PreviewPath);
+                if (img != null) preview.Texture = ImageTexture.CreateFromImage(img);
+            }
+            itemVbox.AddChild(preview);
+
+            var nameLabel = new Label
+            {
+                Text = m.DisplayName,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                AutowrapMode = TextServer.AutowrapMode.Off,
+            };
+            nameLabel.AddThemeFontSizeOverride("font_size", 11);
+            itemVbox.AddChild(nameLabel);
+
+            var itemRef = m;
+            item.GuiInput += ev =>
+            {
+                if (ev is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Left)
+                {
+                    Select(itemRef);
+                    _browser.Visible = false;
+                }
+            };
+            _gridContainer.AddChild(item);
         }
         if (_mapSelectOpt != null && _filtered.Count > 0)
             _mapSelectOpt.Selected = 0;
