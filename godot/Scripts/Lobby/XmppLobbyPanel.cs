@@ -103,6 +103,28 @@ public sealed partial class XmppLobbyPanel : CanvasLayer
         container.AddChild(closeBtn);
     }
 
+    /// <summary>登录信息预填(prelobby login 注册成功/重试回填;原版
+    /// page_prelobby_login 的输入框预填语义)。</summary>
+    public void SetCredentials(string username, string password)
+    {
+        if (IsNodeReady())
+        {
+            _usernameInput.Text = username;
+            _passwordInput.Text = password;
+        }
+        else
+        {
+            // 延迟到 _Ready(prelobby 注册转登录时面板刚 AddChild)。
+            CallDeferred(nameof(SetCredentialsDeferred), username, password);
+        }
+    }
+
+    private void SetCredentialsDeferred(string username, string password)
+    {
+        _usernameInput.Text = username;
+        _passwordInput.Text = password;
+    }
+
     private async void OnConnect()
     {
         var user = _usernameInput.Text.Trim();

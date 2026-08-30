@@ -469,8 +469,9 @@ public sealed partial class MainMenu : Control
 
 	private void OnLobby()
 	{
-		var panel = new Lobby.XmppLobbyPanel();
-		AddChild(panel);
+		// 原版 Multiplayer → Lobby 经 prelobby 三页分流(entrance → login/register
+		// → 大厅);此前直开大厅,跳过登录/注册分流。
+		Lobby.PrelobbyPanel.OpenPage(Lobby.PrelobbyPanel.Page.Entrance);
 	}
 
 	private void StartMp(bool host)
