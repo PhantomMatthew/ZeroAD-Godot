@@ -251,12 +251,22 @@ namespace ZeroAD.Godot;
 						_flySpeed = Mathf.Clamp(_flySpeed / 1.3f, 5f, 2000f);
 					return;
 				}
+				// 滚轮映射(原版 camera.zoom.wheel.in/out + camera.rotate.wheel.cw/ccw):
+				// Shift+滚轮 = 旋转(原版 Shift+WheelUp/Down 默认),无修饰 = 缩放;
+				// 打断跟随(原版 Break out of following mode 同款)。
+				_followActive = false;
+				_followTarget = null;
+				// 缩放锚定鼠标指向点(原版 zoom-to-cursor:缩放时焦点向鼠标
+				// 指向的地面点偏移——缩放向"看向的点"收敛,而非绕中心缩放)。
 				if (mb.ButtonIndex == MouseButton.WheelUp)
 				{
 					if (Input.IsKeyPressed(Key.Shift))
 						_smYaw.AddSmoothly(0.3f);
 					else
+					{
 						_smDistance.SetValueSmoothly(Mathf.Max(MinDistance, _smDistance.Target * 0.85f));
+						AnchorZoomToMouse(mb.Position, zoomIn: true);
+					}
 					UpdateTransform();
 				}
 				else if (mb.ButtonIndex == MouseButton.WheelDown)
@@ -264,7 +274,10 @@ namespace ZeroAD.Godot;
 					if (Input.IsKeyPressed(Key.Shift))
 						_smYaw.AddSmoothly(-0.3f);
 					else
+					{
 						_smDistance.SetValueSmoothly(Mathf.Min(MaxDistance, _smDistance.Target * 1.15f));
+						AnchorZoomToMouse(mb.Position, zoomIn: false);
+					}
 					UpdateTransform();
 				}
 			}
@@ -288,6 +301,14 @@ namespace ZeroAD.Godot;
 		}
 	}
 
+	/// <summary>dev 截图钩子用：直接设镜头距离（夹在 Min/Max 内）。</summary>
+	public void SetDistance(float distance)
+	{
+		_distance = Mathf.Clamp(distance, MinDistance, MaxDistance);
+		_smDistance.SetValue(_distance);
+		UpdateTransform();
+	}
+
     public void SetFocus(Vector3 focus)
     {
         _focus = focus;
@@ -295,11 +316,51 @@ namespace ZeroAD.Godot;
         UpdateTransform();
     }
 
-	/// <summary>dev 截图钩子用：直接设镜头距离（夹在 Min/Max 内）。</summary>
-	public void SetDistance(float distance)
+	/// <summary>缩放锚定鼠标指向点(原版 zoom-to-cursor):缩放时焦点向鼠标
+	/// 指向的地面点偏移——缩放向"看向的点"收敛,而非绕中心缩放。</summary>
+	private void AnchorZoomToMouse(Vector2 screenPos, bool zoomIn)
 	{
-		_distance = Mathf.Clamp(distance, MinDistance, MaxDistance);
-		UpdateTransform();
+		var groundPoint = ScreenToWorldGround(screenPos);
+		if (!groundPoint.HasValue) return;
+		var p = groundPoint.Value;
+		// 偏移量 = 焦点到鼠标点的向量 × 缩放系数(原版 0.85/1.15 收敛速率近似)。
+		float factor = zoomIn ? 0.15f : -0.15f;
+		_smFocusX.AddSmoothly((p.X - _smFocusX.Target) * factor);
+		_smFocusZ.AddSmoothly((p.Z - _smFocusZ.Target) * factor);
+	}
+
+	/// <summary>屏幕点 → 地面 sim 坐标(射线步进地形高度;失败 → null)。</summary>
+	private Vector3? ScreenToWorldGround(Vector2 screenPos)
+	{
+		var from = ProjectRayOrigin(screenPos);
+		var dir = ProjectRayNormal(screenPos);
+		if (dir.Y >= 0) return null;
+
+		// 射线步进地形高度(与 Main.ScreenToWorld 同款采样)。
+		float t = 0f;
+		const float maxDist = 1000f;
+		const float step = 2f;
+		while (t < maxDist)
+		{
+			var p = from + dir * t;
+			float groundY = TerrainHeightService.Sample(p.X, p.Z);
+			if (p.Y <= groundY)
+			{
+				// 二分细化到地面
+				float lo = t - step, hi = t;
+				for (int i = 0; i < 8; i++)
+				{
+					float mid = (lo + hi) / 2;
+					var pm = from + dir * mid;
+					if (pm.Y <= TerrainHeightService.Sample(pm.X, pm.Z)) hi = mid;
+					else lo = mid;
+				}
+				var hit = from + dir * hi;
+				return new Vector3(hit.X, TerrainHeightService.Sample(hit.X, hit.Z), hit.Z);
+			}
+			t += step;
+		}
+		return null;
 	}
 
 	/// <summary>跟随目标的世界位置(原版 GetInterpolatedTransform 的简化——
