@@ -266,6 +266,8 @@ public sealed partial class MainMenu : Control
 				new("Hotkeys", OnHotkeys),
 				// 原版 MainMenuItems.js:Settings 第三项即 Language(page_locale.xml)
 				new("Language", OnLanguage),
+				// 原版 MainMenuItems.js:Settings 第四项即 Credits(page_credits.xml)。
+				new("Credits", OnCredits),
 			}),
 			new("Quit", () => GetTree().Quit()),
 		};
@@ -523,6 +525,13 @@ public sealed partial class MainMenu : Control
 	private void OnReplay()
 	{
 		var panel = new ReplayPanel();
+		AddChild(panel);
+		panel.Open();
+	}
+
+	private void OnCredits()
+	{
+		var panel = new CreditsPanel();
 		AddChild(panel);
 		panel.Open();
 	}
