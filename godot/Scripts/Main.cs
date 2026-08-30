@@ -109,6 +109,14 @@ public sealed partial class Main : Node3D
 	private MatchSettingsPanel? _matchSettingsPanel;
 
 	public IReadOnlySet<EntityId> SelectedEntities => _selectedEntities;
+
+	/// <summary>跟随选中单位(原版 camera.follow 热键 setCameraFollow):
+	/// 选中首单位 → 相机平滑跟随;任何滚轮/移动输入打断(原版同款)。</summary>
+	public void FollowSelectedUnit()
+	{
+		if (_camera == null || _selectedEntities.Count == 0) return;
+		_camera.FollowTarget = _selectedEntities.First();
+	}
 	public bool IsTutorial => _isTutorial;
 	public SimBridge Sim => _sim;
 	public void SetCameraFocus(Vector3 pos) => _camera.SetFocus(pos);
@@ -2661,6 +2669,8 @@ public sealed partial class Main : Node3D
 				if (key.Keycode == Key.Bracketleft) _placeAngle -= Mathf.Pi / 12f;
 				else if (key.Keycode == Key.Bracketright) _placeAngle += Mathf.Pi / 12f;
 			}
+			// F:跟随选中单位(原版 camera.follow 热键)。
+			if (key.Keycode == Key.F) FollowSelectedUnit();
 			if (key.Keycode == Key.F5) QuickSave();
 			if (key.Keycode == Key.F9) QuickLoad();
 			// pause 热键(原版 MenuButtons.js:226 Pause hotkey):Pause/Break 键直接切暂停,

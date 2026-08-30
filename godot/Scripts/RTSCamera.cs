@@ -1,11 +1,68 @@
 using Godot;
+using ZeroAD.Sim;
+using ZeroAD.Sim.Components;
 
 namespace ZeroAD.Godot;
 
-public sealed partial class RTSCamera : Camera3D
-{
-	public Vector3? Focus => _focus;
-	public float Yaw => _yaw;
+	public sealed partial class RTSCamera : Camera3D
+	{
+		public Vector3? Focus => _focus;
+		public float Yaw => _yaw;
+
+		/// <summary>跟随选中单位(原版 camera.follow 热键 setCameraFollow):
+		/// 平滑逼近目标;任何滚轮/移动输入打断跟随(原版"Break out of following
+		/// mode when the user starts scrolling");目标消失/不可见 → 停跟随。</summary>
+		public EntityId? FollowTarget
+		{
+			get => _followTarget;
+			set { _followTarget = value; _followActive = value.HasValue; }
+		}
+		private EntityId? _followTarget;
+		private bool _followActive;
+
+		/// <summary>平滑加减速(原版 CameraController 的 CSmoothedValue):
+		/// 相机位置/缩放/旋转用目标值平滑逼近,停止时按 minDelta 截断——
+		/// 消除输入突变导致的画面抖动(原版 SmoothedValue.Update 语义)。</summary>
+		private sealed class SmoothedValue
+		{
+			private double _target;
+			private double _current;
+			private readonly float _smoothness;
+			private readonly float _minDelta;
+
+			public SmoothedValue(float initial, float smoothness = 0.5f, float minDelta = 0.0001f)
+			{
+				_target = initial;
+				_current = initial;
+				_smoothness = smoothness;
+				_minDelta = minDelta;
+			}
+
+			public float Target => (float)_target;
+			public float Current => (float)_current;
+
+			public void AddSmoothly(float delta) => _target += delta;
+			public void SetValueSmoothly(float v) => _target = v;
+			public void SetValue(float v) { _target = v; _current = v; }
+
+			/// <summary>原版 CSmoothedValue.Update:按 smoothness^10dt 的指数平滑逼近。</summary>
+			public float Update(float dt)
+			{
+				double diff = _target - _current;
+				if (Math.Abs(diff) < _minDelta) return 0f;
+				double p = Math.Pow(_smoothness, 10.0 * dt);
+				double delta = diff * (1.0 - p);
+				_current += delta;
+				return (float)delta;
+			}
+		}
+
+		// 平滑字段(原版 m_PosX/Y/Z、 m_Zoom、 m_RotateX/Y 的 SmoothedValue)。
+		private SmoothedValue _smFocusX;
+		private SmoothedValue _smFocusZ;
+		private SmoothedValue _smDistance;
+		private SmoothedValue _smYaw;
+		private SmoothedValue _smPitch;
 
 	/// <summary>Free camera(自由飞行)模式:开启后 WASD 平移(垂直视角方向)、
 	/// QE 升降、Shift 加速、滚轮调速度;RTS 边缘平移/缩放/地形吸附全停。
@@ -33,89 +90,129 @@ public sealed partial class RTSCamera : Camera3D
     private Vector2 _lastMousePos = new(-1, -1);
     private bool _edgePanEnabled;
 
-    private const float DefaultFov = 45f;
+		private const float DefaultFov = 45f;
 
-    private const float PanSpeed = 120f;
-    private const float RotateSpeed = 2.0f;
-    private const float EdgeMargin = 15f;
-    private const float MinDistance = 5f;
-    private const float MaxDistance = 200f;
-    private const float MinPitch = -1.3f;
-    private const float MaxPitch = -0.15f;
+		private const float PanSpeed = 120f;
+		private const float RotateSpeed = 2.0f;
+		private const float EdgeMargin = 15f;
+		private const float MinDistance = 5f;
+		private const float MaxDistance = 200f;
+		private const float MinPitch = -1.3f;
+		private const float MaxPitch = -0.15f;
 
-    public override void _Ready()
-    {
-        Fov = DefaultFov;
-        Near = 2f;
-        Far = 4096f;
-        // 阴影代理挂第 2 层(见 ShadowProxyManager):相机剔除使其不可见,
-        // 方向光投影掩码默认全含 → 不可见但照常写阴影贴图。
-        CullMask &= ~ShadowProxyManager.ProxyLayer;
-        UpdateTransform();
-    }
+		public override void _Ready()
+		{
+			Fov = DefaultFov;
+			Near = 2f;
+			Far = 4096f;
+			// 阴影代理挂第 2 层(见 ShadowProxyManager):相机剔除使其不可见,
+			// 方向光投影掩码默认全含 → 不可见但照常写阴影贴图。
+			CullMask &= ~ShadowProxyManager.ProxyLayer;
+			// 平滑字段初始化(原版 CameraController 的 SmoothedValue 默认值)。
+			_smFocusX = new SmoothedValue(_focus.X);
+			_smFocusZ = new SmoothedValue(_focus.Z);
+			_smDistance = new SmoothedValue(_distance);
+			_smYaw = new SmoothedValue(_yaw);
+			_smPitch = new SmoothedValue(_pitch);
+			UpdateTransform();
+		}
 
-    public override void _Process(double delta)
-    {
-        if (_freeFly)
-        {
-            FlyProcess((float)delta);
-            return;
-        }
+	public override void _Process(double delta)
+	{
+		if (_freeFly)
+		{
+			FlyProcess((float)delta);
+			return;
+		}
 
-        float dt = (float)delta;
-        bool moved = false;
+		float dt = (float)delta;
+		bool moved = false;
 
-        Vector3 camDir = new(Mathf.Sin(_yaw), 0f, Mathf.Cos(_yaw));
-        // 平移在 sim 空间进行(_focus 是 sim 坐标):世界经 _worldRoot 镜像(visZ=S−simZ),
-        // 视线方向 visDir=−camDir 换回 sim 得 forward=(−sin,0,+cos),屏幕右=东(+x)。
-        Vector3 forward = new(-camDir.X, 0f, camDir.Z);
-        Vector3 right = new(camDir.Z, 0f, camDir.X);
+		Vector3 camDir = new(Mathf.Sin(_yaw), 0f, Mathf.Cos(_yaw));
+		// 平移在 sim 空间进行(_focus 是 sim 坐标):世界经 _worldRoot 镜像(visZ=S−simZ),
+		// 视线方向 visDir=−camDir 换回 sim 得 forward=(−sin,0,+cos),屏幕右=东(+x)。
+		Vector3 forward = new(-camDir.X, 0f, camDir.Z);
+		Vector3 right = new(camDir.Z, 0f, camDir.X);
 
-        if (Input.IsActionPressed("cam_up"))    { _focus += forward * PanSpeed * dt; moved = true; }
-        if (Input.IsActionPressed("cam_down"))  { _focus -= forward * PanSpeed * dt; moved = true; }
-        if (Input.IsActionPressed("cam_left"))  { _focus -= right * PanSpeed * dt; moved = true; }
-        if (Input.IsActionPressed("cam_right")) { _focus += right * PanSpeed * dt; moved = true; }
+		// 用户移动输入打断跟随(原版 CameraController:Break out of following mode
+		// when the user starts scrolling)。
+		bool userMoved = false;
+		if (Input.IsActionPressed("cam_up"))    { _smFocusX.AddSmoothly(forward.X * PanSpeed * dt); _smFocusZ.AddSmoothly(forward.Z * PanSpeed * dt); moved = true; userMoved = true; }
+		if (Input.IsActionPressed("cam_down"))  { _smFocusX.AddSmoothly(-forward.X * PanSpeed * dt); _smFocusZ.AddSmoothly(-forward.Z * PanSpeed * dt); moved = true; userMoved = true; }
+		if (Input.IsActionPressed("cam_left"))  { _smFocusX.AddSmoothly(-right.X * PanSpeed * dt); _smFocusZ.AddSmoothly(-right.Z * PanSpeed * dt); moved = true; userMoved = true; }
+		if (Input.IsActionPressed("cam_right")) { _smFocusX.AddSmoothly(right.X * PanSpeed * dt); _smFocusZ.AddSmoothly(right.Z * PanSpeed * dt); moved = true; userMoved = true; }
 
-        if (Input.IsActionPressed("cam_rotate_cw"))  { _yaw += RotateSpeed * dt; moved = true; }
-        if (Input.IsActionPressed("cam_rotate_ccw")) { _yaw -= RotateSpeed * dt; moved = true; }
+		if (Input.IsActionPressed("cam_rotate_cw"))  { _smYaw.AddSmoothly(RotateSpeed * dt); moved = true; }
+		if (Input.IsActionPressed("cam_rotate_ccw")) { _smYaw.AddSmoothly(-RotateSpeed * dt); moved = true; }
 
 		if (Input.IsKeyPressed(Key.Equal) || Input.IsKeyPressed(Key.KpAdd))
-		{ _distance = Mathf.Max(MinDistance, _distance * Mathf.Pow(0.5f, dt)); moved = true; }
+		{ _smDistance.AddSmoothly(-_smDistance.Target * 0.5f * dt); moved = true; userMoved = true; }
 		if (Input.IsKeyPressed(Key.Minus) || Input.IsKeyPressed(Key.KpSubtract))
-		{ _distance = Mathf.Min(MaxDistance, _distance * Mathf.Pow(2.0f, dt)); moved = true; }
+		{ _smDistance.AddSmoothly(_smDistance.Target * 1.0f * dt); moved = true; userMoved = true; }
 
-        var vp = GetViewport();
-        if (vp != null)
-        {
-            var mp = vp.GetMousePosition();
-            var sz = vp.GetVisibleRect().Size;
-            // Detect the first REAL mouse movement: the position differs from the
-            // previous frame. Synthetic events on window creation report (0,0) every
-            // frame, so _lastMousePos stays (0,0) and the guard never opens. Once the
-            // user actually moves the mouse, the position changes and edge-pan unlocks.
-            if (mp != _lastMousePos)
-            {
-                if (_lastMousePos.X >= 0) // not the initial (-1,-1) sentinel
-                    _edgePanEnabled = true;
-                _lastMousePos = mp;
-            }
-            if (_edgePanEnabled)
-            {
-                if (mp.X < EdgeMargin)       { _focus -= right * PanSpeed * dt; moved = true; }
-                else if (mp.X > sz.X - EdgeMargin) { _focus += right * PanSpeed * dt; moved = true; }
-                // Godot 屏幕坐标 Y 向下为正:顶边 mp.Y 小 → 应前进(+= forward,对齐 cam_up);
-                // 底边 mp.Y 大 → 应后退。此前两分支接反,鼠标上移反而后退。
-                if (mp.Y < EdgeMargin)       { _focus += forward * PanSpeed * dt; moved = true; }
-                else if (mp.Y > sz.Y - EdgeMargin) { _focus -= forward * PanSpeed * dt; moved = true; }
-            }
-        }
+		var vp = GetViewport();
+		if (vp != null)
+		{
+			var mp = vp.GetMousePosition();
+			var sz = vp.GetVisibleRect().Size;
+			// Detect the first REAL mouse movement: the position differs from the
+			// previous frame. Synthetic events on window creation report (0,0) every
+			// frame, so _lastMousePos stays (0,0) and the guard never opens. Once the
+			// user actually moves the mouse, the position changes and edge-pan unlocks.
+			if (mp != _lastMousePos)
+			{
+				if (_lastMousePos.X >= 0) // not the initial (-1,-1) sentinel
+					_edgePanEnabled = true;
+				_lastMousePos = mp;
+			}
+			if (_edgePanEnabled)
+			{
+				if (mp.X < EdgeMargin)       { _smFocusX.AddSmoothly(-right.X * PanSpeed * dt); _smFocusZ.AddSmoothly(-right.Z * PanSpeed * dt); moved = true; userMoved = true; }
+				else if (mp.X > sz.X - EdgeMargin) { _smFocusX.AddSmoothly(right.X * PanSpeed * dt); _smFocusZ.AddSmoothly(right.Z * PanSpeed * dt); moved = true; userMoved = true; }
+				// Godot 屏幕坐标 Y 向下为正:顶边 mp.Y 小 → 应前进(+= forward,对齐 cam_up);
+				// 底边 mp.Y 大 → 应后退。此前两分支接反,鼠标上移反而后退。
+				if (mp.Y < EdgeMargin)       { _smFocusX.AddSmoothly(forward.X * PanSpeed * dt); _smFocusZ.AddSmoothly(forward.Z * PanSpeed * dt); moved = true; userMoved = true; }
+				else if (mp.Y > sz.Y - EdgeMargin) { _smFocusX.AddSmoothly(-forward.X * PanSpeed * dt); _smFocusZ.AddSmoothly(-forward.Z * PanSpeed * dt); moved = true; userMoved = true; }
+			}
+		}
 
-        if (moved)
-        {
-            _focus.Y = TerrainHeightService.Sample(_focus.X, _focus.Z);
-            UpdateTransform();
-        }
-    }
+		// 跟随选中单位(原版 m_FollowEntity:平滑逼近目标位置)。
+		if (_followActive && _followTarget.HasValue)
+		{
+			var targetPos = GetEntityWorldPosition(_followTarget.Value);
+			if (targetPos.HasValue)
+			{
+				var p = targetPos.Value;
+				_smFocusX.AddSmoothly(p.X - _smFocusX.Target);
+				_smFocusZ.AddSmoothly(p.Z - _smFocusZ.Target);
+				moved = true;
+			}
+			else
+			{
+				// 目标消失/不可见 → 停跟随(原版 m_FollowEntity = INVALID_ENTITY)。
+				_followActive = false;
+				_followTarget = null;
+			}
+		}
+		if (userMoved)
+		{
+			_followActive = false;
+			_followTarget = null;
+		}
+
+		// 平滑更新(原版 Update(deltaRealTime):按 smoothness^10dt 指数逼近目标)。
+		_focus.X = _smFocusX.Update(dt);
+		_focus.Z = _smFocusZ.Update(dt);
+		_distance = Mathf.Clamp(_smDistance.Update(dt), MinDistance, MaxDistance);
+		_yaw = _smYaw.Update(dt);
+		_pitch = Mathf.Clamp(_smPitch.Update(dt), MinPitch, MaxPitch);
+
+		if (moved)
+		{
+			_focus.Y = TerrainHeightService.Sample(_focus.X, _focus.Z);
+			UpdateTransform();
+		}
+	}
 
     public override void _Input(InputEvent @event)
     {
@@ -156,12 +253,24 @@ public sealed partial class RTSCamera : Camera3D
         UpdateTransform();
     }
 
-    /// <summary>dev 截图钩子用：直接设镜头距离（夹在 Min/Max 内）。</summary>
-    public void SetDistance(float distance)
-    {
-        _distance = Mathf.Clamp(distance, MinDistance, MaxDistance);
-        UpdateTransform();
-    }
+	/// <summary>dev 截图钩子用：直接设镜头距离（夹在 Min/Max 内）。</summary>
+	public void SetDistance(float distance)
+	{
+		_distance = Mathf.Clamp(distance, MinDistance, MaxDistance);
+		UpdateTransform();
+	}
+
+	/// <summary>跟随目标的世界位置(原版 GetInterpolatedTransform 的简化——
+	/// 直接读 PositionComponent 当前位;消失/驻军 → null 停跟随)。</summary>
+	private Vector3? GetEntityWorldPosition(EntityId entity)
+	{
+		var sim = SimSystem.Sim;
+		if (sim == null) return null;
+		var pos = sim.QueryInterface<PositionComponent>(entity);
+		if (pos == null || !pos.InWorld) return null;
+		return new Vector3(pos.Position.X.ToFloat(), pos.Position.Y.ToFloat(),
+			pos.Position.Z.ToFloat());
+	}
 
     /// <summary>Free camera 逐帧移动:WASD 沿视线方向平移(垂直俯仰也参与),
     /// QE 垂直升降,Shift ×4 加速,滚轮调基准速度。绕开 RTS 的地形吸附/边缘平移。</summary>
