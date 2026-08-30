@@ -114,7 +114,7 @@
 - [x] Placers:EntitiesObstructionPlacer、RandomPathPlacer(53e87f7)
 - [x] Painters:CityPainter、ElevationBlendingPainter、TerrainTextureArrayPainter(53e87f7)
 - [x] library.js 尾量(53e87f7/0746e5f:getObstructionSize/extractHeightmap/convertHeightmap1Dto2D/getDifficulties 全量)
-- [ ] **地图脚本批量翻译:~84/173 张注册(含 8 张触发器脚本);mainland(021122f)+ saharan_oases(d4e8306)+ mediterranean(5369dfa)全量移植;触发器脚本:polar_sea/elephantine/survivalofthefittest(8942c4c)+ danubius/jebel_barkal/extinct_volcano/flood/wall_demo 待做;余量按热度
+- [ ] **地图脚本批量翻译:~84/173 张注册;mainland(021122f)+ saharan_oases(d4e8306)+ mediterranean(5369dfa)全量移植;触发器脚本 8 张全量(polar_sea/elephantine/survivalofthefittest/flood/extinct_volcano/danubius/jebel_barkal 已接 b2fb6dd,wall_demo 原版空文件无需移植);余量按热度全量化
 
 ### 触发器(Triggers/TriggerSystem.cs,279 行 vs Trigger.js ~1100 行)
 - [x] 事件类型(7210b24:OnOwnershipChanged/OnStructureBuilt/OnTrainingFinished/OnResearchFinished/OnTreasureCollected 钩子 + Treasure.Reward 广播;余下类型按需按需接)
