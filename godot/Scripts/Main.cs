@@ -105,6 +105,7 @@ public sealed partial class Main : Node3D
 	private DiplomacyPanel? _diplomacyPanel;
 	private TradePanel? _tradePanel;
 	private StructreePanel? _structreePanel;
+	private ViewerPanel? _viewerPanel;
 	private DiagPanel? _diagPanel;   // F11 诊断日志面板(诊断方案 3)
 	private MatchSettingsPanel? _matchSettingsPanel;
 
@@ -976,6 +977,10 @@ public sealed partial class Main : Node3D
 		// 打开时预选本地玩家文明。
 		_structreePanel = new StructreePanel();
 		AddChild(_structreePanel);
+		// 模板查看器(原版 selection_panels showTemplateDetails → page_viewer):
+		// 选中实体/生产图标右键 → 完整信息面板。
+		_viewerPanel = new ViewerPanel();
+		AddChild(_viewerPanel);
 		// 诊断日志面板(F11):tag 勾选静音 + 最近日志。非模态,不暂停 sim。
 		_diagPanel = new DiagPanel();
 		AddChild(_diagPanel);
@@ -3740,6 +3745,15 @@ public sealed partial class Main : Node3D
 
 	/// <summary>顶栏 Settings 按钮回调:打开对局设置摘要面板(只读,不暂停 sim)。</summary>
 	public void OpenMatchSettingsPanel() => _matchSettingsPanel?.Open();
+
+	/// <summary>模板查看器(原版 page_viewer):按模板名打开完整信息面板;
+	/// civ 缺省取本地玩家。</summary>
+	public void OpenViewerPanel(string templateName, string civ = "")
+	{
+		if (_viewerPanel == null) return;
+		if (civ.Length == 0) civ = _sim.GetPlayer()?.Civ ?? "athen";
+		_viewerPanel.OpenFor(templateName, civ);
+	}
 
 	/// <summary>开发者覆盖层内容(F8):回合/FPS/实体数/选中数/状态 hash。hash 每 60 tick 算
 	/// 一次(全状态 MD5 太贵,不每帧算)。</summary>

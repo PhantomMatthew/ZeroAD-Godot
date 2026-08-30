@@ -1165,6 +1165,10 @@ public sealed partial class HUD : CanvasLayer
                 var tex = tstats != null ? LoadPortraitFromIcon(tstats.Icon) : null;
                 var ub = upBuilding.Value;
                 AddCmdButton(tex, text, () => _main.CommandUpgrade(ub, upBuilder));
+                // 右键开升级目标模板查看器(原版 showTemplateDetails)。
+                if (_commandBox.GetChildCount() > 0)
+                    ((Button)_commandBox.GetChild(_commandBox.GetChildCount() - 1))
+                        .SetMeta("template", tstats != null ? tstats.TemplateName : "");
             }
         }
 
@@ -1349,6 +1353,7 @@ public sealed partial class HUD : CanvasLayer
         string t = template; // 闭包捕获迭代变量
         // 批量提示进 tooltip(原版训练按钮提示 "Shift = 5 个一批");按下瞬间取 Shift。
         var btn = AddCmdButton(tex, text, () => _main.TrainUnit(t, _shiftHeldAtMouseDown), enabled: true);
+        btn.SetMeta("template", t);   // 右键开模板查看器(原版 showTemplateDetails)
         btn.TooltipText += " — Shift+click: train 5 at once";
     }
 
@@ -1407,6 +1412,9 @@ public sealed partial class HUD : CanvasLayer
         var tex = def.Icon.Length > 0 ? LoadPortraitFromIcon("technologies/" + def.Icon) : null;
         string t = tech;
         AddCmdButton(tex, text, () => _main.ResearchTech(t));
+        // 右键开模板查看器(原版 showTemplateDetails;按钮在命令面板末位)。
+        if (_commandBox.GetChildCount() > 0)
+            ((Button)_commandBox.GetChild(_commandBox.GetChildCount() - 1)).SetMeta("template", t);
     }
 
     /// <summary>建造按钮(数据驱动,construction_panel):头像取模板 Identity/Icon 原版立绘,
@@ -1431,6 +1439,9 @@ public sealed partial class HUD : CanvasLayer
                   ?? LoadPortraitForTemplate(template);
         string t = template;
         AddCmdButton(tex, text, () => _main.EnterBuildMode(t));
+        // 右键开模板查看器(原版 showTemplateDetails)。
+        if (_commandBox.GetChildCount() > 0)
+            ((Button)_commandBox.GetChild(_commandBox.GetChildCount() - 1)).SetMeta("template", t);
     }
 
     /// <summary>从原版 art 树加载立绘(Identity/Icon 相对路径,如
@@ -1508,6 +1519,15 @@ public sealed partial class HUD : CanvasLayer
         {
             if (ev is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Left)
                 _shiftHeldAtMouseDown = mb.ShiftPressed;
+            // 右键打开模板查看器(原版 selection_panels showTemplateDetails:
+            // 生产/训练/研究图标右键 → 完整信息面板)。
+            else if (ev is InputEventMouseButton mbRight && mbRight.Pressed
+                && mbRight.ButtonIndex == MouseButton.Right)
+            {
+                string? template = btn.GetMeta("template").AsString();
+                if (template != null && template.Length > 0)
+                    _main.OpenViewerPanel(template);
+            }
         };
 
         var label = new Label
