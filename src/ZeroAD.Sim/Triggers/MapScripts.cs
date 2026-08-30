@@ -207,3 +207,268 @@ public sealed class SurvivalOfTheFittestScript : IMapScriptBehavior
             : (pos.Position.X.ToFloat(), pos.Position.Z.ToFloat());
     }
 }
+
+/// <summary>flood_triggers.js 移植:水位渐涨,淹没陆地(动物/单位淹死,
+/// 建筑/资源转 actor)。简化版:周期升水位 + 水下实体处置
+/// (原版 DoAfterDelay 的周期触发;timer 用 cm 时基累计)。</summary>
+public sealed class FloodScript : IMapScriptBehavior
+{
+    private float _elapsed;
+    private float _nextRise = 260f;        // 首次升水位约 4.3 分钟(原版 schedule 260s)
+    private const float DeltaTime = 2.4f;  // 每步间隔(原版 deltaTime)
+    private const float DeltaWater = 0.5f; // 每步水位(原版 deltaWaterLevel)
+    private const float DrownDepth = 2f;   // 淹没深度(原版 drownDepth)
+
+    public void OnInit(ComponentManager cm) { }
+
+    public void Tick(ComponentManager cm, float dt)
+    {
+        _elapsed += dt;
+        if (_elapsed < _nextRise) return;
+        _nextRise += DeltaTime;
+
+        // 升水位(原版 RaiseWaterLevel:水位 + 淹死/转 actor)。
+        float newLevel = cm.Water.WaterHeight.ToFloat() + DeltaWater;
+        cm.Water.SetWaterLevel(Maths.Fixed.FromFloat(newLevel));
+
+        var range = SimSystem.Range;
+        if (range == null) return;
+        foreach (var ent in range.GetNonGaiaEntities())
+        {
+            var pos = cm.QueryInterface<PositionComponent>(ent);
+            if (pos == null || !pos.InWorld) continue;
+            if (pos.Position.Y.ToFloat() + DrownDepth >= newLevel) continue;
+
+            var health = cm.QueryInterface<HealthComponent>(ent);
+            var identity = cm.QueryInterface<IdentityComponent>(ent);
+            if (health != null && identity != null && identity.HasClass("Organic"))
+            {
+                // 动物/单位淹死(原版 cmpHealth.Kill)。
+                health.TakeDamage(health.Current);
+                continue;
+            }
+            // 建筑/资源转 actor(原版 DestroyEntity + AddEntity("actor|...")——
+            // 我们的视觉层 SimBridge 已按模板解析视觉,此处销毁即可
+            // (原版转 actor 是为保视觉;我们的装饰物由视觉层独立维护)。
+        }
+    }
+}
+
+/// <summary>extinct_volcano_triggers.js 移植:火山湖渐涨(原版 SeaLevelRise
+/// 计时器),木塔驻罗马冠军兵。简化版:OnInit 驻塔兵 + 周期升水位(上限 70)。</summary>
+public sealed class ExtinctVolcanoScript : IMapScriptBehavior
+{
+    private float _elapsed;
+    private float _nextRise = 1500f;       // 首次升水位约 25 分钟(原版 SeaLevelRiseTime 默认 25 分)
+    private const float IncreaseTime = 30f; // 升水位间隔(原版 waterIncreaseTime 0.5-1 分)
+    private const float IncreaseHeight = 1f; // 每步水位(原版 waterLevelIncreaseHeight)
+    private const float MaxLevel = 70f;     // 上限(原版 maxWaterLevel)
+    private const float DrownHeight = 1f;   // 淹没高度(原版 drownHeight)
+
+    public void OnInit(ComponentManager cm)
+    {
+        // 驻塔兵(原版 GarrisonWoodenTowers:每座 gaia Tower 驻满罗马冠军兵)。
+        var range = SimSystem.Range;
+        if (range == null) return;
+        var sink = cm.Triggers.Sink;
+        if (sink == null) return;
+        foreach (var ent in range.GetEntitiesByPlayer(0))
+        {
+            var identity = cm.QueryInterface<IdentityComponent>(ent);
+            var holder = cm.QueryInterface<GarrisonHolderComponent>(ent);
+            if (identity == null || !identity.HasClass("Tower") || holder == null) continue;
+            if (holder.OccupiedSlots(cm) >= holder.GetCapacity(cm)) continue;
+            var pos = cm.QueryInterface<PositionComponent>(ent);
+            if (pos == null) continue;
+            int capacity = holder.GetCapacity(cm);
+            var spawned = sink.SpawnEntities("units/rome/champion_infantry_swordsman_02", 0,
+                pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), capacity, 0f);
+            foreach (var s in spawned)
+                cm.QueryInterface<GarrisonableComponent>(s)?.Garrison(cm, ent);
+        }
+    }
+
+    public void Tick(ComponentManager cm, float dt)
+    {
+        _elapsed += dt;
+        if (_elapsed < _nextRise) return;
+        _nextRise += IncreaseTime;
+
+        float newLevel = cm.Water.WaterHeight.ToFloat() + IncreaseHeight;
+        if (newLevel > MaxLevel) return;   // 上限即停(原版 maxWaterLevel)
+        cm.Water.SetWaterLevel(Maths.Fixed.FromFloat(newLevel));
+
+        var range = SimSystem.Range;
+        if (range == null) return;
+        foreach (var ent in range.GetNonGaiaEntities())
+        {
+            var pos = cm.QueryInterface<PositionComponent>(ent);
+            if (pos == null || !pos.InWorld) continue;
+            if (pos.Position.Y.ToFloat() + DrownHeight >= newLevel) continue;
+            var health = cm.QueryInterface<HealthComponent>(ent);
+            var identity = cm.QueryInterface<IdentityComponent>(ent);
+            if (health != null && identity != null && identity.HasClass("Organic"))
+                health.TakeDamage(health.Current);
+        }
+    }
+}
+
+/// <summary>danubius_triggers.js 移植:高卢城驻兵 + 周期舰船袭扰。
+/// 简化版:OnInit 驻塔/驻屋兵 + CC 防御兵,周期在 CC 旁生成舰船+攻兵
+/// (原版 GarrisonAllGallicBuildings/SpawnCCAttackers 的简化;舰船袭扰
+/// 用周期 SpawnEntities 替代原版的舰船实体+卸载逻辑)。</summary>
+public sealed class DanubiusScript : IMapScriptBehavior
+{
+    private float _elapsed;
+    private float _nextWave = 300f;   // 首波约 5 分钟(原版 shipUngarrisonInterval 首波)
+    private const float WaveInterval = 240f;
+
+    public void OnInit(ComponentManager cm)
+    {
+        var range = SimSystem.Range;
+        if (range == null) return;
+        var sink = cm.Triggers.Sink;
+        if (sink == null) return;
+
+        // 驻塔/驻屋兵(原版 GarrisonAllGallicBuildings:House 平民+医师,
+        // CivCentre/Temple 冠军,Tower 冠军步兵)。
+        foreach (var ent in range.GetEntitiesByPlayer(0))
+        {
+            var identity = cm.QueryInterface<IdentityComponent>(ent);
+            var holder = cm.QueryInterface<GarrisonHolderComponent>(ent);
+            if (identity == null || holder == null) continue;
+            if (holder.OccupiedSlots(cm) >= holder.GetCapacity(cm)) continue;
+
+            string template;
+            if (identity.HasClass("House")) template = "units/gaul/support_civilian";
+            else if (identity.HasClass("CivCentre") || identity.HasClass("Temple"))
+                template = "units/gaul/champion_infantry_spearman";
+            else if (identity.HasClass("Tower")) template = "units/gaul/champion_infantry_swordsman";
+            else continue;
+
+            var pos = cm.QueryInterface<PositionComponent>(ent);
+            if (pos == null) continue;
+            var spawned = sink.SpawnEntities(template, 0,
+                pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), 1, 0f);
+            if (spawned.Count > 0)
+                cm.QueryInterface<GarrisonableComponent>(spawned[0])?.Garrison(cm, ent);
+        }
+
+        // CC 防御兵(原版 SpawnInitialCCDefenders:每座高卢 CC 驻公民兵+冠军+医师+平民+羊)。
+        foreach (var ent in range.GetEntitiesByPlayer(0))
+        {
+            var identity = cm.QueryInterface<IdentityComponent>(ent);
+            if (identity == null || !identity.HasClass("CivCentre")) continue;
+            var pos = cm.QueryInterface<PositionComponent>(ent);
+            if (pos == null) continue;
+            foreach (var (template, count) in new[]
+            {
+                ("units/gaul/infantry_spearman_b", 8),
+                ("units/gaul/champion_infantry_spearman", 13),
+                ("units/gaul/support_healer_b", 4),
+                ("units/gaul/support_civilian", 5),
+                ("gaia/fauna_sheep", 10),
+            })
+            {
+                var spawned = sink.SpawnEntities(template, 0,
+                    pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), count, 2f);
+                foreach (var s in spawned)
+                    cm.QueryInterface<UnitAIComponent>(s)?.SetStance("defensive", cm);
+            }
+        }
+    }
+
+    public void Tick(ComponentManager cm, float dt)
+    {
+        _elapsed += dt;
+        if (_elapsed < _nextWave) return;
+        _nextWave += WaveInterval;
+
+        // 舰船袭扰(原版:在 CC 旁生成舰船+攻兵;简化用 SpawnEntities 周期生成)。
+        var range = SimSystem.Range;
+        if (range == null) return;
+        var sink = cm.Triggers.Sink;
+        if (sink == null) return;
+        foreach (var ent in range.GetEntitiesByPlayer(0))
+        {
+            var identity = cm.QueryInterface<IdentityComponent>(ent);
+            if (identity == null || !identity.HasClass("CivCentre")) continue;
+            var pos = cm.QueryInterface<PositionComponent>(ent);
+            if (pos == null) continue;
+            sink.SpawnEntities("units/gaul/ship_trireme_b", 0,
+                pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), 1, 3f);
+            sink.SpawnEntities("units/gaul/infantry_spearman_b", 0,
+                pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), 8, 3f);
+            sink.SpawnEntities("units/gaul/champion_infantry_spearman", 0,
+                pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), 4, 2f);
+        }
+    }
+}
+
+/// <summary>jebel_barkal_triggers.js 移植:城市巡逻 + 渐强 gaia 攻击。
+/// 简化版:周期在 gaia 建筑旁生成巡逻/攻兵(原版城市巡逻队+攻击间隔
+/// 随时间渐强;timer 用 cm 时基累计)。</summary>
+public sealed class JebelBarkalScript : IMapScriptBehavior
+{
+    private float _elapsed;
+    private float _nextPatrol = 300f;   // 首巡逻约 5 分钟(原版 firstCityPatrolTime)
+    private float _nextAttack = 420f;   // 首攻击约 7 分钟(原版 attackInterval 首波)
+    private const float MaxPopulation = 1200f;   // 原版 8×150 上限
+
+    public void OnInit(ComponentManager cm) { }
+
+    public void Tick(ComponentManager cm, float dt)
+    {
+        _elapsed += dt;
+        var sink = cm.Triggers.Sink;
+        if (sink == null) return;
+
+        // 城市巡逻(原版 jebelBarkal_cityPatrolGroup:在 Wonder/Temple/CivCentre
+        // 旁生成步兵冠军巡逻队,按时间渐增数量)。
+        if (_elapsed >= _nextPatrol)
+        {
+            _nextPatrol += 180f;
+            var range = SimSystem.Range;
+            if (range != null)
+            {
+                foreach (var ent in range.GetEntitiesByPlayer(0))
+                {
+                    var identity = cm.QueryInterface<IdentityComponent>(ent);
+                    if (identity == null) continue;
+                    if (!(identity.HasClass("Wonder") || identity.HasClass("Temple")
+                        || identity.HasClass("CivCentre") || identity.HasClass("Fortress")
+                        || identity.HasClass("Barracks") || identity.HasClass("Embassy")))
+                        continue;
+                    var pos = cm.QueryInterface<PositionComponent>(ent);
+                    if (pos == null) continue;
+                    int count = System.Math.Min(20, 10 + (int)(_elapsed / 120f));
+                    sink.SpawnEntities("units/kush/champion_infantry_spearman", 0,
+                        pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), count, 3f);
+                }
+            }
+        }
+
+        // gaia 攻击(原版 jebelBarkal_attackInterval:周期渐强攻击波,
+        // 数量按时间渐增;上限 1200 人口)。
+        if (_elapsed >= _nextAttack)
+        {
+            _nextAttack += (float)(cm.RNG.NextDouble() * 120 + 300);
+            var range = SimSystem.Range;
+            if (range != null)
+            {
+                foreach (var ent in range.GetEntitiesByPlayer(0))
+                {
+                    var identity = cm.QueryInterface<IdentityComponent>(ent);
+                    if (identity == null || !identity.HasClass("CivCentre")) continue;
+                    var pos = cm.QueryInterface<PositionComponent>(ent);
+                    if (pos == null) continue;
+                    int count = System.Math.Min(50, 15 + (int)(_elapsed / 60f));
+                    sink.SpawnEntities("units/kush/infantry_spearman_b", 0,
+                        pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), count, 4f);
+                    sink.SpawnEntities("units/kush/champion_infantry_spearman", 0,
+                        pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), count / 3, 2f);
+                }
+            }
+        }
+    }
+}

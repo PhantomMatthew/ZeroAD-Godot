@@ -324,6 +324,10 @@ public sealed partial class SimBridge : Node
 			"polar_sea" => new ZeroAD.Sim.Triggers.PolarSeaScript(),
 			"elephantine" => new ZeroAD.Sim.Triggers.ElephantineScript(),
 			"survivalofthefittest" => new ZeroAD.Sim.Triggers.SurvivalOfTheFittestScript(),
+			"flood" => new ZeroAD.Sim.Triggers.FloodScript(),
+			"extinct_volcano" => new ZeroAD.Sim.Triggers.ExtinctVolcanoScript(),
+			"danubius" => new ZeroAD.Sim.Triggers.DanubiusScript(),
+			"jebel_barkal" => new ZeroAD.Sim.Triggers.JebelBarkalScript(),
 			_ => null,
 		};
 		_sim.Triggers.MapScript = script;
