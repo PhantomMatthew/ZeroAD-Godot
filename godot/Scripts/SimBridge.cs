@@ -1031,6 +1031,11 @@ public sealed partial class SimBridge : Node
 		// 击杀贴地血斑(原版 blood_*.xml 的 decal 语义:命中迸溅在池里,
 		// 残留血斑在本系统——45s 消融后回收)。
 		if (isKill) _decals?.Spawn(target.Position);
+		// 攻城/建筑命中贴花(原版 eyecandy/impact_decal 的 decal 语义:
+		// 建筑被命中/被毁时落弹坑贴花,90s 消融;比血斑大、消融更久)。
+		var targetIdentity = _sim?.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(e.Target);
+		if (targetIdentity != null && targetIdentity.IsBuilding)
+			_decals?.SpawnImpact(target.Position);
 	}
 
 	public override void _Ready()

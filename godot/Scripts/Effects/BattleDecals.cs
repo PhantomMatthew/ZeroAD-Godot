@@ -18,10 +18,17 @@ public sealed partial class BattleDecals : Node
     {
         "blood_01.dds", "blood_02.dds", "blood_03.dds", "blood_05.dds",
     };
+    /// <summary>炮击弹坑/建筑毁坏贴花纹理(原版 eyecandy/impact_decal 与
+    /// decal_destruct 的 decals;攻城命中/建筑被毁时落,比血斑大、消融更久)。</summary>
+    private static readonly string[] ImpactTextures =
+    {
+        "decal_campfire.png", "decal_destruct_large.png", "decal_destruct_llong.png",
+    };
 
     private readonly List<MeshInstance3D> _pool = new();
     private readonly List<(MeshInstance3D node, float age)> _active = new();
     private static readonly List<Texture2D> _textures = new();
+    private static readonly List<Texture2D> _impactTextures = new();
     private static bool _texturesLoaded;
     private int _nextTexture;
 
@@ -57,13 +64,27 @@ public sealed partial class BattleDecals : Node
                 var img = Image.LoadFromFile(path);
                 if (img != null) _textures.Add(ImageTexture.CreateFromImage(img));
             }
+            foreach (var name in ImpactTextures)
+            {
+                string path = System.IO.Path.Combine(dir, name);
+                if (!System.IO.File.Exists(path)) continue;
+                var img = Image.LoadFromFile(path);
+                if (img != null) _impactTextures.Add(ImageTexture.CreateFromImage(img));
+            }
             return;
         }
     }
 
     /// <summary>击杀/重击落地血斑(原版 blood_*.xml 的 decal 触发语义;
     /// 随机纹理轮转 + 随机朝向,贴地消融)。</summary>
-    public void Spawn(Vector3 pos)
+    public void Spawn(Vector3 pos) => SpawnDecal(pos, _textures, 45f);
+
+    /// <summary>炮击弹坑/建筑毁坏贴花(原版 eyecandy/impact_decal 与
+    /// decal_destruct 的 decal 语义:攻城命中/建筑被毁时落,比血斑大、
+    /// 消融更久 90s)。</summary>
+    public void SpawnImpact(Vector3 pos) => SpawnDecal(pos, _impactTextures, 90f);
+
+    private void SpawnDecal(Vector3 pos, List<Texture2D> textures, float decaySeconds)
     {
         MeshInstance3D? node = null;
         foreach (var n in _pool)
@@ -77,11 +98,11 @@ public sealed partial class BattleDecals : Node
         }
         if (node == null) return;
 
-        if (_textures.Count > 0)
+        if (textures.Count > 0)
         {
             var mat = new StandardMaterial3D
             {
-                AlbedoTexture = _textures[_nextTexture % _textures.Count],
+                AlbedoTexture = textures[_nextTexture % textures.Count],
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
                 AlbedoColor = new Color(1, 1, 1, 0.9f),
