@@ -123,6 +123,10 @@ public sealed partial class Main : Node3D
 		// 播完广播 OnCinemaPathEnded/OnCinemaQueueEnded)。
 		_cinema = new CinemaManager(_camera);
 		AddChild(_cinema);
+		// 过场事件 → 触发器(原版 MT_CinemaPathEnded/MT_CinemaQueueEnded 广播;
+		// 触发器脚本的"播完一径/队列空即推进剧情"经此驱动)。
+		_cinema.PathEnded += name => _sim?.Sim.Triggers.CallEvent(_sim.Sim, "OnCinemaPathEnded", name);
+		_cinema.QueueEnded += () => _sim?.Sim.Triggers.CallEvent(_sim.Sim, "OnCinemaQueueEnded", null);
 
 		var light = new DirectionalLight3D();
 		light.Rotation = new Vector3(-0.7f, 0.5f, 0);
@@ -1326,6 +1330,9 @@ public sealed partial class Main : Node3D
 				// 地图 Environment 光照(太阳方向/色 + 环境光 + 雾色,公式对齐 CLightEnv);
 				// 镜像世界后太阳必须随之镜像,否则面向相机的坡面整体背光发暗。
 				(MapEnvironment.LoadFromXml(xmlPath) ?? MapEnvironment.Default).Apply(_light, _env);
+				// 过场路径注册(原版 MapReader::ReadPaths:地图 <Paths> 段
+				// → CinemaManager.AddPath;触发器脚本按名 PushPathToQueue 播放)。
+				_cinema?.LoadFromMapXml(xmlPath);
 				// HQ 上采样(MSAA 3D 2x/4x,原版 HQ 选项;Viewport 属性)。
 				MapEnvironment.ApplyViewport(GetViewport());
 				var water = WaterRenderer.LoadWaterFromXml(xmlPath);

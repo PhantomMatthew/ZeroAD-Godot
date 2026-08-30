@@ -57,6 +57,59 @@ public sealed partial class CinemaManager : Node
     /// <summary>注册路径(原版 AddPath:地图侧给名字挂路径)。</summary>
     public void AddPath(CinemaPath path) => _paths[path.Name] = path;
 
+    /// <summary>地图 XML 的 <Paths> 段解析(原版 MapReader::ReadPaths):
+    /// 每 <Path name=...> 注册一条路径,Node 的 deltatime 为时长,
+    /// Position/Target 为样条点。原版 C++ MapReader 的逐字移植——
+    /// MapEnvironment.LoadFromXml 同树解析,由 SimBridge 加载地图后调用。</summary>
+    public void LoadFromMapXml(string xmlPath)
+    {
+        if (!System.IO.File.Exists(xmlPath)) return;
+        try
+        {
+            var doc = System.Xml.Linq.XDocument.Load(xmlPath);
+            var pathsEl = doc.Root?.Element("Paths");
+            if (pathsEl == null) return;
+            foreach (var pathEl in pathsEl.Elements("Path"))
+            {
+                var path = new CinemaPath
+                {
+                    Name = pathEl.Attribute("name")?.Value ?? "",
+                    Timescale = ReadFloat(pathEl.Attribute("timescale")?.Value, 1f),
+                };
+                foreach (var nodeEl in pathEl.Elements("Node"))
+                {
+                    float duration = ReadFloat(nodeEl.Attribute("deltatime")?.Value, 1f);
+                    var posEl = nodeEl.Element("Position");
+                    var targetEl = nodeEl.Element("Target");
+                    path.Nodes.Add(new PathNode
+                    {
+                        Position = posEl != null ? ReadVector3(posEl) : Vector3.Zero,
+                        Target = targetEl != null ? ReadVector3(targetEl) : Vector3.Zero,
+                        Duration = duration,
+                    });
+                }
+                if (path.Nodes.Count > 0 && path.Name.Length > 0)
+                    AddPath(path);
+            }
+        }
+        catch (System.Exception e)
+        {
+            ZeroAD.Sim.Diag.Err("Cinema", $"LoadFromMapXml failed: {e.Message}");
+        }
+    }
+
+    private static Vector3 ReadVector3(System.Xml.Linq.XElement el)
+    {
+        float x = ReadFloat(el.Attribute("x")?.Value, 0f);
+        float y = ReadFloat(el.Attribute("y")?.Value, 0f);
+        float z = ReadFloat(el.Attribute("z")?.Value, 0f);
+        return new Vector3(x, y, z);
+    }
+
+    private static float ReadFloat(string? s, float fallback) =>
+        float.TryParse(s, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : fallback;
+
     /// <summary>按名推入播放队列(原版 PushPathToQueue)。</summary>
     public void PushPathToQueue(string name)
     {
