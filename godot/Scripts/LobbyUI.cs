@@ -11,17 +11,12 @@ public sealed partial class LobbyUI : CanvasLayer
     private LineEdit _seedEdit = null!;
     private Label _statusLabel = null!;
 
-    private Panel _mainPanel = null!;
-    private Panel _submenuPanel = null!;
-    private VBoxContainer _buttonList = null!;
-    private VBoxContainer _submenuList = null!;
-
-    private readonly List<MenuButton> _menuButtons = new();
+    // 收敛注记(2026-08):此类曾是 MainMenu.tscn 存在前的假主菜单(SetupMainMenu/BuildMenuItems
+    // 一堆 action=null 死项)。真主菜单在 MainMenu.cs;本类只保留 MP 连接表单 + 槽位大厅
+    // (gamesetup_mp 端口)。Mode=Lobby(裸跑 session)由 Main._Ready 弹回 MainMenu.tscn。
 
     public event System.Action<int, uint>? OnHostStart;
     public event System.Action<string, int>? OnClientConnect;
-    public event System.Action<uint>? OnSinglePlayer;
-    public event System.Action? OnTutorialStart;
 
     // --- Slot-lobby events (Task #10): host edits slots, host starts the game ---
     /// <summary>Host edited a slot (playerId, kind, civ, team). Wired to
@@ -85,14 +80,9 @@ public sealed partial class LobbyUI : CanvasLayer
         }
     }
 
-    private sealed record MenuItem(string Caption, string Tooltip, System.Action? OnPress, MenuItem[]? Submenu = null);
-
     public override void _Ready()
     {
         SetupBackground();
-        SetupMainMenu();
-        SetupSubmenu();
-        SetupLobbyPanel();
     }
 
     private void SetupBackground()
@@ -123,207 +113,13 @@ public sealed partial class LobbyUI : CanvasLayer
         AddChild(logo);
     }
 
-    private void SetupMainMenu()
-    {
-        _mainPanel = new Panel();
-        _mainPanel.Position = new Vector2(50, 0);
-        _mainPanel.Size = new Vector2(240, 0);
-        _mainPanel.SetAnchorsPreset(Control.LayoutPreset.LeftWide);
-        _mainPanel.OffsetTop = -2;
-        _mainPanel.OffsetBottom = 2;
-        _mainPanel.OffsetLeft = 50;
-        _mainPanel.OffsetRight = 290;
-
-        var panelBg = new TextureRect
-        {
-            Texture = UITheme.TryLoad("res://assets/ui/menu_panel.png"),
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.Tile,
-        };
-        panelBg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        _mainPanel.AddChild(panelBg);
-
-        var goldBorder = new ColorRect { Color = new Color(0.90f, 0.745f, 0.314f) };
-        goldBorder.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        goldBorder.OffsetLeft = 0; goldBorder.OffsetTop = 0;
-        goldBorder.OffsetRight = 0; goldBorder.OffsetBottom = 0;
-        _mainPanel.AddChild(goldBorder);
-
-        var innerPanel = new ColorRect { Color = new Color(0, 0, 0, 0) };
-        innerPanel.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        innerPanel.OffsetLeft = 2; innerPanel.OffsetTop = 2;
-        innerPanel.OffsetRight = -2; innerPanel.OffsetBottom = -2;
-        _mainPanel.AddChild(innerPanel);
-
-        _buttonList = new VBoxContainer();
-        _buttonList.OffsetLeft = 8; _buttonList.OffsetTop = 150;
-        _buttonList.OffsetRight = -8; _buttonList.OffsetBottom = -8;
-        _buttonList.AddThemeConstantOverride("separation", 2);
-        _buttonList.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        _mainPanel.AddChild(_buttonList);
-
-        AddChild(_mainPanel);
-
-        BuildMenuItems();
-    }
-
-    private void BuildMenuItems()
-    {
-        var items = new[]
-        {
-            new MenuItem("Learn to Play", "", null, new MenuItem[]
-            {
-                new("Tutorial", "Start the introductory tutorial", () => OnTutorialStart?.Invoke()),
-                new("Structure Tree", "View unit/building tree", null),
-                new("Civilization Overview", "Browse civilizations", null),
-            }),
-            new MenuItem("Single-player", "", null, new MenuItem[]
-            {
-                new("Matches", "Start a new game", () => OnSinglePlayer?.Invoke(42)),
-                new("Load Game", "Load a saved game", null),
-                new("Replays", "Playback previous games", null),
-            }),
-            new MenuItem("Multiplayer", "", null, new MenuItem[]
-            {
-                new("Game Lobby", "Join the multiplayer lobby", null),
-                new("Host New Game", "Host a multiplayer game", () =>
-                {
-                    _submenuPanel.Visible = false;
-                    ShowLobbyPanel(isHost: true);
-                }),
-                new("Connect by IP", "Join via IP address", () =>
-                {
-                    _submenuPanel.Visible = false;
-                    ShowLobbyPanel(isHost: false);
-                }),
-            }),
-            new MenuItem("Settings", "", null, new MenuItem[]
-            {
-                new("Options", "Adjust game settings", null),
-                new("Hotkeys", "Configure hotkeys", null),
-                new("Language", "Choose language", null),
-            }),
-            new MenuItem("Scenario Editor", "Open the map editor", null),
-            new MenuItem("Credits", "Show credits", null),
-            new MenuItem("Exit", "Quit the game", () => GetTree().Quit()),
-        };
-
-        foreach (var item in items)
-            AddMenuButton(item);
-    }
-
-    private void AddMenuButton(MenuItem item)
-    {
-        var btn = new Button
-        {
-            Text = item.Caption,
-            CustomMinimumSize = new Vector2(0, 28),
-            Theme = CreateStoneButtonTheme(),
-            TooltipText = item.Tooltip,
-        };
-        btn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-
-        btn.Pressed += () =>
-        {
-            if (item.Submenu != null)
-                ShowSubmenu(item);
-            else
-                item.OnPress?.Invoke();
-        };
-
-        _buttonList.AddChild(btn);
-    }
-
-    private void SetupSubmenu()
-    {
-        _submenuPanel = new Panel();
-        _submenuPanel.Position = new Vector2(290, 0);
-        _submenuPanel.Size = new Vector2(220, 0);
-        _submenuPanel.SetAnchorsPreset(Control.LayoutPreset.LeftWide);
-        _submenuPanel.OffsetLeft = 290;
-        _submenuPanel.OffsetRight = 510;
-        _submenuPanel.OffsetTop = -2;
-        _submenuPanel.OffsetBottom = 2;
-        _submenuPanel.Visible = false;
-
-        var panelBg = new TextureRect
-        {
-            Texture = UITheme.TryLoad("res://assets/ui/menu_panel.png"),
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.Tile,
-        };
-        panelBg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        _submenuPanel.AddChild(panelBg);
-
-        var goldBorder = new ColorRect { Color = new Color(0.90f, 0.745f, 0.314f) };
-        goldBorder.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        _submenuPanel.AddChild(goldBorder);
-
-        var inner = new ColorRect { Color = new Color(0, 0, 0, 0) };
-        inner.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        inner.OffsetLeft = 2; inner.OffsetTop = 2;
-        inner.OffsetRight = -2; inner.OffsetBottom = -2;
-        _submenuPanel.AddChild(inner);
-
-        _submenuList = new VBoxContainer();
-        _submenuList.OffsetLeft = 8; _submenuList.OffsetTop = 150;
-        _submenuList.OffsetRight = -8; _submenuList.OffsetBottom = -8;
-        _submenuList.AddThemeConstantOverride("separation", 2);
-        _submenuList.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        _submenuPanel.AddChild(_submenuList);
-
-        AddChild(_submenuPanel);
-    }
-
-    private void ShowSubmenu(MenuItem parent)
-    {
-        foreach (var child in _submenuList.GetChildren())
-            child.QueueFree();
-
-        if (parent.Submenu == null)
-        {
-            _submenuPanel.Visible = false;
-            return;
-        }
-
-        foreach (var sub in parent.Submenu)
-        {
-            var btn = new Button
-            {
-                Text = sub.Caption,
-                CustomMinimumSize = new Vector2(0, 28),
-                Theme = CreateStoneButtonTheme(),
-                TooltipText = sub.Tooltip,
-                Disabled = sub.OnPress == null,
-            };
-            btn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-
-            if (sub.OnPress != null)
-            {
-                btn.Pressed += () =>
-                {
-                    _submenuPanel.Visible = false;
-                    sub.OnPress();
-                };
-            }
-            _submenuList.AddChild(btn);
-        }
-
-        _submenuPanel.Visible = true;
-    }
 
     private Control? _lobbyPanel;
-
-    private void SetupLobbyPanel()
-    {
-    }
 
     /// <summary>从 MainMenu 以明确 MP 意图进入(Host New Game / Connect by IP):
     /// 跳过本场景遗留的旧菜单面板,直显连接/主持表单(对齐原版 gamesetup_mp 入口)。</summary>
     public void EnterMpDirect(bool isHost)
     {
-        _mainPanel.Visible = false;
-        _submenuPanel.Visible = false;
         ShowLobbyPanel(isHost);
     }
 

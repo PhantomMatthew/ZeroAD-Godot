@@ -203,8 +203,6 @@ public sealed partial class Main : Node3D
 		// 大厅聊天(gamesetup_mp 聊天栏):发送 → 网络;收到 → 追加行。
 		_lobby.OnChatSend += text => _mp.SendChat((int)_mp.LocalPlayerId, text);
 		_mp.OnChatReceived += (pid, text) => _lobby.AppendChat(pid, text);
-		_lobby.OnSinglePlayer += seed => StartSinglePlayer(seed);
-		_lobby.OnTutorialStart += () => StartTutorial();
 		// Lobby-state refresh: clients repaint their read-only slot list from the host's table.
 		// The host is the source of truth (its rows are editable) and never repaints from events.
 		_mp.OnLobbyStateChanged += slots => { if (!_mp.IsHost) _lobby.RefreshSlotDisplay(slots); };
@@ -235,6 +233,11 @@ public sealed partial class Main : Node3D
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		switch (cfg.Mode)
 		{
+			// Lobby = 未配置裸跑 session(编辑器直开 Main.tscn 等):弹回真主菜单
+			// (LobbyUI 的假主菜单已随收敛移除,MainMenu.tscn 是唯一主菜单)。
+			case GameLaunchConfig.LaunchMode.Lobby:
+				CallDeferred(nameof(BounceToMainMenu));
+				break;
 			case GameLaunchConfig.LaunchMode.SinglePlayer:
 				CallDeferred(nameof(AutoStart));
 				break;
@@ -255,6 +258,8 @@ public sealed partial class Main : Node3D
 
 	private void AutoStart() => StartSinglePlayer(GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Seed);
 	private void AutoTutorial() => StartTutorial();
+
+	private void BounceToMainMenu() => GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 
 	/// <summary>MP 入口(MainMenu 子菜单 Host New Game / Connect by IP):直显连接表单,
 	/// 不再显 LobbyUI 遗留旧菜单(那是 MainMenu.tscn 存在前的假主菜单)。</summary>
