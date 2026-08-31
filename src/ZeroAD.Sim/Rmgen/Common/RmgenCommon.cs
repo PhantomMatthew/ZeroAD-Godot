@@ -925,21 +925,152 @@ namespace ZeroAD.Sim.Rmgen.Common
 
         /// <summary>playerPlacementByPattern——按布置模式定玩家位置。
         /// patternName null 时读 settings.PlayerPlacement（gamesetup 下发,"circle" 默认）。
-        /// groupedLines/stronghold/randomGroup 未移植——回退 circle。
-        /// 注意 angle 通常由调用方 randomAngle() 先抽（与上游实参求值一致）。</summary>
+        /// 注意 angle 通常由调用方 randomAngle() 先抽（与上游实参求值一致）。
+        /// 上游未知模式 throw；本版回退 circle（gamesetup 之外的调用方可能传自定义名）。</summary>
         public static (List<int> playerIDs, List<RmgenVector2D> playerPosition) PlayerPlacementByPattern(
             RmgenRng rng, RandomMap map, MapSettings settings, string? patternName,
-            double distance, double? angle = null, RmgenVector2D? center = null)
+            double distance, double groupedDistance = 0, double? angle = null,
+            RmgenVector2D? center = null)
         {
             patternName ??= settings.PlayerPlacement;
-            if (patternName == "river")
-                return PlayerPlacementRiver(rng, map, settings, angle ?? rng.RandomAngle(),
-                    distance, center);
+            switch (patternName)
+            {
+                case "river":
+                    return PlayerPlacementRiver(rng, map, settings, angle ?? rng.RandomAngle(),
+                        distance, center);
 
-            // circle / 未移植模式回退
+                case "groupedLines":
+                    return PlaceLine(map, GetTeamsArray(rng, settings), distance, groupedDistance,
+                        angle ?? rng.RandomAngle());
+
+                case "stronghold":
+                    return PlaceStronghold(map, GetTeamsArray(rng, settings), distance,
+                        groupedDistance * 1.4, angle ?? rng.RandomAngle());
+
+                case "randomGroup":
+                    // 上游 playerPlacementRandom(getPlayerIDs(), undefined)——失败返回 undefined，
+                    // 调用方（rmgen2 playerbaseTypes）再回退 circle。
+                    var random = PlayerPlacementRandom(rng, map, settings, null);
+                    if (random.HasValue)
+                        return random.Value;
+                    break;
+            }
+
             var (ids, pos, _, _) = PlayerPlacementCircle(rng, map, GetNumPlayers(settings),
                 distance, angle, center);
             return (ids, pos);
+        }
+
+        /// <summary>getTeamsArray（逐字移植 player.js）——按队分组的玩家 ID 二维表；
+        /// 无队玩家各自成组，最后过滤掉空洞（上游 filter(team =&gt; true) 去 sparse 洞）。</summary>
+        public static List<List<int>> GetTeamsArray(RmgenRng rng, MapSettings settings)
+        {
+            int numPlayers = GetNumPlayers(settings);
+            var playerIDs = Enumerable.Range(1, numPlayers).ToList();
+
+            // JS 稀疏数组 teams[team] —— 以 (队号 → 成员) 字典 + 队号升序还原枚举顺序
+            var byTeam = new SortedDictionary<int, List<int>>();
+            foreach (int id in playerIDs)
+            {
+                int team = GetPlayerTeam(settings, id);
+                if (team == -1) continue;
+                if (!byTeam.TryGetValue(team, out var members))
+                    byTeam[team] = members = new List<int>();
+                members.Add(id);
+            }
+
+            var teams = byTeam.Values.ToList();
+            foreach (int id in playerIDs)
+                if (GetPlayerTeam(settings, id) == -1)
+                    teams.Add(new List<int> { id });
+
+            return teams;
+        }
+
+        /// <summary>placeLine（逐字移植 player.js）——每队沿一条自图心向外的射线排开。</summary>
+        public static (List<int> playerIDs, List<RmgenVector2D> playerPosition) PlaceLine(
+            RandomMap map, IReadOnlyList<List<int>> teamsArray, double distance,
+            double groupedDistance, double startAngle)
+        {
+            var playerIDs = new List<int>();
+            var playerPosition = new List<RmgenVector2D>();
+
+            var mapCenter = map.GetCenter();
+            int numPlayers = teamsArray.Sum(t => t.Count);
+            double numAcross = 2.0 * numPlayers / teamsArray.Count;
+            double dist = RmgenLibrary.FractionToTiles(
+                numAcross == 2 ? 0.45 : 0.66 + -0.01 * numAcross, map.GetSize());
+            groupedDistance *= 3.00 + -0.225 * numAcross;
+
+            for (int i = 0; i < teamsArray.Count; ++i)
+            {
+                double safeDist = distance;
+                if (distance + teamsArray[i].Count * groupedDistance > dist)
+                    safeDist = dist - teamsArray[i].Count * groupedDistance;
+
+                double teamAngle = startAngle + (i + 1) * 2 * SafeMath.PI / teamsArray.Count;
+
+                for (int p = 0; p < teamsArray[i].Count; ++p)
+                {
+                    playerIDs.Add(teamsArray[i][p]);
+                    var offset = new RmgenVector2D(safeDist + p * groupedDistance, 0);
+                    offset.Rotate(-teamAngle);
+                    var pos = RmgenVector2D.Add(mapCenter, offset);
+                    pos.Round();
+                    playerPosition.Add(pos);
+                }
+            }
+
+            return (playerIDs, playerPosition);
+        }
+
+        /// <summary>placeStronghold（逐字移植 player.js）——每队一个据点圆环，
+        /// 据点沿图心圆按各自半径等弧长分布。</summary>
+        public static (List<int> playerIDs, List<RmgenVector2D> playerPosition) PlaceStronghold(
+            RandomMap map, IReadOnlyList<List<int>> teamsArray, double distance,
+            double groupedDistance, double startAngle)
+        {
+            var mapCenter = map.GetCenter();
+            var playerIDs = new List<int>();
+            var playerPosition = new List<RmgenVector2D>();
+
+            // 单人队放在队位置正中（半径 0）
+            var strongholdRadius = teamsArray.Select(team => team.Count == 1
+                ? 0
+                : groupedDistance / 2 / SafeMath.Sin(SafeMath.PI / team.Count)).ToList();
+
+            double distanceBetweenStrongholds =
+                (distance * 2 * SafeMath.PI - 2 * strongholdRadius.Sum()) / strongholdRadius.Count;
+
+            // 上游 strongholdRadius.at(i - 1)：i=0 时取末元素（负索引回卷）
+            var relativeTeamAngles = strongholdRadius.Select((r1, i) =>
+                (distanceBetweenStrongholds +
+                    strongholdRadius[(i - 1 + strongholdRadius.Count) % strongholdRadius.Count] + r1)
+                / distance).ToList();
+
+            var teamAngles = new List<double>();
+            for (int i = 0; i < relativeTeamAngles.Count; ++i)
+                teamAngles.Add((i == 0 ? startAngle : teamAngles[^1]) + relativeTeamAngles[i]);
+
+            for (int i = 0; i < teamsArray.Count; ++i)
+            {
+                var teamOffset = new RmgenVector2D(distance * 0.8, 0);
+                teamOffset.Rotate(-teamAngles[i]);
+                var teamPosition = RmgenVector2D.Add(mapCenter, teamOffset);
+
+                for (int p = 0; p < teamsArray[i].Count; ++p)
+                {
+                    double angle = startAngle + (p + 1) * 2 * SafeMath.PI / teamsArray[i].Count;
+                    playerIDs.Add(teamsArray[i][p]);
+                    var offset = new RmgenVector2D(strongholdRadius[i], 0);
+                    offset.Rotate(-angle);
+                    var pos = RmgenVector2D.Add(teamPosition, offset);
+                    pos.Round();
+                    playerPosition.Add(pos);
+                }
+            }
+
+            return (playerIDs, playerPosition);
         }
 
         /// <summary>原版 playerPlacementCircle——startAngle 未给定时消耗 1 次 randomAngle(),
@@ -1065,6 +1196,68 @@ namespace ZeroAD.Sim.Rmgen.Common
                         map.SetHeight(vecPoint, height);
                     }
                 }
+        }
+
+        /// <summary>createPassage（逐字移植 gaia_terrain.js）——在 start/end 之间开一条
+        /// 两端宽度可变的平滑可通行通道，边缘按 smoothWidth 做高度插值。
+        /// startHeight/endHeight 为 null 时取端点当前高度。</summary>
+        public static Area? CreatePassage(RmgenRng rng, RandomMap map,
+            RmgenVector2D start, RmgenVector2D end, double startWidth, double endWidth,
+            double smoothWidth, object? terrain = null, object? edgeTerrain = null,
+            TileClass? tileClass = null, IConstraint? constraints = null,
+            double? startHeight = null, double? endHeight = null)
+        {
+            int Bound(double x) => (int)Math.Max(0, Math.Min(SafeMath.Round(x), map.GetSize() - 1));
+
+            double h0 = startHeight ?? map.GetHeight(new RmgenVector2D(Bound(start.X), Bound(start.Y)));
+            double h1 = endHeight ?? map.GetHeight(new RmgenVector2D(Bound(end.X), Bound(end.Y)));
+
+            var passageVec = RmgenVector2D.Sub(end, start);
+            var widthDirection = passageVec.Perpendicular();
+            widthDirection.Normalize();
+            double lengthStep = 1 / (2 * passageVec.Length());
+            var points = new List<RmgenVector2D>();
+
+            var constraint = constraints != null ? new StaticConstraint(map, constraints) : null;
+            var terrainObj = terrain != null ? TerrainFactory.CreateTerrain(terrain) : null;
+            var edgeTerrainObj = edgeTerrain != null ? TerrainFactory.CreateTerrain(edgeTerrain) : null;
+
+            for (double lengthFraction = 0; lengthFraction <= 1; lengthFraction += lengthStep)
+            {
+                var locationLength = RmgenVector2D.Add(start,
+                    RmgenVector2D.Mult(passageVec, lengthFraction));
+                double halfPassageWidth = (startWidth + (endWidth - startWidth) * lengthFraction) / 2;
+                double passageHeight = h0 + (h1 - h0) * lengthFraction;
+
+                for (double stepWidth = -halfPassageWidth; stepWidth <= halfPassageWidth; stepWidth += 0.5)
+                {
+                    var location = RmgenVector2D.Add(locationLength,
+                        RmgenVector2D.Mult(widthDirection, stepWidth));
+                    location.Round();
+
+                    if (!map.InMapBounds(location) ||
+                        constraint != null && !constraint.Allows(location))
+                        continue;
+
+                    points.Add(location);
+
+                    double smoothDistance = smoothWidth + Math.Abs(stepWidth) - halfPassageWidth;
+
+                    map.SetHeight(location, smoothDistance > 0
+                        ? (map.GetHeight(location) * smoothDistance + passageHeight / smoothDistance)
+                            / (smoothDistance + 1 / smoothDistance)
+                        : passageHeight);
+
+                    tileClass?.Add(location);
+
+                    if (edgeTerrainObj != null && smoothDistance > 0)
+                        edgeTerrainObj.Place(map, rng, location);
+                    else
+                        terrainObj?.Place(map, rng, location);
+                }
+            }
+
+            return points.Count == 0 ? null : new Area(map, points);
         }
 
         // ── player.js 组队放置 ──

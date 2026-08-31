@@ -71,7 +71,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             // 布置模式由 gamesetup 下发;randomAngle 实参抽数位置与上游一致
             var (_, playerPosition) = RmgenCommon.PlayerPlacementByPattern(
                 rng, map, settings, null, RmgenLibrary.FractionToTiles(0.35, MapSize),
-                rng.RandomAngle());
+                RmgenLibrary.FractionToTiles(0.1, MapSize), rng.RandomAngle());
 
             RmgenCommon.PlacePlayerBases(rng, map, settings, biome.MainTerrain0, ClPlayer, null,
                 playerPosition, biome.MainTerrain0, tCitytiles,

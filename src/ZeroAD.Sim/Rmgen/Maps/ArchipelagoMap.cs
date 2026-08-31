@@ -35,7 +35,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             // 布置模式由 gamesetup 下发;randomAngle 实参抽数位置与上游一致
             var (_, playerPosition) = RmgenCommon.PlayerPlacementByPattern(
                 rng, map, settings, null, RmgenLibrary.FractionToTiles(0.35, MapSize),
-                rng.RandomAngle());
+                RmgenLibrary.FractionToTiles(0.1, MapSize), rng.RandomAngle());
 
             // ── 玩家岛屿（queue 固定首圆半径 = floor(islandRadius)）──
             for (int i = 0; i < NumPlayers; ++i)

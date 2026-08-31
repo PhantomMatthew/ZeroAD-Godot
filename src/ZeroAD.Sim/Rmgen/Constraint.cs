@@ -43,6 +43,18 @@ namespace ZeroAD.Sim.Rmgen
         public bool Allows(RmgenVector2D pos) => _areas.Any(a => a.Contains(pos));
     }
 
+    /// <summary>与给定 Area 相邻但不在其中（逐字移植 AdjacentToAreaConstraint）。</summary>
+    public sealed class AdjacentToAreaConstraint : IConstraint
+    {
+        private readonly List<Area> _areas;
+        private readonly RandomMap _map;
+        public AdjacentToAreaConstraint(RandomMap map, IEnumerable<Area> areas)
+        { _map = map; _areas = areas.ToList(); }
+
+        public bool Allows(RmgenVector2D pos) => _areas.Any(a =>
+            !a.Contains(pos) && _map.GetAdjacentPoints(pos).Any(a.Contains));
+    }
+
     /// <summary>避开给定 Area。</summary>
     public sealed class AvoidAreasConstraint : IConstraint
     {

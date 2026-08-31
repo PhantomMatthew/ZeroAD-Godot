@@ -47,12 +47,14 @@ namespace ZeroAD.Sim.Rmgen
         public const string ActorPrefix = "actor|";
 
         public readonly string TemplateName;
-        public readonly int MinCount, MaxCount;
+        /// <summary>上游 SimpleObject 的 min/maxCount 是裸数值，rmgen2 大量传小数
+        /// （randIntInclusive 自身接受小数并 floor），故此处保 double 不提前取整。</summary>
+        public readonly double MinCount, MaxCount;
         public readonly double MinDistance, MaxDistance, MinAngle, MaxAngle;
         public double AvoidDistanceSquared { get; }
         private readonly RmgenRng _rng;
 
-        public ScatterObject(RmgenRng rng, string templateName, int minCount, int maxCount,
+        public ScatterObject(RmgenRng rng, string templateName, double minCount, double maxCount,
             double minDistance, double maxDistance,
             double minAngle = 0, double maxAngle = 2 * SafeMath.PI, double avoidDistance = 1)
         {
@@ -120,10 +122,10 @@ namespace ZeroAD.Sim.Rmgen
     {
         private readonly RmgenRng _rng;
         private readonly IReadOnlyList<string> _templateNames;
-        private readonly int _minCount, _maxCount;
+        private readonly double _minCount, _maxCount;
         private readonly double _minDistance, _maxDistance, _minAngle, _maxAngle, _avoidDistance;
 
-        public RandomObject(RmgenRng rng, IReadOnlyList<string> templateNames, int minCount, int maxCount,
+        public RandomObject(RmgenRng rng, IReadOnlyList<string> templateNames, double minCount, double maxCount,
             double minDistance, double maxDistance,
             double minAngle = 0, double maxAngle = 2 * SafeMath.PI, double avoidDistance = 1)
         {
