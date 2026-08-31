@@ -202,8 +202,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                             null);
 
                         // createBase(playerID, position, mapSize >= 384)
-                        zoneCtx.CreateBases(new[] { playerIDs[i] }, new[] { playerPosition[i] },
-                            MapSize >= 384);
+                        zoneCtx.CreateBase(playerIDs[i], playerPosition[i], MapSize >= 384);
                     }
                 }
             }

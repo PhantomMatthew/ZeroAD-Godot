@@ -54,7 +54,7 @@ namespace ZeroAD.Sim.Rmgen.Common
         /// 避免 bluff 把基地整个圈死。</summary>
         public void CreateBluffsPassages(IReadOnlyList<RmgenVector2D> playerPosition)
         {
-            var bluffsPassage = Cl("bluffsPassage");
+            var bluffsPassage = ClOrNull("bluffsPassage");
             double baseRadius = RmgenCommon.DefaultPlayerBaseRadius(MapSize);
 
             foreach (var position in playerPosition)

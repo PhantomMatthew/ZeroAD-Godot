@@ -11,9 +11,20 @@ public static class WaterRenderer
         float Height, Color Color, Color Tint,
         float Waviness, float Murkiness, float WindAngle, string Type);
 
-    public static WaterSpec? LoadWaterFromXml(string xmlPath)
+    /// <summary>rmgen 生成图的水体参数(MapExport.Environment.Water)。
+    /// 上游 Height 为 undefined 时按 SEA_LEVEL 兜底(与 ExportMap 的默认一致)。</summary>
+    public static WaterSpec FromRmgen(ZeroAD.Sim.Rmgen.RmgenEnvironment env)
     {
-        if (!File.Exists(xmlPath)) return null;
+        var w = env.Water;
+        return new WaterSpec(
+            (float)(w.Height ?? ZeroAD.Sim.Rmgen.RmgenConstants.SEA_LEVEL),
+            new Color((float)w.Color.R, (float)w.Color.G, (float)w.Color.B),
+            new Color((float)w.Tint.R, (float)w.Tint.G, (float)w.Tint.B),
+            (float)w.Waviness, (float)w.Murkiness, (float)w.WindAngle, w.Type);
+    }
+
+    public static WaterSpec? LoadWaterFromXml(string xmlPath)
+    {        if (!File.Exists(xmlPath)) return null;
 
         try
         {

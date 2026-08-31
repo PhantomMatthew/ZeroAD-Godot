@@ -23,6 +23,24 @@ public sealed record MapEnvironment(
         new Color(0.501961f, 0.501961f, 0.501961f),
         new Color(0.8f, 0.8f, 0.894118f), 0.0f, 1.0f);
 
+    /// <summary>rmgen 生成图的环境(MapExport.Environment ← rmgen/environment.js 的 g_Environment)。
+    /// FogFactor 上游已在 setFogFactor 里除过 100;FogThickness 对应本类的 FogMax。</summary>
+    public static MapEnvironment FromRmgen(ZeroAD.Sim.Rmgen.RmgenEnvironment env)
+    {
+        static Color C(ZeroAD.Sim.Rmgen.RmgenColor c)
+            => new((float)c.R, (float)c.G, (float)c.B);
+
+        // 上游 SkySet 默认值就是 "default",但本仓约定空串 = 走程序化天空兜底。
+        string skySet = env.SkySet == "default" ? "" : env.SkySet;
+
+        return new MapEnvironment(
+            C(env.SunColor), (float)env.SunElevation, (float)env.SunRotation,
+            C(env.AmbientColor), C(env.Fog.FogColor),
+            (float)env.Fog.FogFactor, (float)env.Fog.FogThickness,
+            (float)env.Postproc.Brightness, (float)env.Postproc.Contrast,
+            (float)env.Postproc.Saturation, skySet);
+    }
+
     public static MapEnvironment? LoadFromXml(string xmlPath)
     {
         if (!System.IO.File.Exists(xmlPath)) return null;

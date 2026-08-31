@@ -184,10 +184,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     count: (int)SafeMath.Ceil(RmgenLibrary.ScaleByMapSize(1, 4, MapSize) *
                         NumPlayers));
 
-            var (forestTreesInt, stragglerTreesInt) = RmgenCommon.GetTreeCounts(
-                biome.TreesMin, biome.TreesMax, biome.ForestProbability, MapSize);
-            double forestTrees = forestTreesInt;
-            double stragglerTrees = stragglerTreesInt;
+            double treeCount = RmgenLibrary.ScaleByMapSize(biome.TreesMin, biome.TreesMax, MapSize);
+            double forestTrees = biome.ForestProbability * treeCount;
+            double stragglerTrees = (1 - biome.ForestProbability) * treeCount;
             var pForest1 = new[]
             {
                 biome.ForestFloor2 + "|" + biome.Tree1,
@@ -586,10 +585,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 RmgenLibrary.AvoidClasses(clLand, 1, ClHill, 1),
                 RmgenLibrary.ScaleByMapSize(20, 150, MapSize));
 
-            var (forestTreesInt, stragglerTreesInt) = RmgenCommon.GetTreeCounts(
-                biome.TreesMin, biome.TreesMax, biome.ForestProbability, MapSize);
-            double forestTrees = forestTreesInt;
-            double stragglerTrees = stragglerTreesInt;
+            double treeCount = RmgenLibrary.ScaleByMapSize(biome.TreesMin, biome.TreesMax, MapSize);
+            double forestTrees = biome.ForestProbability * treeCount;
+            double stragglerTrees = (1 - biome.ForestProbability) * treeCount;
             var pForest1 = new[]
             {
                 biome.ForestFloor2 + "|" + biome.Tree1,
@@ -984,10 +982,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 }),
                 RmgenLibrary.ScaleByMapSize(100, 200, MapSize));
 
-            var (forestTreesInt, stragglerTreesInt) = RmgenCommon.GetTreeCounts(
-                biome.TreesMin, biome.TreesMax, biome.ForestProbability, MapSize);
-            double forestTrees = forestTreesInt;
-            double stragglerTrees = stragglerTreesInt;
+            double treeCount = RmgenLibrary.ScaleByMapSize(biome.TreesMin, biome.TreesMax, MapSize);
+            double forestTrees = biome.ForestProbability * treeCount;
+            double stragglerTrees = (1 - biome.ForestProbability) * treeCount;
             var pForest1 = new[]
             {
                 biome.ForestFloor2 + "|" + biome.Tree1,

@@ -123,12 +123,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
 
     // ── 河谷/峡谷 ──
 
-    public sealed class CanyonMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "desert_grass_a";
-    }
-
     public sealed class GuadalquivirRiverMap : StandardMap
     {
         protected override double HeightLand => 3;
@@ -136,12 +130,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
     }
 
     public sealed class LatiumMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
-    public sealed class RiversMap : StandardMap
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "medit_grass_field";
@@ -155,19 +143,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
 
     // ── 海洋/岛屿 ──
 
-    public sealed class CycladicArchipelagoMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
     public sealed class CorsicaMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
-    public sealed class DodecaneseMap : StandardMap
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "medit_grass_field";
@@ -179,19 +155,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "medit_grass_field";
     }
 
-    public sealed class IslandsMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
 
-
-
-    public sealed class CorinthianIsthmusMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
 
     public sealed class PhoenicianLevantMap : StandardMap
     {
@@ -249,12 +213,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "medit_grass_field";
     }
 
-    public sealed class GearMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
     public sealed class ElephantineMap : StandardMap
     {
         protected override double HeightLand => 3;
@@ -265,12 +223,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "temperate_grass_01";
-    }
-
-    public sealed class CoastRangeMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "alpine_grass";
     }
 
     public sealed class DanubiusMap : StandardMap

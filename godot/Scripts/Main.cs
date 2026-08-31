@@ -1499,10 +1499,20 @@ public sealed partial class Main : Node3D
 		_sim.TerritoryWorld.Attach(fogOverlay, pmp.MapSizeMeters);
 		TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
 
+		// 地图环境(rmgen environment.js 的 setSkySet/setSun*/setFog*/setPP* 结果):
+		// 天光/雾/后处理 + 水面。此前随机图恒用 MapEnvironment.Default,各图专属氛围全丢。
+		MapEnvironment.FromRmgen(export.Environment).Apply(_light, _env);
+		MapEnvironment.ApplyViewport(GetViewport());
+
+		var rmgenWater = WaterRenderer.FromRmgen(export.Environment);
+		WaterRenderer.TerrainHeight = TerrainHeightService.Sample;
+		_worldRoot.AddChild(WaterRenderer.CreateWaterPlane(rmgenWater, pmp.MapSizeMeters));
+		_sim.Sim.Water.SetWaterLevel(ZeroAD.Sim.Maths.Fixed.FromFloat(rmgenWater.Height));
+
 		// 可通行性(rmgen 陆水:超过水面高度=Land,否则 Water)+ 顶点高度网格。
-		// rmgen 水面在米制 SEA_LEVEL=20m(rmgen 内部水面高度 0 + SEA_LEVEL 偏移;
-		// 原版 alpine_lakes.js 水 tile 内部 -5 → 米制 15 < 20)。
-		FillPassabilityAllLand(pmp, (float)ZeroAD.Sim.Rmgen.RmgenConstants.SEA_LEVEL);
+		// 水位取地图环境的 setWaterHeight(未设定则 SEA_LEVEL=20m ——
+		// rmgen 内部水面高度 0 + SEA_LEVEL 偏移)。
+		FillPassabilityAllLand(pmp, rmgenWater.Height);
 
 		// 放置实体（从 MapExport.Entities）。rmgen 实体坐标单位是 TILES——上游
 		// MapReader::ParseEntities ×TERRAIN_TILE_SIZE 转米;不乘 4 会把全部实体挤进

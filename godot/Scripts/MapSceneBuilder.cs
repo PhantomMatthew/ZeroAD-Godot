@@ -80,11 +80,12 @@ public static class MapSceneBuilder
                 OrientationY = (float)ent.Orientation,
             });
         }
-        return BuildCore(pmp, xmlPath: null, entities, mapName, setOwners);
+        return BuildCore(pmp, xmlPath: null, entities, mapName, setOwners, export.Environment);
     }
 
     private static Result BuildCore(PmpMap pmp, string? xmlPath, List<ScenarioEntityDef> entities,
-        string mapName, bool setOwners)
+        string mapName, bool setOwners,
+        ZeroAD.Sim.Rmgen.RmgenEnvironment? rmgenEnv = null)
     {
         // 实体 Y 贴地的数据源(ModelLibrary 内部采样;未设置时退化 y=0)。
         TerrainHeightService.Set(pmp.GetHeightWorld, pmp.MapSizeMeters);
@@ -127,21 +128,23 @@ public static class MapSceneBuilder
         };
         sky.Environment = env;
         root.AddChild(sky);
-        var mapEnv = xmlPath != null ? MapEnvironment.LoadFromXml(xmlPath) : null;
+        // 场景图走 XML 的 <Environment>;rmgen 图走 MapExport.Environment(environment.js)。
+        var mapEnv = rmgenEnv != null
+            ? MapEnvironment.FromRmgen(rmgenEnv)
+            : xmlPath != null ? MapEnvironment.LoadFromXml(xmlPath) : null;
         (mapEnv ?? MapEnvironment.Default).Apply(light, env);
 
         // 水面(运行时挂 WorldMirror 下)。
         bool hasWater = false;
-        if (xmlPath != null)
+        var water = rmgenEnv != null
+            ? WaterRenderer.FromRmgen(rmgenEnv)
+            : xmlPath != null ? WaterRenderer.LoadWaterFromXml(xmlPath) : null;
+        if (water != null)
         {
-            var water = WaterRenderer.LoadWaterFromXml(xmlPath);
-            if (water != null)
-            {
-                var waterMesh = WaterRenderer.CreateWaterPlane(water, pmp.MapSizeMeters);
-                waterMesh.Name = "Water";
-                mirror.AddChild(waterMesh);
-                hasWater = true;
-            }
+            var waterMesh = WaterRenderer.CreateWaterPlane(water, pmp.MapSizeMeters);
+            waterMesh.Name = "Water";
+            mirror.AddChild(waterMesh);
+            hasWater = true;
         }
 
         // 实体(真实 GLB 模型 + 队色;缺模型回退占位体)。跳过 special/ 系统实体。

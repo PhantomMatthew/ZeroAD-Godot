@@ -105,6 +105,11 @@ namespace ZeroAD.Sim.Rmgen.Common
             ? tc
             : throw new ArgumentException($"g_TileClasses.{name} not initialized", nameof(name));
 
+        /// <summary>未注册时返回 null——上游读到 undefined 属性后当假值静默跳过
+        /// （stronghold.js 调 createBluffsPassages 却没 initTileClasses(["bluffsPassage"])）。</summary>
+        public TileClass? ClOrNull(string name)
+            => _tileClasses.TryGetValue(name, out var tc) ? tc : null;
+
         public TileClass ClAnimals => Cl("animals");
         public TileClass ClBaseResource => Cl("baseResource");
         public TileClass ClBerries => Cl("berries");
@@ -215,7 +220,20 @@ namespace ZeroAD.Sim.Rmgen.Common
                 playerPosition,
                 cityPatchOuterTerrain: Biome.RoadWild, cityPatchInnerTerrain: Biome.Road,
                 playerIDs: playerIDs,
-                options: new RmgenCommon.PlayerBaseOptions
+                options: BaseOptions());
+        }
+
+        /// <summary>createBase(playerID, playerPosition, walls)——只建一个玩家的基地
+        /// （mediterranean 逐玩家换 biome 时用）。</summary>
+        public void CreateBase(int playerID, RmgenVector2D playerPosition, bool walls)
+        {
+            _ = walls;
+            RmgenCommon.PlaceSinglePlayerBase(Map, Rng, Settings, playerID, playerPosition,
+                ClPlayer, Biome.RoadWild, Biome.Road, BaseOptions());
+        }
+
+        private RmgenCommon.PlayerBaseOptions BaseOptions()
+            => new()
                 {
                     BaseResourceClass = ClBaseResource,
                     ExtraBaseResourceConstraint =
@@ -231,8 +249,7 @@ namespace ZeroAD.Sim.Rmgen.Common
                     TreesTemplate = Biome.Tree1,
                     TreesCount = BiomeName == "generic/savanna" ? 5 : 15,
                     DecorativesTemplate = Biome.GrassShort,
-                });
-        }
+                };
 
         // ── 常用短名（gaia.js 大量直用）──
         internal double ScaleByMapSize(double min, double max)

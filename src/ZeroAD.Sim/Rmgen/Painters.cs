@@ -63,8 +63,12 @@ namespace ZeroAD.Sim.Rmgen
             _terrains = new List<ITerrain>();
             foreach (var t in terrains)
                 _terrains.Add(Resolve(t));
-            if (widths.Length != _terrains.Count - 1)
-                throw new System.ArgumentException("LayeredPainter: widths must have one item less than terrains");
+            if (widths.Length > _terrains.Count - 1)
+                throw new System.ArgumentException(
+                    "LayeredPainter: widths must not exceed terrains-1");
+            // 上游不做长度校验：widths 比 terrains-1 少时，索引 i 封顶在 widths.Length，
+            // 多出来的末尾 terrain 永不使用（rmgen2 addLayeredPatches 就是 4 层 + [1,1]，
+            // tier4Terrain 实际是死层）。此处照搬该语义，只拒绝会越界的“widths 过多”。
             _widths = widths;
             _rng = rng;
         }

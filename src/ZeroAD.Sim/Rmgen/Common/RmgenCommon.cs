@@ -500,6 +500,18 @@ namespace ZeroAD.Sim.Rmgen.Common
             }
         }
 
+        /// <summary>单个玩家的基地（上游 rmgen2 setup.js 的 createBase(playerID, position, walls)）。
+        /// PlacePlayerBases 是"按 settings 的玩家数遍历"版，逐玩家换参数时不能用。</summary>
+        public static void PlaceSinglePlayerBase(RandomMap map, RmgenRng rng, MapSettings settings,
+            int playerId, RmgenVector2D pos, TileClass playerTileClass,
+            object? cityPatchOuterTerrain, object? cityPatchInnerTerrain,
+            PlayerBaseOptions? options,
+            double cityPatchRadius = 0, double cityPatchCoherence = 0.6,
+            double cityPatchSmoothness = 0.3)
+            => PlacePlayerBase(map, rng, settings, GetCivCode(settings, playerId), playerId, pos,
+                playerTileClass, cityPatchOuterTerrain, cityPatchInnerTerrain,
+                cityPatchRadius, cityPatchCoherence, cityPatchSmoothness, options);
+
         private static void PlacePlayerBase(RandomMap map, RmgenRng rng, MapSettings settings,
             string civ, int playerId, RmgenVector2D pos, TileClass playerTileClass,
             object? cityPatchOuterTerrain, object? cityPatchInnerTerrain,
