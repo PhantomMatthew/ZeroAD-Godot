@@ -193,6 +193,12 @@ public sealed class GameState
         => Col("huntable", Filters.IsHuntable());
     public EntityCollection GetFishableSupplies()
         => Col("fishable", Filters.IsFishable());
+    /// <summary>可拾取宝藏(原版 Filters.IsTreasure;worker.startGathering 的 gatherTreasure 首选)。</summary>
+    public EntityCollection GetTreasureSupplies()
+        => Col("treasures", Filters.IsTreasure());
+
+    /// <summary>游戏已进行秒数(原版 ai.elapsedTime;由锁步回合 × 0.1s 推导,Net 缺失时为 0)。</summary>
+    public double ElapsedTime => (Net?.CurrentTurn ?? 0) * 0.1;
 
     public EntityCollection GetOwnDropsites(string resourceType)
         => Col("ownDropsites:" + resourceType, e => e.Owner == PlayerId && Filters.IsDropsite(resourceType)(e));

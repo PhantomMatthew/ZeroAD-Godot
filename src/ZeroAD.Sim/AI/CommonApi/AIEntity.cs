@@ -83,6 +83,15 @@ public sealed class AIEntity
     public bool IsBuilder => Get<BuilderComponent>() != null;
     /// <summary>可采集(原版 isGatherer:ResourceGatherer 组件存在)。</summary>
     public bool IsGatherer => Get<ResourceGatherer>() != null;
+    /// <summary>可采集某类资源(原版 canGather(type):模板采集速率表含该 generic 前缀
+    /// 的 subtype,如 "wood" 匹配 "wood.tree")。</summary>
+    public bool CanGather(string genericType)
+    {
+        if (!IsGatherer) return false;
+        foreach (var key in Template.ResourceGatherRates().Keys)
+            if (key.StartsWith(genericType + ".", System.StringComparison.Ordinal)) return true;
+        return false;
+    }
     /// <summary>可治疗(原版 isHealable:HealComponent 存在)。</summary>
     public bool IsHealer => Get<HealComponent>() != null;
     /// <summary>可修理(原版 isRepairable:RepairableComponent 存在且未禁用)。</summary>

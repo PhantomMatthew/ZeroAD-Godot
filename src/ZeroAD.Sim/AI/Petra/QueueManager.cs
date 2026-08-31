@@ -215,6 +215,71 @@ public sealed class QueueManager
         StartNextItems(gameState);
     }
 
+    /// <summary>期望采集速率（原版 queueManager.wantedGatherRates 逐字移植）:
+    /// 各队列前两项的成本按"预计就绪时间窗"折算成资源需求速率——
+    /// 首项 30s、次项 60s、isGo=false 项 300s;玩家现有资源先冲抵 short→medium→long。
+    /// 首回合用 config.queues.firstTurn 默认值。reassignIdleWorkers 据此挑最缺资源。</summary>
+    public Dictionary<string, double> WantedGatherRates(GameState gameState)
+    {
+        string[] resCodes = { "wood", "food", "stone", "metal" };
+        string Cfg(string window, string res)
+            => _config.Queues.TryGetValue(window, out var w)
+                ? (w.TryGetValue(res, out int v) ? v.ToString() : null)
+                    ?? (w.TryGetValue("default", out int d) ? d.ToString() : "0")
+                : "0";
+        double CfgNum(string window, string res) =>
+            double.TryParse(Cfg(window, res), out double v) ? v : 0;
+
+        // 首回合:队列为空,用 firstTurn 默认。
+        if ((gameState.Net?.CurrentTurn ?? 0) == 0)
+            return resCodes.ToDictionary(r => r, r => CfgNum("firstTurn", r));
+
+        // 现有资源(不扣账户——原版注释:not removing accounts)。
+        var current = gameState.GetResources();
+        var totals = new Dictionary<string, Dictionary<string, double>>
+        {
+            ["short"] = resCodes.ToDictionary(r => r, r => CfgNum("short", r)),
+            ["medium"] = resCodes.ToDictionary(r => r, r => CfgNum("medium", r)),
+            ["long"] = resCodes.ToDictionary(r => r, r => CfgNum("long", r)),
+        };
+        foreach (var q in _queueArrays)
+        {
+            var queue = q.Value;
+            if (queue.Paused) continue;
+            for (int j = 0; j < queue.Length && j < 2; j++)
+            {
+                var plan = queue.Plans[j];
+                var cost = plan.GetCost();
+                bool go = plan.IsGo(gameState);
+                var total = !go ? totals["long"] : j == 0 ? totals["short"] : totals["medium"];
+                total["wood"] += cost.Wood;
+                total["food"] += cost.Food;
+                total["stone"] += cost.Stone;
+                total["metal"] += cost.Metal;
+                if (!go) break;   // 原版:isGo=false 后续都算 long 但不累加(只计首个)
+            }
+        }
+        var rates = new Dictionary<string, double>();
+        foreach (var res in resCodes)
+        {
+            int cur = ResValue(current, res);
+            if (cur > 0)
+            {
+                double diff = Math.Min(cur, totals["short"][res]);
+                totals["short"][res] -= diff; cur -= (int)diff;
+                if (cur > 0)
+                {
+                    diff = Math.Min(cur, totals["medium"][res]);
+                    totals["medium"][res] -= diff; cur -= (int)diff;
+                    if (cur > 0)
+                        totals["long"][res] -= Math.Min(cur, totals["long"][res]);
+                }
+            }
+            rates[res] = totals["short"][res] / 30 + totals["medium"][res] / 60 + totals["long"][res] / 300;
+        }
+        return rates;
+    }
+
     /// <summary>工人少时暂停非关键队列（逐字移植 checkPausedQueues）。
     /// TODO: 精确版需 HQ.hasPotentialBase + needFarm/needCorral/needFish（Phase 2 后续补）。
     /// 当前简化版：仅按 worker 数量暂停。</summary>

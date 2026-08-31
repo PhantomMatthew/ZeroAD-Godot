@@ -139,6 +139,27 @@ public sealed class AITemplate
     public int GatherRate => GetInt("ResourceGatherer/BaseSpeed");
     public string? ResourceDropsiteTypes => Get("ResourceDropsite/Types");
 
+    /// <summary>采集速率表(原版 ent.resourceGatherRates()):ResourceGatherer/Rates 子键
+    /// ("food.meat"/"wood.tree"…)× BaseSpeed;*.ruins 原版明确忽略。worker.startGathering
+    /// 用它过滤"这工人会不会采这 subtype"(不会采的 supply 直接跳过)。</summary>
+    public Dictionary<string, float> ResourceGatherRates()
+    {
+        var rates = new Dictionary<string, float>(StringComparer.Ordinal);
+        var gatherer = _node.GetChild("ResourceGatherer");
+        if (!gatherer.IsOk) return rates;
+        float baseSpeed = gatherer.GetChild("BaseSpeed").IsOk
+            ? gatherer.GetChild("BaseSpeed").ToFixed().ToFloat() : 1f;
+        var r = gatherer.GetChild("Rates");
+        if (!r.IsOk) return rates;
+        foreach (var (key, node) in r.Children)
+        {
+            if (key.StartsWith('@')) continue;
+            if (key.EndsWith(".ruins", StringComparison.Ordinal)) continue;
+            rates[key] = node.ToFixed().ToFloat() * baseSpeed;
+        }
+        return rates;
+    }
+
     // ── Promotion ──
 
     public string? PromotionEntity => Get("Promotion/Entity");

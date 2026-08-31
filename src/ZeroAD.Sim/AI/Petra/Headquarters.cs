@@ -1,5 +1,8 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim.AI.CommonApi;
+using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.AI.Petra;
 
@@ -76,6 +79,7 @@ public sealed class Headquarters
         Config = config;
         Queues = new QueueManager(config);
         BasesManager = new BasesManager(config);
+        BasesManager.HqResolver = _ => this;   // worker 分配的需求序回查(原版 basesManager.HQ)
         ResearchManager = new ResearchManager(config);
         AttackManager = new AttackManager(config);
         TradeManager = new TradeManager(config);
@@ -361,16 +365,109 @@ public sealed class Headquarters
         public double Strength;
         public HashSet<uint> Ents = new();
     }
+
+    // ── 采集速率编排(原版 headquarters.js:616-668;worker 分配的资源需求驱动)──
+
+    /// <summary>期望采集速率(原版 GetWantedGatherRates,带 turnCache)。</summary>
+    public Dictionary<string, double> GetWantedGatherRates(GameState gameState)
+    {
+        if (_turnCache.TryGetValue("wantedRates", out var cached))
+            return (Dictionary<string, double>)cached;
+        var rates = Queues.WantedGatherRates(gameState);
+        _turnCache["wantedRates"] = rates;
+        return rates;
+    }
+
+    /// <summary>当前采集速率(原版 GetCurrentGatherRates → 各 base addGatherRates 之和):
+    /// 按 worker 的 gather-type 元数据,累加其模板该 generic 类的最高 subtype 速率。</summary>
+    public Dictionary<string, double> GetCurrentGatherRates(GameState gameState)
+    {
+        var rates = new Dictionary<string, double>
+        { ["wood"] = 0, ["food"] = 0, ["stone"] = 0, ["metal"] = 0 };
+        foreach (var ent in gameState.GetOwnUnits().Values())
+        {
+            var role = gameState.Metadata.GetObject(ent.Id, "role")?.ToString();
+            if (role != WorkerRoles.RoleWorker) continue;
+            var subrole = gameState.Metadata.GetObject(ent.Id, "subrole")?.ToString();
+            if (subrole != WorkerRoles.SubroleGatherer && subrole != WorkerRoles.SubroleHunter
+                && subrole != WorkerRoles.SubroleFisher) continue;
+            var type = gameState.Metadata.GetObject(ent.Id, "gather-type")?.ToString();
+            if (type == null || !rates.ContainsKey(type)) continue;
+            // 该 generic 类的最高 subtype 速率(原版 gatherRates[supplyType] 的近似——
+            // 实际采集的 subtype 在 supply 元数据里,取 max 高估不多)。
+            double best = 0;
+            foreach (var kv in ent.Template.ResourceGatherRates())
+                if (kv.Key.StartsWith(type + ".", StringComparison.Ordinal) && kv.Value > best)
+                    best = kv.Value;
+            rates[type] += best;
+        }
+        return rates;
+    }
+
+    /// <summary>最缺资源排序(原版 pickMostNeededResources 逐字移植):
+    /// wanted vs current 采集速率比排序;wanted=0 且 current=0 的沉底。</summary>
+    public List<(string Type, double Wanted, double Current)> PickMostNeededResources(
+        GameState gameState, IReadOnlyList<string>? allowedResources = null)
+    {
+        var wanted = GetWantedGatherRates(gameState);
+        var current = GetCurrentGatherRates(gameState);
+        var allowed = allowedResources is { Count: > 0 }
+            ? allowedResources : new List<string> { "wood", "food", "stone", "metal" };
+
+        var needed = allowed
+            .Select(r => (Type: r, Wanted: wanted.GetValueOrDefault(r), Current: current.GetValueOrDefault(r)))
+            .ToList();
+        needed.Sort((a, b) =>
+        {
+            if (a.Current < a.Wanted && b.Current < b.Wanted)
+            {
+                if (a.Current > 0 && b.Current > 0)
+                    return (b.Wanted / b.Current).CompareTo(a.Wanted / a.Current);
+                if (a.Current > 0) return 1;
+                if (b.Current > 0) return -1;
+                return b.Wanted.CompareTo(a.Wanted);
+            }
+            if (a.Current < a.Wanted || a.Wanted > 0 && b.Wanted == 0) return -1;
+            if (b.Current < b.Wanted || b.Wanted > 0 && a.Wanted == 0) return 1;
+            return (a.Current - a.Wanted - b.Current + b.Wanted).CompareTo(0.0);
+        });
+        return needed;
+    }
+
+    /// <summary>可建模板(原版 canBuild 简化:模板存在且可建造;科技门由 CanStart 兜底)。</summary>
+    public bool CanBuild(GameState gameState, string template)
+    {
+        string resolved = gameState.ApplyCiv(template);
+        return gameState.Templates.TemplateExists(resolved)
+            && gameState.FindBuilder(resolved).HasEntities();
+    }
+
+    /// <summary>危险位置判定(原版 isDangerousLocation 简化版:半径内有敌防御火力建筑)。</summary>
+    public bool IsDangerousLocation(GameState gameState, FixedVector2D pos, float radius)
+    {
+        foreach (var e in gameState.GetEnemyStructures().Values())
+        {
+            if (!e.HasDefensiveFire || e.Position2D == default) continue;
+            float dx = e.Position2D.X.ToFloat() - pos.X.ToFloat();
+            float dz = e.Position2D.Y.ToFloat() - pos.Y.ToFloat();
+            if (dx * dx + dz * dz < radius * radius) return true;
+        }
+        return false;
+    }
 }
 
 /// <summary>基地管理器（原版 petra/basesManager.js，809 行）。
 /// 管理多个基地的生命周期：创建/销毁/资源分配。
 /// 当前骨架——完整逻辑（base anchor/resource balancing）逐步填充。</summary>
-public sealed class BasesManager
+    public sealed class BasesManager
 {
     public readonly PetraConfig Config;
     public readonly List<BaseManager> Bases = new();
     private int _nextBaseId = 1;
+
+    /// <summary>基地 → HQ 反链(原版 base.basesManager.HQ;worker 分配要查
+    /// pickMostNeededResources/lastFailedGather)。HQ 构造时注入。</summary>
+    public Func<GameState, Headquarters?>? HqResolver;
 
     public BasesManager(PetraConfig config) => Config = config;
 
