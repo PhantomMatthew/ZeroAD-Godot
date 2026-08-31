@@ -1,11 +1,9 @@
-using System;
 using Godot;
-using ZeroAD.Sim.Components;
 
 namespace ZeroAD.Godot;
 
 // Match Settings 面板(对齐 session/MenuButtons.js 的 match-settings → getGameDescription 只读摘要)。
-// v1 显示可从 sim 直接读取的内容:玩家花名册(玩家色/文明/队/状态/人口)+ 人口上限。
+// 玩家花名册(玩家色/文明/队/状态/人口)经 GuiInterface.GetPlayerRoster 桥读(收敛后无内核直查)。
 // 地图名/胜利条件/种子属 gamesetup 会话外数据(当前建图硬编码 seed=42、civ=athen 为已知缺口),
 // 本轮显示运行时实际设置并标注为待接线。面板只读,Close 关闭。不暂停 sim。
 public sealed partial class MatchSettingsPanel : ModalPanelBase
@@ -44,22 +42,20 @@ public sealed partial class MatchSettingsPanel : ModalPanelBase
         }
 
         int localId = (int)_sim.LocalPlayerId;
-        foreach (int pid in _sim.Sim.Players.GetNonGaiaPlayerIds())
+        foreach (var row in _sim.Gui.GetPlayerRoster())
         {
-            var p = _sim.Sim.GetPlayerEntity(pid);
-            if (p == null) continue;
-
-            var nameLbl = MakeLabel(pid == localId ? $"Player {pid} (You)" : $"Player {pid}", 14);
+            var nameLbl = MakeLabel(row.PlayerId == localId
+                ? $"Player {row.PlayerId} (You)" : $"Player {row.PlayerId}", 14);
             nameLbl.HorizontalAlignment = HorizontalAlignment.Left;
-            nameLbl.AddThemeColorOverride("font_color", SimBridge.GetPlayerColor(pid));
+            nameLbl.AddThemeColorOverride("font_color", SimBridge.GetPlayerColor(row.PlayerId));
 
             _grid.AddChild(nameLbl);
-            _grid.AddChild(Left(p.Civ));
-            _grid.AddChild(Left(p.Team >= 0 ? (p.Team + 1).ToString() : "None"));
-            var stateLbl = Left(StateName(p.State));
-            stateLbl.AddThemeColorOverride("font_color", StateColor(p.State));
+            _grid.AddChild(Left(row.Civ));
+            _grid.AddChild(Left(row.Team >= 0 ? (row.Team + 1).ToString() : "None"));
+            var stateLbl = Left(StateName(row));
+            stateLbl.AddThemeColorOverride("font_color", StateColor(row));
             _grid.AddChild(stateLbl);
-            _grid.AddChild(Left($"{p.PopUsed}/{p.PopulationLimit}"));
+            _grid.AddChild(Left($"{row.PopUsed}/{row.PopulationLimit}"));
         }
 
         _status.Text = "Map / victory condition / seed: not yet captured (gamesetup hard-coding is a known gap).";
@@ -72,17 +68,11 @@ public sealed partial class MatchSettingsPanel : ModalPanelBase
         return l;
     }
 
-    private static string StateName(PlayerState s) => s switch
-    {
-        PlayerState.Defeated => "Defeated",
-        PlayerState.Won => "Won",
-        _ => "Active",
-    };
+    private static string StateName(GuiInterface.PlayerRosterRow r) =>
+        r.IsDefeated ? "Defeated" : r.HasWon ? "Won" : "Active";
 
-    private static Color StateColor(PlayerState s) => s switch
-    {
-        PlayerState.Defeated => new Color(0.86f, 0.32f, 0.30f),
-        PlayerState.Won => new Color(0.40f, 0.80f, 0.50f),
-        _ => new Color(0.80f, 0.80f, 0.74f),
-    };
+    private static Color StateColor(GuiInterface.PlayerRosterRow r) =>
+        r.IsDefeated ? new Color(0.86f, 0.32f, 0.30f)
+        : r.HasWon ? new Color(0.40f, 0.80f, 0.50f)
+        : new Color(0.80f, 0.80f, 0.74f);
 }

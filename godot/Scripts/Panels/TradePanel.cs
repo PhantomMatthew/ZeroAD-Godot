@@ -114,22 +114,23 @@ public sealed partial class TradePanel : ModalPanelBase
         foreach (var n in _buyRow.GetChildren())
             ((Node)n).QueueFree();
 
+        // 可易物性 + 价签估算全走 GuiInterface 桥(此前绕桥:PlayerComponent.CanBarter +
+        // BarterSystem 静态直读——收敛点)。
         int localId = (int)_sim.LocalPlayerId;
-        var local = _sim.GetPlayer();
-        bool canBarter = local != null && local.CanBarter(_sim.Sim, localId);
-        _barterStatus.Text = canBarter ? "" : "No Markets Available — build a Market to barter.";
-
         ResourceType sell = AllResources[(int)_sellSel.Selected];
+        var anyQuote = _sim.Gui.GetBarterQuote(localId, sell,
+            sell == ResourceType.Food ? ResourceType.Wood : ResourceType.Food);
+        _barterStatus.Text = anyQuote.CanBarter ? "" : "No Markets Available — build a Market to barter.";
+
         foreach (var buy in AllResources)
         {
             if (buy == sell) continue;
-            int gain100 = GainEstimate(sell, buy, 100);
-            int gain500 = GainEstimate(sell, buy, 500);
+            var quote = _sim.Gui.GetBarterQuote(localId, sell, buy);
             var btn = new Button
             {
-                Text = $"{ResourceName(buy)}  (+{gain100}/{gain500})",
+                Text = $"{ResourceName(buy)}  (+{quote.Gain100}/{quote.Gain500})",
                 Theme = UITheme.GetTheme(),
-                Disabled = !canBarter,
+                Disabled = !quote.CanBarter,
                 CustomMinimumSize = new Vector2(120, 28),
                 TooltipText = "Click = 100, Shift = 500",
             };
@@ -143,9 +144,6 @@ public sealed partial class TradePanel : ModalPanelBase
             _buyRow.AddChild(btn);
         }
     }
-
-    private static int GainEstimate(ResourceType sell, ResourceType buy, int amount) =>
-        (int)Math.Round((double)BarterSystem.SellPrice(sell) / BarterSystem.BuyPrice(buy) * amount);
 
     // 增/减某资源 5%,保持和=100:增则减最大他项,减则加最大他项。
     private void Adjust(ResourceType t, int delta)

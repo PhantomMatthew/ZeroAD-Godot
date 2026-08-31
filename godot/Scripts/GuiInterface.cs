@@ -199,5 +199,104 @@ public sealed class GuiInterface
         return p != null ? p.GetTradingGoods() : new Dictionary<ResourceType, int>();
     }
 
+    // ── 外交(原版 GuiInterface.js GetSimulationState 的 players 段 + DiplomacyDialog.js 查询面)──
+
+    /// <summary>立场(值与 DiplomacyComponent.Ally/Neutral/Enemy 对齐,面板可安全 (int) 转换
+    /// 喂 CommandSetStance)。</summary>
+    public enum Stance
+    {
+        Enemy = DiplomacyComponent.Enemy,     // -1
+        Neutral = DiplomacyComponent.Neutral, // 0
+        Ally = DiplomacyComponent.Ally,       // 1
+    }
+
+    /// <summary>外交表一行(DiplomacyDialog 每玩家行所需全部只读字段)。
+    /// Tributeable = 本地余额能否负担该资源 100(500 = Shift;原版按 100 逐资源禁用)。</summary>
+    public record DiplomacyRow(
+        int PlayerId, string Civ, int Team,
+        bool IsSelf, bool IsActive, bool IsDefeated, bool HasWon,
+        Stance TheirStance,    // 对方对本地的立场(只读展示)
+        Stance OurStance,      // 本地对其的立场(A/N/E 钮当前档)
+        bool TeamLocked,
+        IReadOnlyDictionary<ResourceType, bool> Tributeable);
+
+    /// <summary>外交页整体快照:行表 + 本地资源(状态行)+ 本地活跃态(进贡禁用条件之一)。</summary>
+    public record DiplomacyState(
+        IReadOnlyList<DiplomacyRow> Rows,
+        bool HasLocalPlayer,
+        bool LocalActive,
+        int LocalWood, int LocalFood, int LocalStone, int LocalMetal);
+
+    public DiplomacyState GetDiplomacyState(int localPlayerId)
+    {
+        var localEnt = _cm.GetPlayerEntityId(localPlayerId);
+        var localDip = localEnt.HasValue ? _cm.QueryInterface<DiplomacyComponent>(localEnt.Value) : null;
+        var local = _cm.GetPlayerEntity(localPlayerId);
+
+        var rows = new List<DiplomacyRow>();
+        foreach (int pid in _cm.Players.GetNonGaiaPlayerIds())
+        {
+            var other = _cm.GetPlayerEntity(pid);
+            if (other == null) continue;
+            var otherEnt = _cm.GetPlayerEntityId(pid);
+            var otherDip = otherEnt.HasValue ? _cm.QueryInterface<DiplomacyComponent>(otherEnt.Value) : null;
+            rows.Add(new DiplomacyRow(
+                PlayerId: pid,
+                Civ: other.Civ,
+                Team: other.Team,
+                IsSelf: pid == localPlayerId,
+                IsActive: other.IsActive(),
+                IsDefeated: other.IsDefeated(),
+                HasWon: other.HasWon(),
+                TheirStance: (Stance)(otherDip?.GetStance(localPlayerId) ?? DiplomacyComponent.Neutral),
+                OurStance: (Stance)(localDip?.GetStance(pid) ?? DiplomacyComponent.Neutral),
+                TeamLocked: localDip?.IsTeamLocked() ?? false,
+                Tributeable: new Dictionary<ResourceType, bool>
+                {
+                    [ResourceType.Food] = local?.CanAfford(ResourceType.Food, 100) ?? false,
+                    [ResourceType.Wood] = local?.CanAfford(ResourceType.Wood, 100) ?? false,
+                    [ResourceType.Stone] = local?.CanAfford(ResourceType.Stone, 100) ?? false,
+                    [ResourceType.Metal] = local?.CanAfford(ResourceType.Metal, 100) ?? false,
+                }));
+        }
+        return new DiplomacyState(rows, local != null, local?.IsActive() ?? false,
+            local?.Wood ?? 0, local?.Food ?? 0, local?.Stone ?? 0, local?.Metal ?? 0);
+    }
+
+    // ── 玩家花名册(原版 GetSimulationState 的 players 段;Match Settings 页只读摘要)──
+
+    /// <summary>玩家花名册一行(名字色由面板自取;人口/状态为运行时值)。</summary>
+    public record PlayerRosterRow(
+        int PlayerId, string Civ, int Team,
+        bool IsActive, bool IsDefeated, bool HasWon,
+        int PopUsed, int PopulationLimit);
+
+    public List<PlayerRosterRow> GetPlayerRoster()
+    {
+        var rows = new List<PlayerRosterRow>();
+        foreach (int pid in _cm.Players.GetNonGaiaPlayerIds())
+        {
+            var p = _cm.GetPlayerEntity(pid);
+            if (p == null) continue;
+            rows.Add(new PlayerRosterRow(pid, p.Civ, p.Team,
+                p.IsActive(), p.IsDefeated(), p.HasWon(), p.PopUsed, p.PopulationLimit));
+        }
+        return rows;
+    }
+
+    // ── 易物(原版 Barter.js 的 GUI 查询面:可易物性 + 价签估算)──
+
+    /// <summary>易物报价快照:本地有无市场 + 按当前漂移价的估算换得量(100/500 两档)。</summary>
+    public record BarterQuote(bool CanBarter, int Gain100, int Gain500);
+
+    public BarterQuote GetBarterQuote(int playerId, ResourceType sell, ResourceType buy)
+    {
+        var local = _cm.GetPlayerEntity(playerId);
+        bool canBarter = local != null && local.CanBarter(_cm, playerId);
+        int Gain(int amount) => (int)System.Math.Round(
+            (double)BarterSystem.SellPrice(sell) / BarterSystem.BuyPrice(buy) * amount);
+        return new BarterQuote(canBarter, Gain(100), Gain(500));
+    }
+
     private ComponentManager cm() => _cm;
 }

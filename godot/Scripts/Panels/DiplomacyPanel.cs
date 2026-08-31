@@ -54,125 +54,118 @@ public sealed partial class DiplomacyPanel : ModalPanelBase
             _grid.AddChild(lbl);
         }
 
-        int localId = (int)_sim.LocalPlayerId;
-        var localEnt = _sim.Sim.GetPlayerEntityId(localId);
-        var localDip = localEnt.HasValue ? _sim.Sim.QueryInterface<DiplomacyComponent>(localEnt.Value) : null;
-        var localPlayer = _sim.GetPlayer();
+        // 全部 sim 读数经 GuiInterface 桥(原版 DiplomacyDialog 只读 GetSimulationState;
+        // 此前绕桥直查 Sim/GetPlayerEntityId/QueryInterface——收敛点)。
+        var state = _sim.Gui.GetDiplomacyState((int)_sim.LocalPlayerId);
 
-        foreach (int pid in _sim.Sim.Players.GetNonGaiaPlayerIds())
+        foreach (var row in state.Rows)
         {
-            var otherEnt = _sim.Sim.GetPlayerEntityId(pid);
-            var other = _sim.Sim.GetPlayerEntity(pid);
-            var otherDip = otherEnt.HasValue ? _sim.Sim.QueryInterface<DiplomacyComponent>(otherEnt.Value) : null;
-            if (other == null) continue;
-
             // 1) 玩家名(玩家色)+ 状态后缀。
-            bool self = pid == localId;
-            string name = self ? $"Player {pid} (You)" : $"Player {pid}";
-            if (other.IsDefeated()) name += "  [Defeated]";
-            else if (other.HasWon()) name += "  [Won]";
+            string name = row.IsSelf ? $"Player {row.PlayerId} (You)" : $"Player {row.PlayerId}";
+            if (row.IsDefeated) name += "  [Defeated]";
+            else if (row.HasWon) name += "  [Won]";
             var nameLbl = MakeLabel(name, 14);
             nameLbl.HorizontalAlignment = HorizontalAlignment.Left;
-            nameLbl.AddThemeColorOverride("font_color", SimBridge.GetPlayerColor(pid));
+            nameLbl.AddThemeColorOverride("font_color", SimBridge.GetPlayerColor(row.PlayerId));
 
             // 2) 文明。
-            var civLbl = MakeLabel(other.Civ, 14);
+            var civLbl = MakeLabel(row.Civ, 14);
             civLbl.HorizontalAlignment = HorizontalAlignment.Left;
 
             // 3) 队。
-            var teamLbl = MakeLabel(other.Team >= 0 ? (other.Team + 1).ToString() : "None", 14);
+            var teamLbl = MakeLabel(row.Team >= 0 ? (row.Team + 1).ToString() : "None", 14);
 
             // 4) 对方对我立场(只读)。
-            int theirStance = otherDip?.GetStance(localId) ?? DiplomacyComponent.Neutral;
-            var theirLbl = MakeLabel(StanceName(theirStance), 14);
-            theirLbl.AddThemeColorOverride("font_color", StanceColor(theirStance));
+            var theirLbl = MakeLabel(StanceName(row.TheirStance), 14);
+            theirLbl.AddThemeColorOverride("font_color", StanceColor(row.TheirStance));
 
             // 5) A/N/E 设立场钮(当前档标记)。
-            int ourStance = localDip?.GetStance(pid) ?? DiplomacyComponent.Neutral;
             _grid.AddChild(nameLbl);
             _grid.AddChild(civLbl);
             _grid.AddChild(teamLbl);
             _grid.AddChild(theirLbl);
-            _grid.AddChild(MakeStanceButtons(pid, ourStance, self || (localDip?.IsTeamLocked() ?? false)));
-            _grid.AddChild(MakeTributeButtons(pid, self, localPlayer, other));
+            _grid.AddChild(MakeStanceButtons(row.PlayerId, row.OurStance, row.IsSelf || row.TeamLocked));
+            _grid.AddChild(MakeTributeButtons(row, state.LocalActive));
         }
 
-        _status.Text = localPlayer == null
+        _status.Text = !state.HasLocalPlayer
             ? "No local player."
-            : $"Resources:  Wood {localPlayer.Wood}   Food {localPlayer.Food}   Stone {localPlayer.Stone}   Metal {localPlayer.Metal}";
+            : $"Resources:  Wood {state.LocalWood}   Food {state.LocalFood}   Stone {state.LocalStone}   Metal {state.LocalMetal}";
     }
 
-    private HBoxContainer MakeStanceButtons(int pid, int current, bool disabled)
+    private HBoxContainer MakeStanceButtons(int pid, GuiInterface.Stance current, bool disabled)
     {
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", 4);
-        foreach (var (stance, glyph) in new[]
+        foreach (var stance in new[]
         {
-            (DiplomacyComponent.Ally, "Ally"),
-            (DiplomacyComponent.Neutral, "Neutral"),
-            (DiplomacyComponent.Enemy, "Enemy"),
+            GuiInterface.Stance.Ally,
+            GuiInterface.Stance.Neutral,
+            GuiInterface.Stance.Enemy,
         })
         {
             bool isCurrent = stance == current;
             var btn = new Button
             {
-                Text = glyph,
+                Text = StanceName(stance),
                 Theme = UITheme.GetTheme(),
                 Disabled = disabled,
                 ToggleMode = true,
                 ButtonPressed = isCurrent,
                 CustomMinimumSize = new Vector2(64, 26),
             };
-            int capturedStance = stance;
+            // Stance 枚举值与 DiplomacyComponent 常量对齐(GuiInterface.Stance 定义处注记),
+            // 命令侧 (int) 转换即原版 stance 值。
+            int capturedStance = (int)stance;
             btn.Pressed += () => _sim.CommandSetStance(pid, capturedStance);
             row.AddChild(btn);
         }
         return row;
     }
 
-    private HBoxContainer MakeTributeButtons(int pid, bool self, PlayerComponent? local, PlayerComponent other)
+    private HBoxContainer MakeTributeButtons(GuiInterface.DiplomacyRow row, bool localActive)
     {
-        var row = new HBoxContainer();
-        row.AddThemeConstantOverride("separation", 4);
-        bool localActive = local?.IsActive() ?? false;
-        bool targetActive = other.IsActive();
+        var hbox = new HBoxContainer();
+        hbox.AddThemeConstantOverride("separation", 4);
+        // 原版禁用条件:self || !localActive || !targetActive || !afford100。
+        bool enable = !row.IsSelf && localActive && row.IsActive;
         foreach (var t in AllResources)
         {
-            bool afford100 = local != null && local.CanAfford(t, 100);
+            bool afford100 = row.Tributeable.TryGetValue(t, out bool can) && can;
             var btn = new Button
             {
                 Text = ResourceName(t),
                 Theme = UITheme.GetTheme(),
-                Disabled = self || !localActive || !targetActive || !afford100,
+                Disabled = !enable || !afford100,
                 CustomMinimumSize = new Vector2(60, 26),
-                TooltipText = self ? "" : "Click = 100, Shift = 500",
+                TooltipText = row.IsSelf ? "" : "Click = 100, Shift = 500",
             };
             btn.AddThemeColorOverride("font_color", ResourceColor(t));
             ResourceType captured = t;
             btn.Pressed += () =>
             {
                 int amount = IsShiftHeld() ? 500 : 100;
-                _sim.CommandTribute(pid, captured, amount);
+                _sim.CommandTribute(row.PlayerId, captured, amount);
             };
-            row.AddChild(btn);
+            hbox.AddChild(btn);
         }
-        return row;
+        return hbox;
     }
 
     private static bool IsShiftHeld() =>
         global::Godot.Input.IsPhysicalKeyPressed(Key.Shift);
 
-    private static string StanceName(int s) => s switch
+    private static string StanceName(GuiInterface.Stance s) => s switch
     {
-        DiplomacyComponent.Ally => "Ally",
-        DiplomacyComponent.Enemy => "Enemy",
+        GuiInterface.Stance.Ally => "Ally",
+        GuiInterface.Stance.Enemy => "Enemy",
         _ => "Neutral",
     };
 
-    private static Color StanceColor(int s) => s switch
+    private static Color StanceColor(GuiInterface.Stance s) => s switch
     {
-        DiplomacyComponent.Ally => new Color(0.35f, 0.75f, 0.40f),
-        DiplomacyComponent.Enemy => new Color(0.86f, 0.32f, 0.30f),
+        GuiInterface.Stance.Ally => new Color(0.35f, 0.75f, 0.40f),
+        GuiInterface.Stance.Enemy => new Color(0.86f, 0.32f, 0.30f),
         _ => new Color(0.80f, 0.78f, 0.62f),
     };
 }

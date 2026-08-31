@@ -166,7 +166,8 @@
 - [x] 滚轮旋转热键映射对齐(8d7fef9:Shift+Wheel)
 
 ### GuiInterface(sim→UI 桥)
-- [ ] 覆盖面约原版 1/5;TradePanel/DiplomacyPanel 绕桥直查 SimBridge 组件 → 统一走桥协议
+- [x] TradePanel/DiplomacyPanel/MatchSettingsPanel 绕桥直查已收敛(fb43094 后 commit:桥新增 GetDiplomacyState/GetBarterQuote/GetPlayerRoster DTO,面板零内核直查)
+- [ ] 覆盖面约原版 1/5:HUD/Minimap 热路径仍有零散 QueryInterface 直读(每帧性能敏感段,按需补桥)
 
 ---
 
