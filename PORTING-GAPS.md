@@ -18,7 +18,7 @@
 | M2 模拟组件 | ★★★★☆ | 83 JS 组件:22 ✅ / 15 🟡偏完整 / ~11 ❌ |
 | M3 寻路 | ★★★★☆ | 三引擎齐;缺异步任务、增量更新、pass class 数据驱动 |
 | M4 渲染 | ★★★☆☆ | 地形/水/迷雾/领土/血条/集结点线齐;缺粒子、过场、天空、战场贴花 |
-| M5 GUI | ★★★☆☆ | 约 60%;缺 prelobby/campaigns/viewer/credits 等 10+ 页 |
+| M5 GUI | ★★★★☆ | 页面基本齐(prelobby/campaigns/viewer/credits/mod 对话框/autostart 全落);剩引擎级 mod 挂载、GuiInterface 桥收敛 |
 | M6 网络 | ★★★★☆ | 锁步+OOS+大厅协议齐;缺重连、观战 |
 | M7 存档录像 | ★★★★★ | 双闭环,亮点项 |
 | M8 Petra AI | ★★☆☆☆ | 模块名齐全但约 **20% 体量**(≈5–6k 行 vs 原 ≈26k 行) |
@@ -145,24 +145,25 @@
 - [x] prelobby 三页(entrance/login/register;5d4c2d3)
 - [x] viewer(actor 查看器;fc7637a)
 - [x] mapbrowser(68027b1:网格浏览)
-- [ ] campaigns 战役页(依赖触发器成熟)
+- [x] campaigns 战役页(28c9f9d:CampaignTemplate/Run 数据层 + setup/menu/new/load 四页,胜利回写 MarkLevelComplete;末关 endgame 页与 useGameSetup 分支待触发器成熟)
 - [x] splashscreen/tips(199c7b5/d9216b8)
 - [x] credits(580bc7d)
 - [x] userreport(b5d5a9c)
 - [x] locale_advanced(b5d5a9c:LocalePanel Advanced 按钮 + 自定义 locale)
-- [ ] mod 框架对话框全套(modmod/modio/incompatible_mods/termsdialog/msgbox/timedconfirmation/colormixer)
-- [ ] autostart(自动化测试入口,CI 有用)
-- [ ] 收敛 LobbyUI.cs 与 MainMenu.cs 两套主菜单(LobbyUI 部分子项 action=null)
+- [x] mod 框架对话框全套(fb43094:msgbox/timedconfirmation/termsdialog+terms 框架/colormixer/incompatible_mods/modmod 全量/modio;mod.io v1 REST 实接,缺 minisigs Ed25519 验签——只验存在性)
+- [x] autostart(88811b6:CLI -autostart-* 全参数体系,含 MP host/client 分支与 AI 难度接线;CI 可用)
+- [x] 收敛 LobbyUI.cs 与 MainMenu.cs 两套主菜单(7769ad8:假主菜单删除,MainMenu.tscn 唯一;Mode=Lobby 弹回)
+- [ ] 引擎级 mod 挂载(mod.enabledmods 已持久化但内容加载仍硬编码 public 包;需 VFS 等价物后 Start Mods 才真生效)
 
 ### 音频(AudioManager.cs)
 - [ ] 3D 空间化(无 AudioStreamPlayer3D 引用;现距离衰减靠手动增益)
 
 ### 相机(RTSCamera.cs vs GameView.cpp)
-- [ ] 跟随选中单位
-- [ ] 平滑加减速
-- [ ] 俯仰限制、右键 pan 拖拽
-- [ ] 缩放锚定鼠标指向点(现仅改 distance)
-- [ ] 滚轮旋转热键映射对齐(camera.rotate.wheel.cw/ccw)
+- [x] 跟随选中单位(6dc3c4a:F 键,输入打断)
+- [x] 平滑加减速(6dc3c4a:CSmoothedValue 指数平滑)
+- [x] 俯仰限制、右键 pan 拖拽(6aa8abe)
+- [x] 缩放锚定鼠标指向点(8d7fef9:zoom-to-cursor)
+- [x] 滚轮旋转热键映射对齐(8d7fef9:Shift+Wheel)
 
 ### GuiInterface(sim→UI 桥)
 - [ ] 覆盖面约原版 1/5;TradePanel/DiplomacyPanel 绕桥直查 SimBridge 组件 → 统一走桥协议
