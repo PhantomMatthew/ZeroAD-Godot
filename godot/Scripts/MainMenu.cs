@@ -23,6 +23,15 @@ public sealed partial class MainMenu : Control
 		ZeroAD.Godot.Diagnostics.DiagGodot.Install();
 		SetAnchorsPreset(LayoutPreset.FullRect);
 
+		// CLI autostart(原版 page_autostart.xml/autostart/*.js):-autostart=/-autostart-client=
+		// 存在时跳过主菜单直接开局(CI/自动化测试入口)。先于 env dev fallback。
+		if (Autostart.TryApply(GetNode<GameLaunchConfig>("/root/GameLaunchConfig"),
+				GetNode<UserConfig>("/root/UserConfig")))
+		{
+			CallDeferred(nameof(GotoSession));
+			return;   // 已 CallDeferred 切场景,本帧不必构建菜单。
+		}
+
 		// dev 跳过主菜单:ZEROAD_TUTORIAL/AUTOSTART 读一次即清空,设 GameLaunchConfig 后转 session。
 		if (TryConsumeAutostartEnv())
 			return; // 已 CallDeferred 切场景,本帧不必构建菜单。

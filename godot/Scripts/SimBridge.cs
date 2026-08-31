@@ -2293,12 +2293,12 @@ public sealed partial class SimBridge : Node
 	/// 解析玩家实体 → new AIComponent → Configure(_sim, _netTurn)(AddComponent 前注入,与
 	/// AuraComponent.Configure 同模式)→ AddComponent。TickAI 每回合推进;save/load 由
 	/// SaveGameManager.Load 的 prepareComponent 重注入 Configure。</summary>
-	public void AttachAi(int playerId)
+	public void AttachAi(int playerId, int difficulty = ZeroAD.Sim.AI.Petra.DifficultyLevel.Medium)
 	{
 		var playerEntity = _sim.GetPlayerEntityId(playerId);
 		if (playerEntity == null) return;
 		var ai = new AIComponent();
-		ai.Configure(_sim, _netTurn);
+		ai.Configure(_sim, _netTurn, difficulty);
 		if (_sharedState != null)
 			ai.ConfigureSharedState(_sharedState);   // Petra HQ 主循环的激活钥匙
 		_sim.AddComponent(playerEntity.Value, ai);

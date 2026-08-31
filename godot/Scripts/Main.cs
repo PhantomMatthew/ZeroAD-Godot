@@ -261,6 +261,19 @@ public sealed partial class Main : Node3D
 	private void AutoMp()
 	{
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		// CLI autostart MP 分支(-autostart-host/-autostart-client=IP):跳过连接表单直 host/join
+		// (原版 autostart_host.js/autostart_client.js;端口缺省走 UserConfig multiplayerhosting.port)。
+		if (cfg.MpAutoTarget.Length > 0)
+		{
+			var userCfg = GetNode<UserConfig>("/root/UserConfig");
+			int port = cfg.MpAutoPort > 0 ? cfg.MpAutoPort
+				: int.TryParse(userCfg.GetEffective("multiplayerhosting.port"), out int p) ? p : 25565;
+			if (cfg.MpHost)
+				StartMpHost(port, cfg.Seed);
+			else
+				StartMpClient(cfg.MpAutoTarget, port);
+			return;
+		}
 		// dev:ZEROAD_SHOT=mphost/mpclient — 跳过连接表单直进大厅页并截图退出。
 		if (System.Environment.GetEnvironmentVariable("ZEROAD_SHOT") == "mphost")
 		{
@@ -1869,7 +1882,13 @@ public sealed partial class Main : Node3D
 		foreach (var slot in slots)
 		{
 			if (slot.Kind == ZeroAD.Sim.Net.PlayerSlotKind.AI)
-				_sim.AttachAi(slot.PlayerId);
+			{
+				// autostart-aidiff 覆盖(原版 playerAI.difficulty;无项 → Medium 默认)。
+				var launchCfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+				_sim.AttachAi(slot.PlayerId,
+					launchCfg.AiDifficulties.TryGetValue(slot.PlayerId, out int diff)
+						? diff : ZeroAD.Sim.AI.Petra.DifficultyLevel.Medium);
+			}
 		}
 
 		// Ownerless neutral soldiers — mid-map (768m world → centre ~384) so they overlap no base.

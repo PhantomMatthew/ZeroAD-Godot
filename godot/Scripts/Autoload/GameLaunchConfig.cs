@@ -60,6 +60,16 @@ public partial class GameLaunchConfig : Node
     /// <summary>战役关卡 id(模板 Levels 键;胜利时回写 MarkLevelComplete)。</summary>
     public string CampaignLevelId = "";
 
+    // ── autostart(CLI -autostart-*;原版 binaries/data/mods/public/autostart/)──
+    /// <summary>每玩家 AI 难度(playerId → 0..5;autostart-aidiff;无项 = Medium 默认)。</summary>
+    public System.Collections.Generic.Dictionary<int, int> AiDifficulties = new();
+    /// <summary>MP 自动连接:非空 = 跳过连接表单直 host/join(host 为 "host",client 为 IP)。</summary>
+    public string MpAutoTarget = "";
+    /// <summary>MP 自动连接端口(0 = 用 UserConfig 默认)。</summary>
+    public int MpAutoPort;
+    /// <summary>MP host 的人类玩家数(autostart-host-players;0 = 默认)。</summary>
+    public int MpAutoHostPlayers;
+
     /// <summary>开始新一局前重置为大厅默认(避免上一局残留 Mode 触发错误启动)。</summary>
     public void Reset()
     {
@@ -87,5 +97,9 @@ public partial class GameLaunchConfig : Node
         VictoryConditions = new();
         CampaignRunFile = "";
         CampaignLevelId = "";
+        AiDifficulties = new();
+        MpAutoTarget = "";
+        MpAutoPort = 0;
+        MpAutoHostPlayers = 0;
     }
 }
