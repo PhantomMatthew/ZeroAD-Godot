@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim.AI.CommonApi;
+using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.AI.Petra;
@@ -130,9 +131,9 @@ public sealed class Headquarters
         }
         long t2 = prof.ElapsedMilliseconds;
 
-        // 基地扩张（每10回合）
-        if (!HasPotentialBase(gameState) || (CanExpand && CurrentPhase > 1))
-            CheckBaseExpansion(gameState);
+        // 基地扩张(原版每 think 调 checkBaseExpansion,门控全在函数内——CC 全灭重建/
+        // 升代暂缓/单位数超基地承载;外层不再预过滤)。
+        CheckBaseExpansion(gameState);
         long t3 = prof.ElapsedMilliseconds;
 
         // 建筑（每3回合，town+）
@@ -291,17 +292,258 @@ public sealed class Headquarters
 
     private void CheckBaseExpansion(GameState gameState)
     {
-        // 原版 checkBaseExpansion:town+ 且 CanExpand 时扩建新 CC。选址经
-        // ConstructionPlan 的 base=-1 + resource 元数据(原版 findEconomicCCLocation
-        // 语义:近资源评分,非"近 CC"默认选址)。
-        if (!CanExpand || CurrentPhase < 2) return;
-        if (HasPendingPlan("economicBuilding")) return;
-        int ccs = CountOwnStructuresByClass(gameState, "CivCentre");
-        int ccsWanted = Config.Difficulty >= DifficultyLevel.Hard ? 3 : 2;
-        if (ccs >= ccsWanted) return;
-        Queues.AddPlan("economicBuilding",
-            new ConstructionPlan(gameState, "structures/{civ}/civil_centre",
-                new Dictionary<string, object> { ["base"] = -1, ["resource"] = "wood" }));
+        // 原版 checkBaseExpansion(headquarters.js:1522-1557)逐字条件:
+        if (HasPendingPlan("civilCentre")) return;
+        // 1) CC 全灭 → 立即重建首基地
+        if (!HasPotentialBase(gameState))
+        {
+            BuildNewBase(gameState, PickExpansionResource(gameState));
+            return;
+        }
+        // 2)(原版 buildManager.numberMissingRoom>1 即扩建——我们的 buildManager 无
+        //    房间追踪,跳过该条件)
+        // 3) 已计划升代 → 暂缓扩张
+        if (Phasing != 0) return;
+        // 4) 单位数超基地承载(侵略性性格调节阈值)或囤资源策略下 >50 → 扩张
+        int activeBases = NumActiveBases(gameState);
+        int numUnits = gameState.GetOwnUnits().Length;
+        double numvar = 10 * (1 - Config.Personality.Aggressive);
+        if (numUnits > activeBases * (65 + numvar + (10 + numvar) * (activeBases - 1))
+            || SaveResources && numUnits > 50)
+            BuildNewBase(gameState, PickExpansionResource(gameState));
+    }
+
+    /// <summary>活跃基地数(原版 numActiveBases:anchor 活着的基地)。</summary>
+    public int NumActiveBases(GameState gameState)
+    {
+        int n = 0;
+        foreach (var b in BasesManager.Bases)
+            if (b.AnchorId != null && gameState.GetEntityById(b.AnchorId.Value) is { IsDead: false })
+                n++;
+        return n;
+    }
+
+    /// <summary>扩张资源选择(原版 buildNewBase 调用点按最缺资源扩张)。</summary>
+    private string PickExpansionResource(GameState gameState)
+    {
+        var needed = PickMostNeededResources(gameState);
+        return needed.Count > 0 ? needed[0].Type : "wood";
+    }
+
+    /// <summary>原版 buildNewBase(headquarters.js:1558-1595)逐字门控:
+    /// phase1 且未在研 phase2 → 不扩;CC 地基/队列已有 → 不重复;
+    /// 有本文明 CC 且可建军营殖民地 → 用 military_colony(原版优先——可释放特定单位/科技),
+    /// 否则 civil_centre;落成 ConstructionPlan(base=-1 + resource)进 civilCentre 队列。</summary>
+    public bool BuildNewBase(GameState gameState, string resource)
+    {
+        if (HasPotentialBase(gameState) && CurrentPhase == 1
+            && !gameState.IsResearching(gameState.GetPhaseName(2)))
+            return false;
+        if (gameState.GetOwnFoundations().Filter(e => e.HasClass("CivCentre")).HasEntities())
+            return false;
+        if (HasPendingPlan("civilCentre")) return false;
+
+        // 本文明 CC 存在性(原版:必须有 civ 自己的 CC,殖民地才放行专属内容)。
+        string ownCc = gameState.ApplyCiv("structures/{civ}/civil_centre");
+        bool hasOwnCC = gameState.GetOwnStructures().Values()
+            .Any(e => e.HasClass("CivCentre") && e.Template.TemplateName == ownCc);
+
+        string template;
+        if (hasOwnCC && CanBuild(gameState, "structures/{civ}/military_colony"))
+            template = "structures/{civ}/military_colony";
+        else if (CanBuild(gameState, "structures/{civ}/civil_centre"))
+            template = "structures/{civ}/civil_centre";
+        else if (!hasOwnCC && CanBuild(gameState, "structures/{civ}/military_colony"))
+            template = "structures/{civ}/military_colony";
+        else
+            return false;
+
+        Queues.AddPlan("civilCentre",
+            new ConstructionPlan(gameState, template,
+                new Dictionary<string, object> { ["base"] = -1, ["resource"] = resource }));
+        return true;
+    }
+
+    /// <summary>原版 findEconomicCCLocation(headquarters.js:668-868)的网格扫描移植:
+    /// 领土图逐格(无主 + 可达陆区 + 可放置)评分:
+    ///   val = (2×目标资源密度 + Σ其它非食物密度) × norm
+    ///   norm = CC 距离门(120² 拒任何 CC / 200² 拒盟友 CC / 250² 盟友近减分;
+    ///         410² 超远拒(可达)/360-reduce² 远减分/500² 不可达远减分;
+    ///         我方 dropsite 60² 拒/80² 减分;地图边界减半;危险位拒)
+    /// 资源密度图 = ccResourceMaps 等价物:静态 supply 按量加权放射 splat(线性衰减 24m)。
+    /// bestVal < cut(60) → 放弃(返回 null)。确定性:全扫描无随机。</summary>
+    public static FixedVector2D? FindEconomicCCLocation(GameState gameState, string templatePath,
+        string resource, PetraConfig config)
+    {
+        var territory = SimSystem.Territory;
+        if (territory == null || gameState.Accessibility == null) return null;
+        int width = territory.GridWidth;
+        const int cellSize = 4;   // TerritoryManager.CellSize
+
+        // 模板足迹(障碍半径)。
+        var template = gameState.GetTemplate(gameState.ApplyCiv(templatePath));
+        if (template == null) return null;
+        float halfW = template.GetFloat("Footprint/Square/@width") / 2f;
+        float halfD = template.GetFloat("Footprint/Square/@depth") / 2f;
+        float halfSize = Math.Max(halfW, halfD);
+        if (halfSize <= 0) halfSize = template.GetFloat("Footprint/Circle/@radius");
+        if (halfSize <= 0) halfSize = 8f;
+
+        // 资源密度图(food 除外项按原版只作背景加分;目标资源双倍权重)。
+        var resMaps = BuildCcResourceMaps(gameState, width, cellSize, resource);
+
+        // CC / dropsite 清单(原版 allCCs + own non-CC dropsites)。
+        var ccList = gameState.GetStructures().Values()
+            .Where(e => e.HasClass("CivCentre") && e.Position2D != default)
+            .Select(e => (Pos: e.Position2D, Ally: gameState.IsPlayerAlly(e.Owner),
+                Access: gameState.Accessibility.GetAccessValue(
+                    e.Position2D.X.ToFloat(), e.Position2D.Y.ToFloat())))
+            .ToList();
+        var dpList = gameState.GetOwnStructures().Values()
+            .Where(e => !string.IsNullOrEmpty(e.Template.ResourceDropsiteTypes)
+                && !e.HasClass("CivCentre") && e.Position2D != default)
+            .Select(e => e.Position2D)
+            .ToList();
+
+        double reduce = (template.HasClass("Colony") ? 30 : 0) + 30 * config.Personality.Defensive;
+        float nearbyRejected = 120 * 120;
+        float nearbyAllyRejected = 200 * 200;
+        float nearbyAllyDisfavored = 250 * 250;
+        float maxAccessRejected = 410 * 410;
+        float maxAccessDisfavored = (360 - (float)reduce) * (360 - (float)reduce);
+        float maxNoAccessDisfavored = 500 * 500;
+        double cut = 60;
+
+        int bestIdx = -1;
+        double bestVal = double.MinValue;
+        var pathfinder = SimSystem.Pathfinder;
+        for (int j = 0; j < width * width; j++)
+        {
+            if (territory.OwnerGrid[j] != 0) continue;   // 只在无主领土扩张
+            float px = cellSize * (j % width + 0.5f);
+            float pz = cellSize * (j / width + 0.5f);
+            // 可达陆区(regionSize>0;0 = 不可达/水域)
+            ushort region = gameState.Accessibility.GetAccessValue(px, pz);
+            if (gameState.Accessibility.GetRegionSize(region, false) <= 0) continue;
+
+            double norm = 0.5;
+            // CC 距离门
+            float minDist = float.MaxValue;
+            bool accessible = false;
+            bool reject = false;
+            foreach (var cc in ccList)
+            {
+                float dx = cc.Pos.X.ToFloat() - px, dz = cc.Pos.Y.ToFloat() - pz;
+                float dist = dx * dx + dz * dz;
+                if (dist < nearbyRejected) { reject = true; break; }
+                if (cc.Ally)
+                {
+                    if (dist < nearbyAllyRejected) { reject = true; break; }
+                    if (dist < nearbyAllyDisfavored) norm *= 0.5;
+                    if (dist < minDist) minDist = dist;
+                    if (cc.Access == region) accessible = true;
+                }
+            }
+            if (reject) continue;
+            if (ccList.Count > 0)
+            {
+                if (accessible && minDist > maxAccessRejected) continue;
+                if (minDist > maxAccessDisfavored)
+                {
+                    if (!accessible)
+                        norm *= minDist > maxNoAccessDisfavored ? 0.5 : 0.8;
+                    else
+                        norm *= 0.5;
+                }
+            }
+            // dropsite 邻近排斥(原版 3600 拒/6400 减分)。
+            foreach (var dp in dpList)
+            {
+                float dx = dp.X.ToFloat() - px, dz = dp.Y.ToFloat() - pz;
+                float dist = dx * dx + dz * dz;
+                if (dist < 3600) { reject = true; break; }
+                if (dist < 6400) norm *= 0.5;
+            }
+            if (reject) continue;
+
+            // 地图边界减分(borderMap 简化:离世界缘 <2 格)。
+            if (j % width < 2 || j / width < 2 || j % width >= width - 2 || j / width >= width - 2)
+                norm *= 0.5;
+
+            double val = 2 * resMaps.Target[j];
+            foreach (var kv in resMaps.Others) val += kv.Value[j];
+            val *= norm;
+            if (val <= bestVal) continue;
+            // 危险位拒(敌防御半径内)。
+            if (headquartersDanger(gameState, px, pz, halfSize)) continue;
+            // 可放置校验(真实障碍+地形;SimSystem.Pathfinder 即原版 obstruction 图等价)。
+            if (pathfinder != null)
+            {
+                var pr = pathfinder.CheckBuildingPlacement(
+                    Fixed.FromFloat(px), Fixed.FromFloat(pz),
+                    Fixed.FromFloat(halfW), Fixed.FromFloat(halfD));
+                if (pr != PlacementResult.Success) continue;
+            }
+            bestVal = val;
+            bestIdx = j;
+        }
+        if (bestIdx < 0 || bestVal < cut) return null;
+        return new FixedVector2D(
+            Fixed.FromFloat(cellSize * (bestIdx % width + 0.5f)),
+            Fixed.FromFloat(cellSize * (bestIdx / width + 0.5f)));
+    }
+
+    /// <summary>危险位判定的静态壳(IsDangerousLocation 的静态版——本方法不进 HQ 实例)。</summary>
+    private static bool headquartersDanger(GameState gameState, float px, float pz, float halfSize)
+    {
+        float radius = halfSize + 40f;   // 原版 isDangerousLocation 的半径近似
+        foreach (var e in gameState.GetEnemyStructures().Values())
+        {
+            if (!e.HasDefensiveFire || e.Position2D == default) continue;
+            float dx = e.Position2D.X.ToFloat() - px;
+            float dz = e.Position2D.Y.ToFloat() - pz;
+            if (dx * dx + dz * dz < radius * radius) return true;
+        }
+        return false;
+    }
+
+    /// <summary>ccResourceMaps 等价物:静态 supply(剔除 Animal/Field/枯竭)按
+    /// min(amount,1000)/1000 权重,24m 半径线性衰减 splat 进领土格。目标资源单列,
+    /// 其余(wood/stone/metal)合并(food 原版明确不计)。</summary>
+    private static (float[] Target, Dictionary<string, float[]> Others) BuildCcResourceMaps(
+        GameState gameState, int width, int cellSize, string targetResource)
+    {
+        var target = new float[width * width];
+        var others = new Dictionary<string, float[]>
+        { ["wood"] = new float[width * width], ["stone"] = new float[width * width],
+          ["metal"] = new float[width * width] };
+        const float radius = 24f;
+        int rCells = (int)(radius / cellSize) + 1;
+        foreach (var type in new[] { "food", "wood", "stone", "metal" })
+        {
+            if (type == "food") continue;   // 原版 CC 选址不计食物(田随基地建)
+            foreach (var supply in gameState.GetResourceSupplies(type).Values())
+            {
+                if (supply.Position2D == default) continue;
+                if (supply.HasClass("Animal") || supply.HasClass("Field")) continue;
+                var comp = gameState.Cm.QueryInterface<ResourceSupply>(supply.Entity);
+                if (comp == null || comp.Amount <= 0) continue;
+                float weight = Math.Min(comp.Amount, 1000) / 1000f;
+                float sx = supply.Position2D.X.ToFloat(), sz = supply.Position2D.Y.ToFloat();
+                int cx = (int)(sx / cellSize), cz = (int)(sz / cellSize);
+                var map = type == targetResource ? target : others[type];
+                for (int dz = -rCells; dz <= rCells; dz++)
+                    for (int dx = -rCells; dx <= rCells; dx++)
+                    {
+                        int gx = cx + dx, gz = cz + dz;
+                        if (gx < 0 || gz < 0 || gx >= width || gz >= width) continue;
+                        float d = (float)Math.Sqrt((dx * dx + dz * dz) * cellSize * cellSize);
+                        if (d > radius) continue;
+                        map[gz * width + gx] += weight * (1f - d / radius);
+                    }
+            }
+        }
+        return (target, others);
     }
 
     private void CheckPhaseRequirements(GameState gameState)

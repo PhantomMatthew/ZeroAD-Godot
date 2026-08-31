@@ -156,10 +156,38 @@ public sealed class ConstructionPlan : QueuePlan
         return best;
     }
 
-    /// <summary>新基地选址(原版 headquarters.findEconomicCCLocation 核心语义的
-    /// 简化):候选采样评分——近资源(原版"近资源优先扩张")+ 离最近 CC 适中距
-    /// (原版"不太近不太远")+ 土地过滤。基地锚 = 最近同类资源(原版 resource 驱动)。</summary>
+    /// <summary>新基地选址:先走 HQ.findEconomicCCLocation 全量移植版(领土图网格扫描
+    /// + 资源密度 + CC/DP 距离门 + 可放置校验);无合格点(null)回退旧采样法。</summary>
     private BuildPosition? FindEconomicCCLocation(GameState gameState, string resource)
+    {
+        var located = Headquarters.FindEconomicCCLocation(gameState, Type, resource, _configCache ??= ResolveConfig(gameState));
+        if (located.HasValue)
+        {
+            ushort access = gameState.Accessibility?.GetAccessValue(
+                located.Value.X.ToFloat(), located.Value.Y.ToFloat()) ?? (ushort)0;
+            return new BuildPosition
+            {
+                X = located.Value.X,
+                Z = located.Value.Y,
+                Angle = DefaultPlacementAngle,
+                Base = -1,
+                Access = access,
+            };
+        }
+        return FindEconomicCCLocationFallback(gameState, resource);
+    }
+
+    // HQ 配置的间接获取(ConstructionPlan 无 HQ 引用;经 AIComponent 注入的共享配置)。
+    private PetraConfig? _configCache;
+    private static PetraConfig ResolveConfig(GameState gameState)
+    {
+        // AIComponent 每玩家一份配置,经 SharedState 不可达;默认中等难度配置兜底
+        // (扩张阈值只读 Personality.Defensive,难度差异影响小)。
+        return new PetraConfig();
+    }
+
+    /// <summary>旧采样选址(资源锚 + CC 距离评分)——真选址无合格点时的兜底。</summary>
+    private BuildPosition? FindEconomicCCLocationFallback(GameState gameState, string resource)
     {
         // 资源锚:最近同类资源(原版"靠近资源扩张新基地"语义)。
         var ccs = gameState.GetOwnStructures().Filter(e => e.HasClass("CivCentre"));
