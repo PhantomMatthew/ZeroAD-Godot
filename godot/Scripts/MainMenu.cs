@@ -28,9 +28,20 @@ public sealed partial class MainMenu : Control
 			return; // 已 CallDeferred 切场景,本帧不必构建菜单。
 
 		_cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		// 战役 run 的"当前 run"读写注入 UserConfig(原版 ConfigDB "currentcampaign")。
+		// 幂等——重进主菜单重复赋值同一委托无副作用。
+		var userCfgNode = GetNode<UserConfig>("/root/UserConfig");
+		Campaigns.CampaignRun.ReadUserConfig = key =>
+			userCfgNode.GetUserValue(key) is { Length: > 0 } v ? v : null;
+		Campaigns.CampaignRun.WriteUserConfig = (key, value) =>
+		{
+			if (value == null) userCfgNode.ResetUserValue(key);
+			else userCfgNode.SetUserValue(key, value);
+			userCfgNode.Save();
+		};
 		// 已存设置全量重放(音量/全屏/垂直同步/GUI 缩放等即时生效项;场景相关项此处无 light/env
 		// → no-op,进 session 后由 Main 再重放)。菜单上下文 inGame:false(adaptivefps 取 menu 值)。
-		var userCfg = GetNode<UserConfig>("/root/UserConfig");
+		var userCfg = userCfgNode;
 		OptionsApplier.ApplyAll(userCfg, GetTree(), inGame: false);
 		// 音量滑杆改动即时生效(菜单音乐实时调)。具名方法 + _ExitTree 退订防悬垂。
 		userCfg.ConfigChanged += OnUserConfigChangedAudio;
@@ -262,6 +273,11 @@ public sealed partial class MainMenu : Control
 				new("Matches", OnSinglePlayer),
 				new("Load Game", OnLoadGame),
 				new("Replays", OnReplay),
+				// 原版 MainMenuItems.js:Single-player 子菜单含 New Campaign /
+				// Continue Campaign(无当前 run 时禁用)。
+				new("New Campaign", OnNewCampaign),
+				new("Continue Campaign", OnContinueCampaign,
+					disabled: !Campaigns.CampaignRun.HasCurrentRun),
 			}),
 			new("Multiplayer", null, new MenuEntry[]
 			{
@@ -364,7 +380,8 @@ public sealed partial class MainMenu : Control
 	// 原版 MainMenuItemHandler:ButtonHeight=28,Margin=4;mainMenuButtons 起于 y=146。
 	private const int ButtonTop0 = 146, ButtonH = 28, ButtonSep = 4;
 
-	private sealed record MenuEntry(string Caption, Action? OnPress, MenuEntry[]? Submenu = null);
+	private sealed record MenuEntry(string Caption, Action? OnPress, MenuEntry[]? Submenu = null,
+		bool disabled = false);
 
 	private Panel _submenuPanel = null!;
 	private VBoxContainer _subVbox = null!;
@@ -400,7 +417,7 @@ public sealed partial class MainMenu : Control
 			{
 				CloseSubmenu();
 				sub.OnPress?.Invoke();
-			});
+			}, disabled: sub.disabled);
 
 		// 竖向:顶 = 被点按钮顶 - Margin(4),高 = (28+4)×count(对齐 openSubmenu)。
 		// 主面板顶缘全局 y=-2,vbox 起于面板内 146 → 被点按钮顶全局 = -2+146+index×32。
@@ -536,6 +553,34 @@ public sealed partial class MainMenu : Control
 		var panel = new LoadGamePanel();
 		AddChild(panel);
 		panel.Open();
+	}
+
+	/// <summary>Single-player → New Campaign(原版 page: campaigns/setup/page.xml)。</summary>
+	private void OnNewCampaign()
+	{
+		var panel = new CampaignsPanel();
+		AddChild(panel);
+		panel.Open();
+	}
+
+	/// <summary>Single-player → Continue Campaign(原版:直开当前 run 的菜单页,
+	/// enabled = CampaignRun.hasCurrentRun——菜单构建时已按此禁用,这里再兜底)。</summary>
+	private void OnContinueCampaign()
+	{
+		string filename = Campaigns.CampaignRun.CurrentRunFilename;
+		if (filename.Length == 0) return;
+		string? dataRoot = _binDir == null ? null : System.IO.Path.Combine(_binDir, "data", "mods", "public");
+		var run = Campaigns.CampaignRun.Load(dataRoot, filename);
+		if (run == null || run.Broken)
+		{
+			ZeroAD.Sim.Diag.Log("Campaign", $"current run '{filename}' unreadable — clearing");
+			Campaigns.CampaignRun.ClearCurrentRun();
+			return;
+		}
+		if (!run.IsCurrent()) run.SetCurrent();
+		var menu = new CampaignMenuPanel(run, dataRoot);
+		AddChild(menu);
+		menu.Open();
 	}
 
 	private void OnReplay()

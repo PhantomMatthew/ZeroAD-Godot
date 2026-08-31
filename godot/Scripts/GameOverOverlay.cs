@@ -138,6 +138,21 @@ public sealed partial class GameOverOverlay : CanvasLayer
     {
         // Only react to the local player's victory.
         if (e.PlayerId != _localPlayerId) return;
+        // 战役胜利回写(原版 campaigns/default_menu/endgame/endgame.js:markLevelComplete)。
+        var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+        if (cfg.CampaignRunFile.Length > 0 && cfg.CampaignLevelId.Length > 0)
+        {
+            string? binDir = StoneButtonStyle.FindBinariesDir();
+            string? dataRoot = binDir == null ? null
+                : System.IO.Path.Combine(binDir, "data", "mods", "public");
+            var run = Campaigns.CampaignRun.Load(dataRoot, cfg.CampaignRunFile);
+            if (run is { Broken: false })
+            {
+                run.MarkLevelComplete(cfg.CampaignLevelId);
+                ZeroAD.Sim.Diag.Log("Campaign",
+                    $"run '{cfg.CampaignRunFile}': level '{cfg.CampaignLevelId}' completed");
+            }
+        }
         ShowOverlay(
             title: "Victory!",
             titleColor: new Color(0.20f, 0.78f, 0.30f),

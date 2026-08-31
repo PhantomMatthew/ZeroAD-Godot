@@ -54,6 +54,12 @@ public partial class GameLaunchConfig : Node
     /// <summary>胜利条件(原版 victory_conditions 名;空 = ["conquest"] 默认征服)。</summary>
     public System.Collections.Generic.List<string> VictoryConditions = new();
 
+    // ── 战役上下文(原版 initAttributes.settings.campaignData)──
+    /// <summary>战役 run 存档文件名(user://saves/campaigns/{file}.0adcampaign;"" = 非战役局)。</summary>
+    public string CampaignRunFile = "";
+    /// <summary>战役关卡 id(模板 Levels 键;胜利时回写 MarkLevelComplete)。</summary>
+    public string CampaignLevelId = "";
+
     /// <summary>开始新一局前重置为大厅默认(避免上一局残留 Mode 触发错误启动)。</summary>
     public void Reset()
     {
@@ -79,5 +85,7 @@ public partial class GameLaunchConfig : Node
         LockedTeams = false;
         Cheats = false;
         VictoryConditions = new();
+        CampaignRunFile = "";
+        CampaignLevelId = "";
     }
 }
