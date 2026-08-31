@@ -97,9 +97,16 @@
 模块骨架齐全(headquarters/attackPlan/baseManager/worker/defense/naval/trade/garrison/queue/research/diplomacy 均有对应),但每个大幅简化。上游:`binaries/data/mods/public/simulation/ai/petra/`(31 个 .js ≈26k 行)。
 
 - [x] 合并 Managers/PetraManagers 判明:AIComponent 只编一套(PetraManagers 全套+Headquarters);Petra/Managers.cs 是游戏层选中的另一套(都活),非真重复——选定统一路径=PetraManagers(2cd3a93 工人命令通道即此路径)
-- [x] attackPlan 深化(a39ed51/9583b8c/ee5452f):集结相 Rallying+参战阈值+撤退判定(敌优比超限撤基地)+目标评分;余缺口:多波次编组、围攻路线(原版 comportment 全量)
-- [x] headquarters 选址评分(0be4127 土地过滤+CC 适中距)+基地扩张评分(c45b980 近资源+离 CC 适中距);余缺口:人口规划
-- [x] worker 供给评分(d5ba82f 性价比+拥塞+敌领土)+种田/狩猎分流(1e25ddc 先猎后种);余缺口:精细基址分配(原版 base 驻留/迁移)
+- [x] attackPlan 深化(a39ed51/9583b8c/ee5452f 集结相/撤退判定;a181b83 全量重写:多波次
+  编组 buildOrders/trainMoreUnits/assignUnits/addSiegeUnits、围攻路线 getPathToTarget/
+  setRallyPoint 领土边界集结/checkTargetObstruction 城墙阻断、attackManager getEnemyPlayer
+  +Raid/Rush/Attack/Huge 轮换);余缺口:overseas 海军运输、bombingAttacks
+- [x] headquarters 选址评分(0be4127/c45b980;34cf5fd 全量:findEconomicCCLocation 领土图
+  网格扫描+资源密度 splat+CC/DP 距离门+可放置校验;checkBaseExpansion/buildNewBase 逐字门控)
+  ;余缺口:人口规划(targetNumWorkers 动态)
+- [x] worker 精细基址分配(f4ffc4c:dropsite 三层补给 nearby/medium/faraway + startGathering
+  七级行走(宝藏→猎→本基地→他基地→助建地基→faraway→冷却)+ 拥塞/敌领土/采集速率表过滤
+  + pickMostNeededResources 需求序;d5ba82f/1e25ddc 为其前置)
 - [x] data.json 配置体系(5075dbb:queues 时间窗阈值+unusedNoAllyTechs 补全;难度/性格/经济/防御/优先级/队列全量)
 - [x] mapMask 掩码工具(MapMask.cs 常量 + PetraMapModule.CreateBorderMap:地图外/边界 + 领土窄/宽前线,原版 mapMask.js + createBorderMap 语义)
 - [x] common-api 补全(AIEntity 能力面 19 项+EntityCollection 质心/近似位置/HasEntId;Filters 26/26 全)
