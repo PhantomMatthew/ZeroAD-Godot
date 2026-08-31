@@ -39,6 +39,14 @@ public sealed partial class MainMenu : Control
 			else userCfgNode.SetUserValue(key, value);
 			userCfgNode.Save();
 		};
+		// 条款框架(mod.io Disclaimer 等)同款注入(原版 terms.js 的 ConfigDB 读写)。
+		Dialogs.TermsManager.ReadUserConfig = key =>
+			userCfgNode.GetUserValue(key) is { Length: > 0 } v ? v : null;
+		Dialogs.TermsManager.WriteUserConfig = (key, value) =>
+		{
+			userCfgNode.SetUserValue(key, value);
+			userCfgNode.Save();
+		};
 		// 已存设置全量重放(音量/全屏/垂直同步/GUI 缩放等即时生效项;场景相关项此处无 light/env
 		// → no-op,进 session 后由 Main 再重放)。菜单上下文 inGame:false(adaptivefps 取 menu 值)。
 		var userCfg = userCfgNode;
@@ -291,6 +299,8 @@ public sealed partial class MainMenu : Control
 				new("Hotkeys", OnHotkeys),
 				// 原版 MainMenuItems.js:Settings 第三项即 Language(page_locale.xml)
 				new("Language", OnLanguage),
+				// 原版 MainMenuItems.js:Language 之后即 Mod Selection(page_modmod.xml)
+				new("Mod Selection", OnModSelection),
 				// 原版 MainMenuItems.js:Settings 第四项即 Credits(page_credits.xml)。
 				new("Credits", OnCredits),
 			}),
@@ -593,6 +603,15 @@ public sealed partial class MainMenu : Control
 	private void OnCredits()
 	{
 		var panel = new CreditsPanel();
+		AddChild(panel);
+		panel.Open();
+	}
+
+	/// <summary>Settings → Mod Selection(原版 page_modmod.xml:启用/禁用/依赖校验/排序;
+	/// 含 Download Mods → mod.io 页,先过 Disclaimer 条款门)。</summary>
+	private void OnModSelection()
+	{
+		var panel = new ModmodPanel();
 		AddChild(panel);
 		panel.Open();
 	}
