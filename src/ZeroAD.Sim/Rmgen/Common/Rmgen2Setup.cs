@@ -22,7 +22,7 @@ namespace ZeroAD.Sim.Rmgen.Common
         public readonly int MapSize;
         public readonly RmgenVector2D MapCenter;
 
-        private readonly Dictionary<string, TileClass> _tileClasses = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, TileClass> _tileClasses;
 
         public Rmgen2Context(RmgenRng rng, RandomMap map, MapSettings settings, BiomeSet biome,
             string biomeName, IEnumerable<string>? extraTileClasses = null)
@@ -34,8 +34,26 @@ namespace ZeroAD.Sim.Rmgen.Common
             BiomeName = biomeName;
             MapSize = map.GetSize();
             MapCenter = map.GetCenter();
+            _tileClasses = new Dictionary<string, TileClass>(StringComparer.Ordinal);
             InitTileClasses(extraTileClasses);
         }
+
+        private Rmgen2Context(Rmgen2Context source, BiomeSet biome, string biomeName)
+        {
+            Rng = source.Rng;
+            Map = source.Map;
+            Settings = source.Settings;
+            Biome = biome;
+            BiomeName = biomeName;
+            MapSize = source.MapSize;
+            MapCenter = source.MapCenter;
+            _tileClasses = source._tileClasses;   // 共享同一批 tileclass
+        }
+
+        /// <summary>换 biome 但共享 tileclass 的上下文——对应上游在同一张图里
+        /// 反复 setBiome(zone.biome)（mediterranean 的多气候区）。</summary>
+        public Rmgen2Context WithBiome(BiomeSet biome, string biomeName)
+            => new(this, biome, biomeName);
 
         // ── setup.js 的量词表 ──
 

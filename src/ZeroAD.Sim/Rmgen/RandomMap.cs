@@ -34,6 +34,9 @@ namespace ZeroAD.Sim.Rmgen
         // 实体列表
         public readonly List<RmgenEntity> Entities = new();
 
+        /// <summary>地图环境（原版 g_Environment 全局；set* 系列写在这里，随 MakeExportable 导出）。</summary>
+        public readonly RmgenEnvironment Env = new();
+
         // RNG（由构造器传入，共享种子）
         private readonly RmgenRng _rng;
         private readonly bool _circularMap;
@@ -271,6 +274,7 @@ namespace ZeroAD.Sim.Rmgen
                 TextureNames = new List<string>(IDToName),
                 TileIndex = idx,
                 TilePriority = pri,
+                Environment = Env.Clone(),
             };
         }
     }
@@ -285,6 +289,9 @@ namespace ZeroAD.Sim.Rmgen
         public List<string> TextureNames = new();
         public ushort[] TileIndex = System.Array.Empty<ushort>();
         public ushort[] TilePriority = System.Array.Empty<ushort>();
+
+        /// <summary>地图环境（天空/太阳/水体/雾/后处理）——上游 g_Environment 的导出段。</summary>
+        public RmgenEnvironment Environment = new();
     }
 
     /// <summary>地图生成的实体（逐字移植 Entity.js）。</summary>

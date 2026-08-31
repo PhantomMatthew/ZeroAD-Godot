@@ -1,210 +1,422 @@
 using System;
 using System.Collections.Generic;
-using ZeroAD.Sim.RmgenMath;
 using ZeroAD.Sim.Rmgen.Common;
+using ZeroAD.Sim.RmgenMath;
+using E = ZeroAD.Sim.Rmgen.Common.Rmgen2Context.Element;
 
 namespace ZeroAD.Sim.Rmgen.Maps
 {
-    /// <summary>地中海地图（原版 maps/random/mediterranean.js,488 行——
-    /// 高度图驱动:GEBCO 地形图 + 多气候区生物群系铺地)。降海平面 +
-    /// 平滑高度图 + 水/陆标记 + 气候区铺生物群系。高度图缺失时回退
-    /// 确定性径向渐变(测试/数据缺失环境)。</summary>
-    public sealed class MediterraneanMap : StandardMap
+    /// <summary>mediterranean.js（逐字移植，488 行）——以 GEBCO 真实海拔（mediterranean.png）
+    /// 为底的地中海：五个气候带（北欧/西欧/东欧/南欧/非洲）各用一套 biome 铺地与放资源，
+    /// 玩家随机落在陆地上。高度图缺失时回退确定性径向渐变（测试/数据缺失环境）。
+    /// placePlayersNomad 与环境设置（水色/天色/雾/PP）按既有移植约定省略。</summary>
+    public sealed class MediterraneanMap : Rmgen2Map
     {
-    protected override double HeightLand => 0;
-        protected override string BaseTerrain => "medit_sand_wet";
+        private const string TWater = "medit_sand_wet";
+        private static readonly string[] TSnowedRocks = { "alpine_cliff_b", "alpine_cliff_snow" };
 
-        /// <summary>生成地图。返回 MapExport 供引擎消费。</summary>
-        public override MapExport Generate(RmgenRng rng, MapSettings settings)
+        private double _heightSeaGround, _heightWaterLevel, _heightShoreline, _heightSnow;
+
+        /// <summary>上游 setBiome("generic/aegean") 作为默认 biome（各气候带再各自覆盖）。</summary>
+        protected override string? ForcedBiome => "generic/aegean";
+
+        /// <summary>上游 new RandomMap(heightWaterLevel, ...)，heightWaterLevel = 0 * scale = 0。</summary>
+        protected override double PickHeightLand(RmgenRng rng) => 0;
+
+        protected override IReadOnlyList<string>? ExtraTileClasses => new[]
         {
-            // 高度图(原版 LoadHeightmapImage("mediterranean.png", 0, 40) +
-            // convertHeightmap1Dto2D;缺失回退确定性径向渐变——扫雷/模板测试
-            // 的 dataRoot 不含 maps/)。
-            float[][] heightmap = LoadMediterraneanHeightmap(settings.DataRoot);
+            "autumn", "desert", "medit", "polar", "steppe", "temp", "shoreline",
+            "africa", "northern_europe", "southern_europe", "western_europe", "eastern_europe",
+        };
 
-            // 高度基准(原版 heightScale = Size/320)。
-            int mapSize = settings.Size;
-            double heightScale = mapSize / 320.0;
-            double heightSeaGround = -6 * heightScale;
-            double heightWaterLevel = 0 * heightScale;
-            double heightShoreline = 0.5 * heightScale;
+        /// <summary>land 类由高度/圆盘决定，不是全图刷。</summary>
+        protected override bool PaintLandClass => false;
 
-            var map = new RandomMap(rng, mapSize, heightWaterLevel,
-                "medit_sand_wet", settings.CircularMap);
-            RmgenLibrary.CurrentMap = map;
-            var mapCenter = map.GetCenter();
-
-            // TileClass(原版 g_TileClasses 八个气候区 + water/land/mountain/shoreline)。
-            var clWater = new TileClass(mapSize);
-            var clLand = new TileClass(mapSize);
-            var clMountain = new TileClass(mapSize);
-            var clShoreline = new TileClass(mapSize);
-            var clNorthernEurope = new TileClass(mapSize);
-            var clWesternEurope = new TileClass(mapSize);
-            var clEasternEurope = new TileClass(mapSize);
-            var clSouthernEurope = new TileClass(mapSize);
-            var clAfrica = new TileClass(mapSize);
-            var clPlayer = new TileClass(mapSize);
-            var clForest = new TileClass(mapSize);
-            var clDirt = new TileClass(mapSize);
-            var clRock = new TileClass(mapSize);
-            var clMetal = new TileClass(mapSize);
-
-            // 高度图写入(原版 TILE_CENTERED_HEIGHT_MAP=true 的逐点刷)。
-            int hmSize = heightmap.Length;
-            for (int x = 0; x < mapSize; x++)
-                for (int y = 0; y < mapSize; y++)
-                {
-                    int hx = Math.Min(x * hmSize / mapSize, hmSize - 1);
-                    int hy = Math.Min(y * hmSize / mapSize, hmSize - 1);
-                    map.SetHeight(new RmgenVector2D(x, y),
-                        heightSeaGround + heightmap[hx][hy] / 0xFFFF * (40 * heightScale));
-                }
-
-            // 气候区(原版 climateZones 五带:北欧/西欧/东欧/南欧/非洲)。
-            var bounds = new { Left = 0, Right = mapSize, Top = mapSize, Bottom = 0 };
-            double northernTopLeftX = RmgenLibrary.FractionToTiles(0.3, mapSize);
-            double northernTopLeftY = RmgenLibrary.FractionToTiles(0.7, mapSize);
-            double westernTopLeftX = RmgenLibrary.FractionToTiles(0.7, mapSize);
-            double westernTopLeftY = RmgenLibrary.FractionToTiles(0.47, mapSize);
-            double africaTop = RmgenLibrary.FractionToTiles(0.33, mapSize);
-
-            var climateZones = new[]
-            {
-                (TileClass: clNorthernEurope, P1: new RmgenVector2D(northernTopLeftX, bounds.Top),
-                 P2: new RmgenVector2D(bounds.Right, northernTopLeftY), Biome: "generic/arctic",
-                 Constraint: (IConstraint?)null),
-                (TileClass: clWesternEurope, P1: new RmgenVector2D(bounds.Left, bounds.Top),
-                 P2: new RmgenVector2D(westernTopLeftX, westernTopLeftY), Biome: "generic/temperate",
-                 Constraint: (IConstraint?)RmgenLibrary.AvoidClasses(clNorthernEurope, 0)),
-                (TileClass: clEasternEurope, P1: new RmgenVector2D(westernTopLeftX, bounds.Top),
-                 P2: new RmgenVector2D(bounds.Right, westernTopLeftY), Biome: "generic/autumn",
-                 Constraint: (IConstraint?)RmgenLibrary.AvoidClasses(clNorthernEurope, 0)),
-                (TileClass: clSouthernEurope, P1: new RmgenVector2D(bounds.Left, africaTop),
-                 P2: new RmgenVector2D(bounds.Right, westernTopLeftY), Biome: "generic/aegean",
-                 Constraint: (IConstraint?)null),
-                (TileClass: clAfrica, P1: new RmgenVector2D(bounds.Left, africaTop),
-                 P2: new RmgenVector2D(bounds.Right, bounds.Bottom), Biome: "generic/sahara",
-                 Constraint: (IConstraint?)null),
-            };
-
-            // 降海平面(原版:MapBoundsPlacer + SmoothElevationPainter ELEVATION_SET)。
-            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
-                new SmoothElevationPainter(rng,
-                    SmoothElevationPainter.SmoothType.Blurry, heightSeaGround, 2),
-                new HeightConstraint(map, double.NegativeInfinity, heightWaterLevel));
-
-            // 平滑高度图(原版:SmoothingPainter)。
-            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
-                new SmoothingPainter(1,
-                    RmgenLibrary.ScaleByMapSize(0.3, 0.8, mapSize), 1),
-                null);
-
-            // 水标记(原版:MapBoundsPlacer + TileClassPainter,水位以下)。
-            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
-                new TileClassPainter(clWater),
-                new HeightConstraint(map, double.NegativeInfinity, heightWaterLevel));
-
-            // 陆标记(原版:DiskPlacer 中心半图径,避水)。
-            RmgenLibrary.CreateArea(
-                new DiskPlacer(RmgenLibrary.FractionToTiles(0.5, mapSize), mapCenter),
-                new TileClassPainter(clLand),
-                RmgenLibrary.AvoidClasses(clWater, 0));
-
-            // 气候区铺生物群系(原版:每区 RectPlacer 标类 + 地形刷漆)。
-            foreach (var zone in climateZones)
-            {
-                var biome = BiomeLoader.Load(settings.DataRoot, zone.Biome, rng);
-                RmgenLibrary.CreateArea(
-                    new RectPlacer((int)zone.P1.X, (int)zone.P1.Y,
-                        (int)zone.P2.X, (int)zone.P2.Y),
-                    new TileClassPainter(zone.TileClass),
-                    zone.Constraint);
-                RmgenLibrary.CreateArea(
-                    new RectPlacer((int)zone.P1.X, (int)zone.P1.Y,
-                        (int)zone.P2.X, (int)zone.P2.Y),
-                    new TerrainPainter(biome.MainTerrain0, rng),
-                    new AndConstraint(
-                        new HeightConstraint(map, heightWaterLevel, double.PositiveInfinity),
-                        zone.Constraint ?? new NullConstraint()));
-            }
-
-            // 生物群系边界模糊(原版:分层斑块破气候区硬边)。
-            foreach (var zone in climateZones)
-            {
-                var biome = BiomeLoader.Load(settings.DataRoot, zone.Biome, rng);
-                RmgenCommon.CreateLayeredPatches(rng, map,
-                    new[] { RmgenLibrary.ScaleByMapSize(3, 6, mapSize),
-                            RmgenLibrary.ScaleByMapSize(5, 10, mapSize),
-                            RmgenLibrary.ScaleByMapSize(8, 21, mapSize) },
-                    new object[] { new object[] { biome.MainTerrain0, biome.Tier1Terrain },
-                                   new object[] { biome.Tier1Terrain, biome.Tier2Terrain },
-                                   new object[] { biome.Tier2Terrain, biome.Tier3Terrain } },
-                    new[] { 1, 1 },
-                    new AndConstraint(
-                        RmgenLibrary.AvoidClasses(clForest, 2, clWater, 2, clMountain, 2,
-                            clDirt, 5, clPlayer, 8),
-                        RmgenLibrary.BorderClasses(zone.TileClass, 3, 3)),
-                    (int)RmgenLibrary.ScaleByMapSize(20, 60, mapSize),
-                    clDirt);
-            }
-
-            // 玩家布置(原版:非 Nomad 时 playerPlacementRandom 随机布置,
-            // 每玩家 CC 区压平 + createBase)。
-            if (!settings.Nomad)
-            {
-                var (playerIDs, playerPosition) = RmgenCommon.PlayerPlacementRandom(
-                    rng, map, settings,
-                    new AndConstraint(
-                        RmgenLibrary.AvoidClasses(clMountain, 5),
-                        RmgenLibrary.StayClasses(clLand,
-                            RmgenLibrary.ScaleByMapSize(8, 25, mapSize)))) ?? (null!, null!);
-                if (playerIDs != null)
-                {
-                    for (int i = 0; i < RmgenCommon.GetNumPlayers(settings); ++i)
-                    {
-                        // CC 区压平(原版:ClumpPlacer + SmoothElevationPainter 到玩家高度)。
-                        RmgenLibrary.CreateArea(
-                            new ClumpPlacer(rng,
-                                (int)(RmgenCommon.DefaultPlayerBaseRadius(mapSize) * 0.8),
-                                0.95, 0.6, double.PositiveInfinity, playerPosition[i]),
-                            new SmoothElevationPainter(rng,
-                                SmoothElevationPainter.SmoothType.Solid,
-                                map.GetHeight(playerPosition[i]), 6),
-                            null);
-                    }
-                    // 基地区按所在气候区 biome 刷(原版:setBiome 按 zone 所在);
-                    // 显式位置版 PlacePlayerBases 一次全玩家(位置列表按序配对——
-                    // 原版每玩家 zoneBiome 不同,按 optionsFactory 逐玩家换基地贴图)。
-                    RmgenCommon.PlacePlayerBases(rng, map, settings,
-                        BiomeLoader.Load(settings.DataRoot, "generic/aegean", rng).MainTerrain0,
-                        clPlayer, null, playerPosition, null, null, playerIDs,
-                        optionsFactory: pid =>
-                        {
-                            int idx = playerIDs.IndexOf(pid);
-                            var pos = playerPosition[idx >= 0 ? idx : 0];
-                            var zone = climateZones[0];
-                            foreach (var z in climateZones)
-                                if (z.TileClass.Has(pos)) { zone = z; break; }
-                            return new RmgenCommon.PlayerBaseOptions();
-                        });
-                }
-            }
-
-            return map.MakeExportable();
+        private sealed class ClimateZone
+        {
+            public TileClass TileClass = null!;
+            public RmgenVector2D Position1, Position2;
+            public string BiomeId = "";
+            public IConstraint Constraint = new NullConstraint();
+            public BiomeSet Biome = null!;
+            public Rmgen2Context Ctx = null!;
         }
 
-        /// <summary>高度图加载(mediterranean.png;缺失回退确定性径向渐变——
-        /// 扫雷/模板测试的 dataRoot 不含 maps/)。</summary>
-        private static float[][] LoadMediterraneanHeightmap(string? dataRoot)
+        protected override void GenerateRmgen2()
         {
-            string? path = dataRoot != null
-                ? System.IO.Path.Combine(dataRoot, "maps", "random", "mediterranean.png")
-                : null;
-            if (path != null && System.IO.File.Exists(path))
-                return HeightmapLoader.ConvertHeightmap1Dto2D(
-                    HeightmapLoader.LoadHeightmapImage(path));
+            var c = Ctx;
 
+            double heightScale = MapSize / 320.0;
+            _heightSeaGround = -6 * heightScale;
+            _heightWaterLevel = 0 * heightScale;
+            _heightShoreline = 0.5 * heightScale;
+            _heightSnow = 10 * heightScale;
+
+            LoadMediterraneanHeightmap();
+
+            // 上游 mapBounds：left/bottom = 0，right/top = mapSize
+            double boundsLeft = 0, boundsBottom = 0, boundsRight = MapSize, boundsTop = MapSize;
+
+            var northernTopLeft = new RmgenVector2D(
+                RmgenLibrary.FractionToTiles(0.3, MapSize),
+                RmgenLibrary.FractionToTiles(0.7, MapSize));
+            var westernTopLeft = new RmgenVector2D(
+                RmgenLibrary.FractionToTiles(0.7, MapSize),
+                RmgenLibrary.FractionToTiles(0.47, MapSize));
+            double africaTop = RmgenLibrary.FractionToTiles(0.33, MapSize);
+
+            var climateZones = new List<ClimateZone>
+            {
+                new()
+                {
+                    TileClass = c.Cl("northern_europe"),
+                    Position1 = new RmgenVector2D(northernTopLeft.X, boundsTop),
+                    Position2 = new RmgenVector2D(boundsRight, northernTopLeft.Y),
+                    BiomeId = "generic/arctic",
+                },
+                new()
+                {
+                    TileClass = c.Cl("western_europe"),
+                    Position1 = new RmgenVector2D(boundsLeft, boundsTop),
+                    Position2 = westernTopLeft,
+                    BiomeId = "generic/temperate",
+                    Constraint = RmgenLibrary.AvoidClasses(c.Cl("northern_europe"), 0),
+                },
+                new()
+                {
+                    TileClass = c.Cl("eastern_europe"),
+                    Position1 = new RmgenVector2D(westernTopLeft.X, boundsTop),
+                    Position2 = new RmgenVector2D(boundsRight, westernTopLeft.Y),
+                    BiomeId = "generic/autumn",
+                    Constraint = RmgenLibrary.AvoidClasses(c.Cl("northern_europe"), 0),
+                },
+                new()
+                {
+                    TileClass = c.Cl("southern_europe"),
+                    Position1 = new RmgenVector2D(boundsLeft, africaTop),
+                    Position2 = new RmgenVector2D(boundsRight, westernTopLeft.Y),
+                    BiomeId = "generic/aegean",
+                },
+                new()
+                {
+                    TileClass = c.Cl("africa"),
+                    Position1 = new RmgenVector2D(boundsLeft, africaTop),
+                    Position2 = new RmgenVector2D(boundsRight, boundsBottom),
+                    BiomeId = "generic/sahara",
+                },
+            };
+
+            foreach (var zone in climateZones)
+            {
+                zone.Biome = BiomeLoader.Load(Settings.DataRoot, zone.BiomeId, Rng);
+                zone.Ctx = c.WithBiome(zone.Biome, zone.BiomeId);
+            }
+
+            // 降海平面
+            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                new SmoothElevationPainter(Rng, SmoothElevationPainter.SmoothType.Solid,
+                    _heightSeaGround, 2),
+                new HeightConstraint(Map, double.NegativeInfinity, _heightWaterLevel));
+
+            // 高度图平滑
+            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                new SmoothingPainter(1, RmgenLibrary.ScaleByMapSize(0.3, 0.8, MapSize), 1),
+                null);
+
+            // 水标记
+            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                new TileClassPainter(c.ClWater),
+                new HeightConstraint(Map, double.NegativeInfinity, _heightWaterLevel));
+
+            // 陆标记（图心半径 0.5 图宽的圆盘内、非水）
+            RmgenLibrary.CreateArea(
+                new DiskPlacer(RmgenLibrary.FractionToTiles(0.5, MapSize), c.MapCenter),
+                new TileClassPainter(c.ClLand),
+                RmgenLibrary.AvoidClasses(c.ClWater, 0));
+
+            // 气候带标记 + 铺地
+            foreach (var zone in climateZones)
+            {
+                RmgenLibrary.CreateArea(RectOf(zone),
+                    new TileClassPainter(zone.TileClass),
+                    zone.Constraint);
+
+                RmgenLibrary.CreateArea(RectOf(zone),
+                    new TerrainPainter(zone.Biome.MainTerrain, Rng),
+                    new AndConstraint(new IConstraint[]
+                    {
+                        new HeightConstraint(Map, _heightWaterLevel, double.PositiveInfinity),
+                        zone.Constraint,
+                    }));
+            }
+
+            // 气候带边界模糊
+            foreach (var zone in climateZones)
+                RmgenCommon.CreateLayeredPatches(Rng, Map,
+                    new[]
+                    {
+                        RmgenLibrary.ScaleByMapSize(3, 6, MapSize),
+                        RmgenLibrary.ScaleByMapSize(5, 10, MapSize),
+                        RmgenLibrary.ScaleByMapSize(8, 21, MapSize),
+                    },
+                    new object[]
+                    {
+                        new object[] { zone.Biome.MainTerrain, zone.Biome.Tier1Terrain },
+                        new object[] { zone.Biome.Tier1Terrain, zone.Biome.Tier2Terrain },
+                        new object[] { zone.Biome.Tier2Terrain, zone.Biome.Tier3Terrain },
+                    },
+                    new[] { 1, 1 },
+                    new AndConstraint(new IConstraint[]
+                    {
+                        RmgenLibrary.AvoidClasses(c.ClForest, 2, c.ClWater, 2, c.ClMountain, 2,
+                            c.ClDirt, 5, c.ClPlayer, 8),
+                        RmgenLibrary.BorderClasses(zone.TileClass, 3, 3),
+                    }),
+                    (int)RmgenLibrary.ScaleByMapSize(20, 60, MapSize),
+                    c.ClDirt);
+
+            // 玩家布置：随机落点 + 基地区压平 + 逐玩家按所在气候带建基地
+            if (!Settings.Nomad)
+            {
+                double baseRadius = RmgenCommon.DefaultPlayerBaseRadius(MapSize);
+                var placement = RmgenCommon.PlayerPlacementRandom(Rng, Map, Settings,
+                    new AndConstraint(new IConstraint[]
+                    {
+                        RmgenLibrary.AvoidClasses(c.ClMountain, 5),
+                        RmgenLibrary.StayClasses(c.ClLand,
+                            RmgenLibrary.ScaleByMapSize(8, 25, MapSize)),
+                    }));
+
+                if (placement.HasValue)
+                {
+                    var (playerIDs, playerPosition) = placement.Value;
+                    for (int i = 0; i < NumPlayers; ++i)
+                    {
+                        var zoneCtx = ZoneAt(climateZones, playerPosition[i]).Ctx;
+
+                        RmgenLibrary.CreateArea(
+                            new ClumpPlacer(Rng, RmgenGeometry.DiskArea(baseRadius * 0.8),
+                                0.95, 0.6, double.PositiveInfinity, playerPosition[i]),
+                            new SmoothElevationPainter(Rng, SmoothElevationPainter.SmoothType.Solid,
+                                Map.GetHeight(playerPosition[i]), 6),
+                            null);
+
+                        // createBase(playerID, position, mapSize >= 384)
+                        zoneCtx.CreateBases(new[] { playerIDs[i] }, new[] { playerPosition[i] },
+                            MapSize >= 384);
+                    }
+                }
+            }
+
+            // 逐气候带：岸线 / 崖壁 / 资源
+            foreach (var zone in climateZones)
+            {
+                var zc = zone.Ctx;
+                var zb = zone.Biome;
+
+                RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                    new IPainter[]
+                    {
+                        new TerrainPainter(zb.Shore, Rng),
+                        new TileClassPainter(c.Cl("shoreline")),
+                    },
+                    new AndConstraint(new IConstraint[]
+                    {
+                        RmgenLibrary.StayClasses(zone.TileClass, 0),
+                        new HeightConstraint(Map, double.NegativeInfinity, _heightShoreline),
+                    }));
+
+                RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                    new IPainter[]
+                    {
+                        new TerrainPainter(zb.Cliff, Rng),
+                        new TileClassPainter(c.ClMountain),
+                    },
+                    new AndConstraint(new IConstraint[]
+                    {
+                        RmgenLibrary.StayClasses(zone.TileClass, 0),
+                        RmgenLibrary.AvoidClasses(c.ClWater, 2),
+                        new SlopeConstraint(Map, 2, double.PositiveInfinity),
+                    }));
+
+                zc.AddElements(new[]
+                {
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddMetal(cs, s, d, f),
+                        Avoid = new object[] { c.ClBerries, 5, c.ClForest, 3, c.ClMountain, 2,
+                            c.ClPlayer, 30, c.ClRock, 10, c.ClMetal, 25, c.ClWater, 4 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "normal" }, Mixes = new[] { "same" },
+                        Amounts = new[] { "many" },
+                    },
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddStone(cs, s, d, f),
+                        Avoid = new object[] { c.ClBerries, 5, c.ClForest, 3, c.ClMountain, 2,
+                            c.ClPlayer, 30, c.ClRock, 10, c.ClMetal, 25, c.ClWater, 4 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "normal" }, Mixes = new[] { "same" },
+                        Amounts = new[] { "many" },
+                    },
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddForests(cs, s, d, f),
+                        Avoid = new object[] { c.ClBerries, 3, c.ClForest, 15, c.ClMetal, 3,
+                            c.ClMountain, 2, c.ClPlayer, 12, c.ClRock, 2, c.ClWater, 2 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "normal" }, Mixes = new[] { "normal" },
+                        Amounts = new[] { "normal" },
+                    },
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddSmallMetal(cs, s, d, f),
+                        Avoid = new object[] { c.ClBerries, 5, c.ClForest, 3, c.ClMountain, 2,
+                            c.ClPlayer, 30, c.ClRock, 10, c.ClMetal, 15, c.ClWater, 4 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "normal" }, Mixes = new[] { "same" },
+                        Amounts = new[] { "few", "normal", "many" },
+                    },
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddBerries(cs, s, d, f),
+                        Avoid = new object[] { c.ClBerries, 30, c.ClForest, 2, c.ClMetal, 4,
+                            c.ClMountain, 2, c.ClPlayer, 20, c.ClRock, 4, c.ClWater, 2 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "normal" }, Mixes = new[] { "normal" },
+                        Amounts = new[] { "many" },
+                    },
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddAnimals(cs, s, d, f),
+                        Avoid = new object[] { c.ClAnimals, 10, c.ClForest, 1, c.ClMetal, 2,
+                            c.ClMountain, 1, c.ClPlayer, 15, c.ClRock, 2, c.ClWater, 3 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "normal" }, Mixes = new[] { "normal" },
+                        Amounts = new[] { "many" },
+                    },
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddAnimals(cs, s, d, f),
+                        Avoid = new object[] { c.ClAnimals, 10, c.ClForest, 1, c.ClMetal, 2,
+                            c.ClMountain, 1, c.ClPlayer, 15, c.ClRock, 2, c.ClWater, 1 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "small" }, Mixes = new[] { "normal" },
+                        Amounts = new[] { "tons" },
+                    },
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddStragglerTrees(cs, s, d, f),
+                        Avoid = new object[] { c.ClBerries, 5, c.ClForest, 5, c.ClMetal, 2,
+                            c.ClMountain, 1, c.ClPlayer, 12, c.ClRock, 2, c.ClWater, 3 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "normal" }, Mixes = new[] { "normal" },
+                        // 上游写的 "some" 不在量词表里，pickAmount 回退 normal——照搬
+                        Amounts = new[] { "some" },
+                    },
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddLayeredPatches(cs, s, d, f),
+                        Avoid = new object[] { c.ClDirt, 5, c.ClForest, 2, c.ClMountain, 2,
+                            c.ClPlayer, 12, c.ClWater, 3 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "normal" }, Mixes = new[] { "normal" },
+                        Amounts = new[] { "tons" },
+                    },
+                    new E
+                    {
+                        Func = (cs, s, d, f, _) => zc.AddDecoration(cs, s, d, f),
+                        Avoid = new object[] { c.ClForest, 2, c.ClMountain, 2, c.ClPlayer, 12,
+                            c.ClWater, 4 },
+                        Stay = new object[] { zone.TileClass, 0 },
+                        Sizes = new[] { "small" }, Mixes = new[] { "same" },
+                        Amounts = new[] { "normal" },
+                    },
+                });
+            }
+
+            // 水面刷漆
+            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                new TerrainPainter(TWater, Rng),
+                new HeightConstraint(Map, double.NegativeInfinity, _heightWaterLevel));
+
+            // 高山雪线
+            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                new TerrainPainter(TSnowedRocks, Rng),
+                new AndConstraint(new IConstraint[]
+                {
+                    new HeightConstraint(Map, _heightSnow, double.PositiveInfinity),
+                    RmgenLibrary.AvoidClasses(c.Cl("africa"), 0, c.Cl("southern_europe"), 0,
+                        c.ClPlayer, 6),
+                }));
+
+            // 鱼群（上游临时改 g_Gaia.fish）
+            var fishBiome = Biome.Clone();
+            fishBiome.Fish = "gaia/fish/generic";
+            var fishCtx = c.WithBiome(fishBiome, BiomeName);
+            fishCtx.AddElements(new[]
+            {
+                new E
+                {
+                    Func = (cs, s, d, f, _) => fishCtx.AddFish(cs, s, d, f),
+                    Avoid = new object[] { c.ClFish, 10 },
+                    Stay = new object[] { c.ClWater, 4 },
+                    Sizes = new[] { "normal" }, Mixes = new[] { "similar" },
+                    Amounts = new[] { "many" },
+                },
+            });
+
+            // 鲸鱼（同上，换模板）
+            var whaleBiome = Biome.Clone();
+            whaleBiome.Fish = "gaia/fauna_whale_fin";
+            var whaleCtx = c.WithBiome(whaleBiome, BiomeName);
+            whaleCtx.AddElements(new[]
+            {
+                new E
+                {
+                    Func = (cs, s, d, f, _) => whaleCtx.AddFish(cs, s, d, f),
+                    Avoid = new object[] { c.ClFish, 2, c.Cl("desert"), 50, c.Cl("steppe"), 50 },
+                    Stay = new object[] { c.ClWater, 7 },
+                    Sizes = new[] { "small" }, Mixes = new[] { "same" },
+                    Amounts = new[] { "scarce" },
+                },
+            });
+        }
+
+        private static ClimateZone ZoneAt(List<ClimateZone> zones, RmgenVector2D position)
+        {
+            foreach (var zone in zones)
+                if (zone.TileClass.Has(position))
+                    return zone;
+            // 上游 climateZones.find(...) 找不到会崩；本版退回南欧带（默认 aegean）
+            return zones[3];
+        }
+
+        private static RectPlacer RectOf(ClimateZone zone)
+            => new((int)zone.Position1.X, (int)zone.Position1.Y,
+                (int)zone.Position2.X, (int)zone.Position2.Y);
+
+        /// <summary>g_Map.LoadHeightmapImage("mediterranean.png", 0, 40)。
+        /// 缺失时回退确定性径向渐变（扫雷/模板测试的 dataRoot 不含 maps/）。</summary>
+        private void LoadMediterraneanHeightmap()
+        {
+            string? path = Settings.DataRoot != null
+                ? System.IO.Path.Combine(Settings.DataRoot, "maps", "random", "mediterranean.png")
+                : null;
+
+            float[][] heightmap;
+            if (path != null && System.IO.File.Exists(path))
+                heightmap = HeightmapLoader.ConvertHeightmap1Dto2D(
+                    HeightmapLoader.LoadHeightmapImage(path));
+            else
+                heightmap = FallbackHeightmap();
+
+            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                new HeightmapPainter(Map, heightmap, 0, 40), null);
+        }
+
+        private static float[][] FallbackHeightmap()
+        {
             const int n = 721;
             var hm = new float[n][];
             for (int x = 0; x < n; ++x)
@@ -212,11 +424,11 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 hm[x] = new float[n];
                 for (int y = 0; y < n; ++y)
                 {
-                    // 确定性径向渐变(测试/数据缺失环境;中心高四周低的海岸近似)。
+                    // 中心高四周低的海岸近似
                     double dx = x - (n - 1) / 2.0;
                     double dy = y - (n - 1) / 2.0;
                     double v = 0.7 - SafeMath.Sqrt(dx * dx + dy * dy) / (n / 2.0) * 0.8;
-                    hm[x][y] = (float)(SafeMath.Max(0, v) * 0xFFFF);
+                    hm[x][y] = (float)(Math.Max(0, v) * 0xFFFF);
                 }
             }
             return hm;

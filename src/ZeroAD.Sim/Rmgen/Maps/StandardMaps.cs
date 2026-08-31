@@ -299,22 +299,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override IReadOnlyList<string> SupportedBiomes => new[] { "alpine" };
     }
 
-    /// <summary>ambush.js（250 行）。</summary>
-    public sealed class AmbushMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
     /// <summary>foothills.js（254 行）。</summary>
     public sealed class FoothillsMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
-    /// <summary>empire.js（255 行）。</summary>
-    public sealed class EmpireMap : StandardMap
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "medit_grass_field";
@@ -366,13 +352,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "polar_snow_b";
     }
 
-    /// <summary>stronghold.js（282 行）。</summary>
-    public sealed class StrongholdMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
     /// <summary>india.js（283 行）。</summary>
     public sealed class IndiaMap : StandardMap
     {
@@ -404,9 +383,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ["volcanic_lands"] = () => new VolcanicLandsMap(),
             ["atlas_mountains"] = () => new AtlasMountainsMap(),
             ["alpine_lakes"] = () => new AlpineLakesMap(),
-            ["ambush"] = () => new AmbushMap(),
+            ["ambush"] = () => new AmbushMap2(),
             ["foothills"] = () => new FoothillsMap(),
-            ["empire"] = () => new EmpireMap(),
+            ["empire"] = () => new EmpireMap2(),
             ["sahel"] = () => new SahelMap(),
             ["saharan_oases"] = () => new SaharanOasesMap(),
             ["deep_forest"] = () => new DeepForestMap(),
@@ -414,23 +393,23 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ["english_channel"] = () => new EnglishChannelMap(),
             ["lake"] = () => new LakeMap(),
             ["polar_sea"] = () => new PolarSeaMap(),
-            ["stronghold"] = () => new StrongholdMap(),
+            ["stronghold"] = () => new StrongholdMap2(),
             ["india"] = () => new IndiaMap(),
             ["continent"] = () => new ContinentMap2(),
             ["cantabrian_highlands"] = () => new CantabrianHighlandsMap(),
             // Phase E（60 个）
             ["survivalofthefittest"] = () => new SurvivalOfTheFittestMap(),
             ["fortress"] = () => new FortressMap(),
-            ["frontier"] = () => new FrontierMap(),
+            ["frontier"] = () => new FrontierMap2(),
             ["land_grab"] = () => new LandGrabMap(),
             ["migration"] = () => new MigrationMap(),
-            ["bahrain"] = () => new BahrainMap(),
+            ["bahrain"] = () => new BahrainMap2(),
             ["cappadocian_badlands"] = () => new CappadocianBadlandsMap(),
             ["fields_of_meroe"] = () => new FieldsOfMeroeMap(),
-            ["ngorongoro"] = () => new NgorongoroMap(),
+            ["ngorongoro"] = () => new NgorongoroMap2(),
             ["oasis"] = () => new OasisMap(),
             ["persian_highlands"] = () => new PersianHighlandsMap(),
-            ["red_sea"] = () => new RedSeaMap(),
+            ["red_sea"] = () => new RedSeaMap2(),
             ["sahel_watering_holes"] = () => new SahelWateringHolesMap(),
             ["scythian_rivulet"] = () => new ScythianRivuletMap(),
             ["syria"] = () => new SyriaMap(),
@@ -444,25 +423,25 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ["canyon"] = () => new CanyonMap(),
             ["guadalquivir_river"] = () => new GuadalquivirRiverMap(),
             ["latium"] = () => new LatiumMap(),
-            ["ratumacos"] = () => new RatumacosMap(),
+            ["ratumacos"] = () => new RatumacosMap2(),
             ["rivers"] = () => new RiversMap(),
             ["river_archipelago"] = () => new RiverArchipelagoMap(),
-            ["lions_den"] = () => new LionsDenMap(),
-            ["hells_pass"] = () => new HellsPassMap(),
+            ["lions_den"] = () => new LionsDenMap2(),
+            ["hells_pass"] = () => new HellsPassMap2(),
             ["cycladic_archipelago"] = () => new CycladicArchipelagoMap(),
             ["corsica"] = () => new CorsicaMap(),
             ["dodecanese"] = () => new DodecaneseMap(),
             ["island_stronghold"] = () => new IslandStrongholdMap(),
             ["islands"] = () => new IslandsMap(),
             ["mediterranean"] = () => new MediterraneanMap(),
-            ["marmara"] = () => new MarmaraMap(),
+            ["marmara"] = () => new MarmaraMap2(),
             ["hellas"] = () => new HellasMap(),
             ["corinthian_isthmus"] = () => new CorinthianIsthmusMap(),
             ["phoenician_levant"] = () => new PhoenicianLevantMap(),
             ["hyrcanian_shores"] = () => new HyrcanianShoresMap(),
             ["kerala"] = () => new KeralMap(),
             ["lower_nubia"] = () => new LowerNubiaMap(),
-            ["harbor"] = () => new HarborMap(),
+            ["harbor"] = () => new HarborMap2(),
             ["gulf_of_bothnia"] = () => new GulfOfBothniaMap(),
             ["northern_lights"] = () => new NorthernLightsMap(),
             ["snowflake_searocks"] = () => new SnowflakeSearocksMap(),
@@ -470,7 +449,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ["extinct_volcano"] = () => new ExtinctVolcanoMap(),
             ["flood"] = () => new FloodMap(),
             ["gear"] = () => new GearMap(),
-            ["pompeii"] = () => new PompeiiMap(),
+            ["pompeii"] = () => new PompeiiMap2(),
             ["elephantine"] = () => new ElephantineMap(),
             ["pyrenean_sierra"] = () => new PyreneanSierraMap(),
             ["coast_range"] = () => new CoastRangeMap(),

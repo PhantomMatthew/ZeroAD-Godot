@@ -58,8 +58,7 @@ public sealed record MapEnvironment(
         }
     }
 
-    private static Color ReadColor(System.Xml.Linq.XElement? el, Color fallback)
-    {
+    private static Color ReadColor(System.Xml.Linq.XElement? el, Color fallback)    {
         if (el == null) return fallback;
         float r = Attr(el, "r", fallback.R), g = Attr(el, "g", fallback.G), b = Attr(el, "b", fallback.B);
         return new Color(r, g, b);
