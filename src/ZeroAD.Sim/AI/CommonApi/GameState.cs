@@ -277,11 +277,14 @@ public sealed class GameState
         => new(AllEntities().Where(e => e.Owner == PlayerId && e.Template.CanBuild
             && ResolveTokens(e.Template.BuildableEntities).Contains(template)));
 
-    /// <summary>查找可训练的单位（按类匹配）。简化版：遍历可训练模板，过滤类。</summary>
+    /// <summary>查找可训练的单位（按类匹配）。简化版：遍历可训练模板，过滤类。
+    /// classes/anticlasses 空格分隔;classes 全需(AND),anticlasses 任一排除
+    /// (原版 findTrainableUnits 的 excluded 语义——Hero/SiegeTower 隐式排除用)。</summary>
     public List<(string template, AITemplate def)> FindTrainableUnits(string classes, string anticlasses = "")
     {
-        var result = new List<(string, AITemplate)>();
+        var result = new List<(string template, AITemplate def)>();
         var requiredClasses = classes.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+        var excludedClasses = anticlasses.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
         // 从 CC 等训练设施的 TrainableEntities 列表取候选
         foreach (var trainer in GetOwnTrainingFacilities().Values())
         {
@@ -293,7 +296,10 @@ public sealed class GameState
                 if (!Templates.Cache.ContainsKey(resolved)) continue;
                 var def = GetTemplate(resolved);
                 if (def == null) continue;
-                if (requiredClasses.All(def.HasClass)) result.Add((resolved, def));
+                if (!requiredClasses.All(def.HasClass)) continue;
+                if (excludedClasses.Any(def.HasClass)) continue;
+                if (result.Any(r => r.template == resolved)) continue;   // 多训练设施去重
+                result.Add((resolved, def));
             }
         }
         return result;

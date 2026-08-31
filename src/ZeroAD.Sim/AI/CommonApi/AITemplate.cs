@@ -17,6 +17,9 @@ public sealed class AITemplate
 
     public string TemplateName => _templateName;
 
+    /// <summary>底层合并 XML 树(Bonuses 等子表遍历用;只读语义,勿改)。</summary>
+    public ParamNode Node => _node;
+
     /// <summary>slash-path 取值（原版 Template.get）。"Attack/Melee/Damage/Hack" → 逐级 GetChild。
     /// "@attr" 后缀取 XML 属性（ParamNode 存储为 "@name" 子节点）。返回 null 表示路径不存在。</summary>
     public string? Get(string slashPath)

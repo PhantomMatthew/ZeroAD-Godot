@@ -2,370 +2,262 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim.AI.CommonApi;
-using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.AI.Petra;
 
-/// <summary>进攻管理器（原版 petra/attackManager.js，870 行）。
-/// 管理多个 AttackPlan 的生命周期：创建/取消/调度。
-/// 骨架版——update 结构 + attackPlan 列表管理。</summary>
+/// <summary>进攻管理器（原版 petra/attackManager.js，867 行）。
+/// 本端口:按类型分桶(Rush/Raid/Attack/HugeAttack)的进攻生命周期 + 发起轮换 +
+/// getEnemyPlayer 目标玩家选择 + defeated 追踪 + outOfPlan 回收池 + 轰炸补丁事件。
+/// 原版 bombingAttacks/海图换面(attackPlansEncounteredWater)未移植。</summary>
 public sealed class AttackManager
 {
     private readonly PetraConfig _config;
-    public readonly List<AttackPlan> UpcomingAttacks = new();  // 筹备中的进攻
-    public readonly List<AttackPlan> StartedAttacks = new();   // 进行中的进攻
+
+    /// <summary>HQ 反链(HQ 构造注入;getEnemyPlayer/raid finder 要用)。</summary>
+    public Headquarters? Hq;
+
+    /// <summary>各类型筹备中/进行中进攻(原版 upcomingAttacks/startedAttacks 按类型分桶)。</summary>
+    public readonly Dictionary<string, List<AttackPlan>> UpcomingAttacks = new()
+    {
+        [AttackPlan.TypeRush] = new(), [AttackPlan.TypeRaid] = new(),
+        [AttackPlan.TypeDefault] = new(), [AttackPlan.TypeHugeAttack] = new(),
+    };
+    public readonly Dictionary<string, List<AttackPlan>> StartedAttacks = new()
+    {
+        [AttackPlan.TypeRush] = new(), [AttackPlan.TypeRaid] = new(),
+        [AttackPlan.TypeDefault] = new(), [AttackPlan.TypeHugeAttack] = new(),
+    };
+
+    /// <summary>离开计划的单位回收池(原版 outOfPlan;assignUnits 优先回收)。</summary>
+    public readonly HashSet<uint> OutOfPlan = new();
+    /// <summary>已败玩家(原版 defeated;checkEvents 维护)。</summary>
+    private readonly HashSet<int> _defeated = new();
+    /// <summary>当前重点敌(原版 currentEnemyPlayer:非 Huge 进攻保持集火)。</summary>
+    private int? _currentEnemyPlayer;
+
+    private int _totalNumber;
+    private int _rushNumber;
+    private int _attackNumber;
+    /// <summary>rush 规模表(原版 rushSize 随 rushNumber 递增)。</summary>
+    private static readonly int[] RushSizes = { 6, 10, 14 };
+    /// <summary>rush 上限(原版 maxRushes:难度驱动;Easy 0 / Medium 1 / Hard+ 2)。</summary>
+    private int MaxRushes => _config.Difficulty <= DifficultyLevel.Easy ? 0
+        : _config.Difficulty <= DifficultyLevel.Medium ? 1 : 2;
 
     public AttackManager(PetraConfig config) => _config = config;
 
-    /// <summary>主更新（原版 attackManager.update）。</summary>
+    public bool IsDefeated(int playerId) => _defeated.Contains(playerId);
+
+    /// <summary>筹备中的指定类型进攻(原版 getAttackInPreparation)。</summary>
+    public AttackPlan? GetAttackInPreparation(string type) =>
+        UpcomingAttacks[type].FirstOrDefault(p => p.State == AttackPlan.AttackState.Unstarted);
+
+    // ── 主更新(原版 attackManager.update:先更新既有,再发起新的)──
+
     public void Update(GameState gameState, QueueManager queues, AIEventBuffer events)
     {
-        // 更新筹备中的进攻
-        foreach (var plan in UpcomingAttacks.ToList())
+        CheckEvents(gameState, events);
+
+        var unexecuted = new Dictionary<string, int>
         {
-            plan.Update(gameState, queues);
-            if (plan.State == AttackPlan.AttackState.Started)
-            {
-                StartedAttacks.Add(plan);
-                UpcomingAttacks.Remove(plan);
-            }
-            else if (plan.State == AttackPlan.AttackState.Aborted)
-                UpcomingAttacks.Remove(plan);
-        }
-
-        // 更新进行中的进攻
-        foreach (var plan in StartedAttacks.ToList())
-        {
-            plan.Update(gameState, queues);
-            if (plan.State == AttackPlan.AttackState.Completed || plan.State == AttackPlan.AttackState.Aborted)
-                StartedAttacks.Remove(plan);
-        }
-
-        // 检查是否应发起新进攻
-        CheckNewAttacks(gameState);
-    }
-
-    /// <summary>检查是否应发起新进攻（原版 attackManager 的轮换逻辑）。
-    /// 简化版：兵力达阈值时创建 Rush（快攻）计划。</summary>
-    private void CheckNewAttacks(GameState gameState)
-    {
-        // 检查已有进攻数（避免同时筹备太多）
-        if (UpcomingAttacks.Count + StartedAttacks.Count >= 2) return;
-
-        // 兵力检查
-        var soldiers = gameState.GetOwnUnits().Filter(e => e.CanAttack && !e.HasClass("Support"));
-        if (!soldiers.HasEntities() || soldiers.Length < 5) return;
-
-        // 创建 Rush（简化的进攻类型）
-        var plan = new AttackPlan(gameState, "Rush", _config);
-        UpcomingAttacks.Add(plan);
-    }
-}
-
-/// <summary>进攻计划（原版 petra/attackPlan.js，2308 行）。
-/// Petra 最大单体文件。管理进攻全流程：组军 → 集结 → 选目标 → 推进 → 撤退/重整。
-/// 骨架版——状态机 + 核心方法签名。完整版需：addUnit/chooseTarget/comportment/</summary>
-public sealed class AttackPlan
-{
-    public readonly string Type;  // Rush/Raid/Attack/HugeAttack/Siege
-    public readonly PetraConfig Config;
-
-    public enum AttackState { Unstarted, Completory, Rallying, Started, Completed, Aborted }
-    public AttackState State { get; private set; }
-
-    // 参与单位
-    public readonly HashSet<uint> UnitCollection = new();
-    // 目标
-    public uint? Target;  // 目标 entity id
-    public FixedVector2D? RallyPoint;  // 集结点
-    public FixedVector2D? TargetPos;  // 目标位置
-
-    // 进攻参数
-    public int MaxForces;  // 最大兵力
-    public bool Overran;
-
-    public AttackPlan(GameState gameState, string type, PetraConfig config)
-    {
-        Type = type;
-        Config = config;
-        State = AttackState.Unstarted;
-        MaxForces = type switch
-        {
-            "Rush" => 15,
-            "Raid" => 8,
-            "Attack" => 40,
-            "HugeAttack" => 80,
-            _ => 20,
+            [AttackPlan.TypeRush] = 0, [AttackPlan.TypeRaid] = 0,
+            [AttackPlan.TypeDefault] = 0, [AttackPlan.TypeHugeAttack] = 0,
         };
-    }
 
-    /// <summary>更新（原版 attackPlan.update，~400 行）。
-    /// 状态机：Unstarted → Completory（组军）→ Started（推进）→ Completed/Aborted。
-    /// 骨架版——状态转换逻辑。</summary>
-    public void Update(GameState gameState, QueueManager queues)
-    {
-        switch (State)
+        foreach (var type in UpcomingAttacks.Keys)
         {
-            case AttackState.Unstarted:
-                // 开始组军
-                State = AttackState.Completory;
-                goto case AttackState.Completory;
-
-            case AttackState.Completory:
-                // 检查兵力是否足够
-                if (UnitCollection.Count >= MaxForces || Overran)
+            for (int i = 0; i < UpcomingAttacks[type].Count; i++)
+            {
+                var attack = UpcomingAttacks[type][i];
+                attack.WireQueues(queues);
+                if (attack.Paused) continue;
+                var step = attack.UpdatePreparation(gameState, queues, this);
+                if (step == AttackPlan.PreparationResult.KeepGoing)
                 {
-                    // 集结(原版:rallyPoint 从最近基地 anchor 起算,先集结再齐推
-                    // ——散落兵力不分批送命)。
-                    RallyPoint = PickRallyPoint(gameState);
-                    IssueRallyCommands(gameState);
-                    State = AttackState.Rallying;
+                    if (attack.State == AttackPlan.AttackState.Unstarted)
+                        unexecuted[type]++;
                 }
-                else
+                else if (step == AttackPlan.PreparationResult.Failed)
                 {
-                    RecruitUnits(gameState, queues);
+                    attack.Abort(gameState, this, queues);
+                    UpcomingAttacks[type].RemoveAt(i--);
                 }
-                break;
-
-            case AttackState.Rallying:
-                // 原版 rally 完成判:已就位率 ≥80% 即齐推(剩余落队各自跟进)。
-                if (RallyReachedFraction(gameState) >= 0.8f)
+                else   // Start
                 {
-                    ChooseTarget(gameState);
-                    State = AttackState.Started;
-                    IssueAttackCommands(gameState);
+                    if (attack.StartAttack(gameState))
+                        StartedAttacks[type].Add(attack);
+                    else
+                        attack.Abort(gameState, this, queues);
+                    UpcomingAttacks[type].RemoveAt(i--);
                 }
-                break;
-
-            case AttackState.Started:
-                // 推进/战斗
-                UpdateStarted(gameState);
-                break;
-        }
-    }
-
-    /// <summary>组军（原版 recruitUnits）。
-    /// 简化版：加入所有 idle 兵力。</summary>
-    private void RecruitUnits(GameState gameState, QueueManager queues)
-    {
-        var soldiers = gameState.GetOwnUnits().Filter(e => e.CanAttack && !e.HasClass("Support") && e.IsIdle);
-        foreach (var s in soldiers.Values())
-            if (UnitCollection.Count < MaxForces) UnitCollection.Add(s.Id);
-    }
-
-    /// <summary>选目标（原版 attackPlan.chooseTarget ~300 行的简化评分版）：
-    /// 高分 = 防御建筑(优先拆塔)+ 近我方基地;地基/无位置排除。
-    /// 无建筑 → 打可见敌单位(原版 fallback)。</summary>
-    private void ChooseTarget(GameState gameState)
-    {
-        var enemies = gameState.GetEnemyStructures().Values().ToList();
-        if (enemies.Count == 0)
-        {
-            var enemyUnits = gameState.GetEnemyUnits().Values().ToList();
-            if (enemyUnits.Count > 0)
-            {
-                Target = enemyUnits[0].Id;
-                TargetPos = enemyUnits[0].Position2D;
-            }
-            return;
-        }
-
-        // 我方首个基地(原版 attackPlan 以基地为锚评近)。
-        var homeBase = gameState.GetOwnStructures().Values()
-            .FirstOrDefault(s => s.HasClass("CivilCentre"))
-            ?? gameState.GetOwnStructures().Values().FirstOrDefault();
-        var homePos = homeBase?.Position2D;
-
-        uint bestId = 0;
-        FixedVector2D? bestPos = null;
-        float bestScore = float.MinValue;
-        foreach (var e in enemies)
-        {
-            if (e.Position2D == default) continue;
-            if (e.IsFoundation) continue;   // 原版不打地基
-            float score = 0f;
-            if (e.HasClass("Tower") || e.HasClass("Defense")) score += 1000f;   // 防御建筑优先
-            if (homePos.HasValue)
-            {
-                float dx = e.Position2D.X.ToFloat() - homePos.Value.X.ToFloat();
-                float dz = e.Position2D.Y.ToFloat() - homePos.Value.Y.ToFloat();
-                score -= (dx * dx + dz * dz) * 0.01f;   // 近优先(平方距离惩罚)
-            }
-            if (score > bestScore || bestId == 0 && score == bestScore)
-            {
-                bestScore = score;
-                bestId = e.Id;
-                bestPos = e.Position2D;
             }
         }
-        if (bestId != 0)
-        {
-            Target = bestId;
-            TargetPos = bestPos;
-        }
-    }
 
-    /// <summary>推进/战斗更新（原版 ~600 行核心决策的简化版）。
-    /// 清理死单位 → 兵力耗尽 Abort → 敌优比超限撤退（原版:1:2 兵力比即不硬拼,
-    /// 逃回最近基地 anchor;Rush 0.8、其余 0.5)→ 目标摧毁换目标 → 完成。</summary>
-    private void UpdateStarted(GameState gameState)
-    {
-        // 清理死单位
-        UnitCollection.RemoveWhere(id => gameState.GetEntityById(id) == null);
-
-        if (UnitCollection.Count == 0)
+        foreach (var type in StartedAttacks.Keys)
         {
-            State = AttackState.Aborted;
-            return;
-        }
-
-        // 撤退判定（原版 comportment 的兵力比评估简化):
-        // 目标周围 60m 的敌兵 + 敌建筑防御估算 vs 我方在场兵力;劣势即撤
-        // (原版 Abort 的 rallyPoint 同款:撤到最近基地 anchor)。
-        if (ShouldRetreat(gameState))
-        {
-            Retreat(gameState);
-            State = AttackState.Aborted;
-            return;
-        }
-
-        if (Target.HasValue)
-        {
-            var target = gameState.GetEntityById(Target.Value);
-            if (target == null || target.IsDead)
+            for (int i = 0; i < StartedAttacks[type].Count; i++)
             {
-                // 目标摧毁 → 选新目标或完成
-                ChooseTarget(gameState);
-                if (!Target.HasValue) State = AttackState.Completed;
-                else IssueAttackCommands(gameState);   // 换目标后重下推进命令
+                var attack = StartedAttacks[type][i];
+                if (attack.Paused) continue;
+                if (!attack.Update(gameState, this))
+                {
+                    attack.Abort(gameState, this, queues);
+                    StartedAttacks[type].RemoveAt(i--);
+                }
             }
         }
-    }
 
-    /// <summary>撤退判定（原版 comportment 兵力比评估的简化):目标周围 60m 的
-    /// 敌兵数 ×1 + 敌防御建筑数 ×3(原版防御力估算近似)vs 我方在场兵力。
-    /// 敌优比 > 阈值即撤(Rush 0.8 更怂,其余 0.5)。</summary>
-    private bool ShouldRetreat(GameState gameState)
-    {
-        if (!TargetPos.HasValue) return false;
-        var tp = TargetPos.Value;
-        int enemyStrength = 0;
-        foreach (var e in gameState.GetEnemyUnits().Values())
-        {
-            if (!e.CanAttack || e.Position2D == default) continue;
-            float dx = e.Position2D.X.ToFloat() - tp.X.ToFloat();
-            float dz = e.Position2D.Y.ToFloat() - tp.Y.ToFloat();
-            if (dx * dx + dz * dz <= 60f * 60f) enemyStrength += 1;
-        }
-        foreach (var s in gameState.GetEnemyStructures().Values())
-        {
-            if (!s.CanAttack || s.Position2D == default) continue;
-            float dx = s.Position2D.X.ToFloat() - tp.X.ToFloat();
-            float dz = s.Position2D.Y.ToFloat() - tp.Y.ToFloat();
-            if (dx * dx + dz * dz <= 60f * 60f) enemyStrength += 3;   // 防御建筑≈3 兵
-        }
-        int myForces = UnitCollection.Count;
-        if (myForces == 0) return true;
-        float threshold = Type == "Rush" ? 0.8f : 0.5f;
-        return enemyStrength > myForces / threshold;
-    }
+        // ── 发起轮换(原版 update 尾部,顺序:rush → attack/huge → raid)──
+        int barracksNb = gameState.GetOwnEntitiesByClass("Barracks")
+            .Filter(e => !e.IsFoundation).Length;
 
-    /// <summary>撤退（原版 Abort 的 rallyPoint 同款):全军移动到最近基地 anchor,
-    /// 单位归位 idle 供其它计划征调。</summary>
-    private void Retreat(GameState gameState)
-    {
-        var rally = PickRallyPoint(gameState);
-        foreach (var id in UnitCollection)
+        // Rush:有兵营且 rush 配额未用完。
+        if (_rushNumber < MaxRushes && barracksNb >= 1
+            && unexecuted[AttackPlan.TypeRush] == 0)
         {
-            if (gameState.GetEntityById(id) == null) continue;
-            gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Move(
-                (uint)gameState.PlayerId, id,
-                ZeroAD.Sim.Maths.Fixed.FromFloat(rally.X.ToFloat()),
-                ZeroAD.Sim.Maths.Fixed.FromFloat(rally.Y.ToFloat())));
-            gameState.Metadata.Remove(id, "plan");
-            gameState.Metadata.Set(id, "subrole", WorkerRoles.SubroleIdle);
+            var plan = new AttackPlan(gameState, _totalNumber, AttackPlan.TypeRush, _config,
+                rushTargetSize: RushSizes[Math.Min(_rushNumber, RushSizes.Length - 1)]);
+            plan.Init(gameState, queues);
+            plan.SetInitialRallyPoint(gameState);
+            UpcomingAttacks[AttackPlan.TypeRush].Add(plan);
+            _totalNumber++;
+            _rushNumber++;
         }
-        UnitCollection.Clear();
-    }
+        // Attack/HugeAttack:无筹备中的进攻 + 进行中 < min(2, 1+popMax/100)
+        // + (无进行中 或 人口余量 >12);门控:有兵营且(town+ 或在研 town),或无基地可扩。
+        else if (unexecuted[AttackPlan.TypeDefault] == 0
+            && unexecuted[AttackPlan.TypeHugeAttack] == 0
+            && StartedAttacks[AttackPlan.TypeDefault].Count
+                + StartedAttacks[AttackPlan.TypeHugeAttack].Count
+                < Math.Min(2, 1 + (int)Math.Round(gameState.GetPopulationMax() / 100.0))
+            && (StartedAttacks[AttackPlan.TypeDefault].Count
+                    + StartedAttacks[AttackPlan.TypeHugeAttack].Count == 0
+                || gameState.GetPopulationMax() - gameState.GetPopulation() > 12))
+        {
+            bool canAggress = barracksNb >= 1
+                && (gameState.CurrentPhase() > 1
+                    || gameState.IsResearching(gameState.GetPhaseName(2)));
+            if (canAggress || Hq == null || !Hq.HasPotentialBase(gameState))
+            {
+                // 前两次普通进攻,之后且已有 Huge 进行中 → 仍普通;否则升级 Huge。
+                string type = _attackNumber < 2
+                    || StartedAttacks[AttackPlan.TypeHugeAttack].Count > 0
+                    ? AttackPlan.TypeDefault : AttackPlan.TypeHugeAttack;
+                var plan = new AttackPlan(gameState, _totalNumber, type, _config);
+                plan.Init(gameState, queues);
+                plan.SetInitialRallyPoint(gameState);
+                UpcomingAttacks[type].Add(plan);
+                _totalNumber++;
+                _attackNumber++;
+            }
+        }
 
-    /// <summary>对参与单位下攻击移动(原版 attackPlan 的 comportment 简化版:
-    /// 全军 attack-walk 到目标位置——沿途自动交战、打完继续推进,
-    /// UnitAI WalkAndFight 状态机已承载该语义)。原版 comportment 核心约束:
-    /// 未达最小参战兵力不推(避免分批送命,Type 阈值照原版 targetSize 近似)。</summary>
-    private void IssueAttackCommands(GameState gameState)
-    {
-        if (!TargetPos.HasValue) return;
-        // 参战阈值(原版 attackPlan 按难度定 targetSize;不足继续集结,
-        // 不下推进令——State 保持 Rallying 等下轮更新)。
-        int minForces = Math.Max(2, MaxForces / 2);
-        if (UnitCollection.Count < minForces)
+        // Raid:defenseManager.targetList 有敌地基目标时发起(原版同款)。
+        if (unexecuted[AttackPlan.TypeRaid] == 0 && Hq != null
+            && Hq.DefenseManager.TargetList.Count > 0)
         {
-            State = AttackState.Rallying;
-            return;
-        }
-        foreach (var id in UnitCollection)
-        {
-            if (gameState.GetEntityById(id) == null) continue;   // 死单位跳过
-            gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.AttackWalk(
-                (uint)gameState.PlayerId, id,
-                ZeroAD.Sim.Maths.Fixed.FromFloat(TargetPos.Value.X.ToFloat()),
-                ZeroAD.Sim.Maths.Fixed.FromFloat(TargetPos.Value.Y.ToFloat())));
+            var plan = new AttackPlan(gameState, _totalNumber, AttackPlan.TypeRaid, _config);
+            plan.Init(gameState, queues);
+            plan.SetInitialRallyPoint(gameState);
+            UpcomingAttacks[AttackPlan.TypeRaid].Add(plan);
+            _totalNumber++;
         }
     }
 
-    /// <summary>集结点选取(原版:rallyPoint 从最近基地 anchor 起算;
-    /// 无基地 → 我方任一实体位置)。</summary>
-    private FixedVector2D PickRallyPoint(GameState gameState)
+    // ── 事件(原版 checkEvents:玩家战败标记)──
+
+    private void CheckEvents(GameState gameState, AIEventBuffer events)
     {
-        var anchor = gameState.GetOwnStructures().Values()
-            .FirstOrDefault(s => s.HasClass("CivilCentre") && s.Position2D != default)
-            ?? gameState.GetOwnStructures().Values()
-                .FirstOrDefault(s => s.Position2D != default);
-        if (anchor != null) return anchor.Position2D;
-        var ent = gameState.GetOwnEntities().Values().FirstOrDefault(e => e.Position2D != default);
-        return ent?.Position2D ?? FixedVector2D.Zero;
+        foreach (var ev in events.Events)
+            if (ev.Type == AIEventType.PlayerDefeated && ev.IntParam > 0)
+            {
+                // 战败者 id 在 IntParam(AIEventBuffer 的 PlayerDefeated 载荷)。
+                _defeated.Add(ev.IntParam);
+                if (_currentEnemyPlayer == ev.IntParam)
+                    _currentEnemyPlayer = null;
+            }
     }
 
-    /// <summary>集结下令(原版 rallyPoint 未到前不走;单位各自移动到 rallyPoint 15m 内)。</summary>
-    private void IssueRallyCommands(GameState gameState)
+    // ── 目标玩家选择(原版 getEnemyPlayer 逐字逻辑)──
+
+    public int? GetEnemyPlayer(GameState gameState, AttackPlan attack)
     {
-        if (!RallyPoint.HasValue) return;
-        foreach (var id in UnitCollection)
+        // (奇迹/圣物胜利条件的偏好玩家未移植——胜利管理器深化时补。)
+
+        var veto = new HashSet<int>(_defeated);
+        // Rush 不挑防守过强的敌(>6 防御建筑,原版"iberians 条款")。
+        if (attack.Type == AttackPlan.TypeRush)
+            foreach (int i in gameState.GetEnemies())
+            {
+                if (veto.Contains(i)) continue;
+                int enemyDefense = gameState.GetEnemyStructures().Values()
+                    .Count(e => e.Owner == i
+                        && (e.HasClass("Tower") || e.HasClass("WallTower") || e.HasClass("Fortress")));
+                if (enemyDefense > 6) veto.Add(i);
+            }
+
+        // 非 Huge:保持当前目标(原版 currentEnemyPlayer 粘性——其有实体即续打)。
+        if (attack.Type != AttackPlan.TypeHugeAttack)
         {
-            if (gameState.GetEntityById(id) == null) continue;
-            gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Move(
-                (uint)gameState.PlayerId, id,
-                ZeroAD.Sim.Maths.Fixed.FromFloat(RallyPoint.Value.X.ToFloat()),
-                ZeroAD.Sim.Maths.Fixed.FromFloat(RallyPoint.Value.Y.ToFloat())));
+            if (attack.TargetPlayer == null && _currentEnemyPlayer != null
+                && !_defeated.Contains(_currentEnemyPlayer.Value)
+                && gameState.IsPlayerEnemy(_currentEnemyPlayer.Value)
+                && HasAnyEntity(gameState, _currentEnemyPlayer.Value))
+                return _currentEnemyPlayer;
+
+            // 同陆最近敌 CC(原版:我方每座 CC 找同陆最近敌 CC,取全局最近)。
+            int? ccmin = null;
+            float distmin = float.MaxValue;
+            var allCcs = gameState.GetStructures().Values()
+                .Where(e => e.HasClass("CivCentre") && e.Position2D != default)
+                .ToList();
+            foreach (var ourcc in allCcs.Where(e => e.Owner == gameState.PlayerId))
+            {
+                ushort access = gameState.Accessibility?.GetAccessValue(
+                    ourcc.Position2D.X.ToFloat(), ourcc.Position2D.Y.ToFloat()) ?? (ushort)0;
+                foreach (var enemycc in allCcs)
+                {
+                    if (enemycc.Owner == gameState.PlayerId || veto.Contains(enemycc.Owner)) continue;
+                    if (!gameState.IsPlayerEnemy(enemycc.Owner)) continue;
+                    if (gameState.Accessibility != null
+                        && gameState.Accessibility.GetAccessValue(
+                            enemycc.Position2D.X.ToFloat(), enemycc.Position2D.Y.ToFloat()) != access)
+                        continue;
+                    float dx = ourcc.Position2D.X.ToFloat() - enemycc.Position2D.X.ToFloat();
+                    float dz = ourcc.Position2D.Y.ToFloat() - enemycc.Position2D.Y.ToFloat();
+                    float dist = dx * dx + dz * dz;
+                    if (dist < distmin) { distmin = dist; ccmin = enemycc.Owner; }
+                }
+            }
+            if (ccmin != null)
+            {
+                if (attack.TargetPlayer == null) _currentEnemyPlayer = ccmin;
+                return ccmin;
+            }
         }
+
+        // 最强敌(实体计数;有 CC +500)。
+        int? enemyPlayer = null;
+        int max = 0;
+        foreach (int i in gameState.GetEnemies())
+        {
+            if (veto.Contains(i)) continue;
+            int count = 0;
+            bool hasCc = false;
+            foreach (var e in gameState.GetEntities(i).Values())
+            {
+                count++;
+                if (e.HasClass("CivCentre")) hasCc = true;
+            }
+            if (hasCc) count += 500;
+            if (count == 0 || count < max) continue;
+            max = count;
+            enemyPlayer = i;
+        }
+        if (attack.TargetPlayer == null) _currentEnemyPlayer = enemyPlayer;
+        return enemyPlayer;
     }
 
-    /// <summary>集结完成率(原版 rally 判:单位距 rallyPoint ≤15m 记到位)。</summary>
-    private float RallyReachedFraction(GameState gameState)
-    {
-        if (!RallyPoint.HasValue || UnitCollection.Count == 0) return 0f;
-        int reached = 0, alive = 0;
-        foreach (var id in UnitCollection)
-        {
-            var ent = gameState.GetEntityById(id);
-            if (ent == null || ent.IsDead) continue;
-            alive++;
-            if (ent.Position2D == default) continue;
-            float dx = ent.Position2D.X.ToFloat() - RallyPoint.Value.X.ToFloat();
-            float dz = ent.Position2D.Y.ToFloat() - RallyPoint.Value.Y.ToFloat();
-            if (dx * dx + dz * dz <= 15f * 15f) reached++;
-        }
-        return alive > 0 ? (float)reached / alive : 0f;
-    }
-
-    /// <summary>释放单位（进攻取消/完成时）。</summary>
-    public void ReleaseAll(GameState gameState)
-    {
-        foreach (var id in UnitCollection)
-        {
-            gameState.Metadata.Remove(id, "plan");
-            gameState.Metadata.Set(id, "subrole", WorkerRoles.SubroleIdle);
-        }
-        UnitCollection.Clear();
-    }
+    private static bool HasAnyEntity(GameState gameState, int playerId)
+        => gameState.GetEntities(playerId).HasEntities();
 }

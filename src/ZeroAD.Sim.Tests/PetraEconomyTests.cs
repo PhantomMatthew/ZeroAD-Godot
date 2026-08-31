@@ -231,18 +231,28 @@ public sealed class PetraEconomyTests
         var w = NewAiWorld();
         if (w == null) return;
 
-        // 造 5 个 AI 士兵(AttackPlan 组军阈值) + 一个敌方目标建筑
+        // 造 5 个 AI 士兵(真类名:步兵近战公民兵——编组槽匹配要真类) + 敌方 CC 目标
         var soldiers = new List<EntityId>();
         for (int i = 0; i < 5; i++)
         {
             var s = w.Cm.CreateEntity();
-            w.Cm.AddComponent(s, new PositionComponent());
+            // 真实位置((0,0)==default 会被判"无位置"——IsValidTarget/可分配都拒)。
+            var pos = new PositionComponent();
+            w.Cm.AddComponent(s, pos);
+            pos.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+                ZeroAD.Sim.Maths.Fixed.FromInt(100 + i * 4), ZeroAD.Sim.Maths.Fixed.Zero,
+                ZeroAD.Sim.Maths.Fixed.FromInt(100));
+            w.Cm.NotifyEntityCreated(s);
+            w.Cm.NotifyOwnerChanged(s, -1, 2);
+            w.Cm.NotifyPositionChanged(s,
+                new ZeroAD.Sim.Maths.FixedVector2D(pos.Position.X, pos.Position.Z),
+                new ZeroAD.Sim.Maths.FixedVector2D(pos.Position.X, pos.Position.Z));
             w.Cm.AddComponent(s, new UnitMotion());
             w.Cm.AddComponent(s, new IdentityComponent
             {
                 TemplateName = "units/gaul/infantry_spearman_b",
                 IsUnit = true,
-                Classes = new List<string> { "CitizenSoldier", "Unit" },
+                Classes = new List<string> { "CitizenSoldier", "Unit", "Infantry", "Melee" },
             });
             w.Cm.AddComponent(s, new UnitAIComponent());
             w.Cm.AddComponent(s, new AttackComponent());
@@ -251,28 +261,65 @@ public sealed class PetraEconomyTests
             soldiers.Add(s);
         }
         var enemy = w.Cm.CreateEntity();
-        w.Cm.AddComponent(enemy, new PositionComponent());
+        var epos = new PositionComponent();
+        w.Cm.AddComponent(enemy, epos);
+        epos.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+            ZeroAD.Sim.Maths.Fixed.FromInt(200), ZeroAD.Sim.Maths.Fixed.Zero,
+            ZeroAD.Sim.Maths.Fixed.FromInt(120));
+        w.Cm.NotifyEntityCreated(enemy);
+        w.Cm.NotifyOwnerChanged(enemy, -1, 1);
+        w.Cm.NotifyPositionChanged(enemy,
+            new ZeroAD.Sim.Maths.FixedVector2D(epos.Position.X, epos.Position.Z),
+            new ZeroAD.Sim.Maths.FixedVector2D(epos.Position.X, epos.Position.Z));
         w.Cm.AddComponent(enemy, new IdentityComponent
         {
-            TemplateName = "structures/athen/house",
+            TemplateName = "structures/athen/civil_centre",
             IsBuilding = true,
-            Classes = new List<string> { "Structure" },
+            Classes = new List<string> { "Structure", "CivCentre" },
         });
         w.Cm.AddComponent(enemy, new HealthComponent { Current = 100, Max = 100 });
         w.Cm.AddComponent(enemy, new OwnershipComponent { PlayerId = 1 });
 
+        // 原版发起门控:兵营 ≥1 且(到 Town 代或在研 Town)——补兵营 + 全阶段研发
+        // (fixture 已有活基地,不满足"无基地可扩"兜底)。
+        var rax = w.Cm.CreateEntity();
+        w.Cm.AddComponent(rax, new PositionComponent());
+        w.Cm.AddComponent(rax, new OwnershipComponent { PlayerId = 2 });
+        w.Cm.AddComponent(rax, new IdentityComponent
+        {
+            TemplateName = "structures/gaul/barracks",
+            IsBuilding = true,
+            Classes = new List<string> { "Structure", "Barracks" },
+        });
+        var tm = w.Cm.QueryInterface<TechnologyManager>(w.Cm.GetPlayerEntityId(2)!.Value);
+        foreach (var ph in w.Gs.Phases) tm!.ApplyResearch(ph, w.Cm);
+
         var mgr = new ZeroAD.Sim.AI.Petra.AttackManager(new PetraConfig(DifficultyLevel.Medium));
-        // 驱动到 Started:两次 Update(建计划→组军满→Started+下推进令)
+        mgr.Hq = w.Hq;
+        // 筹备轮转:4 次 Update 后应有计划在筹备。
         for (int i = 0; i < 4; i++)
             mgr.Update(w.Gs, w.Hq.Queues, w.Events);
 
-        var started = mgr.StartedAttacks.Concat(mgr.UpcomingAttacks).ToList();
-        Assert.NotEmpty(started);
-        // 推进后士兵应持攻击移动状态(WalkAndFight;目标=敌方建筑位置)
-        var ai = w.Cm.QueryInterface<UnitAIComponent>(soldiers[0])!;
-        // 命令经锁步延迟——AdvanceTurn 后检查
+        var preparing = mgr.StartedAttacks.SelectMany(kv => kv.Value)
+            .Concat(mgr.UpcomingAttacks.SelectMany(kv => kv.Value)).ToList();
+        Assert.True(preparing.Count > 0,
+            $"no plan: upcoming={string.Join(',', mgr.UpcomingAttacks.Select(kv => kv.Key + ':' + kv.Value.Count))}");
+
+        // 计划 Started → AttackWalk 下发:直接把 5 个士兵登记进计划并启动
+        // (筹备期全量条件—编组/集结/路径—由 updatePreparation 测;此测只锁推进语义)。
+        var plan = preparing[0];
+        foreach (var s in soldiers)
+        {
+            plan.UnitCollection.Add(s.Value);
+            w.Gs.Metadata.Set(s.Value, "plan", plan.Name);
+        }
+        Assert.True(plan.ChooseTarget(w.Gs, mgr));
+        Assert.True(plan.StartAttack(w.Gs));
+
+        // 命令经锁步延迟——AdvanceTurn 执行;UnitAI 订单分发由 Tick 驱动(UnitAITests 同款)。
         for (int i = 0; i < 3; i++) w.Net.AdvanceTurn();
-        if (mgr.StartedAttacks.Count > 0)
-            Assert.Equal("INDIVIDUAL.WALKINGANDFIGHTING", ai.FsmStateName);
+        var ai = w.Cm.QueryInterface<UnitAIComponent>(soldiers[0])!;
+        ai.Tick(0.1f, w.Cm);
+        Assert.Equal("INDIVIDUAL.WALKINGANDFIGHTING", ai.FsmStateName);
     }
 }

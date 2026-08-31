@@ -83,6 +83,7 @@ public sealed class Headquarters
         BasesManager.HqResolver = _ => this;   // worker 分配的需求序回查(原版 basesManager.HQ)
         ResearchManager = new ResearchManager(config);
         AttackManager = new AttackManager(config);
+        AttackManager.Hq = this;   // 原版 attackManager 经 gameState.ai.HQ 回查(getEnemyPlayer 等)
         TradeManager = new TradeManager(config);
         EmergencyManager = new EmergencyManager(config);
         DefenseManager = new DefenseManager(config);
@@ -683,6 +684,152 @@ public sealed class Headquarters
         return gameState.Templates.TemplateExists(resolved)
             && gameState.FindBuilder(resolved).HasEntities();
     }
+
+    // ── 最优可训单位(原版 findBestTrainableUnit;headquarters.js:519-582)──
+
+    /// <summary>按类过滤可训模板,interest 加权评分取最高(value/cost 性价比):
+    /// strength = 攻击强度(dps 加权和);siegeStrength = 对 Structure(Bonuses 乘子);
+    /// speed = 行速;costsResource = 含该资源成本则 ×weight(稀缺加重);
+    /// canGather = 有采集能力则 ×weight。类含 Hero 不排除;否则排除 Hero+SiegeTower。</summary>
+    public static string? FindBestTrainableUnit(GameState gameState, string[] classes,
+        (string Interest, double Weight)[] interests)
+    {
+        string clsStr = string.Join(' ', classes);
+        bool hero = classes.Contains("Hero");
+        var units = gameState.FindTrainableUnits(clsStr, hero ? "" : "Hero SiegeTower");
+        if (units.Count == 0) return null;
+
+        // 动态 costsResource 惩罚(原版:领土内剩余 <800 且现有 <800 时加重)。
+        var remaining = GetTotalResourceLevel(gameState);
+        var available = gameState.GetResources();
+        var parameters = interests
+            .Select(i => (i.Interest, i.Weight, (string?)null)).ToList();
+        foreach (var type in new[] { "wood", "food", "stone", "metal" })
+        {
+            int avail = ResOf(available, type);
+            if (avail > 800) continue;
+            if (remaining.GetValueOrDefault(type) > 800) continue;
+            double costWeight = remaining.GetValueOrDefault(type) > 400 ? 0.6 : 0.2;
+            // 原版 Rush/Attack 槽自带 costsResource 项(无资源名 = 全类);此处加资源名维度。
+            int idx = parameters.FindIndex(x => x.Item1 == "costsResource");
+            if (idx >= 0)
+                parameters[idx] = ("costsResource", Math.Min(parameters[idx].Item2, costWeight), type);
+            else
+                parameters.Add(("costsResource", costWeight, type));
+        }
+
+        units.Sort((a, b) =>
+        {
+            double aValue = ScoreUnit(a.def, parameters);
+            double bValue = ScoreUnit(b.def, parameters);
+            int aCost = 1 + a.def.CostWood + a.def.CostFood + a.def.CostStone + a.def.CostMetal;
+            int bCost = 1 + b.def.CostWood + b.def.CostFood + b.def.CostStone + b.def.CostMetal;
+            return (-aValue / aCost).CompareTo(-bValue / bCost);   // 性价比降序
+        });
+        return units[0].template;
+    }
+
+    private static double ScoreUnit(AITemplate t,
+        List<(string Interest, double Weight, string? Resource)> parameters)
+    {
+        double value = 0.1;
+        foreach (var p in parameters)
+        {
+            switch (p.Interest)
+            {
+                case "strength":
+                    value += GetMaxStrength(t, null) * p.Weight;
+                    break;
+                case "siegeStrength":
+                    value += GetMaxStrength(t, "Structure") * p.Weight;
+                    break;
+                case "speed":
+                    value += t.GetFloat("UnitMotion/Speed") * p.Weight;
+                    break;
+                case "costsResource":
+                    if (p.Resource != null && ResOf(t, p.Resource) > 0)
+                        value *= p.Weight;
+                    break;
+                case "canGather":
+                    // 原版查 wood.tree(任意采集能力的代理)。
+                    if (t.ResourceGatherRates().ContainsKey("wood.tree"))
+                        value *= p.Weight;
+                    break;
+            }
+        }
+        return value;
+    }
+
+    /// <summary>原版 getMaxStrength(petra/entityExtend.js:17-70)移植:
+    /// 每攻击类型(跳 Slaughter):伤害 × 类型权重均值 + 射程×0.0125
+    /// + repeat/100000 - prepare/100000;againstClass 走 Bonuses 乘子(无匹配按 1)。</summary>
+    private static double GetMaxStrength(AITemplate t, string? againstClass)
+    {
+        double strength = 0;
+        foreach (var type in new[] { "Melee", "Ranged", "Capture", "Charge" })
+        {
+            bool any = false;
+            int dmgCount = 0;
+            double dmgSum = 0;
+            foreach (var dmg in new[] { "Hack", "Pierce", "Crush", "Fire" })
+            {
+                float v = t.GetFloat($"Attack/{type}/Damage/{dmg}");
+                if (v <= 0) continue;
+                any = true;
+                if (againstClass != null)
+                    v *= (float)GetMultiplierAgainst(t, type, againstClass);
+                dmgSum += v;
+                dmgCount++;
+            }
+            if (!any) continue;
+            // 原版:各伤害型 × importance / 类型数(默认等权 → 均值)。
+            strength += dmgSum / Math.Max(dmgCount, 1);
+            strength += t.GetFloat($"Attack/{type}/MaxRange") * 0.0125;
+            strength += t.GetFloat($"Attack/{type}/RepeatTime") / 100000;
+            strength -= t.GetFloat($"Attack/{type}/PrepareTime") / 100000;
+        }
+        return strength;
+    }
+
+    /// <summary>攻击加成乘子(原版 getMultiplierAgainst:Attack/{type}/Bonuses 下
+    /// Classes 含目标类的项取乘)。XML 缺失/无匹配 → 1。</summary>
+    private static double GetMultiplierAgainst(AITemplate t, string attackType, string againstClass)
+    {
+        var bonuses = t.Node.GetChild("Attack").GetChild(attackType).GetChild("Bonuses");
+        if (!bonuses.IsOk) return 1;
+        double mult = 1;
+        foreach (var (name, bonus) in bonuses.Children)
+        {
+            if (name.StartsWith('@')) continue;
+            var cls = bonus.GetChild("Classes");
+            if (!cls.IsOk || !cls.Value.Contains(againstClass)) continue;
+            var m = bonus.GetChild("Multiplier");
+            if (m.IsOk) mult *= m.ToFixed().ToFloat();
+        }
+        return mult;
+    }
+
+    /// <summary>全图剩余资源估值(原版 getTotalResourceLevel 简化:全部静态 supply 余量求和)。</summary>
+    public static Dictionary<string, double> GetTotalResourceLevel(GameState gameState)
+    {
+        var totals = new Dictionary<string, double>
+        { ["wood"] = 0, ["food"] = 0, ["stone"] = 0, ["metal"] = 0 };
+        foreach (var type in new[] { "wood", "food", "stone", "metal" })
+            foreach (var s in gameState.GetResourceSupplies(type).Values())
+            {
+                var comp = gameState.Cm.QueryInterface<ResourceSupply>(s.Entity);
+                if (comp != null) totals[type] += comp.Amount;
+            }
+        return totals;
+    }
+
+    private static int ResOf(ResourcesManager r, string type) => type switch
+    { "wood" => r.Wood, "food" => r.Food, "stone" => r.Stone, _ => r.Metal };
+
+    private static int ResOf(AITemplate t, string type) => type switch
+    {
+        "wood" => t.CostWood, "food" => t.CostFood, "stone" => t.CostStone, _ => t.CostMetal,
+    };
 
     /// <summary>危险位置判定(原版 isDangerousLocation 简化版:半径内有敌防御火力建筑)。</summary>
     public bool IsDangerousLocation(GameState gameState, FixedVector2D pos, float radius)

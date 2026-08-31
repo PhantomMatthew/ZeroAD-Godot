@@ -14,12 +14,18 @@ public sealed class PetraQueue
     public void AddPlan(QueuePlan? plan)
     {
         if (plan == null) return;
-        // 合并同类型 unit 计划（maxMerge 内）
+        // 合并同类型 unit 计划（maxMerge 内);attackPlan 槽位标记("special")不同不并——
+        // 合并会把别的编组槽的在排数算错(原版同款按 metadata 区分)。
         if (plan.Category == "unit")
         {
             foreach (var existing in Plans)
             {
-                if (existing.Type == plan.Type && existing.Number + plan.Number <= (existing as TrainingPlan)?.MaxMerge)
+                if (existing.Type != plan.Type) continue;
+                if (existing.Metadata.GetValueOrDefault("special")?.ToString()
+                    != plan.Metadata.GetValueOrDefault("special")?.ToString()) continue;
+                if (existing.Metadata.GetValueOrDefault("plan")?.ToString()
+                    != plan.Metadata.GetValueOrDefault("plan")?.ToString()) continue;
+                if (existing.Number + plan.Number <= (existing as TrainingPlan)?.MaxMerge)
                 {
                     existing.AddItem(plan.Number);
                     return;
@@ -74,4 +80,10 @@ public sealed class PetraQueue
 
     public int CountQueuedUnitsWithClass(string cls)
         => Plans.Where(p => p.Category == "unit").Sum(p => p.Number);
+
+    /// <summary>按元数据键值计数在排单位(原版 countQueuedUnitsWithMetadata;
+    /// attackPlan 的 "special" 槽位标记经此计入编组进度)。</summary>
+    public int CountQueuedUnitsWithMetadata(string key, object value)
+        => Plans.Where(p => p.Metadata.TryGetValue(key, out var v) && Equals(v, value))
+            .Sum(p => p.Number);
 }
