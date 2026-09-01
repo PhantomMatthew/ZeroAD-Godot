@@ -302,4 +302,89 @@ public sealed class AllMapsGenerationTests
         Assert.Empty(failures);
     }
 
+    /// <summary>防回归:注册表里的每张图都必须真正实现自己的生成算法,
+    /// 即其类要覆盖 <c>Generate</c>(或 rmgen2 图的 <c>GenerateRmgen2</c>)。
+    /// 只覆盖 BaseTerrain/HeightLand 之类参数、跑基类 Generate 的"贴皮图"会被点名——
+    /// 那正是 continent 曾经的状态(顶着 Map2 的名字却跑 mainland 算法,整张图没有海)。
+    ///
+    /// 唯一豁免 mainland:StandardMap 的基类实现本身就是 mainland.js 的逐字移植。</summary>
+    [Fact]
+    public void Every_Registered_Map_Implements_Its_Own_Generator()
+    {
+        // mainland 永久豁免:StandardMap 的基类实现本身就是 mainland.js 的逐字移植。
+        var exempt = new HashSet<string>(StringComparer.Ordinal) { "mainland" };
+
+        // 尚未逐字移植的图(棘轮:每移植一张就从这里删一行,删空即全部完成)。
+        // 名单只减不增——新增条目意味着有人把已移植的图改回了贴皮实现。
+        var notYetPorted = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "alpine_lakes", "anatolian_plateau", "atlas_mountains", "botswanan_haven",
+            "cantabrian_highlands", "cappadocian_badlands", "danubius", "deep_forest",
+            "elephantine", "extinct_volcano", "fields_of_meroe", "flood", "foothills",
+            "fortress", "guadalquivir_river", "gulf_of_bothnia", "hyrcanian_shores", "india",
+            "island_stronghold", "jebel_barkal", "kerala", "lake", "land_grab", "latium",
+            "lorraine_plain", "lower_nubia", "migration", "new_rms_test", "northern_lights",
+            "persian_highlands", "phoenician_levant", "polar_sea", "rhine_marshlands", "sahel",
+            "sahel_watering_holes", "scythian_rivulet", "snowflake_searocks",
+            "survivalofthefittest", "syria", "the_nile", "unknown", "volcanic_lands",
+            "wall_demo",
+        };
+
+        var baseGenerate = typeof(StandardMap).GetMethod("Generate",
+            new[] { typeof(RmgenRng), typeof(MapSettings) });
+        Assert.NotNull(baseGenerate);
+
+        var rmgen2Base = typeof(StandardMap).Assembly
+            .GetType("ZeroAD.Sim.Rmgen.Maps.Rmgen2Map");
+        Assert.NotNull(rmgen2Base);
+
+        var stubs = new List<string>();
+        int checkedMaps = 0;
+
+        foreach (string name in MapRegistry.AvailableMaps.OrderBy(n => n, StringComparer.Ordinal))
+        {
+            if (exempt.Contains(name)) continue;
+
+            // 用一次生成拿到实际类型(注册表只暴露工厂)
+            var export = MapRegistry.Generate(name, new RmgenRng(7), MakeSettings(null));
+            Assert.NotNull(export);
+
+            var type = MapRegistry.MapType(name);
+            Assert.NotNull(type);
+            checkedMaps++;
+
+            // rmgen2 图:基类 Generate 是共用骨架,忠实度体现在 GenerateRmgen2
+            bool isRmgen2 = rmgen2Base!.IsAssignableFrom(type);
+            if (isRmgen2)
+            {
+                var g2 = type!.GetMethod("GenerateRmgen2",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.DeclaredOnly);
+                if (g2 == null)
+                    stubs.Add($"{name} ({type.Name}): no GenerateRmgen2 override");
+                continue;
+            }
+
+            var declared = type!.GetMethod("Generate", new[] { typeof(RmgenRng), typeof(MapSettings) });
+            if (declared == null || declared.DeclaringType == typeof(StandardMap))
+                stubs.Add($"{name} ({type.Name}): runs StandardMap.Generate (mainland algorithm)");
+        }
+
+        // 棘轮校验:实际贴皮集合必须是名单的子集(不能冒出新的贴皮图),
+        // 且名单里不能留下已经移植好的名字(移植完就该删掉那行)。
+        var stubNames = stubs.Select(st => st.Split(' ')[0]).ToHashSet(StringComparer.Ordinal);
+        var unexpected = stubNames.Except(notYetPorted).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        var staleAllowlist = notYetPorted.Except(stubNames).OrderBy(n => n, StringComparer.Ordinal).ToList();
+
+        _out.WriteLine($"maps checked: {checkedMaps}, still generic: {stubNames.Count}");
+        foreach (var st in stubs.Take(60)) _out.WriteLine("STUB: " + st);
+
+        Assert.True(checkedMaps >= 80, $"expected the full registry, got {checkedMaps}");
+        Assert.True(unexpected.Count == 0,
+            "these maps regressed to the generic mainland algorithm: " + string.Join(", ", unexpected));
+        Assert.True(staleAllowlist.Count == 0,
+            "these maps are ported — remove them from notYetPorted: " + string.Join(", ", staleAllowlist));
+    }
+
 }

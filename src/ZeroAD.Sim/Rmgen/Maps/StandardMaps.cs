@@ -482,5 +482,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
         }
 
         public static IEnumerable<string> AvailableMaps => s_maps.Keys;
+
+        /// <summary>该图对应的实现类型（防回归测试用：判断它是否真覆盖了自己的生成算法）。</summary>
+        public static Type? MapType(string mapName)
+            => s_maps.TryGetValue(mapName, out var factory) ? factory().GetType() : null;
     }
 }
