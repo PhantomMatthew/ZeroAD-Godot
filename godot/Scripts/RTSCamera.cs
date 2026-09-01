@@ -345,6 +345,11 @@ namespace ZeroAD.Godot;
 	}
 
 	/// <summary>屏幕点 → 地面 sim 坐标(射线步进地形高度;失败 → null)。</summary>
+	/// <summary>屏幕点 → 地面 sim 坐标(射线步进地形高度;失败 → null)。
+	/// 与 Main.ScreenToWorld 同款:地形网格 z 是预翻转的视觉坐标(visZ = WorldSize − simZ),
+	/// 采样前必须 MirrorZ;返回点也换算回 sim 坐标(_focus 是 sim 空间——
+	/// AnchorZoomToMouse 据此改 _smFocusZ,不换算会把 vis z 写进 sim 焦点,滚轮缩放
+	/// 就变成把整个相机沿 z 推飞,表现成"滚动=水平移动")。</summary>
 	private Vector3? ScreenToWorldGround(Vector2 screenPos)
 	{
 		var from = ProjectRayOrigin(screenPos);
@@ -358,7 +363,7 @@ namespace ZeroAD.Godot;
 		while (t < maxDist)
 		{
 			var p = from + dir * t;
-			float groundY = TerrainHeightService.Sample(p.X, p.Z);
+			float groundY = TerrainHeightService.Sample(p.X, TerrainHeightService.MirrorZ(p.Z));
 			if (p.Y <= groundY)
 			{
 				// 二分细化到地面
@@ -367,11 +372,14 @@ namespace ZeroAD.Godot;
 				{
 					float mid = (lo + hi) / 2;
 					var pm = from + dir * mid;
-					if (pm.Y <= TerrainHeightService.Sample(pm.X, pm.Z)) hi = mid;
-					else lo = mid;
+					if (pm.Y <= TerrainHeightService.Sample(pm.X, TerrainHeightService.MirrorZ(pm.Z)))
+						hi = mid;
+					else
+						lo = mid;
 				}
 				var hit = from + dir * hi;
-				return new Vector3(hit.X, TerrainHeightService.Sample(hit.X, hit.Z), hit.Z);
+				float simZ = TerrainHeightService.MirrorZ(hit.Z);
+				return new Vector3(hit.X, TerrainHeightService.Sample(hit.X, simZ), simZ);
 			}
 			t += step;
 		}
