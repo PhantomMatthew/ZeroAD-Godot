@@ -23,12 +23,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "medit_grass_field";
     }
 
-    public sealed class FrontierMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
     public sealed class LandGrabMap : StandardMap
     {
         protected override double HeightLand => 3;
@@ -184,18 +178,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "medit_grass_field";
     }
 
-    public sealed class LionsDenMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
-    public sealed class HellsPassMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "alpine_grass";
-    }
-
     // ── 海洋/岛屿 ──
 
     public sealed class CycladicArchipelagoMap : StandardMap
@@ -264,12 +246,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "desert_sand_dunes_100";
-    }
-
-    public sealed class HarborMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
     }
 
     public sealed class GulfOfBothniaMap : StandardMap

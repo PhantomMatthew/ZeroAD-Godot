@@ -47,12 +47,15 @@ namespace ZeroAD.Sim.Rmgen
         public const string ActorPrefix = "actor|";
 
         public readonly string TemplateName;
-        public readonly int MinCount, MaxCount;
+        public readonly double MinCount, MaxCount;
         public readonly double MinDistance, MaxDistance, MinAngle, MaxAngle;
         public double AvoidDistanceSquared { get; }
         private readonly RmgenRng _rng;
 
-        public ScatterObject(RmgenRng rng, string templateName, int minCount, int maxCount,
+        /// <summary>count 用 double(非 int):上游多处以分数 offset(如 sizes 缩放的 1.2)
+        /// 直接传给 randIntInclusive,取整发生在该函数内部(floor(min+rand*(max+1-min))),
+        /// 而非构造时截断——分数上下限会影响抽样分布,截断成 int 会系统性丢失这个效果。</summary>
+        public ScatterObject(RmgenRng rng, string templateName, double minCount, double maxCount,
             double minDistance, double maxDistance,
             double minAngle = 0, double maxAngle = 2 * SafeMath.PI, double avoidDistance = 1)
         {

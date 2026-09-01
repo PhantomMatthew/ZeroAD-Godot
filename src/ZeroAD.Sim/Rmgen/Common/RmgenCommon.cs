@@ -923,18 +923,95 @@ namespace ZeroAD.Sim.Rmgen.Common
             }
         }
 
+        /// <summary>getTeamsArray——按队伍分组玩家(独立玩家各自成队),队伍下标顺序=
+        /// 队伍编号升序,无队伍玩家追加在最后(逐字对应 rmgen-common/player.js)。</summary>
+        public static List<List<int>> GetTeamsArray(MapSettings settings)
+        {
+            int numPlayers = GetNumPlayers(settings);
+            var playerIDs = Enumerable.Range(1, numPlayers).ToList();
+            var byTeam = new SortedDictionary<int, List<int>>();
+            foreach (int pid in playerIDs)
+            {
+                int team = GetPlayerTeam(settings, pid);
+                if (team == -1) continue;
+                if (!byTeam.TryGetValue(team, out var list))
+                    byTeam[team] = list = new List<int>();
+                list.Add(pid);
+            }
+            var result = byTeam.Values.Select(l => l).ToList();
+            foreach (int pid in playerIDs)
+                if (GetPlayerTeam(settings, pid) == -1)
+                    result.Add(new List<int> { pid });
+            return result;
+        }
+
+        /// <summary>placeStronghold(逐字移植 rmgen-common/player.js)——每队聚成一个
+        /// "堡垒"圆环(队内玩家沿小圆分布),各队堡垒再沿大圆分布;独队(team.length==1)
+        /// 半径为 0,直接落在堡垒中心。</summary>
+        public static (List<int> playerIDs, List<RmgenVector2D> playerPosition) PlaceStronghold(
+            RmgenRng rng, RandomMap map, MapSettings settings,
+            List<List<int>> teamsArray, double distance, double groupedDistance, double startAngle)
+        {
+            var mapCenter = map.GetCenter();
+            var playerIDs = new List<int>();
+            var playerPosition = new List<RmgenVector2D>();
+
+            var strongholdRadius = teamsArray.Select(team =>
+                team.Count == 1 ? 0.0 : groupedDistance / 2 / SafeMath.Sin(SafeMath.PI / team.Count)).ToList();
+
+            double sumRadius = strongholdRadius.Sum();
+            double distanceBetweenStrongholds =
+                (distance * 2 * SafeMath.PI - 2 * sumRadius) / strongholdRadius.Count;
+
+            var relativeTeamAngles = new List<double>();
+            for (int i = 0; i < strongholdRadius.Count; ++i)
+            {
+                double prev = strongholdRadius[(i - 1 + strongholdRadius.Count) % strongholdRadius.Count];
+                relativeTeamAngles.Add((distanceBetweenStrongholds + prev + strongholdRadius[i]) / distance);
+            }
+
+            var teamAngles = new List<double>();
+            for (int i = 0; i < relativeTeamAngles.Count; ++i)
+            {
+                double baseAngle = i == 0 ? startAngle : teamAngles[^1];
+                teamAngles.Add(baseAngle + relativeTeamAngles[i]);
+            }
+
+            for (int i = 0; i < teamsArray.Count; ++i)
+            {
+                var off = new RmgenVector2D(distance * 0.8, 0);
+                off.Rotate(-teamAngles[i]);
+                var teamPosition = RmgenVector2D.Add(mapCenter, off);
+
+                for (int p = 0; p < teamsArray[i].Count; ++p)
+                {
+                    double angle = startAngle + (p + 1) * 2 * SafeMath.PI / teamsArray[i].Count;
+                    playerIDs.Add(teamsArray[i][p]);
+                    var o2 = new RmgenVector2D(strongholdRadius[i], 0);
+                    o2.Rotate(-angle);
+                    var pos = RmgenVector2D.Add(teamPosition, o2);
+                    pos.Round();
+                    playerPosition.Add(pos);
+                }
+            }
+            return (playerIDs, playerPosition);
+        }
+
         /// <summary>playerPlacementByPattern——按布置模式定玩家位置。
         /// patternName null 时读 settings.PlayerPlacement（gamesetup 下发,"circle" 默认）。
-        /// groupedLines/stronghold/randomGroup 未移植——回退 circle。
+        /// groupedLines/randomGroup 未移植——回退 circle;stronghold 已实现。
         /// 注意 angle 通常由调用方 randomAngle() 先抽（与上游实参求值一致）。</summary>
         public static (List<int> playerIDs, List<RmgenVector2D> playerPosition) PlayerPlacementByPattern(
             RmgenRng rng, RandomMap map, MapSettings settings, string? patternName,
-            double distance, double? angle = null, RmgenVector2D? center = null)
+            double distance, double? angle = null, RmgenVector2D? center = null, double groupedDistance = 0)
         {
             patternName ??= settings.PlayerPlacement;
             if (patternName == "river")
                 return PlayerPlacementRiver(rng, map, settings, angle ?? rng.RandomAngle(),
                     distance, center);
+            if (patternName == "stronghold")
+                return PlaceStronghold(rng, map, settings, GetTeamsArray(settings), distance,
+                    groupedDistance, angle ?? rng.RandomAngle());
 
             // circle / 未移植模式回退
             var (ids, pos, _, _) = PlayerPlacementCircle(rng, map, GetNumPlayers(settings),
@@ -1403,6 +1480,21 @@ namespace ZeroAD.Sim.Rmgen.Common
         }
 
         // ── 辅助 ──
+
+        /// <summary>g_Map.LoadHeightmapImage(filename, normalMin, normalMax)——逐字对应
+        /// RandomMap.js 的引擎方法:PNG(maps/random/&lt;filename&gt;)→ convertHeightmap1Dto2D →
+        /// HeightmapPainter 铺满全图。dataRoot 缺失或文件不存在时静默跳过
+        /// (地图保持构造时的平坦基准高度——测试/数据缺失环境的兜底,同其余地图的既有约定)。</summary>
+        public static void LoadHeightmapImage(RandomMap map, string? dataRoot, string filename,
+            double normalMinHeight, double normalMaxHeight)
+        {
+            if (dataRoot == null) return;
+            string path = Path.Combine(dataRoot, "maps", "random", filename);
+            if (!File.Exists(path)) return;
+            var hm2d = HeightmapLoader.ConvertHeightmap1Dto2D(HeightmapLoader.LoadHeightmapImage(path));
+            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                new HeightmapPainter(map, hm2d, normalMinHeight, normalMaxHeight), null);
+        }
 
         /// <summary>随机地图坐标（原版 RandomMap.randomCoordinate）。</summary>
         public static RmgenVector2D RandomCoordinate(RmgenRng rng, RandomMap map, bool passableOnly)

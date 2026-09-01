@@ -104,7 +104,8 @@ public static class WorkerRoles
         var supplyId = gameState.Metadata.GetObject(ent.Id, "supply");
         if (supplyId != null)
         {
-            var supply = gameState.GetEntityById((uint)supplyId);
+            var supply = gameState.GetEntityById(supplyId is uint su ? su
+                : supplyId is int si ? (uint)si : 0);
             if (supply == null || supply.ResourceSupplyAmount <= 0)
             {
                 // 资源耗尽 → 重新分配
@@ -142,7 +143,8 @@ public static class WorkerRoles
     {
         var foundationId = gameState.Metadata.GetObject(ent.Id, "target-foundation");
         if (foundationId == null) return;
-        var target = gameState.GetEntityById((uint)foundationId);
+        var target = gameState.GetEntityById(foundationId is uint fu ? fu
+            : foundationId is int fi ? (uint)fi : 0);
         if (target == null || !target.IsFoundation)
         {
             // 地基完成或消失 → 回 idle
@@ -425,7 +427,7 @@ public sealed class BaseManager
     {
         int n = 0;
         foreach (var e in gameState.GetOwnUnits().Values())
-            if (gameState.Metadata.GetObject(e.Id, "target-foundation") is int tf && (uint)tf == foundationId)
+            if (gameState.Metadata.GetObject(e.Id, "target-foundation") is uint tf && tf == foundationId)
                 n++;
         return n;
     }
@@ -451,7 +453,7 @@ public sealed class BaseManager
                 if (nearest.HasEntities())
                 {
                     var t = nearest.Values().First();
-                    gameState.Metadata.Set(worker.Id, "supply", (int)t.Id);
+                    gameState.Metadata.Set(worker.Id, "supply", t.Id);
                     gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Gather(
                         (uint)gameState.PlayerId, (uint)worker.Id, t.Id));
                     return true;
@@ -502,7 +504,7 @@ public sealed class BaseManager
                     continue;
                 var builtTypes = f.Template.ResourceDropsiteTypes;
                 if (builtTypes == null || !builtTypes.Split(' ').Contains(resource)) continue;
-                gameState.Metadata.Set(worker.Id, "target-foundation", (int)f.Id);
+                gameState.Metadata.Set(worker.Id, "target-foundation", f.Id);
                 gameState.Metadata.Set(worker.Id, "subrole", WorkerRoles.SubroleBuilder);
                 gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Repair(
                     (uint)gameState.PlayerId, (uint)worker.Id, f.Id));
@@ -565,7 +567,7 @@ public sealed class BaseManager
             }
 
             AddTCGatherer(ent.Id);
-            gameState.Metadata.Set(worker.Id, "supply", (int)ent.Id);
+            gameState.Metadata.Set(worker.Id, "supply", ent.Id);
             gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Gather(
                 (uint)gameState.PlayerId, (uint)worker.Id, ent.Id));
             return true;
@@ -591,7 +593,7 @@ public sealed class BaseManager
             if (d < bestDist) { bestDist = d; best = f; }
         }
         if (best == null) return false;
-        gameState.Metadata.Set(worker.Id, "supply", (int)best.Id);
+        gameState.Metadata.Set(worker.Id, "supply", best.Id);
         gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Gather(
             (uint)gameState.PlayerId, (uint)worker.Id, best.Id));
         return true;
@@ -613,7 +615,7 @@ public sealed class BaseManager
         float dz = prey.Position2D.Y.ToFloat() - worker.Position2D.Y.ToFloat();
         // 原版远猎限 FastMoving(>90m 平方 8100 阈值近似)。
         if (dx * dx + dz * dz > 90f * 90f && !worker.HasClass("FastMoving")) return false;
-        gameState.Metadata.Set(worker.Id, "supply", (int)prey.Id);
+        gameState.Metadata.Set(worker.Id, "supply", prey.Id);
         gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Gather(
             (uint)gameState.PlayerId, (uint)worker.Id, prey.Id));
         return true;

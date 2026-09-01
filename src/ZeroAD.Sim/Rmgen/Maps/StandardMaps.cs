@@ -299,22 +299,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override IReadOnlyList<string> SupportedBiomes => new[] { "alpine" };
     }
 
-    /// <summary>ambush.js（250 行）。</summary>
-    public sealed class AmbushMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
     /// <summary>foothills.js（254 行）。</summary>
     public sealed class FoothillsMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
-    /// <summary>empire.js（255 行）。</summary>
-    public sealed class EmpireMap : StandardMap
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "medit_grass_field";
@@ -364,13 +350,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "polar_snow_b";
-    }
-
-    /// <summary>stronghold.js（282 行）。</summary>
-    public sealed class StrongholdMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
     }
 
     /// <summary>india.js（283 行）。</summary>

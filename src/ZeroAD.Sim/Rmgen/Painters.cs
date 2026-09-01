@@ -63,8 +63,14 @@ namespace ZeroAD.Sim.Rmgen
             _terrains = new List<ITerrain>();
             foreach (var t in terrains)
                 _terrains.Add(Resolve(t));
-            if (widths.Length != _terrains.Count - 1)
-                throw new System.ArgumentException("LayeredPainter: widths must have one item less than terrains");
+            // 上游 JS 构造函数对 widths/terrains 长度关系不做任何校验(见 LayeredPainter.js)；
+            // Paint() 里 for 循环在 width 累加不足时天然把 i 落到 widths.Length,
+            // 之后的 terrains 元素(如 addLayeredPatches 的第 4 组 tier4Terrain)因此
+            // 永远不会被选中——这是上游真实存在的"死配置"行为,原样保留,不视为缺陷。
+            // 只有 widths 数量多到会让 i 越界(terrains 之外)才是真正的调用错误。
+            if (widths.Length >= _terrains.Count)
+                throw new System.ArgumentException(
+                    "LayeredPainter: too many widths for the given terrains (would index out of range)");
             _widths = widths;
             _rng = rng;
         }
