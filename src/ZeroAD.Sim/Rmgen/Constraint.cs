@@ -63,6 +63,26 @@ namespace ZeroAD.Sim.Rmgen
         public bool Allows(RmgenVector2D pos) => _areas.All(a => !a.Contains(pos));
     }
 
+    /// <summary>与给定 Area 相邻但不在其内(逐字移植 Constraint.js 的 AdjacentToAreaConstraint):
+    /// 自身不在任一 area 内,且 4 邻域至少一个点在该 area 内。</summary>
+    public sealed class AdjacentToAreaConstraint : IConstraint
+    {
+        private readonly List<Area> _areas;
+        public AdjacentToAreaConstraint(IEnumerable<Area> areas) => _areas = areas.ToList();
+        public bool Allows(RmgenVector2D pos)
+        {
+            var map = RmgenLibrary.CurrentMap;
+            foreach (var area in _areas)
+            {
+                if (area.Contains(pos)) continue;
+                foreach (var adj in map.GetAdjacentPoints(pos))
+                    if (area.Contains(adj))
+                        return true;
+            }
+            return false;
+        }
+    }
+
     /// <summary>纹理匹配。</summary>
     public sealed class StayTextureConstraint : IConstraint
     {

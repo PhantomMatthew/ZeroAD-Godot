@@ -935,6 +935,10 @@ namespace ZeroAD.Sim.Rmgen.Common
             }
         }
 
+        /// <summary>getTeamsArray——按队伍分组玩家(独立玩家各自成队),队伍下标顺序=
+        /// 队伍编号升序,无队伍玩家追加在最后(逐字对应 rmgen-common/player.js)。</summary>
+
+
         /// <summary>playerPlacementByPattern——按布置模式定玩家位置。
         /// patternName null 时读 settings.PlayerPlacement（gamesetup 下发,"circle" 默认）。
         /// 注意 angle 通常由调用方 randomAngle() 先抽（与上游实参求值一致）。
@@ -1608,6 +1612,21 @@ namespace ZeroAD.Sim.Rmgen.Common
         }
 
         // ── 辅助 ──
+
+        /// <summary>g_Map.LoadHeightmapImage(filename, normalMin, normalMax)——逐字对应
+        /// RandomMap.js 的引擎方法:PNG(maps/random/&lt;filename&gt;)→ convertHeightmap1Dto2D →
+        /// HeightmapPainter 铺满全图。dataRoot 缺失或文件不存在时静默跳过
+        /// (地图保持构造时的平坦基准高度——测试/数据缺失环境的兜底,同其余地图的既有约定)。</summary>
+        public static void LoadHeightmapImage(RandomMap map, string? dataRoot, string filename,
+            double normalMinHeight, double normalMaxHeight)
+        {
+            if (dataRoot == null) return;
+            string path = Path.Combine(dataRoot, "maps", "random", filename);
+            if (!File.Exists(path)) return;
+            var hm2d = HeightmapLoader.ConvertHeightmap1Dto2D(HeightmapLoader.LoadHeightmapImage(path));
+            RmgenLibrary.CreateArea(new MapBoundsPlacer(),
+                new HeightmapPainter(map, hm2d, normalMinHeight, normalMaxHeight), null);
+        }
 
         /// <summary>随机地图坐标（原版 RandomMap.randomCoordinate）。</summary>
         public static RmgenVector2D RandomCoordinate(RmgenRng rng, RandomMap map, bool passableOnly)
