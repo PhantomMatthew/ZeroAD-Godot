@@ -367,13 +367,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "tropic_grass_c";
     }
 
-    /// <summary>continent.js（291 行）。</summary>
-    public sealed class ContinentMap2 : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
     /// <summary>cantabrian_highlands.js（297 行）。</summary>
     public sealed class CantabrianHighlandsMap : StandardMap
     {
