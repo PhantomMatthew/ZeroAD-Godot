@@ -19,7 +19,7 @@
 | 网络/多人 | 锁步内核扎实,外围薄弱 | OOS+锁步完整;❌ 无断线重连/主机迁移;❌ 无观战者;大厅/STUN 为可用骨架非完整实现 |
 | AI(Petra) | ~26.5%(19255 行→5107 行) | 决策主循环骨架逐字对齐,但 defenseManager(~10%)、navalManager(~8%,跨海运输恒失败)等大量子系统被砍成桩 |
 | 寻路 | 算法层完整,数据/并发层缺 | 分层寻路/JPS/可见性图三层算法完整;❌ 通行分类未数据驱动(仅 2/10 类硬编码);❌ 无异步任务化/增量更新 |
-| 随机地图(rmgen) | 图元 100%,地图忠实度低 | 84/84 地图"入口"全注册,但仅 6 张真正逐字移植生成算法,其余 78 张丢失标志性地形结构,退化为"贴皮通用大陆图" |
+| 随机地图(rmgen) | 图元 100%,地图忠实度中 | 84/84 地图"入口"全注册,33 张逐字移植(rmgen2 系 14 + 标志性地形 9 + 早前 10);rmgen2 库与 environment.js 已全量,图专属 rmbiome 已接;余 51 张仍是"贴皮通用大陆图" |
 | 触发器 | 事件总线 ~32%,通用库 0% | 5 条件/6 动作数据驱动模型;`TriggerHelper.js` 32 个通用函数 0 个移植 |
 | 教程/战役 | 主线完整 | `introductory_tutorial` 完整且修复了原版 bug;`starting_economy_walkthrough` 未移植 |
 | 存档/录像 | 架构对等 | 双闭环完整;AI 的 AttackPlan/TransportPlan 等状态未纳入序列化 |
@@ -182,8 +182,10 @@ Health/Attack→Combat.cs、ResourceGatherer/Supply/Dropsite→Resources.cs、Pr
 |---|---|---|
 | 地图入口注册 | ✅ 84/84 | 姓名逐一核对无遗漏无多余 |
 | 图元库(placer/painter) | ✅ 10/10 + 13/13 | 图元原语齐全 |
-| **地图生成忠实度** | ❌ 仅 6/84 真正忠实 | 78 张地图(Phase D 18 张 + Phase E 60 张)**只覆盖了材质/生物群系参数**,未覆盖 `GenerateTerrain`/`GenerateResources` 钩子——峡谷墙(canyon)、齿轮岛形(gear)、伏击走廊(ambush)、群岛布局(archipelago/islands)等**标志性地形结构完全丢失**,实际生成的是"贴皮通用大陆图"。只有 6 张(alpine_valley/arctic_summer/aegean_sea/archipelago/african_plains/ardennes_forest)是"Phase F"标注的逐字翻译 |
-| rmbiome 专属群系 | 🟡 | 部分地图专属 biome(alpine/*、fields_of_meroe/*)回退到最接近的 generic biome |
+| **rmgen2 库(gaia.js + setup.js)** | ✅ | 全量移植;14 张依赖它的图(ambush/bahrain/empire/frontier/harbor/hells_pass/lions_den/marmara/mediterranean/ngorongoro/pompeii/ratumacos/red_sea/stronghold)已逐字接线 |
+| **environment.js** | ✅ | 天空/太阳/环境光/水体/雾/后处理全量;62 张图的 set* 序列表驱动施加(RNG 位置对齐上游),Godot 侧已接线 |
+| **地图生成忠实度** | 🟡 33/84 | 33 张逐字移植:rmgen2 系 14 张 + 标志性地形 9 张(islands/rivers/english_channel/canyon/gear/coast_range/cycladic_archipelago/corinthian_isthmus/dodecanese)+ 早前 10 张。**余 51 张仍只覆盖材质/生物群系参数**,未覆盖 `GenerateTerrain`/`GenerateResources`,实际生成的是"贴皮通用大陆图" |
+| rmbiome 专属群系 | ✅ | alpine/、fields_of_meroe/、gulf_of_bothnia/、persian_highlands/ 四套图专属 biome 已接;cappadocian_badlands/flood/island_stronghold 的显式白名单一并对齐 |
 
 ---
 
@@ -225,7 +227,7 @@ Health/Attack→Combat.cs、ResourceGatherer/Supply/Dropsite→Resources.cs、Pr
 | P0 | AI `navalManager.TransportPlan` 桩函数修复(跨海运输恒失败) | "名义存在、实质不可用",直接卡死跨海地图的 AI 行为 |
 | P0 | 寻路通行性分类数据驱动(补齐 10 类) + `PetraMapModule.CreateObstructionMap` | 二者互为因果,直接影响 AI 建造选址与城墙/舰船寻路正确性 |
 | P0 | AI `defenseManager` 军队编组/合并/分裂 | 现状"就近拦截"过于简化,AI 防御几乎不设防 |
-| P1 | rmgen 78 张地图的地形结构忠实移植(至少挑高热度地图,如群岛/峡谷类) | 当前"贴皮通用大陆图"直接影响地图多样性体验 |
+| P1 | rmgen 余 51 张地图的地形结构忠实移植(rmgen2 系 14 张与群岛/峡谷类 9 张已完成) | 当前"贴皮通用大陆图"直接影响地图多样性体验 |
 | P1 | `RallyPointComponent` 多点排队 + 指令类型 | 影响新造单位的自动化分派体验(先采集/先修理等) |
 | P1 | Guard 双向反击、Garrison/Turret 外交翻面即时逐出 | 影响战斗细节手感,已知延迟窗口 |
 | P1 | 触发器事件总线补齐(尤其 `OnPlayerDefeated/OnPlayerWon/OnDiplomacyChanged`) + `TriggerHelper` 通用库 | 是战役/自定义地图内容扩展的基础设施,当前 0% 复用库会拖慢后续每张地图触发脚本的移植速度 |

@@ -250,7 +250,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 }
             }
 
-            RmgenCommon.PlacePlayerBases(rng, map, settings, tGrass[0], clPlayer, null,
+            RmgenCommon.PlacePlayerBases(rng, map, settings, tGrass[0], clSettlement, null,
                 playerPosition, tRoadWild, tRoad, RmgenCommon.SortAllPlayers(rng, settings),
                 cityPatchRadius: 6, cityPatchCoherence: 0.8,
                 options: new RmgenCommon.PlayerBaseOptions
