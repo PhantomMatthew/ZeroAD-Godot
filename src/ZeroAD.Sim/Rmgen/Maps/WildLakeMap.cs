@@ -15,6 +15,13 @@ namespace ZeroAD.Sim.Rmgen.Maps
     /// farmEntities/mercenaryCampEntities）。setWaterHeight 环境设置按约定省略。</summary>
     public sealed class WildLakeMap : StandardMap
     {
+        /// <summary>本局水面高度（上游 setWaterHeight(heightSeaGround)，
+        /// 值由高度区间与 averageWaterCoverage 算出，故不在 MapEnvironments 表里）。</summary>
+        private double _heightSeaGround;
+
+        protected internal override void ApplyExtraEnvironment(RmgenEnvironment env, RmgenRng rng)
+            => env.SetWaterHeight(_heightSeaGround);
+
         protected override double HeightLand => 0;
 
         /// <summary>上游 wild_lake.json SupportedBiomes = "generic/"（全部 generic biome）。</summary>
@@ -77,7 +84,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             double rangeMax = MaxHeight * heightScale;
 
             const double averageWaterCoverage = 1.0 / 5;
-            double heightSeaGround = -MinHeight + rangeMin +
+            double heightSeaGround = _heightSeaGround = -MinHeight + rangeMin +
                 averageWaterCoverage * (rangeMax - rangeMin);
             double heightSeaGroundAdjusted = heightSeaGround + MinHeight;
 

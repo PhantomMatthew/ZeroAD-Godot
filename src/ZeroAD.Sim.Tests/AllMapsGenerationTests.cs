@@ -247,4 +247,59 @@ public sealed class AllMapsGenerationTests
         Assert.True(mapsWithPlaceholders > 0, "no skirmish placeholders found — sweep is not exercising anything");
         Assert.Empty(failures);
     }
+    /// <summary>环境设置(environment.js 的 setSkySet/setSun*/setWater*/setFog*/setPP*)
+    /// 确实随 MapExport 出来:表里有条目的图必须偏离默认环境,且天空盒名可解析。</summary>
+    [Fact]
+    public void Maps_With_Environment_Export_NonDefault_Environment()
+    {
+        string? dataRoot = FindRepoPath(Path.Combine("binaries", "data", "mods", "public"));
+        var defaults = new RmgenEnvironment();
+        var failures = new List<string>();
+        int checkedMaps = 0;
+
+        foreach (string name in MapRegistry.AvailableMaps.OrderBy(n => n, StringComparer.Ordinal))
+        {
+            if (!MapEnvironments.Has(name)) continue;
+
+            var export = MapRegistry.Generate(name, new RmgenRng(42), MakeSettings(dataRoot));
+            if (export == null) { failures.Add($"{name}: generate returned null"); continue; }
+
+            var env = export.Environment;
+            checkedMaps++;
+
+            bool differs =
+                env.SkySet != defaults.SkySet ||
+                env.SunElevation != defaults.SunElevation ||
+                env.SunRotation != defaults.SunRotation ||
+                env.SunColor.R != defaults.SunColor.R ||
+                env.AmbientColor.R != defaults.AmbientColor.R ||
+                env.Water.Type != defaults.Water.Type ||
+                env.Water.Height != defaults.Water.Height ||
+                env.Water.Color.R != defaults.Water.Color.R ||
+                env.Water.Tint.R != defaults.Water.Tint.R ||
+                env.Water.Waviness != defaults.Water.Waviness ||
+                env.Water.Murkiness != defaults.Water.Murkiness ||
+                env.Water.WindAngle != defaults.Water.WindAngle ||
+                env.Fog.FogThickness != defaults.Fog.FogThickness ||
+                env.Fog.FogColor.R != defaults.Fog.FogColor.R ||
+                env.Postproc.Contrast != defaults.Postproc.Contrast ||
+                env.Postproc.Bloom != defaults.Postproc.Bloom ||
+                env.Fog.FogFactor != defaults.Fog.FogFactor ||
+                env.Postproc.PostprocEffect != defaults.Postproc.PostprocEffect ||
+                env.Postproc.Saturation != defaults.Postproc.Saturation;
+
+            if (!differs)
+                failures.Add($"{name}: environment identical to defaults");
+
+            // 天空盒名不该是空串(上游全是有效子目录名)
+            if (env.SkySet.Length == 0)
+                failures.Add($"{name}: empty SkySet");
+        }
+
+        _out.WriteLine($"maps with environment table entries: {checkedMaps}");
+        foreach (var f in failures.Take(30)) _out.WriteLine("FAIL: " + f);
+        Assert.True(checkedMaps >= 55, $"expected most maps to carry environment settings, got {checkedMaps}");
+        Assert.Empty(failures);
+    }
+
 }

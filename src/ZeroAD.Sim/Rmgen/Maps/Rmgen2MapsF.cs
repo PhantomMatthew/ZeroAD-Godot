@@ -10,6 +10,11 @@ namespace ZeroAD.Sim.Rmgen.Maps
     /// 玩家沿河两岸布置。环境设置与 placePlayersNomad 按既有移植约定省略。</summary>
     public sealed class RatumacosMap2 : Rmgen2Map
     {
+        /// <summary>上游 setWaterHeight(20 + heightWaterLevel)，
+        /// heightWaterLevel = heightScale(0) = 0，故恒为 20（不在 MapEnvironments 表里）。</summary>
+        protected internal override void ApplyExtraEnvironment(RmgenEnvironment env, RmgenRng rng)
+            => env.SetWaterHeight(20);
+
         protected override string? ForcedBiome => "generic/alpine";
 
         protected override double PickHeightLand(RmgenRng rng) => 0;

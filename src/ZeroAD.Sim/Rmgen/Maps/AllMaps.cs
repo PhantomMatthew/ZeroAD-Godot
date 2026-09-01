@@ -243,6 +243,12 @@ namespace ZeroAD.Sim.Rmgen.Maps
 
     public sealed class JebelBarkalMap : StandardMap
     {
+        /// <summary>上游 setSunRotation(Math.PI / 2 * randFloat(-1, 1))——消耗 1 次抽数，
+        /// 必须复现。同处的 setWaterHeight(heightWaterLevel + SEA_LEVEL) 依赖 pmp 高度图，
+        /// 本图生成流程尚未逐字移植，暂缺。</summary>
+        protected internal override void ApplyExtraEnvironment(RmgenEnvironment env, RmgenRng rng)
+            => env.SetSunRotation(SafeMath.PI / 2 * rng.RandFloat(-1, 1));
+
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "desert_sand_dunes_100";
     }

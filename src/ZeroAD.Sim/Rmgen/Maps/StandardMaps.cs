@@ -176,6 +176,12 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ClBaseResource = new TileClass(MapSize);
         }
 
+        /// <summary>补充环境设置——上游那几条依赖图内局部变量的调用
+        /// （多为 setWaterHeight(heightSeaGround)）。表驱动的 <see cref="MapEnvironments"/>
+        /// 覆盖不到，由地图类自己写。表驱动部分先施加、本钩子后施加，二者都在生成尾部，
+        /// 所以只要同一张图不在两边同时抽数，抽数顺序就与上游一致。</summary>
+        protected internal virtual void ApplyExtraEnvironment(RmgenEnvironment env, RmgenRng rng) { }
+
         /// <summary>本图可随机的 biome 白名单(上游 SupportedBiomes;默认全 generic——
         /// 多数上游图即如此,biome 每局随机)。强主题图覆盖。</summary>
         protected virtual IReadOnlyList<string> SupportedBiomes => BiomeLoader.KnownBiomes;
@@ -296,6 +302,16 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string TreeTemplate => "gaia/tree/pine";
         /// <summary>上游 alpine_lakes.json SupportedBiomes = "alpine/"（图专属 biome 目录）。</summary>
         protected override IReadOnlyList<string> SupportedBiomes => BiomeLoader.AlpineBiomes;
+
+        /// <summary>上游按 biome 分支的雾/饱和度三条，加 setWaterHeight(heightSeaGround=-5)。</summary>
+        protected internal override void ApplyExtraEnvironment(RmgenEnvironment env, RmgenRng rng)
+        {
+            bool lateSpring = BiomeName == "alpine/late_spring";
+            env.SetFogThickness(lateSpring ? 0.26 : 0.19);
+            env.SetFogFactor(lateSpring ? 0.4 : 0.35);
+            env.SetPPSaturation(lateSpring ? 0.48 : 0.37);
+            env.SetWaterHeight(-5);
+        }
     }
 
     /// <summary>foothills.js（254 行）。</summary>
@@ -462,7 +478,14 @@ namespace ZeroAD.Sim.Rmgen.Maps
         public static MapExport? Generate(string mapName, RmgenRng rng, MapSettings settings)
         {
             if (!s_maps.TryGetValue(mapName, out var factory)) return null;
-            return factory().Generate(rng, settings);
+            var map = factory();
+            var export = map.Generate(rng, settings);
+
+            // 环境设置（上游各图末尾的 setSkySet/setSun*/setWater*/setFog*/setPP*）。
+            // 表驱动部分先施加，再让地图类补依赖局部变量的那几条。
+            MapEnvironments.Apply(mapName, export.Environment, rng, settings.Size);
+            map.ApplyExtraEnvironment(export.Environment, rng);
+            return export;
         }
 
         public static IEnumerable<string> AvailableMaps => s_maps.Keys;
