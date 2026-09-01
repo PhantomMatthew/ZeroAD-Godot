@@ -40,6 +40,8 @@ namespace ZeroAD.Godot;
 
 			public float Target => (float)_target;
 			public float Current => (float)_current;
+			/// <summary>仍在逼近目标(差值 ≥ minDelta)——_Process 据此决定是否重算相机变换。</summary>
+			public bool IsSettling => Math.Abs(_target - _current) >= _minDelta;
 
 			public void AddSmoothly(float delta) => _target += delta;
 			public void SetValueSmoothly(float v) => _target = v;
@@ -207,11 +209,24 @@ namespace ZeroAD.Godot;
 		}
 
 		// 平滑更新(原版 Update(deltaRealTime):按 smoothness^10dt 指数逼近目标)。
-		_focus.X = _smFocusX.Update(dt);
-		_focus.Z = _smFocusZ.Update(dt);
-		_distance = Mathf.Clamp(_smDistance.Update(dt), MinDistance, MaxDistance);
-		_yaw = _smYaw.Update(dt);
-		_pitch = Mathf.Clamp(_smPitch.Update(dt), MinPitch, MaxPitch);
+		// Update 返回的是**增量**——真值读 Current(此前误把增量赋给 _focus/_distance,
+		// 滚轮缩放被钳成最小距、只剩锚点平移,表现成"水平方向缩放地图")。
+		_smFocusX.Update(dt);
+		_focus.X = _smFocusX.Current;
+		_smFocusZ.Update(dt);
+		_focus.Z = _smFocusZ.Current;
+		_smDistance.Update(dt);
+		_distance = Mathf.Clamp(_smDistance.Current, MinDistance, MaxDistance);
+		_smYaw.Update(dt);
+		_yaw = _smYaw.Current;
+		_smPitch.Update(dt);
+		_pitch = Mathf.Clamp(_smPitch.Current, MinPitch, MaxPitch);
+
+		// 滚轮/快捷键只改平滑目标值——目标未收敛期间每帧重算变换
+		// (此前只在输入帧 moved=true 才 UpdateTransform,滚轮缩放下帧不更新 → 视觉不动)。
+		if (_smFocusX.IsSettling || _smFocusZ.IsSettling || _smDistance.IsSettling
+			|| _smYaw.IsSettling || _smPitch.IsSettling)
+			moved = true;
 
 		if (moved)
 		{
