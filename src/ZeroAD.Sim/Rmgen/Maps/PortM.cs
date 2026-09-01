@@ -1005,7 +1005,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
                     RmgenLibrary.ScaleByMapSize(5, 20, MapSize),
                 },
                 RmgenLibrary.AvoidClasses(clWater, 3, ClPlayer, 20, ClHill, 1, clFood, 10),
-                clFood);
+                null);
 
             GaiaEntities.CreateFood(rng,
                 new IGroupElement[][]

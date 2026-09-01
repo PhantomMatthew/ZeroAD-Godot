@@ -1,0 +1,12 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+CSC : warning CS2002: Source file '/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/obj/Debug/net8.0/.NETCoreApp,Version=v8.0.AssemblyAttributes.cs' specified multiple times [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+  ZeroAD.Sim -> /Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/bin/Debug/net8.0/ZeroAD.Sim.dll
+
+Build succeeded.
+
+CSC : warning CS2002: Source file '/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/obj/Debug/net8.0/.NETCoreApp,Version=v8.0.AssemblyAttributes.cs' specified multiple times [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+    1 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:00.73

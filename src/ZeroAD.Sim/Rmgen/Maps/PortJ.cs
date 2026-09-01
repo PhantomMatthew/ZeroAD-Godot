@@ -200,7 +200,17 @@ namespace ZeroAD.Sim.Rmgen.Maps
             RmgenLibrary.PaintTileClassBasedOnHeight(0, 5,
                 HeightPlacer.Mode.IncludeMinIncludeMax, clLand);
 
-            RmgenCommon.CreateBumps(rng, map, RmgenLibrary.AvoidClasses(ClPlayer, 20));
+            RmgenLibrary.CreateAreas(rng,
+                new ChainPlacer(rng, 1,
+                    Math.Floor(RmgenLibrary.ScaleByMapSize(4, 6, MapSize)),
+                    Math.Floor(RmgenLibrary.ScaleByMapSize(2, 5, MapSize)), 0),
+                new IPainter[]
+                {
+                    new SmoothElevationPainter(rng, SmoothElevationPainter.SmoothType.Blurry,
+                        2, 2, relative: true),
+                },
+                RmgenLibrary.AvoidClasses(ClPlayer, 20),
+                RmgenLibrary.ScaleByMapSize(100, 200, MapSize));
 
             GaiaEntities.CreateMines(rng, map,
                 new IGroupElement[][]
@@ -497,6 +507,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
         {
             // 同上，args.baseResourceConstraint 在原脚本中实际未生效。
             for (int i = 0; i < 2; ++i)
+            {
+                bool success = false;
                 for (int tries = 0; tries < 30; ++tries)
                 {
                     var offset = new RmgenVector2D(0, 9);
@@ -507,8 +519,14 @@ namespace ZeroAD.Sim.Rmgen.Maps
                             new ScatterObject(rng, "gaia/fauna_chicken", 5, 5, 0, 2),
                         }, true, baseResourceClass, RmgenVector2D.Add(offset, playerPosition)),
                         0, null))
+                    {
+                        success = true;
                         break;
+                    }
                 }
+                if (!success)
+                    return;
+            }
         }
     }
 
@@ -1526,7 +1544,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
 
         private static float[][] ConvertHeightmap1Dto2D(ushort[] heightmap)
         {
-            int hmSize = (int)Math.Sqrt(heightmap.Length);
+            int hmSize = (int)SafeMath.Sqrt(heightmap.Length);
             var result = new float[hmSize][];
             for (int x = 0; x < hmSize; ++x)
             {

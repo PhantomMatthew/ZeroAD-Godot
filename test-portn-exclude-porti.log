@@ -9,3 +9,5 @@ VSTest version 17.11.1 (arm64)
 
 Starting test execution, please wait...
 A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     7, Skipped:     0, Total:     7, Duration: 1 m 37 s - ZeroAD.Sim.Tests.dll (net8.0)

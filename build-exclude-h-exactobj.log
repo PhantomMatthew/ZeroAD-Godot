@@ -1,0 +1,10 @@
+  Determining projects to restore...
+/usr/local/share/dotnet/sdk/8.0.422/NuGet.targets(174,5): error : 'v8.0.AssemblyAttributes.cs;/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortH.cs' is not a valid version string. (Parameter 'value') [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+
+Build FAILED.
+
+/usr/local/share/dotnet/sdk/8.0.422/NuGet.targets(174,5): error : 'v8.0.AssemblyAttributes.cs;/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortH.cs' is not a valid version string. (Parameter 'value') [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:00.26

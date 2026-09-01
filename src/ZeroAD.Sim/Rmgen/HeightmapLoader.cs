@@ -68,7 +68,7 @@ namespace ZeroAD.Sim.Rmgen
             if (data.Length < 8 || data[0] != 0x89 || data[1] != 0x50)
                 throw new InvalidDataException("not a PNG");
 
-            int width = 0, height = 0;
+            int width = 0, height = 0, bitDepth = 8;
             var idat = new MemoryStream();
             int pos = 8;
             while (pos + 8 <= data.Length)
@@ -79,10 +79,11 @@ namespace ZeroAD.Sim.Rmgen
                 {
                     width = ReadBE32(data, pos + 8);
                     height = ReadBE32(data, pos + 12);
-                    int bitDepth = data[pos + 16];
+                    bitDepth = data[pos + 16];
                     int colorType = data[pos + 17];
                     int interlace = data[pos + 20];
-                    if (bitDepth != 8 || colorType != 0 || interlace != 0)
+                    // elephantine.png 是 1 位灰度（上游生成时阈值化过）；其余为 8 位。
+                    if (bitDepth != 1 && bitDepth != 8 || colorType != 0 || interlace != 0)
                         throw new InvalidDataException(
                             $"unsupported PNG: bitDepth={bitDepth} colorType={colorType} interlace={interlace}");
                 }
@@ -106,7 +107,12 @@ namespace ZeroAD.Sim.Rmgen
                 raw = ms.ToArray();
             }
 
-            // 逐行解滤波（每行 = 1 滤波字节 + width 像素字节，bpp=1）
+            // 逐行解滤波。8 位灰度：每行 = 1 滤波字节 + width 像素字节；
+            // 1 位灰度：每行 = 1 滤波字节 + ceil(width/8) 压缩字节（解滤波按压缩字节算，
+            // bpp=1——PNG 规范对 1 位图的滤波单位是 1 字节），解完再逐位展开成 0/255。
+            if (bitDepth == 1)
+                return DecodeBitPng(raw, width, height);
+
             var pixels = new byte[width * height];
             int stride = width + 1;
             for (int y = 0; y < height; ++y)
@@ -131,6 +137,44 @@ namespace ZeroAD.Sim.Rmgen
                     pixels[y * width + x] = (byte)(val & 0xFF);
                 }
             }
+            return (pixels, width, height);
+        }
+
+        /// <summary>1 位灰度 PNG：按压缩字节解滤波，然后逐位展开（0/1 → 0/255）。</summary>
+        private static (byte[] pixels, int width, int height) DecodeBitPng(byte[] raw,
+            int width, int height)
+        {
+            int packedWidth = (width + 7) / 8;
+            int stride = packedWidth + 1;
+            var packed = new byte[packedWidth * height];
+            for (int y = 0; y < height; ++y)
+            {
+                int rowStart = y * stride;
+                int filter = raw[rowStart];
+                for (int x = 0; x < packedWidth; ++x)
+                {
+                    int cur = raw[rowStart + 1 + x];
+                    int left = x > 0 ? packed[y * packedWidth + x - 1] : 0;
+                    int up = y > 0 ? packed[(y - 1) * packedWidth + x] : 0;
+                    int upLeft = x > 0 && y > 0 ? packed[(y - 1) * packedWidth + x - 1] : 0;
+                    int val = filter switch
+                    {
+                        0 => cur,
+                        1 => cur + left,
+                        2 => cur + up,
+                        3 => cur + (left + up) / 2,
+                        4 => cur + Paeth(left, up, upLeft),
+                        _ => throw new InvalidDataException("bad PNG filter " + filter),
+                    };
+                    packed[y * packedWidth + x] = (byte)(val & 0xFF);
+                }
+            }
+
+            var pixels = new byte[width * height];
+            for (int y = 0; y < height; ++y)
+                for (int x = 0; x < width; ++x)
+                    pixels[y * width + x] =
+                        (byte)((packed[y * packedWidth + x / 8] >> (7 - x % 8) & 1) * 255);
             return (pixels, width, height);
         }
 

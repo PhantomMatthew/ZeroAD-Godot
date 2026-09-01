@@ -275,76 +275,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "medit_grass_field";
     }
 
-    /// <summary>volcanic_lands.js（201 行）。</summary>
-    public sealed class VolcanicLandsMap : StandardMap
-    {
-        protected override double HeightLand => 1;
-        protected override string BaseTerrain => "ocean_rock_a";
-        protected override string CliffTerrain => "cliff volcanic coarse";
-        protected override string HillTerrain => "cliff volcanic light";
-        protected override string TreeTemplate => "gaia/tree/dead";
-    }
 
-    /// <summary>atlas_mountains.js（244 行）。</summary>
-    public sealed class AtlasMountainsMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field_a";
-    }
-
-    /// <summary>alpine_lakes.js（250 行）。</summary>
-    public sealed class AlpineLakesMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "alpine_grass";
-        protected override string CliffTerrain => "alpine_cliff_a";
-        protected override string HillTerrain => "alpine_grass_rocky";
-        protected override string TreeTemplate => "gaia/tree/pine";
-        /// <summary>上游 alpine_lakes.json SupportedBiomes = "alpine/"（图专属 biome 目录）。</summary>
-        protected override IReadOnlyList<string> SupportedBiomes => BiomeLoader.AlpineBiomes;
-
-        /// <summary>上游按 biome 分支的雾/饱和度三条，加 setWaterHeight(heightSeaGround=-5)。</summary>
-        protected internal override void ApplyExtraEnvironment(RmgenEnvironment env, RmgenRng rng)
-        {
-            bool lateSpring = BiomeName == "alpine/late_spring";
-            env.SetFogThickness(lateSpring ? 0.26 : 0.19);
-            env.SetFogFactor(lateSpring ? 0.4 : 0.35);
-            env.SetPPSaturation(lateSpring ? 0.48 : 0.37);
-            env.SetWaterHeight(-5);
-        }
-    }
-
-    /// <summary>foothills.js（254 行）。</summary>
-    public sealed class FoothillsMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
-    /// <summary>sahel.js（257 行）。</summary>
-    public sealed class SahelMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "savanna_grass_b_wetseason";
-    }
-
-
-
-    /// <summary>deep_forest.js（264 行）。</summary>
-    public sealed class DeepForestMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "temperate_grass_01";
-        protected override string TreeTemplate => "gaia/tree/oak_huge";
-        protected override double ForestRatio => 0.9;  // 深林更多树
-    }
-
-    /// <summary>cantabrian_highlands.js（297 行）。</summary>
-    public sealed class CantabrianHighlandsMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
 
     /// <summary>地图注册表——所有已移植的地图脚本。</summary>
     public static class MapRegistry
@@ -353,15 +284,15 @@ namespace ZeroAD.Sim.Rmgen.Maps
         {
             // Phase D（18 个）
             ["mainland"] = () => new MainlandMap2(),
-            ["volcanic_lands"] = () => new VolcanicLandsMap(),
-            ["atlas_mountains"] = () => new AtlasMountainsMap(),
-            ["alpine_lakes"] = () => new AlpineLakesMap(),
+            ["volcanic_lands"] = () => new VolcanicLandsMap2(),
+            ["atlas_mountains"] = () => new AtlasMountainsMap2(),
+            ["alpine_lakes"] = () => new AlpineLakesMap2(),
             ["ambush"] = () => new AmbushMap2(),
-            ["foothills"] = () => new FoothillsMap(),
+            ["foothills"] = () => new FoothillsMap2(),
             ["empire"] = () => new EmpireMap2(),
-            ["sahel"] = () => new SahelMap(),
+            ["sahel"] = () => new SahelMap2(),
             ["saharan_oases"] = () => new SaharanOasesMap(),
-            ["deep_forest"] = () => new DeepForestMap(),
+            ["deep_forest"] = () => new DeepForestMap2(),
             ["anatolian_plateau"] = () => new AnatolianPlateauMap2(),
             ["english_channel"] = () => new EnglishChannelMap2(),
             ["lake"] = () => new LakeMap2(),
@@ -369,33 +300,33 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ["stronghold"] = () => new StrongholdMap2(),
             ["india"] = () => new IndiaMap2(),
             ["continent"] = () => new ContinentMap2(),
-            ["cantabrian_highlands"] = () => new CantabrianHighlandsMap(),
+            ["cantabrian_highlands"] = () => new CantabrianHighlandsMap2(),
             // Phase E（60 个）
-            ["survivalofthefittest"] = () => new SurvivalOfTheFittestMap(),
-            ["fortress"] = () => new FortressMap(),
+            ["survivalofthefittest"] = () => new SurvivalOfTheFittestMap2(),
+            ["fortress"] = () => new FortressMap2(),
             ["frontier"] = () => new FrontierMap2(),
-            ["land_grab"] = () => new LandGrabMap(),
-            ["migration"] = () => new MigrationMap(),
+            ["land_grab"] = () => new LandGrabMap2(),
+            ["migration"] = () => new MigrationMap2(),
             ["bahrain"] = () => new BahrainMap2(),
-            ["cappadocian_badlands"] = () => new CappadocianBadlandsMap(),
-            ["fields_of_meroe"] = () => new FieldsOfMeroeMap(),
+            ["cappadocian_badlands"] = () => new CappadocianBadlandsMap2(),
+            ["fields_of_meroe"] = () => new FieldsOfMeroeMap2(),
             ["ngorongoro"] = () => new NgorongoroMap2(),
             ["oasis"] = () => new OasisMap(),
-            ["persian_highlands"] = () => new PersianHighlandsMap(),
+            ["persian_highlands"] = () => new PersianHighlandsMap2(),
             ["red_sea"] = () => new RedSeaMap2(),
-            ["sahel_watering_holes"] = () => new SahelWateringHolesMap(),
-            ["scythian_rivulet"] = () => new ScythianRivuletMap(),
-            ["syria"] = () => new SyriaMap(),
-            ["the_nile"] = () => new TheNileMap(),
+            ["sahel_watering_holes"] = () => new SahelWateringHolesMap2(),
+            ["scythian_rivulet"] = () => new ScythianRivuletMap2(),
+            ["syria"] = () => new SyriaMap2(),
+            ["the_nile"] = () => new TheNileMap2(),
             ["belgian_uplands"] = () => new BelgianUplandsMap2(),
-            ["botswanan_haven"] = () => new BotswananHavenMap(),
+            ["botswanan_haven"] = () => new BotswananHavenMap2(),
             ["caledonian_meadows"] = () => new CaledonianMeadowsMap2(),
-            ["lorraine_plain"] = () => new LorrainePlainMap(),
+            ["lorraine_plain"] = () => new LorrainePlainMap2(),
             ["schwarzwald"] = () => new SchwarzwaldMap2(),
-            ["rhine_marshlands"] = () => new RhineMarshlandsMap(),
+            ["rhine_marshlands"] = () => new RhineMarshlandsMap2(),
             ["canyon"] = () => new CanyonMap2(),
-            ["guadalquivir_river"] = () => new GuadalquivirRiverMap(),
-            ["latium"] = () => new LatiumMap(),
+            ["guadalquivir_river"] = () => new GuadalquivirRiverMap2(),
+            ["latium"] = () => new LatiumMap2(),
             ["ratumacos"] = () => new RatumacosMap2(),
             ["rivers"] = () => new RiversMap2(),
             ["river_archipelago"] = () => new RiverArchipelagoMap2(),
@@ -404,33 +335,33 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ["cycladic_archipelago"] = () => new CycladicArchipelagoMap2(),
             ["corsica"] = () => new CorsicaMap2(),
             ["dodecanese"] = () => new DodecaneseMap2(),
-            ["island_stronghold"] = () => new IslandStrongholdMap(),
+            ["island_stronghold"] = () => new IslandStrongholdMap2(),
             ["islands"] = () => new IslandsMap2(),
             ["mediterranean"] = () => new MediterraneanMap(),
             ["marmara"] = () => new MarmaraMap2(),
             ["hellas"] = () => new HellasMap(),
             ["corinthian_isthmus"] = () => new CorinthianIsthmusMap2(),
-            ["phoenician_levant"] = () => new PhoenicianLevantMap(),
-            ["hyrcanian_shores"] = () => new HyrcanianShoresMap(),
-            ["kerala"] = () => new KeralMap(),
-            ["lower_nubia"] = () => new LowerNubiaMap(),
+            ["phoenician_levant"] = () => new PhoenicianLevantMap2(),
+            ["hyrcanian_shores"] = () => new HyrcanianShoresMap2(),
+            ["kerala"] = () => new KeralMap2(),
+            ["lower_nubia"] = () => new LowerNubiaMap2(),
             ["harbor"] = () => new HarborMap2(),
-            ["gulf_of_bothnia"] = () => new GulfOfBothniaMap(),
-            ["northern_lights"] = () => new NorthernLightsMap(),
-            ["snowflake_searocks"] = () => new SnowflakeSearocksMap(),
+            ["gulf_of_bothnia"] = () => new GulfOfBothniaMap2(),
+            ["northern_lights"] = () => new NorthernLightsMap2(),
+            ["snowflake_searocks"] = () => new SnowflakeSearocksMap2(),
             ["wild_lake"] = () => new WildLakeMap(),
-            ["extinct_volcano"] = () => new ExtinctVolcanoMap(),
-            ["flood"] = () => new FloodMap(),
+            ["extinct_volcano"] = () => new ExtinctVolcanoMap2(),
+            ["flood"] = () => new FloodMap2(),
             ["gear"] = () => new GearMap2(),
             ["pompeii"] = () => new PompeiiMap2(),
-            ["elephantine"] = () => new ElephantineMap(),
+            ["elephantine"] = () => new ElephantineMap2(),
             ["pyrenean_sierra"] = () => new PyreneanSierraMap2(),
             ["coast_range"] = () => new CoastRangeMap2(),
-            ["danubius"] = () => new DanubiusMap(),
-            ["jebel_barkal"] = () => new JebelBarkalMap(),
-            ["unknown"] = () => new UnknownMap(),
-            ["wall_demo"] = () => new WallDemoMap(),
-            ["new_rms_test"] = () => new NewRmsTestMap(),
+            ["danubius"] = () => new DanubiusMap2(),
+            ["jebel_barkal"] = () => new JebelBarkalMap2(),
+            ["unknown"] = () => new UnknownMap2(),
+            ["wall_demo"] = () => new WallDemoMap2(),
+            ["new_rms_test"] = () => new NewRmsTestMap2(),
             // Phase F（逐字翻译——依赖完整 rmgen 库的图）
             ["alpine_valley"] = () => new AlpineValleyMap(),
             ["arctic_summer"] = () => new ArcticSummerMap(),

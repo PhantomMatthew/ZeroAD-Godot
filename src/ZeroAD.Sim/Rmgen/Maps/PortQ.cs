@@ -592,7 +592,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
     }
 
     /// <summary>survivalofthefittest.js（255 行，逐字移植）——中央低地竞技场、
-    /// 玩家通道、寻宝平民和触发点；sibling trigger 脚本不在本次范围。</summary>
+    /// 玩家通道、寻宝平民和触发点；同名触发脚本不在本次范围。</summary>
     public sealed class SurvivalOfTheFittestMap2 : StandardMap
     {
         private const string AWaypointFlag = "actor|props/special/common/waypoint_flag_factions.xml";
@@ -888,6 +888,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             InitContext(rng, settings);
             var biome = Biome;
             var map = Map;
+            var clFood = new TileClass(MapSize);
 
             var pForest1 = new[]
             {
@@ -903,9 +904,10 @@ namespace ZeroAD.Sim.Rmgen.Maps
             };
 
             string pattern = settings.PlayerPlacement;
+            double circleTeamDist = rng.RandFloat(0.33, 0.42);
             double teamDist = pattern switch
             {
-                "circle" => rng.RandFloat(0.33, 0.42),
+                "circle" => circleTeamDist,
                 "river" => 0.47,
                 "stronghold" => 0.33,
                 _ => double.NaN,
@@ -1070,10 +1072,9 @@ namespace ZeroAD.Sim.Rmgen.Maps
                 },
                 new double[] { 3 * NumPlayers, 3 * NumPlayers },
                 RmgenLibrary.AvoidClasses(ClForest, 0, ClPlayer, 20, ClMetal, 4,
-                    ClRock, 4, new TileClass(MapSize), 20),
-                new TileClass(MapSize));
+                    ClRock, 4, clFood, 20),
+                clFood);
 
-            var clFood = new TileClass(MapSize);
             GaiaEntities.CreateFood(rng,
                 new IGroupElement[][]
                 {

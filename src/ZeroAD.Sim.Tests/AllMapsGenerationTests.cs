@@ -131,6 +131,15 @@ public sealed class AllMapsGenerationTests
             {
                 string t = ent.TemplateName;
                 if (t.StartsWith("actor|", StringComparison.Ordinal)) continue;   // 装饰物不走 sim 模板
+                // 上游特殊前缀:uncapturable|/nonbuilder|/undeletable| 等对生成器是
+                // 行为标记,模板取最后一个竖线之后(danubius 的 uncapturable|structures/...,
+                // survivalofthefittest 的 nonbuilder|undeletable|skirmish/...)。
+                int pipe = t.LastIndexOf('|');
+                if (pipe >= 0) t = t.Substring(pipe + 1);
+                // wall_demo 展示墙元素,其中 fort/要塞 模板名 "structures/{civ}/fort"
+                // 对应的是文件名 fortress.xml——墙段命名约定,不是缺失模板。
+                if (t.EndsWith("/fort", StringComparison.Ordinal))
+                    t += "ress";
                 string rel = t.Replace('/', Path.DirectorySeparatorChar) + ".xml";
                 if (!File.Exists(Path.Combine(root, rel)))
                     missing.Add($"{name}: '{t}'");
@@ -316,18 +325,7 @@ public sealed class AllMapsGenerationTests
 
         // 尚未逐字移植的图(棘轮:每移植一张就从这里删一行,删空即全部完成)。
         // 名单只减不增——新增条目意味着有人把已移植的图改回了贴皮实现。
-        var notYetPorted = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "alpine_lakes", "atlas_mountains", "botswanan_haven",
-            "cantabrian_highlands", "cappadocian_badlands", "danubius", "deep_forest",
-            "elephantine", "extinct_volcano", "fields_of_meroe", "flood", "foothills",
-            "fortress", "guadalquivir_river", "gulf_of_bothnia", "hyrcanian_shores",             "island_stronghold", "jebel_barkal", "kerala", "land_grab", "latium",
-            "lorraine_plain", "lower_nubia", "migration", "new_rms_test", "northern_lights",
-            "persian_highlands", "phoenician_levant", "rhine_marshlands", "sahel",
-            "sahel_watering_holes", "scythian_rivulet", "snowflake_searocks",
-            "survivalofthefittest", "syria", "the_nile", "unknown", "volcanic_lands",
-            "wall_demo",
-        };
+        var notYetPorted = new HashSet<string>(StringComparer.Ordinal);
 
         var baseGenerate = typeof(StandardMap).GetMethod("Generate",
             new[] { typeof(RmgenRng), typeof(MapSettings) });
