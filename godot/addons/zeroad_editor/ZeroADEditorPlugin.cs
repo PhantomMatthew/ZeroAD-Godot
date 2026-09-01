@@ -41,7 +41,74 @@ public partial class ZeroADEditorPlugin : EditorPlugin
                 RunHeadlessBakeTerrain(mapRel);   // async:只烘地形 albedo PNG
                 break;
             }
+            if (arg == "--zeroad-camera-zoom-smoke")
+            {
+                RunCameraZoomSmoke();   // 相机滚轮缩放的坐标空间冒烟
+                break;
+            }
         }
+    }
+
+    // ── 无头相机冒烟(--zeroad-camera-zoom-smoke)──
+    // 验证 zoom-to-cursor 的坐标空间:滚轮缩放时焦点只该在 sim X/Z 上微调
+    // (缩放向鼠标点收敛),绝不能在 Z 上飞出地图(visZ 误写进 sim 焦点的回归)。
+    private async void RunCameraZoomSmoke()
+    {
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        int rc = 1;
+        try
+        {
+            // 平一块地形做采样(高度恒 0,WorldSize=768 = 192 tiles × 4m)。
+            const float worldSize = 768f;
+            TerrainHeightService.Set((x, z) => 0f, worldSize);
+
+            var cam = new ZeroAD.Godot.RTSCamera();
+            GetTree().Root.AddChild(cam);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var sz = GetViewport().GetVisibleRect().Size; var center = new Vector2(sz.X / 2, sz.Y / 2);
+            var focus0 = cam.Focus!.Value;
+            GD.Print($"[cam-smoke] focus before: ({focus0.X:F1},{focus0.Y:F1},{focus0.Z:F1})");
+
+            // 模拟滚轮放大(无 Shift → 走缩放分支)。
+            var wheel = new InputEventMouseButton
+            {
+                ButtonIndex = MouseButton.WheelUp,
+                Position = center,
+                Pressed = true,
+            };
+            cam._Input(wheel);
+
+            // 让平滑值收敛(足够多帧)。
+            for (int i = 0; i < 120; ++i)
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var focus1 = cam.Focus!.Value;
+            GD.Print($"[cam-smoke] focus after : ({focus1.X:F1},{focus1.Y:F1},{focus1.Z:F1})");
+
+            // 断言:z 方向位移必须很小(收敛方向是向图心鼠标点,量级 ≤ factor×focus 距离,
+            // 不是 0.15×WorldSize 那种飞越)。x/z 都该在 [0, worldSize] 内且不越界漂移。
+            float dz = Mathf.Abs(focus1.Z - focus0.Z);
+            float dx = Mathf.Abs(focus1.X - focus0.X);
+            bool inBounds = focus1.X >= 0 && focus1.X <= worldSize &&
+                            focus1.Z >= 0 && focus1.Z <= worldSize;
+            GD.Print($"[cam-smoke] |dx|={dx:F1} |dz|={dz:F1} inBounds={inBounds}");
+            if (inBounds && dz < worldSize * 0.5f && dx < worldSize * 0.5f)
+            {
+                GD.Print("[cam-smoke] PASS");
+                rc = 0;
+            }
+            else
+            {
+                GD.PrintErr("[cam-smoke] FAIL: focus drifted out of bounds on scroll");
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[cam-smoke] exception: {ex.GetType().Name}: {ex.Message}");
+        }
+        GD.Print($"[cam-smoke] rc={rc}");
+        GetTree().Quit();
     }
 
     public override void _ExitTree()
