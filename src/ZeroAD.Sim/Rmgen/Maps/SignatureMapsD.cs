@@ -10,6 +10,14 @@ namespace ZeroAD.Sim.Rmgen.Maps
     /// 环境设置与 placePlayersNomad 按既有移植约定省略。</summary>
     public sealed class CorsicaMap2 : StandardMap
     {
+        /// <summary>本局两岛是否整体旋转 90°（上游 swapAngle，randBool 抽出）。</summary>
+        private double _swapAngle;
+
+        /// <summary>上游 setSunRotation((swapAngle ? 0.288 : 0.788) * Math.PI)——
+        /// swapAngle 在生成期已抽好，此处不再消耗抽数，故不在 MapEnvironments 表里。</summary>
+        protected internal override void ApplyExtraEnvironment(RmgenEnvironment env, RmgenRng rng)
+            => env.SetSunRotation((_swapAngle != 0 ? 0.288 : 0.788) * SafeMath.PI);
+
         private static readonly string[] tGrass = { "medit_grass_field", "medit_grass_field_b", "temp_grass_c" };
         private static readonly string[] tLushGrass = { "medit_grass_field", "medit_grass_field_a" };
         private static readonly string[] tSteepCliffs = { "temp_cliff_b", "temp_cliff_a" };
@@ -97,7 +105,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
             double nbPassagesLevel1 = RmgenLibrary.ScaleByMapSize(6, 8, MapSize);
             double nbPassagesLevel2 = RmgenLibrary.ScaleByMapSize(2, 4, MapSize);
 
-            double swapAngle = rng.RandBool() ? SafeMath.PI / 2 : 0;
+            double swapAngle = _swapAngle = rng.RandBool() ? SafeMath.PI / 2 : 0;
             var islandLocations = new List<RmgenVector2D>();
             foreach (var source in new[] { new RmgenVector2D(0.05, 0.05), new RmgenVector2D(0.95, 0.95) })
             {
@@ -944,6 +952,10 @@ namespace ZeroAD.Sim.Rmgen.Maps
     /// TILE_CENTERED_HEIGHT_MAP 在当前基础库未暴露；环境设置与 placePlayersNomad 按既有移植约定省略。</summary>
     public sealed class PyreneanSierraMap2 : StandardMap
     {
+        /// <summary>上游 setWaterHeight(heightWaterLevel)，heightWaterLevel 是图内常量 8。</summary>
+        protected internal override void ApplyExtraEnvironment(RmgenEnvironment env, RmgenRng rng)
+            => env.SetWaterHeight(8);
+
         private static readonly string[] tGrassSpecific = { "new_alpine_grass_d", "new_alpine_grass_d", "new_alpine_grass_e" };
         private static readonly string[] tGrass = { "new_alpine_grass_d", "new_alpine_grass_b", "new_alpine_grass_e" };
         private static readonly string[] tGrassMidRange = { "new_alpine_grass_b", "alpine_grass_a" };

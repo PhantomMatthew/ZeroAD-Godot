@@ -139,19 +139,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string BaseTerrain => "medit_grass_field";
     }
 
-    public sealed class RiverArchipelagoMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
     // ── 海洋/岛屿 ──
-
-    public sealed class CorsicaMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
 
     public sealed class IslandStrongholdMap : StandardMap
     {
@@ -227,12 +215,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "desert_sand_dunes_100";
-    }
-
-    public sealed class PyreneanSierraMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "temperate_grass_01";
     }
 
     public sealed class DanubiusMap : StandardMap
