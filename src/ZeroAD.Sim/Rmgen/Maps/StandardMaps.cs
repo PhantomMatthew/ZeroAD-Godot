@@ -294,9 +294,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override string CliffTerrain => "alpine_cliff_a";
         protected override string HillTerrain => "alpine_grass_rocky";
         protected override string TreeTemplate => "gaia/tree/pine";
-        /// <summary>上游 alpine_lakes.json SupportedBiomes = "alpine/"(专属 biome 目录,
-        /// 未移植——回退同名 generic biome)。</summary>
-        protected override IReadOnlyList<string> SupportedBiomes => new[] { "alpine" };
+        /// <summary>上游 alpine_lakes.json SupportedBiomes = "alpine/"（图专属 biome 目录）。</summary>
+        protected override IReadOnlyList<string> SupportedBiomes => BiomeLoader.AlpineBiomes;
     }
 
     /// <summary>foothills.js（254 行）。</summary>

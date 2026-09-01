@@ -100,6 +100,30 @@ namespace ZeroAD.Sim.Rmgen.Common
             "nubia", "sahara", "savanna", "steppe", "aegean",
         };
 
+        // ── 图专属 biome 目录（上游 <map>.json 的 SupportedBiomes = "<dir>/"，
+        //    即"该目录下的全部 biome 文件"；文件名按 rmbiome/<dir>/*.json 的字典序）──
+
+        /// <summary>rmbiome/alpine/（alpine_valley、alpine_lakes）。</summary>
+        public static readonly string[] AlpineBiomes =
+            { "alpine/late_spring", "alpine/winter" };
+
+        /// <summary>rmbiome/fields_of_meroe/。</summary>
+        public static readonly string[] FieldsOfMeroeBiomes =
+            { "fields_of_meroe/dry", "fields_of_meroe/rainy" };
+
+        /// <summary>rmbiome/gulf_of_bothnia/。</summary>
+        public static readonly string[] GulfOfBothniaBiomes =
+            { "gulf_of_bothnia/frozen_lake", "gulf_of_bothnia/late_spring", "gulf_of_bothnia/winter" };
+
+        /// <summary>rmbiome/persian_highlands/。</summary>
+        public static readonly string[] PersianHighlandsBiomes =
+            { "persian_highlands/spring", "persian_highlands/summer" };
+
+        /// <summary>上游 flood.json / island_stronghold.json 的显式 7 项白名单
+        /// （generic 里去掉 nubia/savanna/steppe）。</summary>
+        public static readonly string[] SevenGenericBiomes =
+            { "temperate", "arctic", "sahara", "alpine", "aegean", "india", "autumn" };
+
         /// <summary>加载 biome(defaultbiome.json 基线 + generic/&lt;name&gt;.json 覆盖 + .js 覆盖层)。
         /// biomeName 可带 "generic/" 前缀。rng 仅用于 .js 覆盖层的随机分支。</summary>
         public static BiomeSet Load(string? dataRoot, string biomeName, RmgenRng rng)

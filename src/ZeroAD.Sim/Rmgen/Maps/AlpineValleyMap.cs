@@ -16,7 +16,7 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override double HeightLand => 3;
 
         /// <summary>上游 alpine_valley.json SupportedBiomes = "alpine/"（图专属 biome 目录）。</summary>
-        protected override IReadOnlyList<string> SupportedBiomes => new[] { "alpine/late_spring", "alpine/winter" };
+        protected override IReadOnlyList<string> SupportedBiomes => BiomeLoader.AlpineBiomes;
 
         public override MapExport Generate(RmgenRng rng, MapSettings settings)
         {

@@ -41,21 +41,25 @@ namespace ZeroAD.Sim.Rmgen.Maps
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "steppe_rocks_mossy_dry_1";
+        /// <summary>上游 cappadocian_badlands.json SupportedBiomes = [sahara, nubia, savanna]。</summary>
+        protected override IReadOnlyList<string> SupportedBiomes
+            => new[] { "sahara", "nubia", "savanna" };
     }
 
     public sealed class FieldsOfMeroeMap : StandardMap
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "savanna_grass_b_dryseason";
-        /// <summary>上游 fields_of_meroe.json SupportedBiomes = "fields_of_meroe/"(专属,
-        /// 未移植——回退最接近的 generic/nubia,同处尼罗河流域)。</summary>
-        protected override IReadOnlyList<string> SupportedBiomes => new[] { "nubia" };
+        /// <summary>上游 fields_of_meroe.json SupportedBiomes = "fields_of_meroe/"（图专属 biome 目录）。</summary>
+        protected override IReadOnlyList<string> SupportedBiomes => BiomeLoader.FieldsOfMeroeBiomes;
     }
 
     public sealed class PersianHighlandsMap : StandardMap
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "desert_grass_a";
+        /// <summary>上游 persian_highlands.json SupportedBiomes = "persian_highlands/"。</summary>
+        protected override IReadOnlyList<string> SupportedBiomes => BiomeLoader.PersianHighlandsBiomes;
     }
 
     public sealed class SahelWateringHolesMap : StandardMap
@@ -153,6 +157,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "medit_grass_field";
+        /// <summary>上游 island_stronghold.json SupportedBiomes 显式 7 项。</summary>
+        protected override IReadOnlyList<string> SupportedBiomes => BiomeLoader.SevenGenericBiomes;
     }
 
 
@@ -185,6 +191,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "alpine_snow_a";
+        /// <summary>上游 gulf_of_bothnia.json SupportedBiomes = "gulf_of_bothnia/"。</summary>
+        protected override IReadOnlyList<string> SupportedBiomes => BiomeLoader.GulfOfBothniaBiomes;
     }
 
     public sealed class NorthernLightsMap : StandardMap
@@ -211,6 +219,8 @@ namespace ZeroAD.Sim.Rmgen.Maps
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "medit_grass_field";
+        /// <summary>上游 flood.json SupportedBiomes 显式 7 项。</summary>
+        protected override IReadOnlyList<string> SupportedBiomes => BiomeLoader.SevenGenericBiomes;
     }
 
     public sealed class ElephantineMap : StandardMap
