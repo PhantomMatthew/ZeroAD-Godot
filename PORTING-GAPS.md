@@ -124,12 +124,12 @@
 - [x] **rmgen2 库**(setup.js + gaia.js 全量:tile class 表/addElements/createBases + addBluffs/Hills/Lakes/Mountains/Plateaus/Valleys/Decoration/Props/LayeredPatches/Forests/Metal/SmallMetal/Stone/Berries/Animals/Fish/StragglerTrees + bluff 几何);配套补 createPassage/getTeamsArray/placeLine/placeStronghold/AdjacentToAreaConstraint,playerPlacementByPattern 五种模式齐
 - [x] **environment.js**(Rmgen/Environment.cs:天空/太阳/环境光/水体/雾/后处理;62 张图的 set* 序列由 MapEnvironments.cs 表驱动施加,RNG 消耗位置对齐上游;Godot 侧 MapEnvironment.FromRmgen + WaterRenderer.FromRmgen 接线)
 - [x] **图专属 rmbiome**(alpine/、fields_of_meroe/、gulf_of_bothnia/、persian_highlands/ 四套 + cappadocian_badlands/flood/island_stronghold 的显式白名单)
-- [ ] **地图脚本忠实度:84/84 注册,33 张逐字移植**
+- [ ] **地图脚本忠实度:84/84 注册,39 张逐字移植**
   - rmgen2 系 14 张全量:ambush/bahrain/empire/frontier/harbor/hells_pass/lions_den/marmara/mediterranean/ngorongoro/pompeii/ratumacos/red_sea/stronghold
-  - 标志性地形 9 张:islands/rivers/english_channel/canyon/gear/coast_range/cycladic_archipelago/corinthian_isthmus/dodecanese
+  - 标志性地形 15 张:islands/rivers/english_channel/canyon/gear/coast_range/cycladic_archipelago/corinthian_isthmus/dodecanese/corsica/river_archipelago/pyrenean_sierra/belgian_uplands/schwarzwald/caledonian_meadows
   - 早前 10 张:mainland/saharan_oases/hellas/wild_lake/oasis/alpine_valley/arctic_summer/aegean_sea/archipelago/african_plains/ardennes_forest
   - 触发器脚本 8 张全量(polar_sea/elephantine/survivalofthefittest/flood/extinct_volcano/danubius/jebel_barkal 已接 b2fb6dd,wall_demo 原版空文件无需移植)
-  - **余 51 张仍是"贴皮通用大陆图"**(只覆盖材质/biome 参数,未覆盖 GenerateTerrain/GenerateResources):corsica/river_archipelago/pyrenean_sierra/belgian_uplands/schwarzwald/caledonian_meadows/danubius/jebel_barkal/unknown 等,按热度继续全量化
+  - **余 45 张仍是"贴皮通用大陆图"**(只覆盖材质/biome 参数,未覆盖 GenerateTerrain/GenerateResources):danubius/jebel_barkal/unknown/lower_nubia/phoenician_levant/syria/kerala/scythian_rivulet 等,按热度继续全量化
 
 ### 触发器(Triggers/TriggerSystem.cs,279 行 vs Trigger.js ~1100 行)
 - [x] 事件类型(7210b24:OnOwnershipChanged/OnStructureBuilt/OnTrainingFinished/OnResearchFinished/OnTreasureCollected 钩子 + Treasure.Reward 广播;余下类型按需按需接)

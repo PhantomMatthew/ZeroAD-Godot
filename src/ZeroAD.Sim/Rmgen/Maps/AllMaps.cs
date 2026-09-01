@@ -88,35 +88,16 @@ namespace ZeroAD.Sim.Rmgen.Maps
 
     // ── 温带/森林 ──
 
-    public sealed class BelgianUplandsMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "temperate_grass_01";
-    }
-
     public sealed class BotswananHavenMap : StandardMap
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "savanna_grass_b_wetseason";
     }
 
-    public sealed class CaledonianMeadowsMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "celtic_grass_field";
-    }
-
     public sealed class LorrainePlainMap : StandardMap
     {
         protected override double HeightLand => 3;
         protected override string BaseTerrain => "temperate_grass_01";
-    }
-
-    public sealed class SchwarzwaldMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "temperate_grass_01";
-        protected override double ForestRatio => 0.8;
     }
 
     public sealed class RhineMarshlandsMap : StandardMap
