@@ -40,7 +40,7 @@ public sealed partial class OptionsPanel : ModalPanelBase
 
     // gui.scale 超时确认(原版 dropdownNumber 的 timeout → timedConfirmation 5s)。
     private ConfirmationDialog _timeoutDialog = null!;
-    private Timer _timeoutTimer = null!;
+    private global::Godot.Timer _timeoutTimer = null!;
     private OptionDef? _timeoutDef;
     private string? _timeoutOldUserValue;
 
@@ -118,7 +118,7 @@ public sealed partial class OptionsPanel : ModalPanelBase
         _timeoutDialog.Confirmed += KeepTimeoutChange;
         _timeoutDialog.Canceled += RevertTimeoutChange;
         AddChild(_timeoutDialog);
-        _timeoutTimer = new Timer { OneShot = true };
+        _timeoutTimer = new global::Godot.Timer { OneShot = true };
         _timeoutTimer.Timeout += OnTimeoutExpired;
         AddChild(_timeoutTimer);
     }
