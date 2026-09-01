@@ -339,34 +339,6 @@ namespace ZeroAD.Sim.Rmgen.Maps
         protected override double ForestRatio => 0.9;  // 深林更多树
     }
 
-    /// <summary>anatolian_plateau.js（274 行）。</summary>
-    public sealed class AnatolianPlateauMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "steppe_grass_dirt_66";
-    }
-
-    /// <summary>lake.js（278 行）。</summary>
-    public sealed class LakeMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "medit_grass_field";
-    }
-
-    /// <summary>polar_sea.js（281 行）。</summary>
-    public sealed class PolarSeaMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "polar_snow_b";
-    }
-
-    /// <summary>india.js（283 行）。</summary>
-    public sealed class IndiaMap : StandardMap
-    {
-        protected override double HeightLand => 3;
-        protected override string BaseTerrain => "tropic_grass_c";
-    }
-
     /// <summary>cantabrian_highlands.js（297 行）。</summary>
     public sealed class CantabrianHighlandsMap : StandardMap
     {
@@ -390,12 +362,12 @@ namespace ZeroAD.Sim.Rmgen.Maps
             ["sahel"] = () => new SahelMap(),
             ["saharan_oases"] = () => new SaharanOasesMap(),
             ["deep_forest"] = () => new DeepForestMap(),
-            ["anatolian_plateau"] = () => new AnatolianPlateauMap(),
+            ["anatolian_plateau"] = () => new AnatolianPlateauMap2(),
             ["english_channel"] = () => new EnglishChannelMap2(),
-            ["lake"] = () => new LakeMap(),
-            ["polar_sea"] = () => new PolarSeaMap(),
+            ["lake"] = () => new LakeMap2(),
+            ["polar_sea"] = () => new PolarSeaMap2(),
             ["stronghold"] = () => new StrongholdMap2(),
-            ["india"] = () => new IndiaMap(),
+            ["india"] = () => new IndiaMap2(),
             ["continent"] = () => new ContinentMap2(),
             ["cantabrian_highlands"] = () => new CantabrianHighlandsMap(),
             // Phase E（60 个）

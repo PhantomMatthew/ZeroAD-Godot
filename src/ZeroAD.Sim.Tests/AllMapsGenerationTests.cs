@@ -318,13 +318,12 @@ public sealed class AllMapsGenerationTests
         // 名单只减不增——新增条目意味着有人把已移植的图改回了贴皮实现。
         var notYetPorted = new HashSet<string>(StringComparer.Ordinal)
         {
-            "alpine_lakes", "anatolian_plateau", "atlas_mountains", "botswanan_haven",
+            "alpine_lakes", "atlas_mountains", "botswanan_haven",
             "cantabrian_highlands", "cappadocian_badlands", "danubius", "deep_forest",
             "elephantine", "extinct_volcano", "fields_of_meroe", "flood", "foothills",
-            "fortress", "guadalquivir_river", "gulf_of_bothnia", "hyrcanian_shores", "india",
-            "island_stronghold", "jebel_barkal", "kerala", "lake", "land_grab", "latium",
+            "fortress", "guadalquivir_river", "gulf_of_bothnia", "hyrcanian_shores",             "island_stronghold", "jebel_barkal", "kerala", "land_grab", "latium",
             "lorraine_plain", "lower_nubia", "migration", "new_rms_test", "northern_lights",
-            "persian_highlands", "phoenician_levant", "polar_sea", "rhine_marshlands", "sahel",
+            "persian_highlands", "phoenician_levant", "rhine_marshlands", "sahel",
             "sahel_watering_holes", "scythian_rivulet", "snowflake_searocks",
             "survivalofthefittest", "syria", "the_nile", "unknown", "volcanic_lands",
             "wall_demo",

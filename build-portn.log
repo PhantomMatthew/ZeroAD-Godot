@@ -1,0 +1,17 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortI.cs(1728,25): error CS8602: Dereference of a possibly null reference. [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortI.cs(1729,25): error CS8602: Dereference of a possibly null reference. [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortI.cs(1730,25): error CS8602: Dereference of a possibly null reference. [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortN.cs(1039,26): error CS0219: The variable 'heightLand' is assigned but its value is never used [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+
+Build FAILED.
+
+/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortI.cs(1728,25): error CS8602: Dereference of a possibly null reference. [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortI.cs(1729,25): error CS8602: Dereference of a possibly null reference. [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortI.cs(1730,25): error CS8602: Dereference of a possibly null reference. [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/Rmgen/Maps/PortN.cs(1039,26): error CS0219: The variable 'heightLand' is assigned but its value is never used [/Users/matthew/SourceCode/github/copilot-worktrees/ZeroAD-Godot/phantommatthew-musical-waddle/src/ZeroAD.Sim/ZeroAD.Sim.csproj]
+    0 Warning(s)
+    4 Error(s)
+
+Time Elapsed 00:00:00.65
