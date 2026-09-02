@@ -155,6 +155,10 @@ namespace ZeroAD.Sim.Net
             var ai = _cm.QueryInterface<UnitAIComponent>(entity);
             if (ai != null)
                 ai.Attack(target, allowCapture);
+            else if (_cm.QueryInterface<BuildingAIComponent>(entity) is { } bai)
+                // 原版 Commands.js:建筑选中+攻击敌 → 手动集火(BuildingAI.unitAITarget/
+                // focusTargets;Shift 追加 = queued)。
+                bai.SetUnitAITarget(target);
             else
                 _cm.QueryInterface<AttackComponent>(entity)?.AttackTarget(_cm, target, allowCapture);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "attack", Target = target });

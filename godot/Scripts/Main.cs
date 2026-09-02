@@ -3255,7 +3255,13 @@ public sealed partial class Main : Node3D
 					}
 					if (hostile)
 					{
-						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "attack", "", append);
+						// 防御建筑(BuildingAI)+ 敌目标 → 手动集火(原版 Commands.js:
+						// 建筑选中点敌 = focus fire,不走集结);其余建筑 → 集结点
+						// attack 指令(出厂单位打它)。
+						if (_sim.Sim.QueryInterface<BuildingAIComponent>(only) != null)
+							_sim.CommandAttack(only, tEnt);
+						else
+							_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "attack", "", append);
 						return;
 					}
 				}
