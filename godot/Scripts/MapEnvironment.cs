@@ -104,7 +104,8 @@ public sealed record MapEnvironment(
     private static Color AsCppLight(Color xml) => xml.LinearToSrgb();
 
     /// <summary>施加到场景灯与环境。太阳方向按 C++ 公式算出(sim 空间)后 z 取反(视觉镜像)。</summary>
-    public void Apply(DirectionalLight3D light, global::Godot.Environment env)
+    public void Apply(DirectionalLight3D light, global::Godot.Environment env,
+        Camera3D? camera = null)
     {
         float sinE = Mathf.Sin(SunElevation);
         float scale = 1f - sinE;
@@ -165,6 +166,20 @@ public sealed record MapEnvironment(
         float sharpness = Options.OptionsApplier.GetFloat("sharpness", 0f);
         if (sharpness != 0f)
             env.AdjustmentContrast *= 1f + sharpness * 0.5f;
+
+        // DOF(原版 postproc 束含景深;Godot 4.7 经 CameraAttributesPractical):
+        // 随 postproc 主开关,远距模糊为主(RTS 相机看中景,近景不糊)。
+        if (Options.OptionsApplier.GetBool("postproc", true))
+        {
+            var attrs = new CameraAttributesPractical
+            {
+                DofBlurFarEnabled = true,
+                DofBlurFarDistance = 220f,
+                DofBlurFarTransition = 80f,
+                DofBlurAmount = 0.08f,
+            };
+            if (camera != null) camera.Attributes = attrs;
+        }
 
         // 天空盒(原版 <SkySet>:art/textures/skies/{name}/ 5 面贴图装载;
         // 无贴图走程序化天空兜底——原版 C++ SkyBox 的背景替代)。

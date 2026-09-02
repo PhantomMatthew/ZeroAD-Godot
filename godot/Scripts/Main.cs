@@ -1387,7 +1387,7 @@ public sealed partial class Main : Node3D
 				string? xmlPath = pmpPath.Replace(".pmp", ".xml");
 				// 地图 Environment 光照(太阳方向/色 + 环境光 + 雾色,公式对齐 CLightEnv);
 				// 镜像世界后太阳必须随之镜像,否则面向相机的坡面整体背光发暗。
-				(MapEnvironment.LoadFromXml(xmlPath) ?? MapEnvironment.Default).Apply(_light, _env);
+				(MapEnvironment.LoadFromXml(xmlPath) ?? MapEnvironment.Default).Apply(_light, _env, _camera);
 				// 过场路径注册(原版 MapReader::ReadPaths:地图 <Paths> 段
 				// → CinemaManager.AddPath;触发器脚本按名 PushPathToQueue 播放)。
 				_cinema?.LoadFromMapXml(xmlPath);
@@ -1438,7 +1438,7 @@ public sealed partial class Main : Node3D
 			int gz = (int)(z / map.TileSize);
 			return map.GetHeight(gx, gz);
 		}, genWorldSize);
-		MapEnvironment.Default.Apply(_light, _env);
+		MapEnvironment.Default.Apply(_light, _env, _camera);
 		_camera.SetFocus(new Vector3(130, 0, 122));
 		// Generated terrain has no water by default; mark everything land so placement still works.
 		// 先同步 sim 侧地形尺寸:生成图 128 tiles=512m,缺省 64 tiles=256m ——不配则
@@ -1528,7 +1528,7 @@ public sealed partial class Main : Node3D
 
 		// 地图环境(rmgen environment.js 的 setSkySet/setSun*/setFog*/setPP* 结果):
 		// 天光/雾/后处理 + 水面。此前随机图恒用 MapEnvironment.Default,各图专属氛围全丢。
-		MapEnvironment.FromRmgen(export.Environment).Apply(_light, _env);
+		MapEnvironment.FromRmgen(export.Environment).Apply(_light, _env, _camera);
 		MapEnvironment.ApplyViewport(GetViewport());
 
 		var rmgenWater = WaterRenderer.FromRmgen(export.Environment);
