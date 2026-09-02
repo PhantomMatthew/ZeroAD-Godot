@@ -41,6 +41,9 @@ namespace ZeroAD.Sim
             // UnitAI owns the order queue + state machine for mobile units. Added to all units
             // so SimBridge.Command* and lockstep commands route through the FSM.
             cm.AddComponent(entity, new UnitAIComponent());
+            // Guard(原版 template_unit 基模板自带 <Guard/>):双向护卫簿记
+            // (被护方受击转发 → 护卫反击)。
+            cm.AddComponent(entity, new GuardComponent());
 
             string name = stats?.Name ?? (isSoldier ? "Soldier" : isVillager ? "Villager" : "Unit");
             int maxHp = stats?.MaxHealth ?? (isSoldier ? 80 : 50);

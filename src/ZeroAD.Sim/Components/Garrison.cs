@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Serialization;
 
@@ -32,6 +33,60 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
     public float HealElapsed;                         // runtime:距上次回血的累计秒数
 
     // 默认值全在字段初始化器,OnInit 保持空 —— 调用方用对象初始化器赋值不被 clobber。
+
+    // ── 即时逐出(原版 OnGlobalOwnershipChanged/OnDiplomacyChanged)──
+    private ComponentManager? _subscribedCm;
+
+    /// <summary>事件订阅(懒,首个 Tick;OnInit 期 SimSystem.Sim 可能未就位)。
+    /// 原版:GarrisonHolder.js OnGlobalOwnershipChanged(易主即逐出非互盟)+
+    /// OnDiplomacyChanged(外交翻面即逐出非互盟)。</summary>
+    private void WireEvictionEvents(ComponentManager cm)
+    {
+        if (_subscribedCm != null) return;
+        _subscribedCm = cm;
+        cm.OwnerChanged += OnAnyOwnershipChanged;
+        cm.Events.DiplomacyChanged += OnDiplomacyChanged;
+    }
+
+    protected override void OnDeinit()
+    {
+        if (_subscribedCm == null) return;
+        _subscribedCm.OwnerChanged -= OnAnyOwnershipChanged;
+        _subscribedCm.Events.DiplomacyChanged -= OnDiplomacyChanged;
+        _subscribedCm = null;
+    }
+
+    /// <summary>非互盟驻军即时逐出(原版 EjectOrKill(entities.filter(!互盟)))。</summary>
+    private void EjectNonMutualAllies(ComponentManager cm)
+    {
+        if (Entities.Count == 0) return;
+        var hostiles = Entities
+            .Where(e => !DiplomacyComponent.IsMutualAllyOfEntity(cm, Entity, e))
+            .ToList();
+        if (hostiles.Count > 0)
+            EjectOrKill(cm, hostiles);
+    }
+
+    private void OnDiplomacyChanged(Events.DiplomacyChangedEvent e)
+    {
+        // 只关心涉及本 holder 属主的变化(原版全局广播,各 holder 自查)。
+        var cm = _subscribedCm;
+        if (cm == null) return;
+        int myOwner = cm.QueryInterface<OwnershipComponent>(Entity)?.PlayerId ?? -1;
+        if (e.Player != myOwner && e.OtherPlayer != myOwner) return;
+        EjectNonMutualAllies(cm);
+    }
+
+    private void OnAnyOwnershipChanged(EntityId entity, int from, int to)
+    {
+        var cm = _subscribedCm;
+        if (cm == null) return;
+        // 原版 OnGlobalOwnershipChanged:holder 自身易主,或舱内单位易主
+        // (被抢走的单位不算——to==INVALID 由 Guard 侧管;新主与我非互盟 → 逐)。
+        if (entity != Entity && !Entities.Contains(entity)) return;
+        EjectNonMutualAllies(cm);
+    }
+
 
     /// <summary>Port of GetCapacity(经修正值管线)。</summary>
     public int GetCapacity(ComponentManager cm) =>
@@ -117,6 +172,7 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
     /// BuffHeal 每秒一次回血(替代原版 1s HealTimeout 定时器;无舱员/无速率即停表)。</summary>
     public void Tick(float dt, ComponentManager cm)
     {
+        WireEvictionEvents(cm);
         if (Entities.Count > 0 && !HasEnoughHealth(cm))
             EjectOrKill(cm, new List<EntityId>(Entities));
 

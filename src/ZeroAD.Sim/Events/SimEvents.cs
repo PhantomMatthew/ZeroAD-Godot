@@ -224,6 +224,14 @@ namespace ZeroAD.Sim.Events
         public int Player;
     }
 
+    /// <summary>外交立场变化(原版 MT_DiplomacyChanged 全局消息;DiplomacyComponent
+    /// SetStance 后广播)。驻军/炮塔/护卫据以即时逐出非互盟单位。</summary>
+    public sealed class DiplomacyChangedEvent
+    {
+        public int Player;
+        public int OtherPlayer;
+    }
+
     public sealed class SimEventBus
     {
         public event Action<PlayerCommandEvent>? PlayerCommand;
@@ -236,6 +244,7 @@ namespace ZeroAD.Sim.Events
         public event Action<TutorialNotification>? TutorialMessage;
         public event Action<EntityCreatedEvent>? EntityCreated;
         public event Action<AttackLandedEvent>? AttackLanded;
+        public event Action<DiplomacyChangedEvent>? DiplomacyChanged;
         public event Action<AttackLaunchedEvent>? AttackLaunched;
         public event Action<ChatMessageEvent>? ChatMessage;
         public event Action<PlayerDefeatedEvent>? PlayerDefeated;
@@ -263,6 +272,7 @@ namespace ZeroAD.Sim.Events
         public void RaiseTutorialMessage(TutorialNotification n) => TutorialMessage?.Invoke(n);
         public void RaiseEntityCreated(EntityCreatedEvent e) => EntityCreated?.Invoke(e);
         public void RaiseAttackLanded(AttackLandedEvent e) => AttackLanded?.Invoke(e);
+        public void RaiseDiplomacyChanged(DiplomacyChangedEvent e) => DiplomacyChanged?.Invoke(e);
         public void RaiseAttackLaunched(AttackLaunchedEvent e) => AttackLaunched?.Invoke(e);
         public void RaisePlayerAttackedAlert(PlayerAttackedAlertEvent e) => PlayerAttackedAlert?.Invoke(e);
         public void RaiseChatMessage(ChatMessageEvent e) => ChatMessage?.Invoke(e);

@@ -53,6 +53,27 @@ public sealed class DiplomacyComponent : ComponentBase, IComponentMessageHandler
         Set(otherId, stance);
         if (stance < other.GetStance(selfId))
             other.Set(selfId, stance);
+        // 原版 MT_DiplomacyChanged 全局广播:驻军/炮塔即时逐出非互盟单位、
+        // 护卫 CheckGuards 摘除(订阅方:GarrisonHolder/TurretHolder/Guard)。
+        SimSystem.Sim?.Events.RaiseDiplomacyChanged(new Events.DiplomacyChangedEvent
+        { Player = selfId, OtherPlayer = otherId });
+        SimSystem.Sim?.Events.RaiseDiplomacyChanged(new Events.DiplomacyChangedEvent
+        { Player = otherId, OtherPlayer = selfId });
+    }
+
+    /// <summary>实体级互盟(原版 IsOwnedByMutualAllyOfEntity):双方属主互视为盟。
+    /// gaia/无主按 true(不移除语义);无外交件按 true(测试环境默认宽松)。</summary>
+    public static bool IsMutualAllyOfEntity(ComponentManager cm, EntityId a, EntityId b)
+    {
+        int ownerA = cm.QueryInterface<OwnershipComponent>(a)?.PlayerId ?? -1;
+        int ownerB = cm.QueryInterface<OwnershipComponent>(b)?.PlayerId ?? -1;
+        if (ownerA <= 0 || ownerB <= 0) return true;
+        var dipA = cm.Players.GetPlayerEntityId(ownerA) is { } ea
+            ? cm.QueryInterface<DiplomacyComponent>(ea) : null;
+        var dipB = cm.Players.GetPlayerEntityId(ownerB) is { } eb
+            ? cm.QueryInterface<DiplomacyComponent>(eb) : null;
+        if (dipA == null || dipB == null) return true;
+        return dipA.IsAlly(ownerB) && dipB.IsAlly(ownerA);
     }
 
     public override void Serialize(ISerializer s)

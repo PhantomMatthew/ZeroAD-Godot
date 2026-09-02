@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Serialization;
 
@@ -107,6 +108,55 @@ public sealed class TurretHolderComponent : ComponentBase, IComponentMessageHand
             if (p.Entity != null)
                 result.Add(p.Entity.Value);
         return result;
+    }
+
+    // ── 即时逐出(原版 Turrets.js/驻军同规则:外交翻面/易主即逐非互盟占位者)──
+    private ComponentManager? _subscribedCm;
+
+    protected override void OnInit()
+    {
+        // 炮塔持有者创建总在世界初始化后(SimSystem.Sim 就位);测试夹具同款序。
+        var cm = SimSystem.Sim;
+        if (cm == null || _subscribedCm != null) return;
+        _subscribedCm = cm;
+        cm.OwnerChanged += OnAnyOwnershipChanged;
+        cm.Events.DiplomacyChanged += OnDiplomacyChanged;
+    }
+
+    protected override void OnDeinit()
+    {
+        if (_subscribedCm == null) return;
+        _subscribedCm.OwnerChanged -= OnAnyOwnershipChanged;
+        _subscribedCm.Events.DiplomacyChanged -= OnDiplomacyChanged;
+        _subscribedCm = null;
+    }
+
+    private void EjectNonMutualAlliesNow(ComponentManager cm)
+    {
+        var hostiles = TurretPoints
+            .Where(p => p.Entity != null
+                && !DiplomacyComponent.IsMutualAllyOfEntity(cm, Entity, p.Entity.Value))
+            .Select(p => p.Entity!.Value)
+            .ToList();
+        if (hostiles.Count > 0)
+            EjectOrKill(cm, hostiles);
+    }
+
+    private void OnDiplomacyChanged(Events.DiplomacyChangedEvent e)
+    {
+        var cm = _subscribedCm;
+        if (cm == null) return;
+        int myOwner = cm.QueryInterface<OwnershipComponent>(Entity)?.PlayerId ?? -1;
+        if (e.Player != myOwner && e.OtherPlayer != myOwner) return;
+        EjectNonMutualAlliesNow(cm);
+    }
+
+    private void OnAnyOwnershipChanged(EntityId entity, int from, int to)
+    {
+        var cm = _subscribedCm;
+        if (cm == null) return;
+        if (entity != Entity && TurretPoints.All(p => p.Entity != entity)) return;
+        EjectNonMutualAlliesNow(cm);
     }
 
     /// <summary>Port of EjectOrKill:能下塔的强制下塔;无 Turretable 件的占位者击杀

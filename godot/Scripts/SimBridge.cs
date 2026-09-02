@@ -2122,6 +2122,8 @@ public sealed partial class SimBridge : Node
 				// 集结点(原版每个生产建筑都有 RallyPointRenderer):此前只有地基完工路径
 				// (SpawnScenarioBuilding)装了,起始 CC 永远设不了集结点。
 				_sim.AddComponent(entity, new RallyPointComponent());
+				// Guard(原版 template_structure 基模板自带):建筑可被护卫(锚点/伤船)。
+				_sim.AddComponent(entity, new GuardComponent());
 			}
 			if (stats.IsDropsite)
 				_sim.AddComponent(entity, new ResourceDropsite());

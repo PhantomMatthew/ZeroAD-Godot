@@ -393,6 +393,92 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     public void Guard(EntityId target, bool queued = false) =>
         PushOrder(new UnitOrder { Type = "Guard", Target = target, Queued = queued, Force = !queued });
 
+    /// <summary>原版 UnitAI.IsGuardOf:我正在护卫的目标(无 = null)。</summary>
+    public bool IsGuardOf(EntityId target) => _isGuardOf == target;
+
+    /// <summary>原版 UnitAI.RemoveGuard:停卫(清 _isGuardOf + 结束 Guard 订单)。</summary>
+    public void RemoveGuard(ComponentManager cm)
+    {
+        if (_isGuardOf is { } g)
+            cm.QueryInterface<GuardComponent>(g)?.RemoveGuard(Entity);
+        _isGuardOf = null;
+        if (CurrentOrder?.Type == "Guard")
+            FinishOrder();
+    }
+
+    /// <summary>原版 UnitAI.js GuardedAttacked(4536+ 与 GUARDING 态 1609+ 两个处理点合并):
+    /// 被护卫者受击时——Guard 订单前有 force 订单 → 不动;已在打别的活目标 → 先打完;
+    /// 我是 Support 且被护方受伤 → 治/修它;攻击者是建筑(BuildingAI)且我可修 → 修被护方;
+    /// 否则反击攻击者(可见 → Attack 前插;不可见 → WalkAndFight 到其位置前插)。</summary>
+    public void OnGuardedAttacked(ComponentManager cm, EntityId guarded, EntityId attacker)
+    {
+        if (_isGuardOf != guarded) return;   // 不是我护卫的(簿记漂移兜底)
+        // Guard 订单前有 force 订单 → 不动(原版同款队列扫描)。
+        foreach (var o in _orderQueue)
+        {
+            if (o.Type == "Guard") break;
+            if (o.Force) return;
+        }
+        // 正在打别的活目标 → 先打完(原版:target != attacker 且可攻击 → 保持)。
+        var curOrder = CurrentOrder;
+        if (curOrder?.Type is "Attack" or "WalkAndFight"
+            && curOrder.Target is { } cur && cur != attacker)
+        {
+            var curEnt = cm.QueryInterface<HealthComponent>(cur);
+            if (curEnt is { Current: > 0 })
+            {
+                var atkPos = cm.QueryInterface<PositionComponent>(attacker);
+                if (atkPos != null) return;
+            }
+        }
+
+        // Support 且被护方受伤 → 治/修(原版同款优先级)。
+        var identity = cm.QueryInterface<IdentityComponent>(Entity);
+        var guardedHealth = cm.QueryInterface<HealthComponent>(guarded);
+        if (identity != null && identity.HasClass("Support")
+            && guardedHealth != null && guardedHealth.Current < guardedHealth.Max)
+        {
+            var heal = cm.QueryInterface<HealComponent>(Entity);
+            if (heal != null && heal.CanHeal(cm, guarded))
+                PushOrderFront(new UnitOrder { Type = "Heal", Target = guarded });
+            else if (cm.QueryInterface<BuilderComponent>(Entity) != null)
+                PushOrderFront(new UnitOrder { Type = "Repair", Target = guarded });
+            return;
+        }
+
+        // 攻击者是建筑(有 BuildingAI)且我可修 → 修被护方(原版同款)。
+        if (cm.QueryInterface<BuildingAIComponent>(attacker) != null
+            && cm.QueryInterface<BuilderComponent>(Entity) != null
+            && guardedHealth != null && guardedHealth.Current < guardedHealth.Max)
+        {
+            PushOrderFront(new UnitOrder { Type = "Repair", Target = guarded });
+            return;
+        }
+
+        // 反击:可见 → Attack;不可见 → WalkAndFight 到攻击者位置(原版同款分支)。
+        if (CheckTargetVisible(this, attacker, cm))
+            PushOrderFront(new UnitOrder { Type = "Attack", Target = attacker });
+        else
+        {
+            var atkPos = cm.QueryInterface<PositionComponent>(attacker);
+            if (atkPos == null || !atkPos.InWorld) return;
+            PushOrderFront(new UnitOrder
+            {
+                Type = "WalkAndFight",
+                Position = new Maths.FixedVector2D(atkPos.Position.X, atkPos.Position.Z),
+                Target = attacker,
+            });
+            // 队列已有 WalkAndFight → 只留最新(原版 splice 语义)。
+            if (_orderQueue.Count > 1)
+            {
+                var second = _orderQueue.First!.Next;
+                if (second != null && second.Value.Type == "WalkAndFight"
+                    && second.Value.Target != attacker)
+                    _orderQueue.Remove(second);
+            }
+        }
+    }
+
     /// <summary>编队走位(原版 ArrangeFormation → AddOrder("FormationWalk", {target,x,z},
     /// !force)):target=控制器,x/z=未旋转偏移。由 FormationComponent.ArrangeFormation
     /// 发放;force=true → queued=false(替换成员队列)。</summary>
@@ -423,6 +509,8 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             _orderQueue.Clear();
             // 巡逻起点/护卫目标随订单链替换而作废(原版 Patrol.leave 删除 patrolStartPosOrder)。
             _patrolStart = null;
+            if (_isGuardOf is { } g && SimSystem.Sim != null)
+                SimSystem.Sim.QueryInterface<GuardComponent>(g)?.RemoveGuard(Entity);
             _isGuardOf = null;
         }
         _orderQueue.AddLast(order);
@@ -661,6 +749,15 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 return;
             }
             u._isGuardOf = t;
+            // 双向登记(原版 Guard.js AddGuard):被护方的 GuardComponent 记录我——
+            // 其受击时转发通知我反击。目标缺组件时懒挂(原版全体单位/建筑自带)。
+            var guard = m.Cm.QueryInterface<GuardComponent>(t);
+            if (guard == null)
+            {
+                guard = new GuardComponent();
+                m.Cm.AddComponent(t, guard);
+            }
+            guard.AddGuard(u.Entity);
             u._combatScanElapsed = 0;
             if (InGuardRange(u, t, m.Cm))
                 u.FsmNextState = "GUARD.GUARDING";

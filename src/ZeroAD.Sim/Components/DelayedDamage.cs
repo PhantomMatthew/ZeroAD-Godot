@@ -166,6 +166,11 @@ public sealed class DelayedDamage
             }
         }
 
+        // 护卫反击分发(原版 Guard.js OnAttacked → MT_GuardedAttacked):
+        // 目标的 GuardComponent 通知全部护卫(其 UnitAI 走 OnGuardedAttacked)。
+        if (final.TotalPhysical > 0)
+            cm.QueryInterface<GuardComponent>(target)?.NotifyAttacked(cm, attacker);
+
         // Notify the sim event bus so the presentation layer can play hit feedback.
         cm.Events.RaiseAttackLanded(new AttackLandedEvent
         {
