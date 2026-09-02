@@ -15,6 +15,10 @@ uniform float wind_angle = 0.0;
 uniform sampler2D normal_a : hint_normal, repeat_enable, filter_linear_mipmap;
 uniform sampler2D normal_b : hint_normal, repeat_enable, filter_linear_mipmap;
 uniform sampler2D depth_tex : hint_depth_texture;
+// 画质档(原版 default.cfg:watereffects/waterrealdepth):
+// waves_enabled=false → 平波纯底色(低机位兜底);depth_fade_enabled=false → 岸线不渐隐。
+uniform bool waves_enabled = true;
+uniform bool depth_fade_enabled = true;
 
 void fragment() {
 	vec2 wind = vec2(cos(wind_angle), sin(wind_angle));
@@ -28,15 +32,23 @@ void fragment() {
 
 	// 波纹强度:waviness 0..~12 → 0.15..1.2
 	float wstr = clamp(waviness / 10.0, 0.15, 1.2);
-	NORMAL_MAP = wave * 0.5 + 0.5;
-	NORMAL_MAP_DEPTH = wstr;
+	if (waves_enabled)
+	{
+		NORMAL_MAP = wave * 0.5 + 0.5;
+		NORMAL_MAP_DEPTH = wstr;
+	}
+	else
+	{
+		// watereffects=false:纯底色平波(原版低画质等价——关法线扰动与波光)。
+		NORMAL_MAP_DEPTH = 0.0;
+	}
 
 	// fresnel:视线越平越映天色
 	float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.5);
 	vec3 sky = vec3(0.42, 0.58, 0.72);
 	vec3 base = mix(water_color.rgb, sky, fres * 0.6);
 	// 波纹高光微闪(波光)
-	float sparkle = clamp(wave.x * wave.y * 6.0, 0.0, 1.0) * 0.10 * wstr;
+	float sparkle = waves_enabled ? clamp(wave.x * wave.y * 6.0, 0.0, 1.0) * 0.10 * wstr : 0.0;
 	base += sparkle;
 
 	// 岸线渐隐:水面与场景的屏幕深度差 → 近岸透明
@@ -45,7 +57,7 @@ void fragment() {
 	vec4 vpos = INV_PROJECTION_MATRIX * ndc;
 	vpos.xyz /= vpos.w;
 	float depth_diff = -(vpos.z + VERTEX.z);   // 场景深 − 水面深(米)
-	float shore = smoothstep(0.0, 2.2, depth_diff);
+	float shore = depth_fade_enabled ? smoothstep(0.0, 2.2, depth_diff) : 1.0;
 
 	ALBEDO = base;
 	// murkiness 高 → 深水更不透明;岸线处最透 0.35

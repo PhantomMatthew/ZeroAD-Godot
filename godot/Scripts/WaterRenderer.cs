@@ -171,8 +171,24 @@ public static class WaterRenderer
         var mat = new ShaderMaterial { Shader = _waterShader.Value };
         mat.SetShaderParameter("water_color", spec.Color);
         mat.SetShaderParameter("water_tint", spec.Tint);
-        mat.SetShaderParameter("murkiness", spec.Murkiness);
-        mat.SetShaderParameter("waviness", spec.Waviness);
+        // 画质档(原版 default.cfg:watereffects 关波/水面细节,waterrealdepth 关深度
+        // 着色;均菜单可切,材质即时重设)。
+        bool effects = true, realDepth = true;
+        try
+        {
+            var cfg = (Engine.GetMainLoop() as SceneTree)?.Root
+                .GetNodeOrNull<UserConfig>("/root/UserConfig");
+            if (cfg != null)
+            {
+                effects = cfg.GetEffective("watereffects") != "false";
+                realDepth = cfg.GetEffective("waterrealdepth") != "false";
+            }
+        }
+        catch (System.Exception) { /* 无 autoload(测试)全默认 */ }
+        mat.SetShaderParameter("waves_enabled", effects);
+        mat.SetShaderParameter("depth_fade_enabled", effects && realDepth);
+        mat.SetShaderParameter("murkiness", effects && realDepth ? spec.Murkiness : 1.0f);
+        mat.SetShaderParameter("waviness", effects ? spec.Waviness : 0.0f);
         mat.SetShaderParameter("wind_angle", spec.WindAngle);
         // 水波法线序列帧(原版 art/textures/animated/water/<type>/normal00XX.png,
         // 取两帧错相;junction 直读)。缺失则波纹退化为微闪。
