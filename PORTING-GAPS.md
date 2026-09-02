@@ -19,9 +19,9 @@
 | M3 寻路 | ★★★★☆ | 三引擎齐;缺异步任务、增量更新、pass class 数据驱动 |
 | M4 渲染 | ★★★☆☆ | 地形/水/迷雾/领土/血条/集结点线齐;缺粒子、过场、天空、战场贴花 |
 | M5 GUI | ★★★★☆ | 页面基本齐(prelobby/campaigns/viewer/credits/mod 对话框/autostart 全落);剩引擎级 mod 挂载、GuiInterface 桥收敛 |
-| M6 网络 | ★★★★☆ | 锁步+OOS+大厅协议齐;缺重连、观战 |
+| M6 网络 | ★★★★★ | 锁步+OOS+大厅+观战+STUN+掉线 AI 接管(4b19ce4);真重连 beyond-upstream |
 | M7 存档录像 | ★★★★★ | 双闭环,亮点项 |
-| M8 Petra AI | ★★☆☆☆ | 模块名齐全但约 **20% 体量**(≈5–6k 行 vs 原 ≈26k 行) |
+| M8 Petra AI | ★★★★☆ | 攻防军+运输+编组+存档骑缝全落地;剩 bombingAttacks/外交应答/圣物编排支线 |
 | M9 rmgen | ★★☆☆☆ | 库核心齐;地图仅移植 ~12/~173(≈7%) |
 | 触发器/教程 | ★★~★★★ | 触发器=骨架(5 条件/6 动作);教程硬编非 JSON |
 
@@ -79,16 +79,17 @@
 
 | 项 | 状态 | 缺口 |
 |---|---|---|
-| 寻路 pass class 数据驱动 | 🟡 | 读 `pathfinder.xml` 全通行类(现仅 default/ship 硬编码) |
+| 寻路 pass class 数据驱动 | ✅ | pathfinder.xml 9 类注册表+XML 加载(d5f0b94);水陆分类生效 |
 | 寻路异步任务化 | 🟡 | LongPathfinder 线程池模式:请求在回合边界收割,结果确定 |
 | 寻路增量更新 | 🟡 | 阻挡变化局部刷新导航块(现全量重建) |
 | push-out / 圆形障碍 | 🟡 | 对照 CCmpObstructionManager 的 shape 体系补齐 |
 | 序列化类型覆盖 | 🟡 | U64/I64/Float、backref 共享对象;如需与原版存档互通再对齐二进制格式(当前自研格式 v11,可不对齐) |
 | TurnManager 节奏/超时 | 🟡 | 回合超时节奏控制、客户端落后踢出策略 |
-- [ ] 断线重连(NetworkDelayOverlay/NetworkStatusOverlay 无对应)
-- [ ] 观战者/spectator 支持
+- [x] 观战者/spectator(4b19ce4:observer 不占槽+全图视野+命令拦截;ClientHello 握手)
+- [x] STUN 打洞接入直连流程(4b19ce4:host 建服探测公网地址+大厅状态展示)
+- [x] 局中掉线优雅降级(4b19ce4:槽位转 AI 接管+全端广播);真正断线重连
+  (状态转移+回合追赶)超出上游 0.29 能力面(原版亦无)——标 beyond-upstream
 - [ ] Templates:`actor|...` 模板装载、template_not_found 占位语义、schema 校验(Xeromyces 对应物)、hotloading
-- [ ] STUN 打洞接入直连流程(StunClient.cs 存在,未确认接线)
 
 ---
 
@@ -110,6 +111,10 @@
 - [x] data.json 配置体系(5075dbb:queues 时间窗阈值+unusedNoAllyTechs 补全;难度/性格/经济/防御/优先级/队列全量)
 - [x] mapMask 掩码工具(MapMask.cs 常量 + PetraMapModule.CreateBorderMap:地图外/边界 + 领土窄/宽前线,原版 mapMask.js + createBorderMap 语义)
 - [x] common-api 补全(AIEntity 能力面 19 项+EntityCollection 质心/近似位置/HasEntId;Filters 26/26 全)
+- [x] defenseManager 军队模型(881b8c6:编组/合并/分裂/夺回/转攻,defenseArmy.js 657 行移植)
+- [x] navalManager 跨海运输(e48f00b:TransportPlan 状态机+分船+运船训练;overseas 进攻接入)
+- [x] AI 存档序列化(0104867:计划/队列/攻防军/基地骑缝,存档 v12+录像 v2)
+- [ ] bombingAttacks 攻城游击、diplomacyManager 请求-应答、victoryManager 圣物编排(支线)
 - [x] researchManager 优先级(a3643df:人口/贸易/wanted/兜底四级,原版 update 核心语义)
 
 ---
@@ -131,16 +136,18 @@
   - 触发器脚本 8 张全量(polar_sea/elephantine/survivalofthefittest/flood/extinct_volcano/danubius/jebel_barkal,wall_demo 原版空文件无需移植)
   - 新增棘轮测试(Every_Registered_Map_Implements_Its_Own_Generator):任何图退化回"跑基类 mainland 算法"会被点名,不再能悄悄发生
 
-### 触发器(Triggers/TriggerSystem.cs,279 行 vs Trigger.js ~1100 行)
-- [x] 事件类型(7210b24:OnOwnershipChanged/OnStructureBuilt/OnTrainingFinished/OnResearchFinished/OnTreasureCollected 钩子 + Treasure.Reward 广播;余下类型按需按需接)
-- [x] 定时器调度(7210b24:OnInterval 轮询等价 + TriggerSystem 事件驱动;DoAfterDelay/IntervalRepeats 语义由事件钩子+Tick 承载)
-- [x] 事件总线(7210b24:CallEvent 按事件名投递到事件触发器,Once 自禁用)
-- [x] 触发器状态序列化持久化(7210b24:TriggerSystem.Serialize/Deserialize 随存档骑缝,Enabled/Elapsed 保持)
+### 触发器(Triggers/TriggerSystem.cs vs Trigger.js ~1100 行)
+- [x] 事件总线全量接线(66e4f51:原版 eventNames 全表;OnDeserialized 读档尾;
+  ConstructionStarted/EntityRenamed 新事件;过场双事件经 CinemaManager 转 CallEvent)
+- [x] TriggerHelper 通用库(66e4f51:32 函数全量,Triggers/TriggerHelper.cs)
+- [ ] 事件条件/动作表达力:数据驱动模型仍远小于原版任意 JS(架构性重设计,保留)
+- [x] 触发器状态序列化持久化(早前已落;读档 OnDeserialized 已接)
 
-### 教程(TutorialEngine.cs,720 行)
-- [x] 教程 JSON 化(6875e25:CampaignLevel/GoalSpec 按 campaigns/tutorial.json 装配,CreateFromLevel 内置绑定)
-- [x] goal Delay 计时器(f182edb:TutorialEngine.Tick(dt) 驱动,Delay 秒到自动进目标,不再退化按钮)
-- [ ] TriggerHelper 通用检查函数库成体系(按需逐步补;当前内置绑定已覆盖 introductory)
+### 教程(TutorialEngine.cs)
+- [x] starting_economy_walkthrough 移植(66e4f51:26 目标全量,按图名选引擎,
+  战役 eco_walkthrough 关卡直通)
+- [ ] 教程 JSON 数据驱动(现 C# 目标表硬编;CampaignLevel/GoalSpec 框架已具备)
+- [x] goal Delay 计时器(早前已落)+ TriggerHelper 成体系(66e4f51)
 
 ---
 
@@ -171,7 +178,8 @@
 - [ ] 引擎级 mod 挂载(mod.enabledmods 已持久化但内容加载仍硬编码 public 包;需 VFS 等价物后 Start Mods 才真生效)
 
 ### 音频(AudioManager.cs)
-- [ ] 3D 空间化(无 AudioStreamPlayer3D 引用;现距离衰减靠手动增益)
+- [x] 3D 空间化(b260e15:AudioStreamPlayer3D 池,攻击/死亡/训练位置衰减;
+  人声留 2D——原版选令语音本就非空间化)
 
 ### 相机(RTSCamera.cs vs GameView.cpp)
 - [x] 跟随选中单位(6dc3c4a:F 键,输入打断)
