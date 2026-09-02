@@ -365,6 +365,28 @@ public sealed class AttackComponent : ComponentBase, IComponentMessageHandler
         Cooldown = 0;
     }
 
+    /// <summary>原版 Attack.GetPreference:目标类命中本攻击件各型 PreferredClasses
+    /// 的最小偏好下标(0 = 最优先;无命中 = null)。索敌分组据此(原版
+    /// AttackEntitiesByPreference:同偏好组内取近,组间偏好升序)。</summary>
+    public int? GetPreference(ComponentManager cm, EntityId target)
+    {
+        var identity = cm.QueryInterface<IdentityComponent>(target);
+        if (identity == null) return null;
+        int? minPref = null;
+        foreach (var type in Types)
+        {
+            var prefs = type.PreferredClasses.Split(' ',
+                System.StringSplitOptions.RemoveEmptyEntries);
+            for (int pref = 0; pref < prefs.Length; pref++)
+            {
+                if (!identity.MatchesClassList(prefs[pref])) continue;
+                if (pref == 0) return 0;   // 最优先直接命中(原版同款短路)
+                if (minPref == null || minPref > pref) minPref = pref;
+            }
+        }
+        return minPref;
+    }
+
     /// <summary>对齐原版 Attack.GetBestAttackAgainst:各物理型(Melee/Ranged)+ Capture
     /// 全走 CanAttack 过滤,按偏好公式取最优(原版 sort 升序 .pop):pref = 型内
     /// PreferredClasses 命中(+2)+ 指令偏好(+1,allowCapture ? 捕获型 : 物理型);

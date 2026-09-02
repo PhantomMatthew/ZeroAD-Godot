@@ -1482,9 +1482,14 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                     var enemies = u.FindVisibleEnemies(cm, flags);
                     if (enemies.Count > 0)
                     {
-                        // 换目标续战(原版 AttackEntityInZone → Order.Attack 重发)。
-                        u.Attack(enemies[0]);
-                        return;
+                        // 换目标续战(原版 AttackEntityInZone → Order.Attack 重发;
+                        // 偏好分组取最优)。
+                        var pick = u.PickTargetByPreference(cm, enemies);
+                        if (pick.HasValue)
+                        {
+                            u.Attack(pick.Value);
+                            return;
+                        }
                     }
                 }
                 u.FinishOrder();
@@ -2262,7 +2267,9 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             if (!flags.TargetVisibleEnemies) continue;
             var enemies = ai.FindVisibleEnemies(cm, flags);
             if (enemies.Count == 0) continue;
-            ai.PushOrderFront(new UnitOrder { Type = "Attack", Target = enemies[0], Force = false });
+            var pick = ai.PickTargetByPreference(cm, enemies);
+            if (!pick.HasValue) continue;
+            ai.PushOrderFront(new UnitOrder { Type = "Attack", Target = pick.Value, Force = false });
             engaged = true;
         }
         if (engaged)
@@ -2677,8 +2684,14 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             var enemies = FindVisibleEnemies(cm, flags);
             if (enemies.Count > 0)
             {
-                RespondToTargetedEntity(enemies[0], cm);
-                return;
+                // 原版 IDLE.enter → FindNewTargets → AttackEntitiesByPreference:
+                // 按攻击偏好分组响应(不再是裸取最近)。
+                var pick = PickTargetByPreference(cm, enemies);
+                if (pick.HasValue)
+                {
+                    RespondToTargetedEntity(pick.Value, cm);
+                    return;
+                }
             }
         }
         // 回锚(原版 respondHoldGround && heldPosition && 距锚 >10m → WalkToHeldPosition)。
@@ -2693,6 +2706,40 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                     PushOrder(new UnitOrder { Type = "Walk", Position = held, Force = false });
             }
         }
+    }
+
+    /// <summary>偏好分组取目标(原版 AttackEntitiesByPreference):
+    /// 按攻击件 GetPreference 升序分组,同组内最近优先;无偏好(动物等)垫底。
+    /// 原版对 pref==0 短路直应——这里统一返回全表最优。</summary>
+    private EntityId? PickTargetByPreference(ComponentManager cm, List<EntityId> enemies)
+    {
+        if (enemies.Count == 0) return null;
+        var attack = cm.QueryInterface<AttackComponent>(Entity);
+        if (attack == null) return enemies[0];
+        var pos = cm.QueryInterface<PositionComponent>(Entity);
+        float px = pos?.Position.X.ToFloat() ?? 0f;
+        float pz = pos?.Position.Z.ToFloat() ?? 0f;
+
+        EntityId? best = null;
+        int bestPref = int.MaxValue;
+        float bestDist = float.MaxValue;
+        foreach (var e in enemies)
+        {
+            int pref = attack.GetPreference(cm, e) ?? int.MaxValue - 1;
+            var ep = cm.QueryInterface<PositionComponent>(e);
+            float dx = (ep?.Position.X.ToFloat() ?? 0f) - px;
+            float dz = (ep?.Position.Z.ToFloat() ?? 0f) - pz;
+            float dist = dx * dx + dz * dz;
+            // 偏好升序 → 距离升序(确定性 tie-break:id 升序)。
+            if (pref < bestPref || pref == bestPref && dist < bestDist
+                || best == null || pref == bestPref && dist == bestDist && best != null && e.Value < best.Value.Value)
+            {
+                bestPref = pref;
+                bestDist = dist;
+                best = e;
+            }
+        }
+        return best;
     }
 
     /// <summary>视野内可见、可攻击的敌对玩家实体(原版 FindNewTargets 的目标掩码)。
