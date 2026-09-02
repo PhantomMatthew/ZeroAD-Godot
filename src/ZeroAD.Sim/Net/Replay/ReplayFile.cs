@@ -118,6 +118,9 @@ namespace ZeroAD.Sim.Net
                 bw.Write((byte)s.Kind);
                 bw.Write(s.Civ ?? string.Empty);
                 bw.Write(s.Team);
+                // v3:AI 难度/性格随槽(读侧同款)。
+                bw.Write(s.AIDifficulty);
+                bw.Write(s.AIBehavior ?? string.Empty);
             }
             bw.Write(meta.TimeUnix);
             bw.Write(meta.Description ?? string.Empty);
