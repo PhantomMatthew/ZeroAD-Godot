@@ -49,6 +49,9 @@ public sealed class AttackPlan
     /// <summary>定点目标(原版 uniqueTargetId:switchDefenseToAttack 的定向进攻)——
     /// 非空时目标选择只打它,被毁即完成。</summary>
     public uint? UniqueTargetId;
+    public ushort Overseas;
+    /// <summary>跨海目标的海域 id(原版 overseas;0 = 同陆)。非 0 时集结/启动走
+    /// navalManager 运输,并等海域有运输船。</summary>
 
     // ── 多波次编组(原版 unitStat/buildOrders)──
     /// <summary>单位槽位定义(原版 unitStat 项):类过滤 + 规模/批量 + 优先级 + 评分兴趣。</summary>
@@ -193,6 +196,11 @@ public sealed class AttackPlan
             return PreparationResult.Start;
         }
 
+        // 跨海进攻等船(原版:overseas 且海域无运输船 → 继续筹备)。
+        if (Overseas != 0 && attackManager.Hq != null
+            && !HasTransportShips(gameState, attackManager.Hq.NavalManager))
+            return PreparationResult.KeepGoing;
+
         // 波次人员补充(原版 assignUnits 每轮跑——单位流失即补)。
         AssignUnits(gameState, attackManager);
         // 有 Raid 筹备中时,让出一个 FastMoving 加速其编组(原版 reassignFastUnit)。
@@ -262,15 +270,28 @@ public sealed class AttackPlan
 
         // 集结下令:各单位 moveToRange(rally, 0..15);载货的先回投放站(原版 returnResources)。
         if (RallyPoint.HasValue)
+        {
+            ushort rallyAccess = gameState.Accessibility?.GetAccessValue(
+                RallyPoint.Value.X.ToFloat(), RallyPoint.Value.Y.ToFloat()) ?? (ushort)0;
             foreach (var id in UnitCollection)
             {
                 var ent = gameState.GetEntityById(id);
                 if (ent == null || ent.Position2D == default) continue;
                 gameState.Metadata.Set(id, "role", WorkerRoles.RoleAttack);
                 gameState.Metadata.Set(id, "subrole", WorkerRoles.SubroleCompleting);
+                // 原版:与 rally 不同陆的单位走运输(requireTransport),同陆走地面。
+                ushort entAccess = gameState.Accessibility?.GetAccessValue(
+                    ent.Position2D.X.ToFloat(), ent.Position2D.Y.ToFloat()) ?? rallyAccess;
+                if (entAccess != rallyAccess && attackManager.Hq != null)
+                {
+                    attackManager.Hq.NavalManager.RequireTransport(
+                        gameState, ent, entAccess, rallyAccess, RallyPoint.Value);
+                    continue;
+                }
                 gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Move(
                     (uint)gameState.PlayerId, id, RallyPoint.Value.X, RallyPoint.Value.Y));
             }
+        }
         RemoveQueues(queues);
         return PreparationResult.KeepGoing;
     }
@@ -603,7 +624,20 @@ public sealed class AttackPlan
                     float dist = dx * dx + dz * dz;
                     if (dist < distSame) { distSame = dist; rallySame = anchor.Position2D; }
                 }
-                if (rallySame == null) return false;   // 不可达(无海军)
+                if (rallySame == null)
+                {
+                    // 无同陆基地 → 跨海(原版:overseas = getSeaBetweenIndices +
+                    // setMinimalTransportShips 订船;无路 → 不可达拒)。
+                    ushort rallyAcc = RallyPoint.HasValue
+                        ? gameState.Accessibility.GetAccessValue(
+                            RallyPoint.Value.X.ToFloat(), RallyPoint.Value.Y.ToFloat())
+                        : targetAccess;
+                    ushort sea = NavalManager.GetSeaBetweenIndices(gameState, rallyAcc, targetAccess);
+                    if (sea == 0) return false;   // 区域图无路——真不可达
+                    Overseas = sea;
+                    attackManager.Hq?.NavalManager.SetMinimalTransportShips(sea, 5);
+                    return true;
+                }
                 RallyPoint = rallySame;
             }
         }
@@ -908,6 +942,18 @@ public sealed class AttackPlan
         return true;
     }
 
+    /// <summary>海域有无可用运输船(原版:seaTransportShips[sea].length > 0)。</summary>
+    private static bool HasTransportShips(GameState gameState, NavalManager naval)
+    {
+        foreach (var ship in gameState.GetOwnEntitiesByClass("Ship").Values())
+            if (ship.Template.GarrisonCapacity > 0 && ship.Position2D != default
+                && (gameState.Accessibility == null
+                    || gameState.Accessibility.WaterRegionAt(
+                        ship.Position2D.X.ToFloat(), ship.Position2D.Y.ToFloat()) != 0))
+                return true;
+        return false;
+    }
+
     /// <summary>推进/战斗更新(原版 update 的 walking 段简化):
     /// 清死单位 → 兵力耗尽 Abort → 敌优比超限撤退 → 目标摧毁换目标 → 完成。</summary>
     public bool Update(GameState gameState, AttackManager attackManager)
@@ -918,6 +964,19 @@ public sealed class AttackPlan
             return e == null || e.IsDead;
         });
         if (UnitCollection.Count == 0) return false;
+
+        // 跨海:运输落地(transport 元数据已清)的单位重新收推进令(原版
+        // UpdateTransporting 落地归队语义)。
+        if (TargetPos.HasValue)
+            foreach (var id in UnitCollection)
+            {
+                var ent = gameState.GetEntityById(id);
+                if (ent == null || ent.Position2D == default) continue;
+                if (gameState.Metadata.GetObject(id, "transport") != null) continue;
+                if (ent.IsIdle)
+                    gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.AttackWalk(
+                        (uint)gameState.PlayerId, id, TargetPos.Value.X, TargetPos.Value.Y));
+            }
 
         if (ShouldRetreat(gameState))
         {
