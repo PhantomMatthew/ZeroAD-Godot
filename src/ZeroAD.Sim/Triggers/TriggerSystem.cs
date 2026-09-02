@@ -123,6 +123,30 @@ namespace ZeroAD.Sim.Triggers
                 CallEvent(cm, "OnResearchFinished", e);
             cm.Events.TreasureCollected += e =>
                 CallEvent(cm, "OnTreasureCollected", e);
+            // 原版 Trigger.eventNames 其余项全量接线:
+            cm.Events.PlayerCommand += e =>
+                CallEvent(cm, "OnPlayerCommand", e);
+            cm.Events.PlayerDefeated += e =>
+                CallEvent(cm, "OnPlayerDefeated", e);
+            cm.Events.PlayerWon += e =>
+                CallEvent(cm, "OnPlayerWon", e);
+            cm.Events.DiplomacyChanged += e =>
+                CallEvent(cm, "OnDiplomacyChanged", e);
+            cm.Events.ConstructionStarted += e =>
+                CallEvent(cm, "OnConstructionStarted", e);
+            cm.Events.TrainingQueued += e =>
+                CallEvent(cm, "OnTrainingQueued", e);
+            cm.Events.ResearchQueued += e =>
+                CallEvent(cm, "OnResearchQueued", e);
+            cm.Events.EntityRenamed += e =>
+                CallEvent(cm, "OnEntityRenamed", e);
+            // 原版 OnAttackDetected 数据源 = AttackDetection 报警。
+            cm.Events.PlayerAttackedAlert += e =>
+                CallEvent(cm, "OnAttackDetected", e);
+            // OnCinemaPathEnded/OnCinemaQueueEnded:表现层 CinemaManager 经
+            // SimBridge 转调 CallEvent(过场播放完成时);OnRange:范围查询由
+            // OnInterval 轮询语义承载(原版 OnRange 由 Trigger 组件注册范围事件,
+            // 移植见 GetTriggerPoints + AreaContainsEntities 条件)。
         }
 
         public IReadOnlyList<TriggerDefinition> Triggers => _triggers;
@@ -203,6 +227,12 @@ namespace ZeroAD.Sim.Triggers
                 _triggers.Add(t);
             }
         }
+
+        /// <summary>读档完成后投递(原版 OnDeserialized:Trigger 组件反序列化后
+        /// 广播,触发器脚本重建瞬态)。由存档加载路径(SaveGameManager/SimBridge)
+        /// 在 Deserialize 后调用。</summary>
+        public void NotifyDeserialized(ComponentManager cm) =>
+            CallEvent(cm, "OnDeserialized", null);
 
         /// <summary>每回合推进。dt 为本回合秒数(0.1)。返回本回合触发次数(测试观察用)。
         /// OnInterval 事件在此投递(原版 SetInterval 语义:Interval 秒一到即投递)。</summary>

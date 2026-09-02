@@ -397,15 +397,19 @@ public sealed partial class SimBridge : Node
 		_recorder = null;
 	}
 
-	public void StartTutorial()
+	/// <summary>教程启动(原版两张教程图:introductory_tutorial / starting_economy_walkthrough)。
+	/// 按图名选目标表(原版各图自带 tutorialGoals);空/未知回落 introductory。</summary>
+	public void StartTutorial(string mapName = "")
 	{
 		IsTutorialMode = true;
-		Tutorial = IntroductoryTutorial.Create(_sim, Events);
+		Tutorial = mapName.Contains("starting_economy_walkthrough", System.StringComparison.Ordinal)
+			? ZeroAD.Sim.Tutorial.EconomyWalkthroughTutorial.Create(_sim, Events)
+			: IntroductoryTutorial.Create(_sim, Events);
 	}
 
-	public ScenarioData? LoadTutorialScenario(string dataRoot)
+	public ScenarioData? LoadTutorialScenario(string dataRoot, string mapName = "introductory_tutorial")
 	{
-		string? xmlPath = ScenarioLoader.FindScenarioPath(dataRoot, "maps/tutorials/introductory_tutorial");
+		string? xmlPath = ScenarioLoader.FindScenarioPath(dataRoot, "maps/tutorials/" + mapName);
 		if (xmlPath == null)
 		{
 			ZeroAD.Sim.Diag.Err("Sim", "Tutorial scenario XML not found");

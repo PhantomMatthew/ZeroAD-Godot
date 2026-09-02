@@ -224,6 +224,23 @@ namespace ZeroAD.Sim.Events
         public int Player;
     }
 
+    /// <summary>建造开始(地基放下;原版 MT_ConstructionStarted)。触发器
+    /// OnConstructionStarted 的数据源。</summary>
+    public sealed class ConstructionStartedEvent
+    {
+        public EntityId Foundation;
+        public string Template = "";
+        public int OwnerPlayerId;
+    }
+
+    /// <summary>实体换名(原版 MT_EntityRenamed:晋升/变身旧号→新号)。触发器
+    /// OnEntityRenamed 的数据源;Guard/RallyPoint 的目标改指也挂它。</summary>
+    public sealed class EntityRenamedEvent
+    {
+        public EntityId OldEntity;
+        public EntityId NewEntity;
+    }
+
     /// <summary>外交立场变化(原版 MT_DiplomacyChanged 全局消息;DiplomacyComponent
     /// SetStance 后广播)。驻军/炮塔/护卫据以即时逐出非互盟单位。</summary>
     public sealed class DiplomacyChangedEvent
@@ -245,6 +262,8 @@ namespace ZeroAD.Sim.Events
         public event Action<EntityCreatedEvent>? EntityCreated;
         public event Action<AttackLandedEvent>? AttackLanded;
         public event Action<DiplomacyChangedEvent>? DiplomacyChanged;
+        public event Action<ConstructionStartedEvent>? ConstructionStarted;
+        public event Action<EntityRenamedEvent>? EntityRenamed;
         public event Action<AttackLaunchedEvent>? AttackLaunched;
         public event Action<ChatMessageEvent>? ChatMessage;
         public event Action<PlayerDefeatedEvent>? PlayerDefeated;
@@ -273,6 +292,8 @@ namespace ZeroAD.Sim.Events
         public void RaiseEntityCreated(EntityCreatedEvent e) => EntityCreated?.Invoke(e);
         public void RaiseAttackLanded(AttackLandedEvent e) => AttackLanded?.Invoke(e);
         public void RaiseDiplomacyChanged(DiplomacyChangedEvent e) => DiplomacyChanged?.Invoke(e);
+        public void RaiseConstructionStarted(ConstructionStartedEvent e) => ConstructionStarted?.Invoke(e);
+        public void RaiseEntityRenamed(EntityRenamedEvent e) => EntityRenamed?.Invoke(e);
         public void RaiseAttackLaunched(AttackLaunchedEvent e) => AttackLaunched?.Invoke(e);
         public void RaisePlayerAttackedAlert(PlayerAttackedAlertEvent e) => PlayerAttackedAlert?.Invoke(e);
         public void RaiseChatMessage(ChatMessageEvent e) => ChatMessage?.Invoke(e);

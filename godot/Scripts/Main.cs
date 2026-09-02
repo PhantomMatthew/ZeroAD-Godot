@@ -300,7 +300,11 @@ public sealed partial class Main : Node3D
 		// 加载等待页(对齐原版 page_loading:顶部进度条 + 中央提示卡)。分阶段驱动:
 		// BeginGameplay 拆成 Init/Session/Scenario 三段,段间 await 一帧让进度条重绘
 		// (原 0.15s Timer 只保证首帧绘制,无法反映真实阶段进度)。
-		_loadingOverlay = new LoadingOverlay("Introductory Tutorial");
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		bool walkthrough = cfg.MapPath.Contains("starting_economy_walkthrough",
+			System.StringComparison.Ordinal);
+		_loadingOverlay = new LoadingOverlay(walkthrough
+			? "Starting Economy Walkthrough" : "Introductory Tutorial");
 		AddChild(_loadingOverlay);
 		RunStagedGameplayLoad(42, 1, null, tutorial: true, isMultiplayer: false, isHost: false);
 	}
@@ -1715,8 +1719,13 @@ public sealed partial class Main : Node3D
 
 	private void SetupTutorialWorld()
 	{
-		ZeroAD.Sim.Diag.Log("Tutorial", "SetupTutorialWorld: loading terrain...");
-		SetupTerrain("maps/tutorials/introductory_tutorial.pmp");
+		// 教程图按 GameLaunchConfig.MapPath(战役 eco_walkthrough 走这;
+		// 空 = 主菜单 Tutorial 钮 → introductory)。
+		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		string mapRel = !string.IsNullOrEmpty(cfg.MapPath) && cfg.MapPath.Contains("tutorials/")
+			? cfg.MapPath : "maps/tutorials/introductory_tutorial.pmp";
+		ZeroAD.Sim.Diag.Log("Tutorial", $"SetupTutorialWorld: loading terrain ({mapRel})...");
+		SetupTerrain(mapRel);
 		ZeroAD.Sim.Diag.Log("Tutorial", "terrain loaded");
 
 		string? dataRoot = FindDataRoot();
@@ -1724,7 +1733,9 @@ public sealed partial class Main : Node3D
 		if (dataRoot != null)
 		{
 			ZeroAD.Sim.Diag.Log("Tutorial", "loading scenario...");
-			var scenario = _sim.LoadTutorialScenario(dataRoot);
+			var scenario = _sim.LoadTutorialScenario(dataRoot,
+				mapRel.Contains("starting_economy_walkthrough") ? "starting_economy_walkthrough"
+					: "introductory_tutorial");
 			if (scenario != null)
 			{
 				ZeroAD.Sim.Diag.Log("Tutorial", $"scenario loaded: {scenario.Entities.Count} entities, camera=({scenario.CameraX},{scenario.CameraZ})");
@@ -1764,7 +1775,7 @@ public sealed partial class Main : Node3D
 		}
 
 		ZeroAD.Sim.Diag.Log("Tutorial", "StartTutorial...");
-		_sim.StartTutorial();
+		_sim.StartTutorial(mapRel);
 		ZeroAD.Sim.Diag.Log("Tutorial", "showing panel...");
 		_tutorialPanel.ShowTutorial();
 		ZeroAD.Sim.Diag.Log("Tutorial", "SetupTutorialWorld complete");

@@ -323,6 +323,9 @@ public sealed class PromotionComponent : ComponentBase, IComponentMessageHandler
             ? (float)health.Current / health.Max : 1f;
         cm.DestroyEntity(Entity);
         var promoted = cm.SpawnEntity(target, x, z, owner.PlayerId);
+        // 原版 MT_EntityRenamed(晋升换号):触发器/护卫/集结点改指。
+        cm.Events.RaiseEntityRenamed(new Events.EntityRenamedEvent
+        { OldEntity = Entity, NewEntity = promoted });
         var newPos = cm.QueryInterface<PositionComponent>(promoted);
         if (newPos != null)
             newPos.Rotation = new Maths.FixedVector3D(pos.Rotation.X, yaw, pos.Rotation.Z);

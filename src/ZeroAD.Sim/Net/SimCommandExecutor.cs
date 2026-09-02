@@ -273,6 +273,13 @@ namespace ZeroAD.Sim.Net
             else
                 _cm.QueryInterface<BuilderComponent>(builder)?.Build(foundation);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "repair", Target = foundation });
+            // 原版 cmd type "construct"(地基落锤即报;教程/触发器的 OnPlayerCommand 用)。
+            _cm.Events.RaisePlayerCommand(new PlayerCommandEvent
+            {
+                Type = "construct",
+                Target = foundation,
+                Data = { ["template"] = template },
+            });
         }
 
         /// <summary>建造拒绝事件(原版 GUI 红字提示的移植:此前拒绝全静默,玩家点地面
@@ -331,6 +338,13 @@ namespace ZeroAD.Sim.Net
             // Fog-of-war registration (Fogging/RetainInFog from the structure template —
             // foundations stand in explored fog and mirage like completed buildings).
             EntityAssembler.RegisterForLos(_cm, entity, template, stats);
+            // 原版 MT_ConstructionStarted(地基放下即广播;触发器 OnConstructionStarted)。
+            _cm.Events.RaiseConstructionStarted(new Events.ConstructionStartedEvent
+            {
+                Foundation = entity,
+                Template = template,
+                OwnerPlayerId = ownerPlayerId,
+            });
             return entity;
         }
 
@@ -373,7 +387,18 @@ namespace ZeroAD.Sim.Net
 
             int player = _cm.QueryInterface<OwnershipComponent>(building)?.PlayerId ?? -1;
             if (!append)
+            {
                 rally.Unset(player);   // 原版:无 Shift 重设单点(清空队列)。
+                // 原版 GUI 直发 unset-rallypoint(右键建筑自身清集结);教程目标靠它判。
+                if (target.HasValue && target.Value == building)
+                {
+                    _cm.Events.RaisePlayerCommand(new PlayerCommandEvent
+                    { Type = "unset-rallypoint", Target = null });
+                    _cm.Events.RaisePlayerCommand(new PlayerCommandEvent
+                    { Type = "set-rallypoint", Target = null });
+                    return;
+                }
+            }
 
             if (target.HasValue)
             {
@@ -396,7 +421,13 @@ namespace ZeroAD.Sim.Net
                 Target = target?.Value ?? 0,
                 ResourceType = resourceType,
             }, player);
-            _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "set-rallypoint", Target = target });
+            _cm.Events.RaisePlayerCommand(new PlayerCommandEvent
+            {
+                Type = "set-rallypoint",
+                Target = target,
+                // 原版 cmd.data.command/resourceType(教程 set-rallypoint 目标校验用)。
+                Data = { ["command"] = commandType, ["resourceType"] = resourceType },
+            });
         }
 
         /// <summary>

@@ -22,6 +22,9 @@ namespace ZeroAD.Sim.Tutorial
         public bool TempleStarted;
         public int RamCount;
         public List<EntityId> Attackers = new();
+        /// <summary>脚本级状态槽(原版教程 JS 的 this.xxx 自由字段;经济演练教程的
+        /// houseGoal/femaleCount/stone/metal/trainingDone 等走这里)。</summary>
+        public Dictionary<string, object> State = new();
     }
 
     public sealed class TutorialGoal

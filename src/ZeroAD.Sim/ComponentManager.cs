@@ -599,6 +599,8 @@ namespace ZeroAD.Sim
             // 触发器系统(与 SerializeSaveGame 写序逐位一致;Enabled/Elapsed 骑缝,
             // 条件/动作静态定义由地图脚本重注)。
             Triggers.Deserialize(d);
+            // 原版 OnDeserialized:读档完成后广播(触发器脚本重建瞬态)。
+            Triggers.NotifyDeserialized(this);
         }
     }
 
