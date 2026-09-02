@@ -282,7 +282,6 @@ namespace ZeroAD.Godot;
 					else
 					{
 						_smDistance.SetValueSmoothly(Mathf.Max(MinDistance, _smDistance.Target * 0.85f));
-						AnchorZoomToMouse(mb.Position, zoomIn: true);
 					}
 					UpdateTransform();
 				}
@@ -293,7 +292,6 @@ namespace ZeroAD.Godot;
 					else
 					{
 						_smDistance.SetValueSmoothly(Mathf.Min(MaxDistance, _smDistance.Target * 1.15f));
-						AnchorZoomToMouse(mb.Position, zoomIn: false);
 					}
 					UpdateTransform();
 				}
@@ -332,61 +330,6 @@ namespace ZeroAD.Godot;
         _focus.Y = TerrainHeightService.Sample(_focus.X, _focus.Z);
         UpdateTransform();
     }
-
-	/// <summary>缩放锚定鼠标指向点(原版 zoom-to-cursor):缩放时焦点向鼠标
-	/// 指向的地面点偏移——缩放向"看向的点"收敛,而非绕中心缩放。</summary>
-	private void AnchorZoomToMouse(Vector2 screenPos, bool zoomIn)
-	{
-		var groundPoint = ScreenToWorldGround(screenPos);
-		if (!groundPoint.HasValue) return;
-		var p = groundPoint.Value;
-		// 偏移量 = 焦点到鼠标点的向量 × 缩放系数(原版 0.85/1.15 收敛速率近似)。
-		float factor = zoomIn ? 0.15f : -0.15f;
-		_smFocusX.AddSmoothly((p.X - _smFocusX.Target) * factor);
-		_smFocusZ.AddSmoothly((p.Z - _smFocusZ.Target) * factor);
-	}
-
-	/// <summary>屏幕点 → 地面 sim 坐标(射线步进地形高度;失败 → null)。</summary>
-	/// <summary>屏幕点 → 地面 sim 坐标(射线步进地形高度;失败 → null)。
-	/// 与 Main.ScreenToWorld 同款:地形网格 z 是预翻转的视觉坐标(visZ = WorldSize − simZ),
-	/// 采样前必须 MirrorZ;返回点也换算回 sim 坐标(_focus 是 sim 空间——
-	/// AnchorZoomToMouse 据此改 _smFocusZ,不换算会把 vis z 写进 sim 焦点,滚轮缩放
-	/// 就变成把整个相机沿 z 推飞,表现成"滚动=水平移动")。</summary>
-	private Vector3? ScreenToWorldGround(Vector2 screenPos)
-	{
-		var from = ProjectRayOrigin(screenPos);
-		var dir = ProjectRayNormal(screenPos);
-		if (dir.Y >= 0) return null;
-
-		// 射线步进地形高度(与 Main.ScreenToWorld 同款采样)。
-		float t = 0f;
-		const float maxDist = 1000f;
-		const float step = 2f;
-		while (t < maxDist)
-		{
-			var p = from + dir * t;
-			float groundY = TerrainHeightService.Sample(p.X, TerrainHeightService.MirrorZ(p.Z));
-			if (p.Y <= groundY)
-			{
-				// 二分细化到地面
-				float lo = t - step, hi = t;
-				for (int i = 0; i < 8; i++)
-				{
-					float mid = (lo + hi) / 2;
-					var pm = from + dir * mid;
-					if (pm.Y <= TerrainHeightService.Sample(pm.X, TerrainHeightService.MirrorZ(pm.Z)))
-						hi = mid;
-					else
-						lo = mid;
-				}
-				var hit = from + dir * hi;
-				float simZ = TerrainHeightService.MirrorZ(hit.Z);
-				return new Vector3(hit.X, TerrainHeightService.Sample(hit.X, simZ), simZ);
-			}
-			t += step;
-		}
-		return null;
-	}
 
 	/// <summary>跟随目标的世界位置(原版 GetInterpolatedTransform 的简化——
 	/// 直接读 PositionComponent 当前位;消失/驻军 → null 停跟随)。</summary>

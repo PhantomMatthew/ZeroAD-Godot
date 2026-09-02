@@ -91,12 +91,16 @@ public partial class ZeroADEditorPlugin : EditorPlugin
 
             // 真正的回归判据:滚轮必须真的改变视距(缩放),且 sim 焦点仍守界。
             bool zoomed = dist1 < dist0 - 0.5f;   // WheelUp 应缩短视距
+            // 焦点不该漂移(原版滚轮缩放只改视距,焦点保持不动;
+            // zoom-to-cursor 锚点曾把焦点横向推飞——见 RTSCamera 注释)。
+            bool focusStable = Mathf.Abs(focus1.X - focus0.X) < 0.01f &&
+                               Mathf.Abs(focus1.Z - focus0.Z) < 0.01f;
             float dz = Mathf.Abs(focus1.Z - focus0.Z);
             float dx = Mathf.Abs(focus1.X - focus0.X);
             bool inBounds = focus1.X >= 0 && focus1.X <= worldSize &&
                             focus1.Z >= 0 && focus1.Z <= worldSize;
-            GD.Print($"[cam-smoke] |dx|={dx:F1} |dz|={dz:F1} inBounds={inBounds} zoomed={zoomed}");
-            if (inBounds && zoomed && dz < worldSize * 0.5f && dx < worldSize * 0.5f)
+            GD.Print($"[cam-smoke] |dx|={dx:F1} |dz|={dz:F1} inBounds={inBounds} zoomed={zoomed} focusStable={focusStable}");
+            if (inBounds && zoomed && focusStable)
             {
                 GD.Print("[cam-smoke] PASS");
                 rc = 0;
