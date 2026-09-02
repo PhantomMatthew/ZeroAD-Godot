@@ -1372,7 +1372,16 @@ public sealed partial class SimBridge : Node
 		// 死亡音效(原版 Sound.js:实体销毁时播模板 death 组;模板查询须在节点释放前)。
 		var identity = _sim?.QueryInterface<IdentityComponent>(entity);
 		if (identity != null && !string.IsNullOrEmpty(identity.TemplateName))
-			AudioManager.PlayUnitEvent(Templates, identity.TemplateName, "death");
+		{
+			// 死亡音位置化(原版世界事件;实体位 3D 衰减)。
+			var dpos = _sim.QueryInterface<PositionComponent>(entity);
+			if (dpos != null)
+				AudioManager.PlayUnitEventAt(Templates, identity.TemplateName, "death",
+					new Vector3(dpos.Position.X.ToFloat(), dpos.Position.Y.ToFloat(),
+						dpos.Position.Z.ToFloat()));
+			else
+				AudioManager.PlayUnitEvent(Templates, identity.TemplateName, "death");
+		}
 		if (_entityNodes.TryGetValue(entity, out var node))
 		{
 			node.QueueFree();

@@ -219,8 +219,10 @@ public sealed partial class Main : Node3D
 		_camera.SetFocus(new Vector3(128, 0, 128));
 
 		// 音频初始化(数据根 = binaries/data/mods/public;null 静默)。音乐播放列表在
-		// 开局时启动(BeginGameplayScenario 末尾 peace 列表)。
+		// 开局时启动(BeginGameplayScenario 末尾 peace 列表)。3D 宿主注册(世界事件
+		// 位置衰减;菜单场景不注册——Init 每次重进重放)。
 		AudioManager.Init(this, FindDataRoot());
+		AudioManager.Init3D(this);
 
 		// 启动模式由 MainMenu 写入 GameLaunchConfig(进程级 env 仅 dev fallback,已由 MainMenu
 		// 首次读取后清空——修 ChangeScene 回主菜单重触发自动开局的 bug)。SP/Tutorial 直接开局;
@@ -2062,7 +2064,16 @@ public sealed partial class Main : Node3D
 	private int _sessionPlayerId = 1;
 
 	private void OnTrainingFinishedSound(ZeroAD.Sim.Events.TrainingFinishedEvent e)
-		=> AudioManager.PlayUnitEvent(_sim.Templates, e.UnitTemplate, "trained");
+	{
+		// 原版训练完成音位置化(训练建筑处)。
+		var pos = _sim.Sim.QueryInterface<PositionComponent>(e.TrainerEntity);
+		if (pos != null)
+			AudioManager.PlayUnitEventAt(_sim.Templates, e.UnitTemplate, "trained",
+				new Vector3(pos.Position.X.ToFloat(), pos.Position.Y.ToFloat(),
+					pos.Position.Z.ToFloat()));
+		else
+			AudioManager.PlayUnitEvent(_sim.Templates, e.UnitTemplate, "trained");
+	}
 
 	private void OnPlayerWonSound(ZeroAD.Sim.Events.PlayerWonEvent e)
 	{
@@ -2083,8 +2094,18 @@ public sealed partial class Main : Node3D
 	{
 		var id = _sim.Sim.QueryInterface<IdentityComponent>(e.Attacker);
 		if (id != null && !string.IsNullOrEmpty(id.TemplateName))
-			AudioManager.PlayUnitEvent(_sim.Templates, id.TemplateName,
-				e.IsRanged ? "attack_ranged" : "attack_melee");
+		{
+			// 原版战斗音位置化(CSoundManager 世界事件):按攻击者位 3D 衰减。
+			var pos = _sim.Sim.QueryInterface<PositionComponent>(e.Attacker);
+			if (pos != null)
+				AudioManager.PlayUnitEventAt(_sim.Templates, id.TemplateName,
+					e.IsRanged ? "attack_ranged" : "attack_melee",
+					new Vector3(pos.Position.X.ToFloat(), pos.Position.Y.ToFloat(),
+						pos.Position.Z.ToFloat()));
+			else
+				AudioManager.PlayUnitEvent(_sim.Templates, id.TemplateName,
+					e.IsRanged ? "attack_ranged" : "attack_melee");
+		}
 		_lastCombatSec = Time.GetTicksMsec() / 1000.0;
 	}
 

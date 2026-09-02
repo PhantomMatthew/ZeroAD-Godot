@@ -17,7 +17,12 @@ namespace ZeroAD.Godot;
 public static class AudioManager
 {
     private const int PoolSize = 12;
+    private const int Pool3DSize = 16;
     private static readonly List<AudioStreamPlayer> _pool = new();
+    // 3D 池(原版 CSoundManager 位置音:战斗/死亡/建造等世界事件按相机距离衰减)。
+    private static readonly List<AudioStreamPlayer3D> _pool3D = new();
+    private static int _pool3DNext;
+    private static Node3D? _worldHost;   // 3D 播放器的挂载点(Main 场景根;菜单 = null)
     private static int _poolNext;
     private static AudioStreamPlayer? _music;
     private static AudioStreamPlayer? _ambient;
@@ -152,6 +157,81 @@ public static class AudioManager
         player.VolumeDb = Mathf.LinearToDb(Mathf.Max(gain, 0.0001f));
         player.PitchScale = def.PitchLower + (float)_rng.NextDouble() * (def.PitchUpper - def.PitchLower);
         player.Play();
+    }
+
+    /// <summary>注册 3D 世界宿主(Main 场景;菜单/无宿主时位置音退化为 2D 池)。
+    /// 重进场景时旧播放器随场景销毁,检测失效引用重建(与 2D 池同款)。</summary>
+    public static void Init3D(Node3D worldHost)
+    {
+        _worldHost = worldHost;
+        if (_pool3D.Count > 0 && !GodotObject.IsInstanceValid(_pool3D[0]))
+            _pool3D.Clear();
+        if (_pool3D.Count == 0)
+            for (int i = 0; i < Pool3DSize; i++)
+                // 原版距离衰减(CSoundManager 反比衰减):UnitSize 内全量,
+                // 外圈反比滚降,MaxDistance 外静音。MaxDistance 原版按听力范围,
+                // 取 250m(大半个屏)。
+                _pool3D.Add(new AudioStreamPlayer3D
+                {
+                    Bus = "Master",
+                    UnitSize = 15f,
+                    MaxDistance = 250f,
+                    AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.InverseDistance,
+                });
+        foreach (var p in _pool3D)
+            if (p.GetParent() == null) worldHost.AddChild(p);
+    }
+
+    /// <summary>清 3D 宿主(离场场景;播放器随场景销毁,引用摘除防悬垂)。</summary>
+    public static void Clear3D()
+    {
+        _pool3D.Clear();
+        _worldHost = null;
+    }
+
+    /// <summary>位置化播声音组(原版世界事件音:pos 处发声,按与监听者(相机)
+    /// 距离衰减)。无 3D 宿主(菜单/测试)→ 回落 2D 池。</summary>
+    public static void PlayGroupAt(string groupPath, Vector3 worldPos, string channel = "action")
+    {
+        if (_dataRoot == null) return;
+        if (_worldHost == null || _pool3D.Count == 0)
+        {
+            PlayGroup(groupPath, channel);
+            return;
+        }
+        var def = LoadGroup(groupPath);
+        if (def == null || def.Files.Length == 0) return;
+        var stream = LoadStream(ResolveAudio(def.Files[_rng.Next(def.Files.Length)]));
+        if (stream == null) return;
+
+        var player = _pool3D[_pool3DNext];
+        _pool3DNext = (_pool3DNext + 1) % _pool3D.Count;
+        player.Stream = stream;
+        player.Position = worldPos;
+        float gain = def.Gain * _masterGain * _actionGain;
+        player.VolumeDb = Mathf.LinearToDb(Mathf.Max(gain, 0.0001f));
+        player.PitchScale = def.PitchLower + (float)_rng.NextDouble() * (def.PitchUpper - def.PitchLower);
+        player.Play();
+    }
+
+    /// <summary>位置化模板事件(世界事件专用;select/order_* 人声留在 2D——
+    /// 原版选令语音是界面反馈不走空间衰减)。</summary>
+    public static void PlayUnitEventAt(TemplateLoader? templates, string templateName,
+        string eventName, Vector3 worldPos)
+    {
+        if (templates == null || _dataRoot == null) return;
+        ParamNode node;
+        try { node = templates.LoadTemplate(templateName); }
+        catch (Exception) { return; }
+        var sg = node.GetChild("Sound").GetChild("SoundGroups").GetChild(eventName);
+        if (!sg.IsOk) return;
+        string path = sg.ToString().Trim();
+        if (path.Length == 0) return;
+        string lang = ReadChild(node, "Identity", "Lang");
+        string pheno = ReadChild(node, "Identity", "Phenotype");
+        if (lang.Length == 0) lang = "global";
+        if (pheno.Length == 0) pheno = "male";
+        PlayGroupAt(path.Replace("{lang}", lang).Replace("{phenotype}", pheno), worldPos);
     }
 
     /// <summary>播实体的模板音效事件(select/order_walk/order_attack/order_gather/
