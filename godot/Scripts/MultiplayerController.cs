@@ -145,6 +145,25 @@ public sealed partial class MultiplayerController : Node
     /// <summary>收到聊天消息（playerId, text）。MP 时由 ReceiveChat RPC 触发；SP 不经此（直接 raise SimEventBus）。</summary>
     public event System.Action<int, string>? OnChatReceived;
 
+    // ── STUN(原版 StunClient 接入直连流程:host 建服即查公网地址,
+    // 大厅状态与 lobby 注册消费——原版 host 直接注册公网地址供直连)──
+    /// <summary>STUN 探测到的公网地址(ip:port;null = 未探测/失败)。</summary>
+    public string? ExternalAddress { get; private set; }
+    /// <summary>STUN 探测完成(成功/失败都触发,UI 刷新状态行)。</summary>
+    public event System.Action? OnStunResolved;
+
+    // ── 观战者(原版 observer:不占槽、不收令、只看)──
+    /// <summary>观战者 peer 集(host 侧;不占槽不进 _peerToPlayer)。</summary>
+    private readonly HashSet<int> _observerPeers = new();
+    /// <summary>本端是否观战(client 侧;连接表单的 Observer 勾选)。</summary>
+    public bool IsObserver { get; private set; }
+    /// <summary>观战者显示名表(host → 广播,大厅行展示)。</summary>
+    public IReadOnlyList<int> ObserverPeers => _observerPeers.OrderBy(p => p).ToList();
+    /// <summary>观战者数变化(大厅刷新)。</summary>
+    public event System.Action? OnObserversChanged;
+    /// <summary>等待 hello 的新 peer(claim 延到 ClientHello 到达——观战标记随它来)。</summary>
+    private readonly HashSet<int> _pendingHello = new();
+
     public void StartHost(int port, uint seed)
     {
         _isHost = true;
@@ -158,18 +177,75 @@ public sealed partial class MultiplayerController : Node
         Multiplayer.PeerConnected += OnPeerConnected;
         Multiplayer.PeerDisconnected += OnPeerDisconnected;
         ZeroAD.Sim.Diag.Log("MP", $"Hosting on port {port}, seed={seed}, player=1");
+        StartStunProbe(port);
     }
 
-    public void StartClient(string address, int port)
+    /// <summary>STUN 探测(后台线程,不阻塞锁步):default.cfg 的 stun 服务器。
+    /// 原版在 host 建服时探测并注册到 lobby(供公网直连)。</summary>
+    private void StartStunProbe(int port)
+    {
+        ExternalAddress = null;
+        var cfg = GetNodeOrNull<UserConfig>("/root/UserConfig");
+        string server = cfg?.GetEffective("network.stun.server") is { Length: > 0 } v
+            ? v : "stun.l.google.com";
+        int stunPort = int.TryParse(cfg?.GetEffective("network.stun.port"), out int sp)
+            ? sp : 19302;
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            var found = Lobby.StunClient.FindPublicIP(server, stunPort);
+            CallDeferred(nameof(OnStunDone),
+                found.HasValue ? $"{found.Value.ip}:{port}" : "");
+        });
+    }
+
+    private void OnStunDone(string address)
+    {
+        ExternalAddress = address.Length > 0 ? address : null;
+        ZeroAD.Sim.Diag.Log("MP", ExternalAddress != null
+            ? $"STUN public address: {ExternalAddress}" : "STUN probe failed (direct IP only)");
+        OnStunResolved?.Invoke();
+    }
+
+    public void StartClient(string address, int port) => StartClient(address, port, false);
+
+    /// <summary>observer=true:以观战者加入(不占槽、不出令、全图视野)。</summary>
+    public void StartClient(string address, int port, bool observer)
     {
         _isHost = false;
         _lobbyActive = true;
+        IsObserver = observer;
         _peer = new ENetMultiplayerPeer();
         _peer.CreateClient(address, port);
         Multiplayer.MultiplayerPeer = _peer;
         Multiplayer.PeerConnected += OnPeerConnected;
         Multiplayer.PeerDisconnected += OnPeerDisconnected;
-        ZeroAD.Sim.Diag.Log("MP", $"Connecting to {address}:{port}");
+        // 连接建立即报身份(原版 hello 握手;host 依此决定是否占槽)。
+        Multiplayer.ConnectedToServer += SendClientHello;
+        ZeroAD.Sim.Diag.Log("MP", $"Connecting to {address}:{port}" + (observer ? " (observer)" : ""));
+    }
+
+    private void SendClientHello()
+    {
+        Rpc(nameof(ClientHello), IsObserver);
+    }
+
+    /// <summary>client 身份握手(观战标记;原版连接握手扩展)。</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void ClientHello(bool observer)
+    {
+        if (!_isHost) return;
+        int sender = (int)Multiplayer.GetRemoteSenderId();
+        _pendingHello.Remove(sender);
+        if (observer)
+        {
+            _observerPeers.Add(sender);
+            ZeroAD.Sim.Diag.Log("MP", $"Peer {sender} joined as observer");
+            OnObserversChanged?.Invoke();
+            BroadcastLobbyState();
+            return;
+        }
+        ClaimSlotForPeer(sender);
+        BroadcastLobbyState();
     }
 
     /// <summary>
@@ -203,11 +279,18 @@ public sealed partial class MultiplayerController : Node
     {
         ZeroAD.Sim.Diag.Log("MP", $"Peer connected: {id}");
         if (!_isHost) return;
-        // Lobby phase only: claim a Human slot for the new peer, then broadcast the lobby
-        // state. The host does NOT start the game here — that waits for HostStartGame so the
-        // host can configure AI slots first. Host owns slot 1; clients fill slots 2..K in
-        // connect order. AI/Closed slots are host-assigned, never connect-assigned.
-        if (!_peerToPlayer.ContainsKey((int)id))
+        // 占槽延到 ClientHello(观战标记随握手到达;hello 前的 peer 挂起)。
+        if (!_peerToPlayer.ContainsKey((int)id) && !_observerPeers.Contains((int)id))
+            _pendingHello.Add((int)id);
+    }
+
+    /// <summary>占槽(原 OnPeerConnected 内联段;现由 ClientHello 驱动)。
+    /// Lobby phase only:claim a Human slot for the new peer, then broadcast the lobby
+    /// state. Host owns slot 1; clients fill slots 2..K in connect order.
+    /// AI/Closed slots are host-assigned, never connect-assigned.</summary>
+    private void ClaimSlotForPeer(int id)
+    {
+        if (!_peerToPlayer.ContainsKey(id))
         {
             // 先占未被认领的 Human 槽;没有则挤掉第一个 AI 槽(原版行为:加入者顶替 AI,
             // 否则默认 AI 槽的房间里客户端永远 "lobby full")。
@@ -238,18 +321,59 @@ public sealed partial class MultiplayerController : Node
                 ZeroAD.Sim.Diag.Err("MP", $"No free slot for peer {id} (lobby full)");
                 return;
             }
-            _peerToPlayer[(int)id] = (uint)claimedSlot;
+            _peerToPlayer[id] = (uint)claimedSlot;
         }
-        BroadcastLobbyState();
     }
 
     private void OnPeerDisconnected(long id)
     {
         ZeroAD.Sim.Diag.Log("MP", $"Peer disconnected: {id}");
+        // 先查槽(Remove 前):局中掉线要把该玩家槽转 AI。
+        bool hadSlot = _peerToPlayer.TryGetValue((int)id, out uint playerId);
         _peerToPlayer.Remove((int)id);
-        if (_lobbyActive && _isHost) BroadcastLobbyState();
-        // Mid-game leave: out of scope (no reconnection/host migration — design doc §9).
+        if (_observerPeers.Remove((int)id))
+            OnObserversChanged?.Invoke();
+        _pendingHello.Remove((int)id);
+        if (_lobbyActive && _isHost)
+        {
+            BroadcastLobbyState();
+            return;
+        }
+        // 局中掉线(host 侧):该玩家槽位转 AI 接管,对局继续(原版 0.29 无局中
+        // 重连,此为优雅降级;真正断线重连 = 状态转移+回合追赶,超出上游能力面,
+        // 记 PORTING-GAPS)。掉线玩家此前的命令节奏由 AI 在回合边界注入接棒。
+        if (_isHost && hadSlot)
+        {
+            int idx = _slots.FindIndex(sl => sl.PlayerId == (int)playerId);
+            if (idx >= 0)
+            {
+                _slots[idx] = _slots[idx] with { Kind = PlayerSlotKind.AI };
+                ZeroAD.Sim.Diag.Log("MP", $"Player {playerId} slot → AI takeover (peer {id} left)");
+                // 全端同步:host 本地 + 广播给其余 peer(各端同点挂 AI,锁步一致)。
+                ApplyAiTakeover((int)playerId);
+                Rpc(nameof(ReceiveAiTakeover), (int)playerId);
+            }
+        }
     }
+
+    private void ApplyAiTakeover(int playerId)
+    {
+        // 热接线:Main 监听,把 AIComponent 挂到该玩家实体。
+        OnPlayerAiTakeover?.Invoke(playerId);
+    }
+
+    /// <summary>host 广播:某玩家槽转 AI(客户端同点转换,锁步一致)。</summary>
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void ReceiveAiTakeover(int playerId)
+    {
+        int idx = _slots.FindIndex(sl => sl.PlayerId == playerId);
+        if (idx >= 0)
+            _slots[idx] = _slots[idx] with { Kind = PlayerSlotKind.AI };
+        OnPlayerAiTakeover?.Invoke(playerId);
+    }
+
+    /// <summary>局中玩家掉线 → 槽位转 AI(host 广播后各端同样转换;Main 挂 AI 脑)。</summary>
+    public event System.Action<int>? OnPlayerAiTakeover;
 
     /// <summary>Host → all: broadcast the current peer map + slot table. Clients store it and
     /// refresh their lobby UI; the host refreshes its own UI via the local event raise.</summary>
@@ -360,7 +484,9 @@ public sealed partial class MultiplayerController : Node
         _slots = PlayerSlotSetupCodec.Unpack(kinds, civs, teams);
         _mapPath = mapPath;
         long myPeer = Multiplayer.GetUniqueId();
-        _localPlayerId = _peerToPlayer.TryGetValue((int)myPeer, out var pid) ? pid : 1;
+        // 观战者不占槽:localPlayerId = 0(全图视野由 Main 按 0 开图;不产命令)。
+        _localPlayerId = IsObserver ? 0u
+            : _peerToPlayer.TryGetValue((int)myPeer, out var pid) ? pid : 1;
         ZeroAD.Sim.Diag.Log("MP", $"Game starting: seed={seed}, localPlayer={_localPlayerId}, slots={_slots.Count}, map={mapPath}");
         OnGameStart?.Invoke(seed, _localPlayerId, _slots, mapPath);
     }

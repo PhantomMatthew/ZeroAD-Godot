@@ -188,7 +188,13 @@ public sealed partial class Main : Node3D
 		AddChild(_lobby);
 
 		_lobby.OnHostStart += (port, seed) => StartMpHost(port, seed);
-		_lobby.OnClientConnect += (addr, port) => StartMpClient(addr, port);
+		// STUN 探测完成 → 大厅状态行补公网地址(供好友直连;原版 host 注册同款)。
+		_mp.OnStunResolved += () =>
+		{
+			if (_mp.ExternalAddress != null)
+				_lobby.SetStatus($"Hosting on port — public: {_mp.ExternalAddress} (share for direct join)");
+		};
+		_lobby.OnClientConnect += (addr, port, observer) => StartMpClient(addr, port, observer);
 		// Lobby slot editing (host only): each edit re-broadcasts the slot table to clients.
 		_lobby.OnSlotEdit += (id, kind, civ, team) => _mp.HostSetSlot(id, kind, civ, team);
 		_lobby.OnMapEdit += map => _mp.HostSetMap(map);
@@ -203,6 +209,14 @@ public sealed partial class Main : Node3D
 		// 大厅聊天(gamesetup_mp 聊天栏):发送 → 网络;收到 → 追加行。
 		_lobby.OnChatSend += text => _mp.SendChat((int)_mp.LocalPlayerId, text);
 		_mp.OnChatReceived += (pid, text) => _lobby.AppendChat(pid, text);
+		// 局中掉线 → AI 接管(全端同点挂载,锁步一致;MP 大厅见 MultiplayerController)。
+		_mp.OnPlayerAiTakeover += pid =>
+		{
+			if (!_gameStarted) return;
+			_sim.AttachAi(pid);
+			_hud?.ShowToast(Localization.Tr("Player") + $" {pid} " +
+				Localization.Tr("has disconnected — AI takes over."));
+		};
 		// Lobby-state refresh: clients repaint their read-only slot list from the host's table.
 		// The host is the source of truth (its rows are editable) and never repaints from events.
 		_mp.OnLobbyStateChanged += slots => { if (!_mp.IsHost) _lobby.RefreshSlotDisplay(slots); };
@@ -379,9 +393,9 @@ public sealed partial class Main : Node3D
 	/// <summary>Client connects and waits in the lobby. Its slot is claimed by the host on
 	/// connect; the host's slot table broadcasts keep this client's read-only view in sync.
 	/// World creation is deferred until the host fires GameStart.</summary>
-	private void StartMpClient(string addr, int port)
+	private void StartMpClient(string addr, int port, bool observer = false)
 	{
-		_mp.StartClient(addr, port);
+		_mp.StartClient(addr, port, observer);
 		_mp.OnGameStart += (s, pid, slots, map) => StartMpGameplay(s, pid, slots, isHost: false, map);
 		_lobby.ShowSlotLobby(isHost: false, null, LobbyMapCatalog(), "");
 		_lobby.SetStatus($"Connecting to {addr}:{port} — waiting for host…");
@@ -419,6 +433,10 @@ public sealed partial class Main : Node3D
 		cfg.LockedTeams = o.LockedTeams;
 		cfg.Cheats = o.Cheats;
 		cfg.VictoryConditions = new System.Collections.Generic.List<string>(o.VictoryConditions);
+		// 观战者(localPlayerId==0):全图揭示(原版 observer 视野),命令面全关
+		// (SimBridge 侧拦截:LocalPlayerId 0 不下发任何玩家命令)。
+		if (playerId == 0)
+			cfg.RevealedMap = true;
 		string mpRel = string.IsNullOrEmpty(map) ? PickSkirmishMapRel() : map;
 		_loadingOverlay = new LoadingOverlay(MapTitleFromPath(mpRel), IsRandomMap(mpRel));
 		AddChild(_loadingOverlay);

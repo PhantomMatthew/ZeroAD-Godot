@@ -2328,7 +2328,13 @@ public sealed partial class SimBridge : Node
 	// they execute COMMAND_DELAY turns later, exactly as in multiplayer — one code path,
 	// no SP/MP divergence. Presentation-only validation stays in Main.) ---
 
-	public void SubmitCommand(NetCommand cmd) => _netTurn.SubmitLocalCommand(cmd);
+	/// <summary>观战者(LocalPlayerId==0)不下发任何玩家命令(原版 observer 无命令面;
+	/// 命令通道只读——选择/点击照常,但一切写操作在此拦截)。</summary>
+	public void SubmitCommand(NetCommand cmd)
+	{
+		if (LocalPlayerId == 0) return;
+		_netTurn.SubmitLocalCommand(cmd);
+	}
 
 	/// <summary>Idempotently assign an entity's owning player. Sandbox spawn paths
 	/// (SpawnUnit/SpawnBuilding) create ownerless entities; this attaches the OwnershipComponent

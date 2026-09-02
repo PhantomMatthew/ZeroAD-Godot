@@ -16,7 +16,9 @@ public sealed partial class LobbyUI : CanvasLayer
     // (gamesetup_mp 端口)。Mode=Lobby(裸跑 session)由 Main._Ready 弹回 MainMenu.tscn。
 
     public event System.Action<int, uint>? OnHostStart;
-    public event System.Action<string, int>? OnClientConnect;
+    /// <summary>client 连接(地址/端口/观战勾选;原版 join 无观战框——
+    /// observer 是我们的扩展,对齐原版 lateobservers 语义)。</summary>
+    public event System.Action<string, int, bool>? OnClientConnect;
 
     // --- Slot-lobby events (Task #10): host edits slots, host starts the game ---
     /// <summary>Host edited a slot (playerId, kind, civ, team). Wired to
@@ -124,6 +126,7 @@ public sealed partial class LobbyUI : CanvasLayer
     }
 
     private LineEdit _nameEdit = null!;
+    private CheckBox? _observerBox;
 
     private void ShowLobbyPanel(bool isHost)
     {
@@ -187,6 +190,16 @@ public sealed partial class LobbyUI : CanvasLayer
         _portEdit = AddModernRow(panel, Localization.Tr("Server Port") + ":",
             cfg.GetEffective("multiplayerhosting.port") is { Length: > 0 } p ? p : "25565", y);
         y += 40;
+        // 观战勾选(原版 observer 加入;不占玩家槽、全图视野、不出令)。
+        if (!isHost)
+        {
+            _observerBox = new CheckBox { Text = Localization.Tr("Join as observer") };
+            UITheme.ApplyCheckboxIcons(_observerBox);
+            _observerBox.Position = new Vector2(460f / 2 + 10, y);
+            _observerBox.Size = new Vector2(460f / 2 - 30, 24);
+            panel.AddChild(_observerBox);
+            y += 40;
+        }
         if (isHost)
         {
             // 同 SP 选图:预填随机种子(原版 gamesetup 行为),手改可锁种子。
@@ -242,7 +255,8 @@ public sealed partial class LobbyUI : CanvasLayer
             if (isHost)
                 OnHostStart?.Invoke(int.Parse(_portEdit.Text), uint.Parse(_seedEdit.Text));
             else
-                OnClientConnect?.Invoke(_addressEdit.Text, int.Parse(_portEdit.Text));
+                OnClientConnect?.Invoke(_addressEdit.Text, int.Parse(_portEdit.Text),
+                    _observerBox?.ButtonPressed ?? false);
         };
         panel.AddChild(btnContinue);
 
