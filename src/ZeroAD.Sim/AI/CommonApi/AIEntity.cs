@@ -112,6 +112,17 @@ public sealed class AIEntity
     public bool NeedsRepair => IsHurt && IsRepairable;
     /// <summary>防御火力(原版 hasDefensiveFire:BuildingAI 存在)。</summary>
     public bool HasDefensiveFire => Get<BuildingAIComponent>() != null;
+
+    /// <summary>可攻击目标(原版 canAttackTarget 简化:有攻击组件 + 目标未死;
+    /// 类/距离精确过滤由命令侧 UnitAI 兜底)。allowCapture 参数对齐原版签名(占位)。</summary>
+    public bool CanAttackTarget(AIEntity target, bool allowCapture = false) =>
+        CanAttack && !target.IsDead;
+
+    // ── UnitAI 状态面(defenseArmy/attackPlan 读;UnitAIState 见上方既有定义)──
+    /// <summary>当前订单目标(原版 unitAIOrderData()[0].target;无 = null)。</summary>
+    public EntityId? UnitAIOrderTarget => Get<UnitAIComponent>()?.CurrentOrder?.Target;
+    /// <summary>当前订单类型(原版 orderData[0].attackType 等的承载;无 = null)。</summary>
+    public string? UnitAIOrderType => Get<UnitAIComponent>()?.CurrentOrder?.Type;
     /// <summary>视野范围(原版 visionRange:VisionComponent/Range)。</summary>
     public float VisionRange => Get<VisionComponent>()?.Range.ToFloat() ?? 0f;
     /// <summary>贸易增益(原版 gainMultiplier:TraderComponent/GainMultiplier)。</summary>

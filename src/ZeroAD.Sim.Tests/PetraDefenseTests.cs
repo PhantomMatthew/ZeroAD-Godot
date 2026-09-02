@@ -145,8 +145,17 @@ public sealed class PetraDefenseTests
         if (w == null) return;
         var dm = new ZeroAD.Sim.AI.Petra.DefenseManager(new PetraConfig(DifficultyLevel.Medium));
 
-        dm.Update(w.Gs, w.Events);
-        AdvanceAndTick(w, 3);
+        // 原版逐玩家轮次扫描(checkEnemyUnits:playedTurn % nbPlayers)——生产环境
+        // 每 think 都 Update,故测试按同款节律驱动(单次 Update 只扫一家)。
+        // 命令延迟 2 回合(commandDelay=2):turn1 的 Attack 命令 turn3 才执行——
+        // 5 轮覆盖"扫描轮次 + 命令延迟 + 订单派发"。
+        for (int i = 0; i < 5; i++)
+        {
+            dm.Update(w.Gs, w.Events);
+            w.Net.AdvanceTurn();
+            foreach (var e in w.Cm.AllEntities.ToList())
+                w.Cm.QueryInterface<UnitAIComponent>(e)?.Tick(0.1f, w.Cm);
+        }
 
         // 最近的空闲士兵应收到 Attack 订单并锁定威胁目标。
         var ai1 = w.Cm.QueryInterface<UnitAIComponent>(w.Soldier1)!;

@@ -87,6 +87,7 @@ public sealed class Headquarters
         TradeManager = new TradeManager(config);
         EmergencyManager = new EmergencyManager(config);
         DefenseManager = new DefenseManager(config);
+        DefenseManager.Hq = this;   // 原版 defenseManager 经 HQ 回查(switchToAttack/isDefendable)
         GarrisonManager = new GarrisonManager(config);
         NavalManager = new NavalManager(config);
         DiplomacyManager = new DiplomacyManager(config);
@@ -763,7 +764,7 @@ public sealed class Headquarters
     /// <summary>原版 getMaxStrength(petra/entityExtend.js:17-70)移植:
     /// 每攻击类型(跳 Slaughter):伤害 × 类型权重均值 + 射程×0.0125
     /// + repeat/100000 - prepare/100000;againstClass 走 Bonuses 乘子(无匹配按 1)。</summary>
-    private static double GetMaxStrength(AITemplate t, string? againstClass)
+    internal static double GetMaxStrength(AITemplate t, string? againstClass)
     {
         double strength = 0;
         foreach (var type in new[] { "Melee", "Ranged", "Capture", "Charge" })
@@ -830,6 +831,33 @@ public sealed class Headquarters
     {
         "wood" => t.CostWood, "food" => t.CostFood, "stone" => t.CostStone, _ => t.CostMetal,
     };
+
+    /// <summary>可防守建筑(原版 HQ.isDefendable 简化:非地基即守;原版按
+    /// 建筑类型/领土连通细算)。defenseManager.isDangerous 的建筑邻近分支用。</summary>
+    public bool IsDefendable(AIEntity ent) => !ent.IsFoundation;
+
+    /// <summary>应急训练(原版 headquarters.trainEmergencyUnits 简化版:各威胁位置
+    /// 就近 CC 补 2 个步兵,进 emergency 队列——原版按军缺口算量,此处定值)。</summary>
+    public void TrainEmergencyUnits(GameState gameState, IReadOnlyList<FixedVector2D> positions)
+    {
+        var ccs = gameState.GetOwnStructures()
+            .Filter(e => e.HasClass("CivCentre") && !e.IsFoundation).Values().ToList();
+        if (ccs.Count == 0) return;
+        string? template = FindBestTrainableUnit(gameState,
+            new[] { "Infantry", "CitizenSoldier" }, new[] { ("strength", 1.0) });
+        if (template == null) return;
+        foreach (var pos in positions)
+        {
+            var cc = ccs.OrderBy(c =>
+            {
+                float dx = c.Position2D.X.ToFloat() - pos.X.ToFloat();
+                float dz = c.Position2D.Y.ToFloat() - pos.Y.ToFloat();
+                return dx * dx + dz * dz;
+            }).First();
+            var metadata = new Dictionary<string, object> { ["plan"] = -2, ["base"] = 0 };
+            Queues.AddPlan("emergency", new TrainingPlan(gameState, template, metadata, 2, 2));
+        }
+    }
 
     /// <summary>危险位置判定(原版 isDangerousLocation 简化版:半径内有敌防御火力建筑)。</summary>
     public bool IsDangerousLocation(GameState gameState, FixedVector2D pos, float radius)

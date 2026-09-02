@@ -260,4 +260,39 @@ public sealed class AttackManager
 
     private static bool HasAnyEntity(GameState gameState, int playerId)
         => gameState.GetEntities(playerId).HasEntities();
+
+    /// <summary>防御军转攻(原版 switchDefenseToAttack):为指定目标起 uniqueTarget
+    /// 进攻计划并立即启动(绕过筹备——原版直推 startedAttacks),军队同陆成员
+    /// 全部转隶(240m 内)。</summary>
+    public bool SwitchDefenseToAttack(GameState gameState, AIEntity target, int armyId)
+    {
+        if (target.Position2D == default) return false;
+        var plan = new AttackPlan(gameState, _totalNumber, AttackPlan.TypeDefault, _config)
+        {
+            UniqueTargetId = target.Id,
+        };
+        _totalNumber++;
+        // 原版直推 startedAttacks 不走筹备,队列注册走 HQ 的 QueueManager
+        // (Init 注册 plan_* 三条;RemoveQueues 收尾要用同表)。
+        plan.Init(gameState, Hq != null ? Hq.Queues : new QueueManager(_config));
+        plan.SetInitialRallyPoint(gameState);
+        // 原版:直推 startedAttacks 并 forceStart。我们走:目标已定 → Completing
+        // 立即超时路径(集结 0s)→ 下轮 UpdatePreparation 返回 Start → StartAttack。
+        plan.Target = target.Id;
+        plan.TargetPos = target.Position2D;
+        plan.ForceStartImmediate(gameState);
+        StartedAttacks[AttackPlan.TypeDefault].Add(plan);
+
+        // 军队成员转隶(原版:army.ownEntities 中同陆者 setMetadata plan)。
+        var army = Hq?.DefenseManager.GetArmy(armyId);
+        if (army != null)
+            foreach (var id in army.OwnEntities.ToList())
+            {
+                var ent = gameState.GetEntityById(id);
+                if (ent == null || ent.Position2D == default) continue;
+                gameState.Metadata.Set(id, "plan", plan.Name);
+                plan.UnitCollection.Add(id);
+            }
+        return true;
+    }
 }

@@ -130,6 +130,10 @@ public sealed class VictoryManager
 {
     private readonly PetraConfig _config;
 
+    /// <summary>胜利关键实体(原版 victoryManager.criticalEnts:奇迹/圣物/国王——
+    /// 防御分派与进攻征收都绕开它们)。</summary>
+    public readonly HashSet<uint> CriticalEnts = new();
+
     public VictoryManager(PetraConfig config) => _config = config;
 
     /// <summary>主更新（原版 victoryManager.js:594-770）。</summary>

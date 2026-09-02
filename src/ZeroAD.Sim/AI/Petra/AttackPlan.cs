@@ -46,6 +46,9 @@ public sealed class AttackPlan
     public List<FixedVector2D>? Path;
     /// <summary>被城墙/门阻断 → Target 改指阻断物(原版 isBlocked)。</summary>
     public bool IsBlocked;
+    /// <summary>定点目标(原版 uniqueTargetId:switchDefenseToAttack 的定向进攻)——
+    /// 非空时目标选择只打它,被毁即完成。</summary>
+    public uint? UniqueTargetId;
 
     // ── 多波次编组(原版 unitStat/buildOrders)──
     /// <summary>单位槽位定义(原版 unitStat 项):类过滤 + 规模/批量 + 优先级 + 评分兴趣。</summary>
@@ -286,6 +289,15 @@ public sealed class AttackPlan
         int targetTotal = 0;
         foreach (var o in BuildOrders) targetTotal += o.Stats.TargetSize;
         return targetTotal > 0 && UnitCollection.Count >= targetTotal;
+    }
+
+    /// <summary>立即启动(原版 switchDefenseToAttack 的 forceStart 路径):
+    /// 绕过筹备——集结 0 秒,状态置 Completing,下轮 UpdatePreparation 即 Start。</summary>
+    public void ForceStartImmediate(GameState gameState)
+    {
+        State = AttackState.Completing;
+        _completingSince = gameState.ElapsedTime;
+        _maxCompletingTime = 0;
     }
 
     private PreparationResult ForceStart(GameState gameState, QueueManager queues)
@@ -604,6 +616,13 @@ public sealed class AttackPlan
         AttackManager attackManager)
     {
         IsBlocked = false;
+        // 定点目标(原版 uniqueTargetId 分支):只打它。
+        if (UniqueTargetId.HasValue)
+        {
+            var only = gameState.GetEntityById(UniqueTargetId.Value);
+            if (only == null || !IsValidTarget(gameState, only)) return null;
+            return CheckTargetObstruction(gameState, only, position);
+        }
         var targets = Type == TypeRaid
             ? RaidTargetFinder(gameState, attackManager)
             : Type is TypeRush or TypeDefault
