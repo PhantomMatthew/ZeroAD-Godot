@@ -59,7 +59,7 @@
 
 | 优先 | 文件(vs 原版) | 缺口 |
 |---|---|---|
-| P1 | **UnitAI.cs** | ✅ CHASING/FINDINGNEWTARGET(16903fa)+Heal/Treasure 换目标续单(c241b13);余缺口:Pickup 接送/编队控制组切换(属内核寻路层,列 §4) |
+| P1 | **UnitAI.cs** | ✅ CHASING/FINDINGNEWTARGET+Heal/Treasure 续单+偏好索敌(71344aa);余:Pickup 接送/编队控制组切换/炮塔站姿 |
 | P1 | **Combat.cs** | ✅ 全清:多攻击型分立(1bbcffc)+溅射范围伤害+弹道延迟(b7b907d)+回血再生(40124c0)+DeathDamage 联动(1754989) |
 | P1 | **Production.cs** | ✅ 逐个出兵 + autoQueue(ea13f60);Upkeep 数据无条目(0 科技/模板带 upkeep,机制存在无需激活) |
 | P1 | **Technology.cs** | ✅ 全清:研究队列+取消退款(68f8e24)+训练 requirements 科技门(521f3b3) |
@@ -67,9 +67,9 @@
 | P1 | **BarterSystem.cs** | ✅ 价漂移已落地(40124c0):每笔推涨+周期回落+存档骑缝;仅 per-player BarterMultiplier 待接(科技修正值管线) |
 | P2 | **UnitMotion.cs**(408 行 vs 原 C++ ~2000) | 异步路径请求架构(现同步解算+0.3s 节流 L41–47)、朝向更新、waypoints 序列化(L38–40 瞬态) |
 | P2 | **UnitSeparation.cs** | pushing-pressure、编队控制组豁免、中途 nudge、per-template weight、CheckMovement 不可通行钳制(TODO L99);O(n²) → 空间分格 |
-| P2 | **Formation.cs** | scatter 队形、双编队合并定时器、编队光环、LoadFormation 换模板、IsRearrangementAllowed(L27–31) |
-| P2 | **Garrison.cs/Turret.cs/GateComponent.cs** | Pickup 接送、外交翻面即时逐出、initGarrison/initTurrets(Garrison L14–18,Turret L13–16);友军接近自动开门、开合动画状态(Gate L5–7) |
-| P2 | **BuildingAI.cs** | attack preference 排序表(L9 取最近敌替代)、手动集火 unitAITarget/focusTargets(L10) |
+| P2 | **Formation.cs** | ✅ scatter + 双编队分簇合并 + 编队光环(6935798);余 LoadFormation 换模板/IsRearrangementAllowed |
+| P2 | **Garrison.cs/Turret.cs/GateComponent.cs** | ✅ 外交翻面即时逐出(e84c6bc);余 Pickup 接送/initGarrison/initTurrets/门自动开关 |
+| P2 | **BuildingAI.cs** | ✅ 偏好排序+手动集火(752ae63) |
 | P2 | TerritoryManager.cs | 影响力模型/BFS 连通/blink 为重建式近似(L8–10 自述),建议对照 CCmpTerritoryManager.cpp 校准 |
 | P3 | PathfinderComponent.cs | 增量阻挡更新=全量 RebuildGrid 替代(L118–119,P1);通行类仅 default/ship |
 
@@ -158,7 +158,7 @@
 - [x] **天空盒**(ef5d6b5:SkyBox.cs——<SkySet>名 → 5 面贴图 + 程序化天空兜底)
 - [x] **战场贴花**(4bb75a1+5c0eea8:BattleDecals——击杀血斑+炮击弹坑/建筑毁坏贴花,45s/90s 消融回收;与 ImpactEffectPool 互补)
 - [x] CCmpDecay 尸体消融表现(4bb75a1:贴花线性淡出+缩小消融回收)
-- [x] 后处理对齐原版选项(5999290:bloom Glow/HQ MSAA 上采样/sharpness 接线)
+- [x] 后处理对齐原版选项(5999290 bloom/MSAA/sharpness;ded5353 水质两档 + fa3b170 DOF 远距模糊)
 - ✅ 已存在勿重复造:单位血条(DrawHealth/HealthBar)、集结点标记+路径线(Main.cs:2482)、投射物视觉池(ProjectilePool/ImpactEffectPool)、迷雾小地图层(FogTextureBuilder)
 
 ## 8. M5 GUI / 音频 / 相机 / GuiInterface
@@ -175,11 +175,14 @@
 - [x] mod 框架对话框全套(fb43094:msgbox/timedconfirmation/termsdialog+terms 框架/colormixer/incompatible_mods/modmod 全量/modio;mod.io v1 REST 实接,缺 minisigs Ed25519 验签——只验存在性)
 - [x] autostart(88811b6:CLI -autostart-* 全参数体系,含 MP host/client 分支与 AI 难度接线;CI 可用)
 - [x] 收敛 LobbyUI.cs 与 MainMenu.cs 两套主菜单(7769ad8:假主菜单删除,MainMenu.tscn 唯一;Mode=Lobby 弹回)
-- [ ] 引擎级 mod 挂载(mod.enabledmods 已持久化但内容加载仍硬编码 public 包;需 VFS 等价物后 Start Mods 才真生效)
+- [x] GUI 尾巴(ec989d0:gamesetup/大厅 AI 难度+性格下拉、外交停火倒计时+盟友攻击请求
+  (锁步命令+AI 评估)、大厅排行榜 UI、手册热键动态替换、加载页引言、易物漂移 1s 刷新);
+  间谍请求待逐对 LOS 共享基建
+- [x] 引擎级 mod 挂载(1050faf:VfsResolver 数据分层挂载,sim 数据下一局生效;美术重启重导)
 
 ### 音频(AudioManager.cs)
 - [x] 3D 空间化(b260e15:AudioStreamPlayer3D 池,攻击/死亡/训练位置衰减;
-  人声留 2D——原版选令语音本就非空间化)
+  人声留 2D——原版选令语音本就非空间化);环境音单层限制(原版多轨叠加)未移植
 
 ### 相机(RTSCamera.cs vs GameView.cpp)
 - [x] 跟随选中单位(6dc3c4a:F 键,输入打断)
