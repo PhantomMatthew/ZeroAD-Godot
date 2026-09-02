@@ -859,6 +859,50 @@ public sealed class Headquarters
         }
     }
 
+    // ── 序列化(原版 headquarters.js Serialize:管理器全量)──
+    /// 读档保真:基地/队列/攻防军/运输全量骑缝;派生表(领土/可达性/密度图)重建。
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("phasing", Phasing);
+        s.NumberI32("currentPhase", CurrentPhase);
+        s.Bool("firstBaseConfig", FirstBaseConfig);
+        s.NumberI32("targetWorkers", TargetNumWorkers);
+        s.Bool("saveResources", SaveResources);
+        s.NumberI32("fortStart", FortStartTime);
+        s.NumberI32("towerStart", TowerStartTime);
+        s.NumberI32("towerLapse", TowerLapseTime);
+        s.NumberI32("fortressStart", FortressStartTime);
+        s.NumberI32("fortressLapse", FortressLapseTime);
+
+        BasesManager.Serialize(s);
+        Queues.Serialize(s);
+        AttackManager.Serialize(s);
+        DefenseManager.Serialize(s);
+        NavalManager.Serialize(s);
+    }
+
+    /// <summary>重建(写序逐位一致)。gameState 用于队列计划/编组的模板成本重算——
+    /// 由 AIComponent 在反序列化前以最小上下文构造(模板目录在 cm 已就位)。</summary>
+    public void Deserialize(Serialization.IDeserializer d, GameState gameState)
+    {
+        Phasing = d.NumberI32("phasing");
+        CurrentPhase = d.NumberI32("currentPhase");
+        FirstBaseConfig = d.Bool("firstBaseConfig");
+        TargetNumWorkers = d.NumberI32("targetWorkers");
+        SaveResources = d.Bool("saveResources");
+        FortStartTime = d.NumberI32("fortStart");
+        TowerStartTime = d.NumberI32("towerStart");
+        TowerLapseTime = d.NumberI32("towerLapse");
+        FortressStartTime = d.NumberI32("fortressStart");
+        FortressLapseTime = d.NumberI32("fortressLapse");
+
+        BasesManager.Deserialize(d);
+        Queues.Deserialize(d, gameState);
+        AttackManager.Deserialize(d, gameState);
+        DefenseManager.Deserialize(d, gameState);
+        NavalManager.Deserialize(d);
+    }
+
     /// <summary>危险位置判定(原版 isDangerousLocation 简化版:半径内有敌防御火力建筑)。</summary>
     public bool IsDangerousLocation(GameState gameState, FixedVector2D pos, float radius)
     {
@@ -915,6 +959,40 @@ public sealed class Headquarters
 
     public bool HasPotentialBase(GameState gameState)
         => HasActiveBase(gameState);
+
+    // ── 序列化(原版 basesManager:基地锚/序号;dropsite 分层表是派生态,
+    /// 首个 Update 重建,不骑缝)──
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("nextId", _nextBaseId);
+        s.NumberI32("bases", Bases.Count);
+        foreach (var b in Bases.OrderBy(b => b.ID))
+        {
+            s.NumberI32("id", b.ID);
+            s.NumberU32("anchor", b.AnchorId ?? 0);
+            s.NumberI32("access", b.AccessIndex ?? -1);
+            s.Bool("constructing", b.Constructing);
+            s.NumberI32("neededDef", b.NeededDefenders);
+        }
+    }
+
+    public void Deserialize(Serialization.IDeserializer d)
+    {
+        _nextBaseId = d.NumberI32("nextId");
+        int bases = d.NumberI32("bases");
+        for (int i = 0; i < bases; i++)
+        {
+            int id = d.NumberI32("id");
+            var b = new BaseManager(null!, this, id)
+            {
+                AnchorId = d.NumberU32("anchor") is { } a && a > 0 ? a : null,
+                AccessIndex = d.NumberI32("access") is { } ac && ac >= 0 ? (ushort)ac : null,
+                Constructing = d.Bool("constructing"),
+                NeededDefenders = d.NumberI32("neededDef"),
+            };
+            Bases.Add(b);
+        }
+    }
 
     public BaseManager CreateBase(GameState gameState, uint anchorId)
     {

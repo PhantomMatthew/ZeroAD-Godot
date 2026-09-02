@@ -23,18 +23,18 @@ public sealed class TransportPlan
     public readonly ushort EndIndex;     // 目标陆区
     public readonly ushort Sea;          // 途经海域(0 = 无——不应发生,构造时已验)
     public readonly FixedVector2D EndPos;
-    public TransportState State { get; private set; } = TransportState.Boarding;
+    public TransportState State { get; internal set; } = TransportState.Boarding;
 
     /// <summary>待运单位 / 分配到的运输船(entity id)。</summary>
     public readonly List<uint> Units = new();
     public readonly List<uint> Ships = new();
     /// <summary>船 → 登船点(岸线上船位)。</summary>
-    private readonly Dictionary<uint, FixedVector2D> _boardingPos = new();
+    internal readonly Dictionary<uint, FixedVector2D> _boardingPos = new();
     /// <summary>单位 → 登船尝试次数(卡死检测)。</summary>
     private readonly Dictionary<uint, int> _tryCount = new();
     /// <summary>单位 → 上次位置(卡死检测)。</summary>
     private readonly Dictionary<uint, FixedVector2D> _lastPos = new();
-    private double _stateSince;
+    internal double _stateSince;
 
     public TransportPlan(int id, ushort startIndex, ushort endIndex, ushort sea, FixedVector2D endPos)
     {
@@ -271,6 +271,49 @@ public sealed class TransportPlan
         gameState.Metadata.Remove(unitId, "onBoard");
         gameState.Metadata.Remove(unitId, "endPosX");
         gameState.Metadata.Remove(unitId, "endPosZ");
+    }
+
+    // ── 序列化(原版 transportPlan.js Serialize;读档后运输不丢)──
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("id", ID);
+        s.NumberI32("start", StartIndex);
+        s.NumberI32("end", EndIndex);
+        s.NumberI32("sea", Sea);
+        s.NumberFixed("ex", EndPos.X);
+        s.NumberFixed("ez", EndPos.Y);
+        s.NumberI32("state", (int)State);
+        s.NumberFixed("since", Fixed.FromFloat((float)_stateSince));
+        s.NumberI32("units", Units.Count);
+        foreach (var id in Units.OrderBy(i => i)) s.NumberU32("u", id);
+        s.NumberI32("ships", Ships.Count);
+        foreach (var id in Ships.OrderBy(i => i)) s.NumberU32("s", id);
+        s.NumberI32("boardingPos", _boardingPos.Count);
+        foreach (var kv in _boardingPos.OrderBy(kv => kv.Key))
+        {
+            s.NumberU32("ship", kv.Key);
+            s.NumberFixed("bx", kv.Value.X);
+            s.NumberFixed("bz", kv.Value.Y);
+        }
+    }
+
+    public static TransportPlan Deserialize(Serialization.IDeserializer d)
+    {
+        int id = d.NumberI32("id");
+        var plan = new TransportPlan(id, (ushort)d.NumberI32("start"),
+            (ushort)d.NumberI32("end"), (ushort)d.NumberI32("sea"),
+            new FixedVector2D(d.NumberFixed("ex"), d.NumberFixed("ez")));
+        plan.State = (TransportState)d.NumberI32("state");
+        plan._stateSince = d.NumberFixed("since").ToFloat();
+        int units = d.NumberI32("units");
+        for (int i = 0; i < units; i++) plan.Units.Add(d.NumberU32("u"));
+        int ships = d.NumberI32("ships");
+        for (int i = 0; i < ships; i++) plan.Ships.Add(d.NumberU32("s"));
+        int boardingPos = d.NumberI32("boardingPos");
+        for (int i = 0; i < boardingPos; i++)
+            plan._boardingPos[d.NumberU32("ship")] =
+                new FixedVector2D(d.NumberFixed("bx"), d.NumberFixed("bz"));
+        return plan;
     }
 
     /// <summary>收尾释放(原版 releaseAll):单位/船元数据全清。</summary>

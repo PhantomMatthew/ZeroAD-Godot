@@ -21,7 +21,7 @@ public sealed class DefenseManager
 
     /// <summary>防御军列表(原版 armies)。</summary>
     public readonly List<DefenseArmy> Armies = new();
-    private int _nextArmyId = 1;
+    internal int _nextArmyId = 1;
 
     /// <summary>敌方进攻目标(地基/在建 CC)id(原版 targetList;Raid 目标源)。</summary>
     public readonly List<uint> TargetList = new();
@@ -496,6 +496,36 @@ public sealed class DefenseManager
     {
         army.Clear(gameState);
         Armies.Remove(army);
+    }
+
+    // ── 序列化(原版 defenseManager.js Serialize)──
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("nextArmy", _nextArmyId);
+        s.NumberI32("targets", TargetList.Count);
+        foreach (var id in TargetList) s.NumberU32("t", id);
+        s.NumberI32("attackedAllies", AttackedAllies.Count);
+        foreach (var kv in AttackedAllies.OrderBy(kv => kv.Key))
+        {
+            s.NumberI32("ally", kv.Key);
+            s.NumberI32("count", kv.Value);
+        }
+        s.NumberI32("armies", Armies.Count);
+        foreach (var army in Armies.OrderBy(a => a.ID))
+            army.Serialize(s);
+    }
+
+    public void Deserialize(Serialization.IDeserializer d, GameState gameState)
+    {
+        _nextArmyId = d.NumberI32("nextArmy");
+        int targets = d.NumberI32("targets");
+        for (int i = 0; i < targets; i++) TargetList.Add(d.NumberU32("t"));
+        int allies = d.NumberI32("attackedAllies");
+        for (int i = 0; i < allies; i++)
+            AttackedAllies[d.NumberI32("ally")] = d.NumberI32("count");
+        int armies = d.NumberI32("armies");
+        for (int i = 0; i < armies; i++)
+            Armies.Add(DefenseArmy.Deserialize(d, gameState, _config));
     }
 
     private void CheckEvents(GameState gameState, AIEventBuffer events)

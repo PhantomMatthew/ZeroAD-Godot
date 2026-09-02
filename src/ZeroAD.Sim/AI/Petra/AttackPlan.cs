@@ -33,7 +33,7 @@ public sealed class AttackPlan
     public readonly string Type;
     public readonly int Name;
     public readonly PetraConfig Config;
-    public AttackState State { get; private set; }
+    public AttackState State { get; internal set; }
     public bool Paused;
 
     /// <summary>参与单位(entity id 集;metadata plan == Name 为其登记方式)。</summary>
@@ -69,13 +69,13 @@ public sealed class AttackPlan
         public string Name = "";
     }
     public readonly List<BuildOrder> BuildOrders = new();
-    private readonly Dictionary<string, UnitStat> _unitStats = new();
-    private int _siegeState = SiegeNotTested;
+    internal readonly Dictionary<string, UnitStat> _unitStats = new();
+    internal int _siegeState = SiegeNotTested;
     public bool CanBuildUnits;
     /// <summary>筹备期上限(秒;原版 maxCompletingTime——超时强制推)。</summary>
-    private double _maxCompletingTime;
+    internal double _maxCompletingTime;
     /// <summary>集结开始时刻(秒)。</summary>
-    private double _completingSince = -1;
+    internal double _completingSince = -1;
 
     // 队列名(原版 queueManager.addQueue("plan_" + name…))。
     public string QueueName => "plan_" + Name;
@@ -1122,4 +1122,107 @@ public sealed class AttackPlan
 
     /// <summary>UpdatePreparation 的 queues 缓存(addSiegeUnits 的 EmptyQueues 用)。</summary>
     public void WireQueues(QueueManager queues) => _queuesRef = queues;
+
+    // ── 序列化(原版 attackPlan.js Serialize;读档后进攻状态不丢)──
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("name", Name);
+        s.StringASCII("type", Type);
+        s.NumberI32("state", (int)State);
+        s.Bool("paused", Paused);
+        s.NumberU32("target", Target ?? 0);
+        s.NumberI32("targetPlayer", TargetPlayer ?? -1);
+        s.Bool("hasTargetPos", TargetPos.HasValue);
+        if (TargetPos.HasValue)
+        {
+            s.NumberFixed("tpx", TargetPos.Value.X);
+            s.NumberFixed("tpz", TargetPos.Value.Y);
+        }
+        s.Bool("hasRally", RallyPoint.HasValue);
+        if (RallyPoint.HasValue)
+        {
+            s.NumberFixed("rpx", RallyPoint.Value.X);
+            s.NumberFixed("rpz", RallyPoint.Value.Y);
+        }
+        s.NumberI32("overseas", Overseas);
+        s.NumberU32("uniqueTarget", UniqueTargetId ?? 0);
+        s.Bool("blocked", IsBlocked);
+        s.Bool("canBuild", CanBuildUnits);
+        s.NumberI32("siegeState", _siegeState);
+        s.NumberFixed("compSince", Fixed.FromFloat((float)_completingSince));
+        s.NumberFixed("maxComp", Fixed.FromFloat((float)_maxCompletingTime));
+        s.NumberI32("units", UnitCollection.Count);
+        foreach (var id in UnitCollection.OrderBy(id => id))
+            s.NumberU32("u", id);
+        // 编组槽(原版 buildOrders):名称 + 计数 + 槽位定义全字段。
+        s.NumberI32("orders", BuildOrders.Count);
+        foreach (var o in BuildOrders)
+        {
+            s.StringASCII("name", o.Name);
+            s.NumberI32("current", o.CurrentCount);
+            s.NumberFixed("priority", Fixed.FromFloat((float)o.Stats.Priority));
+            s.NumberI32("min", o.Stats.MinSize);
+            s.NumberI32("target", o.Stats.TargetSize);
+            s.NumberI32("batch", o.Stats.BatchSize);
+            s.StringASCII("classes", string.Join(' ', o.Classes));
+            s.NumberI32("interests", o.Stats.Interests.Length);
+            foreach (var (interest, weight) in o.Stats.Interests)
+            {
+                s.StringASCII("iname", interest);
+                s.NumberFixed("iw", Fixed.FromFloat((float)weight));
+            }
+        }
+    }
+
+    /// <summary>重建(写序逐位一致)。构造走默认表再被读值覆盖——
+    /// BuildOrders 由反序列化重建,不走构造的默认编组。</summary>
+    public static AttackPlan Deserialize(Serialization.IDeserializer d, GameState gameState,
+        PetraConfig config)
+    {
+        int name = d.NumberI32("name");
+        string type = d.StringASCII("type");
+        var plan = new AttackPlan(gameState, name, type, config);
+        plan.State = (AttackState)d.NumberI32("state");
+        plan.Paused = d.Bool("paused");
+        plan.Target = d.NumberU32("target") is { } t && t > 0 ? t : null;
+        plan.TargetPlayer = d.NumberI32("targetPlayer") is { } tp && tp >= 0 ? tp : null;
+        if (d.Bool("hasTargetPos"))
+            plan.TargetPos = new FixedVector2D(d.NumberFixed("tpx"), d.NumberFixed("tpz"));
+        if (d.Bool("hasRally"))
+            plan.RallyPoint = new FixedVector2D(d.NumberFixed("rpx"), d.NumberFixed("rpz"));
+        plan.Overseas = (ushort)d.NumberI32("overseas");
+        plan.UniqueTargetId = d.NumberU32("uniqueTarget") is { } ut && ut > 0 ? ut : null;
+        plan.IsBlocked = d.Bool("blocked");
+        plan.CanBuildUnits = d.Bool("canBuild");
+        plan._siegeState = d.NumberI32("siegeState");
+        plan._completingSince = d.NumberFixed("compSince").ToFloat();
+        plan._maxCompletingTime = d.NumberFixed("maxComp").ToFloat();
+        int units = d.NumberI32("units");
+        for (int i = 0; i < units; i++)
+            plan.UnitCollection.Add(d.NumberU32("u"));
+        plan.BuildOrders.Clear();
+        int orders = d.NumberI32("orders");
+        for (int i = 0; i < orders; i++)
+        {
+            var o = new BuildOrder
+            {
+                Name = d.StringASCII("name"),
+                CurrentCount = d.NumberI32("current"),
+            };
+            double priority = d.NumberFixed("priority").ToFloat();
+            int min = d.NumberI32("min");
+            int target = d.NumberI32("target");
+            int batch = d.NumberI32("batch");
+            var classes = d.StringASCII("classes").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            int interests = d.NumberI32("interests");
+            var ints = new (string, double)[interests];
+            for (int j = 0; j < interests; j++)
+                ints[j] = (d.StringASCII("iname"), d.NumberFixed("iw").ToFloat());
+            o.Classes = classes;
+            o.Stats = new UnitStat(priority, min, target, batch, classes, ints);
+            plan.BuildOrders.Add(o);
+            plan._unitStats[o.Name] = o.Stats;
+        }
+        return plan;
+    }
 }

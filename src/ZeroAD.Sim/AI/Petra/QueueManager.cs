@@ -360,6 +360,40 @@ public sealed class QueueManager
         if (_queues.TryGetValue(name, out var q)) q.Paused = false;
     }
 
+    /// <summary>序列化(原版 queueManager.js Serialize):队列按名排序(确定性),
+    /// 每队列 优先级+paused+账户(4 资源)+计划。</summary>
+    public void Serialize(Serialization.ISerializer s)
+    {
+        var names = _queues.Keys.OrderBy(k => k, StringComparer.Ordinal).ToList();
+        s.NumberI32("queues", names.Count);
+        foreach (var name in names)
+        {
+            s.StringASCII("name", name);
+            s.NumberI32("priority", _priorities.GetValueOrDefault(name));
+            _accounts[name].Serialize(s);
+            _queues[name].Serialize(s);
+        }
+    }
+
+    public void Deserialize(Serialization.IDeserializer d, GameState gameState)
+    {
+        int count = d.NumberI32("queues");
+        for (int i = 0; i < count; i++)
+        {
+            string name = d.StringASCII("name");
+            int priority = d.NumberI32("priority");
+            if (!_queues.ContainsKey(name))
+            {
+                _queues[name] = new PetraQueue();
+                _accounts[name] = new ResourcesManager();
+            }
+            _priorities[name] = priority;
+            _accounts[name].Deserialize(d);
+            _queues[name].Deserialize(d, gameState);
+        }
+        SortQueues();
+    }
+
     public void Clear()
     {
         foreach (var q in _queues.Values) q.Plans.Clear();

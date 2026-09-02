@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim.AI.CommonApi;
@@ -13,6 +14,85 @@ public abstract class QueuePlan
     public int Number = 1;
     public ResourcesManager Cost = new();
     public Dictionary<string, object> Metadata = new();
+
+    // ── 序列化(原版 queueplan*.js Serialize;存档后 AI 计划不丢)──
+    // 种类标签:0=Training 1=Construction 2=Research(写序与 Deserialize 逐位一致)。
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("kind", this is TrainingPlan ? 0 : this is ConstructionPlan ? 1 : 2);
+        s.StringASCII("type", Type);
+        s.NumberI32("number", Number);
+        if (this is TrainingPlan tp) s.NumberI32("maxMerge", tp.MaxMerge);
+        if (this is ConstructionPlan cp)
+        {
+            var pos = cp.Position;
+            s.Bool("hasPos", pos.HasValue);
+            if (pos.HasValue)
+            {
+                s.NumberFixed("px", pos.Value.X);
+                s.NumberFixed("pz", pos.Value.Y);
+            }
+        }
+        s.NumberI32("metaCount", Metadata.Count);
+        foreach (var kv in Metadata.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            s.StringASCII("key", kv.Key);
+            // 类型标签:0=string 1=int 2=FixedVector2D(生产者收敛:plan/special/
+            // role=string,base/sea=int,position=FixedVector2D)。
+            switch (kv.Value)
+            {
+                case int i:
+                    s.NumberI32("tag", 1);
+                    s.NumberI32("ival", i);
+                    break;
+                case Maths.FixedVector2D v:
+                    s.NumberI32("tag", 2);
+                    s.NumberFixed("vx", v.X);
+                    s.NumberFixed("vz", v.Y);
+                    break;
+                default:
+                    s.NumberI32("tag", 0);
+                    s.StringASCII("sval", kv.Value?.ToString() ?? "");
+                    break;
+            }
+        }
+    }
+
+    /// <summary>重建(种类标签分发;ConstructionPlan 的 Cost 由 gameState 模板重算)。</summary>
+    public static QueuePlan Deserialize(Serialization.IDeserializer d, GameState gameState)
+    {
+        int kind = d.NumberI32("kind");
+        string type = d.StringASCII("type");
+        int number = d.NumberI32("number");
+        QueuePlan plan;
+        if (kind == 0)
+        {
+            int maxMerge = d.NumberI32("maxMerge");
+            plan = new TrainingPlan(gameState, type, number: number, maxMerge: maxMerge);
+        }
+        else if (kind == 1)
+        {
+            var cp = new ConstructionPlan(gameState, type);
+            if (d.Bool("hasPos"))
+                cp.Position = new Maths.FixedVector2D(d.NumberFixed("px"), d.NumberFixed("pz"));
+            plan = cp;
+        }
+        else
+            plan = new ResearchPlan(gameState, type);
+        int metaCount = d.NumberI32("metaCount");
+        for (int i = 0; i < metaCount; i++)
+        {
+            string key = d.StringASCII("key");
+            int tag = d.NumberI32("tag");
+            plan.Metadata[key] = tag switch
+            {
+                1 => d.NumberI32("ival"),
+                2 => new Maths.FixedVector2D(d.NumberFixed("vx"), d.NumberFixed("vz")),
+                _ => (object)d.StringASCII("sval"),
+            };
+        }
+        return plan;
+    }
 
     public abstract bool IsInvalid(GameState gameState);
     public virtual bool IsGo(GameState gameState) => true;

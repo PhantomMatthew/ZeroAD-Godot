@@ -81,6 +81,24 @@ public sealed class PetraQueue
     public int CountQueuedUnitsWithClass(string cls)
         => Plans.Where(p => p.Category == "unit").Sum(p => p.Number);
 
+    /// <summary>序列化(原版 queue.js;计划全量,顺序 = 队列序)。</summary>
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.Bool("paused", Paused);
+        s.NumberI32("count", Plans.Count);
+        foreach (var plan in Plans)
+            plan.Serialize(s);
+    }
+
+    public void Deserialize(Serialization.IDeserializer d, GameState gameState)
+    {
+        Paused = d.Bool("paused");
+        int count = d.NumberI32("count");
+        Plans.Clear();
+        for (int i = 0; i < count; i++)
+            Plans.Add(QueuePlan.Deserialize(d, gameState));
+    }
+
     /// <summary>按元数据键值计数在排单位(原版 countQueuedUnitsWithMetadata;
     /// attackPlan 的 "special" 槽位标记经此计入编组进度)。</summary>
     public int CountQueuedUnitsWithMetadata(string key, object value)

@@ -216,6 +216,9 @@ public sealed class AIComponent : ComponentBase
         s.NumberI32("attackThinkCount", _attack?._attackThinkCount ?? 0);
         s.NumberI32("targetVillagers", _economy?._targetVillagers ?? 12);
         Metadata.Serialize(s);
+        // HQ 全量(基地/队列/攻防军/运输;v12 新增,档尾追加)。反序列化侧靠
+        // 读档版本门(SaveGameManager Version≥12 才喂这段——旧档无此尾)。
+        _hq?.Serialize(s);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -234,5 +237,25 @@ public sealed class AIComponent : ComponentBase
         if (_research != null) _research._researchThinkCount = researchThinkCount;
         if (_attack != null) _attack._attackThinkCount = attackThinkCount;
         Metadata.Deserialize(d);
+
+        // HQ 尾段(存档 v12+;格式版本严格相等才进载荷——旧档在头被拒,
+        // 到这里的都是 v12+,直读)。
+        DeserializeHq(d);
+    }
+
+    /// <summary>HQ 尾段反序列化(仅存档版本 ≥12 调用;gameState 由本组件以最小
+    /// 上下文构造——模板目录在 cm 就位,科技目录缺失时给空壳(phases 不参与
+    /// 队列重建)。</summary>
+    public void DeserializeHq(IDeserializer d)
+    {
+        if (_hq == null || _cm == null) return;
+        // playerId 单一真源(与 Tick 同款):本实体的 OwnershipComponent。
+        int playerId = _cm.QueryInterface<OwnershipComponent>(Entity)?.PlayerId ?? 0;
+        var gs = new AI.CommonApi.GameState(_cm,
+            _cm.Templates ?? new Content.TemplateLoader(""),
+            Content.TechnologyLoader.LoadAll(""),
+            playerId, Metadata, Events, null)
+        { Net = _net };
+        _hq.Deserialize(d, gs);
     }
 }

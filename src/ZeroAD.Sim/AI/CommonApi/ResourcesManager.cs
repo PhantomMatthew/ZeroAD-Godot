@@ -18,6 +18,22 @@ public sealed class ResourcesManager
     public static ResourcesManager FromPlayer(PlayerComponent p)
         => new(p.Wood, p.Food, p.Stone, p.Metal);
 
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("w", Wood);
+        s.NumberI32("f", Food);
+        s.NumberI32("s", Stone);
+        s.NumberI32("m", Metal);
+    }
+
+    public void Deserialize(Serialization.IDeserializer d)
+    {
+        Wood = d.NumberI32("w");
+        Food = d.NumberI32("f");
+        Stone = d.NumberI32("s");
+        Metal = d.NumberI32("m");
+    }
+
     public int this[ResourceType t] => t switch
     {
         ResourceType.Wood => Wood, ResourceType.Food => Food,

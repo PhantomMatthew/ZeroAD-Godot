@@ -261,6 +261,56 @@ public sealed class AttackManager
     private static bool HasAnyEntity(GameState gameState, int playerId)
         => gameState.GetEntities(playerId).HasEntities();
 
+    // ── 序列化(原版 attackManager.js Serialize;计数器/回收池/计划全量)──
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("total", _totalNumber);
+        s.NumberI32("rush", _rushNumber);
+        s.NumberI32("attack", _attackNumber);
+        s.NumberI32("currentEnemy", _currentEnemyPlayer ?? -1);
+        s.NumberI32("defeated", _defeated.Count);
+        foreach (var p in _defeated.OrderBy(p => p)) s.NumberI32("d", p);
+        s.NumberI32("outOfPlan", OutOfPlan.Count);
+        foreach (var id in OutOfPlan.OrderBy(id => id)) s.NumberU32("o", id);
+        foreach (var (bucket, list) in new[]
+            { ("up", UpcomingAttacks), ("st", StartedAttacks) })
+        {
+            s.StringASCII("bucket", bucket);
+            int total = list.Values.Sum(v => v.Count);
+            s.NumberI32("plans", total);
+            foreach (var type in new[] { AttackPlan.TypeRush, AttackPlan.TypeRaid,
+                AttackPlan.TypeDefault, AttackPlan.TypeHugeAttack })
+                foreach (var plan in list[type])
+                    plan.Serialize(s);
+        }
+    }
+
+    /// <summary>重建(写序逐位一致;计划经 AttackPlan.Deserialize 全量还原,
+    /// 队列由 HQ 的 QueueManager 序列另行恢复——plan_* 队列在其中)。</summary>
+    public void Deserialize(Serialization.IDeserializer d, GameState gameState)
+    {
+        _totalNumber = d.NumberI32("total");
+        _rushNumber = d.NumberI32("rush");
+        _attackNumber = d.NumberI32("attack");
+        _currentEnemyPlayer = d.NumberI32("currentEnemy") is { } c && c >= 0 ? c : null;
+        int defeated = d.NumberI32("defeated");
+        for (int i = 0; i < defeated; i++) _defeated.Add(d.NumberI32("d"));
+        int outOfPlan = d.NumberI32("outOfPlan");
+        for (int i = 0; i < outOfPlan; i++) OutOfPlan.Add(d.NumberU32("o"));
+        foreach (var list in new[] { UpcomingAttacks, StartedAttacks })
+        {
+            string bucket = d.StringASCII("bucket");
+            int plans = d.NumberI32("plans");
+            for (int i = 0; i < plans; i++)
+            {
+                var plan = AttackPlan.Deserialize(d, gameState, _config);
+                // 读回时队列引用重挂(HQ.Queues 由 QueueManager.Deserialize 先行恢复)。
+                if (Hq != null) plan.WireQueues(Hq.Queues);
+                list[plan.Type].Add(plan);
+            }
+        }
+    }
+
     /// <summary>防御军转攻(原版 switchDefenseToAttack):为指定目标起 uniqueTarget
     /// 进攻计划并立即启动(绕过筹备——原版直推 startedAttacks),军队同陆成员
     /// 全部转隶(240m 内)。</summary>

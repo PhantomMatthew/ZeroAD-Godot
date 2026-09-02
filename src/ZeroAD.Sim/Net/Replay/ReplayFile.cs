@@ -32,7 +32,7 @@ namespace ZeroAD.Sim.Net
     public static class ReplayFile
     {
         public const string Magic = "0ADREPL";
-        public const uint Version = 1;
+        public const uint Version = 2;   // v2: AIComponent 增 HQ 尾段(初始状态载荷格式随存档 v12)
 
         /// <summary>开始录制：写 magic + header + 初始状态，返回 ReplayWriter 供逐回合追加命令。</summary>
         public static ReplayWriter BeginRecording(Stream stream, ReplayMeta meta, ComponentManager cm)

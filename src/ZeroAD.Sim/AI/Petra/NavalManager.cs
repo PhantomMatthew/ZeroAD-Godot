@@ -26,7 +26,7 @@ public sealed class NavalManager
 
     public NavalManager(PetraConfig config) => _config = config;
 
-    private int _nextTransportId = 1;
+    internal int _nextTransportId = 1;
     /// <summary>每海域最低运输船数(原版 minimalTransportShips;attackPlan 跨海进攻上调)。</summary>
     public readonly Dictionary<ushort, int> MinimalTransportShips = new();
 
@@ -94,6 +94,32 @@ public sealed class NavalManager
                 needPlans.RemoveAt(0);
             if (needPlans.Count == 0) return;
         }
+    }
+
+    // ── 序列化(原版 navalManager 运输段)──
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("nextPlan", _nextTransportId);
+        s.NumberI32("minShips", MinimalTransportShips.Count);
+        foreach (var kv in MinimalTransportShips.OrderBy(kv => kv.Key))
+        {
+            s.NumberI32("sea", kv.Key);
+            s.NumberI32("num", kv.Value);
+        }
+        s.NumberI32("plans", TransportPlans.Count);
+        foreach (var plan in TransportPlans.OrderBy(p => p.ID))
+            plan.Serialize(s);
+    }
+
+    public void Deserialize(Serialization.IDeserializer d)
+    {
+        _nextTransportId = d.NumberI32("nextPlan");
+        int minShips = d.NumberI32("minShips");
+        for (int i = 0; i < minShips; i++)
+            MinimalTransportShips[(ushort)d.NumberI32("sea")] = d.NumberI32("num");
+        int plans = d.NumberI32("plans");
+        for (int i = 0; i < plans; i++)
+            TransportPlans.Add(TransportPlan.Deserialize(d));
     }
 
     /// <summary>运输船缺口(原版 wantedTransportShips:各海域最低数 vs 实有)。</summary>

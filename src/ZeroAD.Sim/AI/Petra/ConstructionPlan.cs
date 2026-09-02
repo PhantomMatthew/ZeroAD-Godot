@@ -19,6 +19,8 @@ namespace ZeroAD.Sim.AI.Petra;
 /// 和 territory map 的完整实现。</summary>
 public sealed class ConstructionPlan : QueuePlan
 {
+    /// <summary>建造位置(Start 后有效;序列化骑缝)。</summary>
+    public FixedVector2D? Position;
     private FixedVector2D _position;
 
     public ConstructionPlan(GameState gameState, string type, Dictionary<string, object>? metadata = null)
@@ -95,6 +97,7 @@ public sealed class ConstructionPlan : QueuePlan
             (uint)gameState.PlayerId, builder.Id, Type, pos.X, pos.Z,
             Maths.Fixed.FromFloat(pos.Angle)));
         _position = new FixedVector2D(pos.X, pos.Z);
+        Position = _position;
     }
 
     /// <summary>选址（原版 findGoodPosition，~800 行 → 简化版 ~40 行）。

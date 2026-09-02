@@ -27,8 +27,8 @@ public sealed class DefenseArmy
     private double _positionLastUpdate = -1;
 
     /// <summary>防守者 → 目标(assignedTo)/ 目标 → 防守者列表(assignedAgainst)。</summary>
-    private readonly Dictionary<uint, uint> _assignedTo = new();
-    private readonly Dictionary<uint, List<uint>> _assignedAgainst = new();
+    internal readonly Dictionary<uint, uint> _assignedTo = new();
+    internal readonly Dictionary<uint, List<uint>> _assignedAgainst = new();
 
     public readonly List<uint> FoeEntities = new();
     public readonly List<uint> OwnEntities = new();
@@ -346,5 +346,57 @@ public sealed class DefenseArmy
         float dx = a.X.ToFloat() - b.X.ToFloat();
         float dz = a.Y.ToFloat() - b.Y.ToFloat();
         return dx * dx + dz * dz;
+    }
+
+    // ── 序列化(原版 defenseArmy.js Serialize)──
+    public void Serialize(Serialization.ISerializer s)
+    {
+        s.NumberI32("id", ID);
+        s.StringASCII("type", Type);
+        s.NumberFixed("fx", FoePosition.X);
+        s.NumberFixed("fz", FoePosition.Y);
+        s.NumberFixed("foeStr", Fixed.FromFloat((float)FoeStrength));
+        s.NumberFixed("ownStr", Fixed.FromFloat((float)OwnStrength));
+        s.NumberI32("foes", FoeEntities.Count);
+        foreach (var id in FoeEntities.OrderBy(i => i)) s.NumberU32("f", id);
+        s.NumberI32("own", OwnEntities.Count);
+        foreach (var id in OwnEntities.OrderBy(i => i)) s.NumberU32("o", id);
+        s.NumberI32("assignedTo", _assignedTo.Count);
+        foreach (var kv in _assignedTo.OrderBy(kv => kv.Key))
+        {
+            s.NumberU32("unit", kv.Key);
+            s.NumberU32("foe", kv.Value);
+        }
+    }
+
+    public static DefenseArmy Deserialize(Serialization.IDeserializer d, GameState gameState,
+        PetraConfig config)
+    {
+        int id = d.NumberI32("id");
+        string type = d.StringASCII("type");
+        var army = new DefenseArmy(gameState, System.Array.Empty<uint>(), type, id, config);
+        army.FoePosition = new FixedVector2D(d.NumberFixed("fx"), d.NumberFixed("fz"));
+        army.FoeStrength = d.NumberFixed("foeStr").ToFloat();
+        army.OwnStrength = d.NumberFixed("ownStr").ToFloat();
+        int foes = d.NumberI32("foes");
+        for (int i = 0; i < foes; i++)
+        {
+            uint f = d.NumberU32("f");
+            army.FoeEntities.Add(f);
+            gameState.Metadata.Set(f, "PartOfArmy", id);
+        }
+        int own = d.NumberI32("own");
+        for (int i = 0; i < own; i++) army.OwnEntities.Add(d.NumberU32("o"));
+        int assigned = d.NumberI32("assignedTo");
+        for (int i = 0; i < assigned; i++)
+        {
+            uint unit = d.NumberU32("unit");
+            uint foe = d.NumberU32("foe");
+            army._assignedTo[unit] = foe;
+            if (!army._assignedAgainst.TryGetValue(foe, out var list))
+                army._assignedAgainst[foe] = list = new List<uint>();
+            list.Add(unit);
+        }
+        return army;
     }
 }
