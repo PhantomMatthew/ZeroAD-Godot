@@ -236,6 +236,11 @@ public sealed partial class SimBridge : Node
 		_terrain.Configure(gridSize, cellSize);
 		_pathfinder = new PathfinderComponent(_sim);
 		_pathfinder.SetTerrain(_terrain);
+		// pathfinder.xml 通行类注册表(数据驱动):templatesPath =
+		// …/mods/public/simulation/templates → 三级上级即 mods 根;缺失 → 内建默认。
+		if (templatesPath != null)
+			_pathfinder.SetPassabilityConfig(System.IO.Path.GetFullPath(
+				System.IO.Path.Combine(templatesPath, "..", "..", "..")));
 		SimSystem.SetTerrainComponent(_terrain);   // 高度网格/Attack 高度差用
 		_range = new RangeManager(_sim, Fixed.FromFloat(worldSize), Fixed.FromFloat(worldSize));
 		SimSystem.SetRangeManager(_range);

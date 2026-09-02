@@ -332,7 +332,14 @@ public readonly struct TerrainTileInfo
 }
 
 // --- Passability class definition (from pathfinder.xml) -----------------------
-/// <summary>One passability class's rules. Mirrors PathfinderPassability in the original.</summary>
+
+/// <summary>该类印哪种静态障碍(原版 pathfinder.xml 的 Obstructions 字段):
+/// Pathfinding = BlockPathfinding 旗标;Foundation = BlockFoundation;None = 不印
+/// (unrestricted/*-terrain-only 只按地形规则,给 AI 选址/领土用)。</summary>
+public enum ObstructionKind { None, Pathfinding, Foundation }
+
+/// <summary>One passability class's rules. Mirrors PathfinderPassability in the original
+/// (pathfinder.xml 全字段:水深上下限/坡度上限/岸线距离上下限/净空/障碍种类)。</summary>
 public sealed class PassabilityClassDef
 {
     public required string Name;
@@ -344,15 +351,21 @@ public sealed class PassabilityClassDef
     public Fixed MaxTerrainSlope = Fixed.FromInt(int.MaxValue >> 16);
     /// <summary>Min clearance from static obstructions, in world units.</summary>
     public Fixed Clearance = Fixed.Zero;
-    /// <summary>Whether static obstruction shapes stamp this class's impassable bit.</summary>
-    public bool StampObstructions = true;
+    /// <summary>Whether/which static obstruction shapes stamp this class's impassable bit.</summary>
+    public ObstructionKind Obstructions = ObstructionKind.Pathfinding;
+    /// <summary>距岸线最小米数(building-land 的 4m;负数 = 无约束)。</summary>
+    public Fixed MinShoreDistance = Fixed.FromInt(-1);
+    /// <summary>距岸线最大米数(building-shore 的 8m;巨大值 = 无约束)。</summary>
+    public Fixed MaxShoreDistance = Fixed.FromInt(int.MaxValue >> 16);
 
-    /// <summary>True if a terrain tile satisfies this class's depth/slope rules.</summary>
+    /// <summary>True if a terrain tile satisfies this class's depth/slope/shore rules.</summary>
     public bool TerrainIsPassable(in TerrainTileInfo tile)
     {
         if (tile.WaterDepth < MinWaterDepth) return false;
         if (tile.WaterDepth > MaxWaterDepth) return false;
         if (tile.Slope > MaxTerrainSlope) return false;
+        if (MinShoreDistance.InternalValue >= 0 && tile.ShoreDist < MinShoreDistance) return false;
+        if (tile.ShoreDist > MaxShoreDistance) return false;
         return true;
     }
 }

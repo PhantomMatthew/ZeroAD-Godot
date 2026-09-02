@@ -32,8 +32,10 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     public string PassClassName = "default";
 
     /// <summary>当前单位的通行类掩码(ship → Ship 水类;其余 → Default 陆地类)。</summary>
+    /// <summary>模板通行类名 → 位掩码(原版 pathfinder.xml 9 类注册表;
+    /// default/large/ship/ship-small/unrestricted 等单位类直接按名查,未知名 → default)。</summary>
     private Pathfinding.PassClass ResolvePassClass(PathfinderComponent pf) =>
-        PassClassName == "ship" ? pf.ShipClass.Mask : pf.DefaultClass.Mask;
+        pf.GetPassabilityClassMask(PassClassName);
 
     private readonly List<(float x, float z)> _waypoints = new();
     private int _currentWaypoint;

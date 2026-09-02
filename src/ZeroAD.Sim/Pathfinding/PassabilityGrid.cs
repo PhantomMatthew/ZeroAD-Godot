@@ -7,26 +7,29 @@ namespace ZeroAD.Sim.Pathfinding;
 // obstruction shapes. Ported from source/simulation2/helpers/Rasterize.cpp (ExpandImpassableCells)
 // and CCmpPathfinder::UpdateGrid.
 //
-// Two passability classes (per the confirmed M3 scope):
-//   default (index 0): land units — MaxWaterDepth=2, MaxTerrainSlope=1.0, Clearance=0.8
-//   ship    (index 1): ships     — MinWaterDepth=1, Clearance=10
+// 通行类注册表驱动(pathfinder.xml;见 PathfinderConfig):
+//   单位寻路类 default/large/ship/ship-small(Obstructions=pathfinding,印 BlockPathfinding)
+//   建筑放置类 building-land/building-shore(Obstructions=foundation,印 BlockFoundation)
+//   AI 类 unrestricted/*-terrain-only(Obstructions=none,只按地形规则)
 //
 // Pipeline:
 //   1. Rasterize terrain: for each 4m terrain tile, classify its 4x4 navcell block by the
-//      tile's depth/slope. A navcell is impassable for a class if the tile fails that class's
-//      terrain rules.
-//   2. Stamp obstructions: for each class that stamps, mark navcells covered by static
-//      obstruction shapes impassable.
+//      tile's depth/slope/shore-distance. A navcell is impassable for a class if the tile
+//      fails that class's terrain rules.
+//   2. Stamp obstructions: for each class, mark navcells covered by static obstruction shapes
+//      carrying the kind-matching flag impassable.
 //   3. Expand by clearance: dilate the impassable region by each class's clearance radius
 //      (ExpandImpassableCells) so units keep distance from walls/buildings.
 
 /// <summary>Builds and owns the navcell passability grid + the passability-class registry.</summary>
 public sealed class PassabilityGridBuilder
 {
+    private readonly PathfinderConfig _config;
+
     /// <summary>The default (land) passability class.</summary>
-    public readonly PassabilityClassDef Default;
+    public PassabilityClassDef Default => _config.ByName("default")!;
     /// <summary>The ship (water) passability class.</summary>
-    public readonly PassabilityClassDef Ship;
+    public PassabilityClassDef Ship => _config.ByName("ship")!;
 
     /// <summary>The current passability grid (navcell → bitmask). Null until Build.</summary>
     public Grid<NavcellData>? Grid { get; private set; }
@@ -34,37 +37,25 @@ public sealed class PassabilityGridBuilder
     /// <summary>Navcells per side (square map). 0 until Build.</summary>
     public int NavcellsPerSide { get; private set; }
 
-    public PassabilityGridBuilder()
+    public PassabilityGridBuilder(PathfinderConfig? config = null)
     {
-        Default = new PassabilityClassDef
-        {
-            Name = "default",
-            Mask = PathfindingCore.PassClassMaskFromIndex(0),
-            MaxWaterDepth = Fixed.FromInt(2),
-            MaxTerrainSlope = Fixed.FromInt(1),
-            Clearance = Fixed.FromFraction(4, 5),     // 0.8
-            StampObstructions = true,
-        };
-        Ship = new PassabilityClassDef
-        {
-            Name = "ship",
-            Mask = PathfindingCore.PassClassMaskFromIndex(1),
-            MinWaterDepth = Fixed.FromInt(1),
-            Clearance = Fixed.FromInt(10),
-            StampObstructions = true,
-        };
+        _config = config ?? PathfinderConfig.Default();
     }
 
     /// <summary>All defined classes (for hierarchical/long pathfinder recompute).</summary>
-    public IEnumerable<PassabilityClassDef> AllClasses
-    {
-        get { yield return Default; yield return Ship; }
-    }
+    public IEnumerable<PassabilityClassDef> AllClasses => _config.Classes;
+
+    /// <summary>单位寻路类(default/large/ship/ship-small)——寻路连通性只对它们建。</summary>
+    public IEnumerable<PassabilityClassDef> UnitClasses => _config.UnitPathClasses();
 
     public PassabilityClassDef GetClass(PassClass mask) =>
-        mask.Mask == Default.Mask.Mask ? Default :
-        mask.Mask == Ship.Mask.Mask ? Ship :
-        Default;
+        _config.Classes.Count > 0 && mask.Mask != 0
+            ? _config.Classes[System.Math.Min(
+                System.Numerics.BitOperations.Log2(mask.Mask), _config.Classes.Count - 1)]
+            : Default;
+
+    public PassabilityClassDef? GetClassByName(string name) => _config.ByName(name);
+    public PassClass MaskOf(string name) => _config.MaskOf(name);
 
     /// <summary>Build the passability grid from terrain tile info + obstruction shapes.</summary>
     /// <param name="terrain">Per-tile (4m) depth/slope/shore info, indexed [tileX, tileZ].</param>
@@ -78,39 +69,36 @@ public sealed class PassabilityGridBuilder
         var grid = new Grid<NavcellData>(nav, nav);
 
         // --- 1. Rasterize terrain: classify each navcell by its parent terrain tile. ---
-        // Every navcell in a 4m tile inherits that tile's depth/slope (the original does the
-        // same — terrain is sampled at tile granularity).
+        // Every navcell in a 4m tile inherits that tile's depth/slope/shore (the original does
+        // the same — terrain is sampled at tile granularity).
         for (int tileZ = 0; tileZ < terrainTilesPerSide; tileZ++)
             for (int tileX = 0; tileX < terrainTilesPerSide; tileX++)
             {
                 var info = terrain[tileX, tileZ];
-                bool passDefault = Default.TerrainIsPassable(in info);
-                bool passShip = Ship.TerrainIsPassable(in info);
-
+                // 每类判定一次,把失败类的位印到该 tile 的 4×4 navcell 块。
                 for (int dz = 0; dz < PathfindingCore.NavcellsPerTerrainTile; dz++)
                     for (int dx = 0; dx < PathfindingCore.NavcellsPerTerrainTile; dx++)
                     {
                         int ni = tileX * PathfindingCore.NavcellsPerTerrainTile + dx;
                         int nj = tileZ * PathfindingCore.NavcellsPerTerrainTile + dz;
                         var cell = grid.Get(ni, nj);
-                        if (!passDefault) cell = PathfindingCore.MakeImpassable(cell, Default.Mask);
-                        if (!passShip) cell = PathfindingCore.MakeImpassable(cell, Ship.Mask);
+                        foreach (var cls in _config.Classes)
+                            if (!cls.TerrainIsPassable(in info))
+                                cell = PathfindingCore.MakeImpassable(cell, cls.Mask);
                         grid.Set(ni, nj, cell);
                     }
             }
 
-        // --- 2. Stamp static obstructions for classes that stamp. ---
+        // --- 2. Stamp static obstructions per class(kind 选旗:pathfinding/foundation)。 ---
         foreach (var ob in obstructions)
-        {
-            StampObstruction(grid, ob, Default);
-            StampObstruction(grid, ob, Ship);
-        }
+            foreach (var cls in _config.Classes)
+                StampObstruction(grid, ob, cls);
 
         // --- 3. Expand by clearance (dilate impassable region outward). ---
         // Done per-class after all stamps so one class's clearance doesn't bleed into another's
         // pre-expansion state.
-        ExpandImpassable(grid, Default);
-        ExpandImpassable(grid, Ship);
+        foreach (var cls in _config.Classes)
+            ExpandImpassable(grid, cls);
 
         Grid = grid;
     }
@@ -121,7 +109,11 @@ public sealed class PassabilityGridBuilder
     // close approximation for the small unit/building footprints at 1m navcell resolution).
     private static void StampObstruction(Grid<NavcellData> grid, ObstructionSquare ob, PassabilityClassDef cls)
     {
-        if (!cls.StampObstructions) return;
+        var flag = cls.Obstructions == ObstructionKind.Pathfinding ? ObstructionFlags.BlockPathfinding
+            : cls.Obstructions == ObstructionKind.Foundation ? ObstructionFlags.BlockFoundation
+            : ObstructionFlags.None;
+        if (flag == ObstructionFlags.None) return;
+        if ((ob.Flags & flag) == 0) return;
         // AABB half-extents from the oriented box.
         var bb = Geometry.GetHalfBoundingBox(ob.U, ob.V, new FixedVector2D(ob.Hw, ob.Hh));
         int x0 = PathfindingCore.WorldToNavcell(ob.X - bb.X);

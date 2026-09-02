@@ -200,6 +200,11 @@ public sealed class GameState
     /// <summary>游戏已进行秒数(原版 ai.elapsedTime;由锁步回合 × 0.1s 推导,Net 缺失时为 0)。</summary>
     public double ElapsedTime => (Net?.CurrentTurn ?? 0) * 0.1;
 
+    /// <summary>原版 getPassabilityClassMask:类名 → 通行位掩码(pathfinder.xml 注册表;
+    /// 未知名 → default)。AI 选址/寻路按名取类(building-land/ship 等)。</summary>
+    public Pathfinding.PassClass GetPassabilityClassMask(string name) =>
+        SimSystem.Pathfinder?.GetPassabilityClassMask(name) ?? new Pathfinding.PassClass(1);
+
     public EntityCollection GetOwnDropsites(string resourceType)
         => Col("ownDropsites:" + resourceType, e => e.Owner == PlayerId && Filters.IsDropsite(resourceType)(e));
     public EntityCollection GetAnyDropsites(string resourceType)

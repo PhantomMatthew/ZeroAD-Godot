@@ -34,7 +34,9 @@ public sealed class ObstructionMitigationTests
                 grid[i, j] = TerrainClass.Land;
         terrain.SetPassabilityGrid(grid);
 
-        // 墙:x≈32,z 从 0 到 48(2m 宽,分段 4m 长)。
+        // 墙:x≈32,z 从 0 到 48(2m 宽,分段 4m 长)。旗标 = 真实墙体的 DefaultBlock
+        // (pathfinding 类位图只印 BlockPathfinding 旗——原版 Rasterize 同款过滤;
+        // 此前省略该旗只因旧构建器旗盲全印)。
         var wallOwner = cm.CreateEntity();
         for (int z = 2; z <= 46; z += 4)
         {
@@ -43,7 +45,8 @@ public sealed class ObstructionMitigationTests
                 new FixedVector2D(Fixed.Zero, Fixed.FromInt(1)),   // u = +z 方向
                 new FixedVector2D(Fixed.FromInt(1), Fixed.Zero),   // v = +x
                 Fixed.FromInt(2), Fixed.FromInt(1),
-                ObstructionFlags.BlockMovement | ObstructionFlags.BlockFoundation, 1, 1);
+                ObstructionFlags.BlockMovement | ObstructionFlags.BlockFoundation
+                    | ObstructionFlags.BlockPathfinding, 1, 1);
         }
 
         var pf = new PathfinderComponent(cm);

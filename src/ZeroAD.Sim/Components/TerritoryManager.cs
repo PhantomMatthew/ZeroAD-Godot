@@ -67,6 +67,20 @@ public sealed class TerritoryManager
         Version++;
     }
 
+    /// <summary>按 cell 索引读 owner(AI 的 territoryMap.data[i] 等价物;越界 = gaia)。</summary>
+    public int GetOwnerByIndex(int idx)
+    {
+        EnsureComputed();
+        return idx >= 0 && idx < _owner.Length ? _owner[idx] : 0;
+    }
+
+    /// <summary>按 cell 索引读连通性(原版 territoryMap blinking 位的反;越界 = false)。</summary>
+    public bool IsConnectedByIndex(int idx)
+    {
+        EnsureComputed();
+        return idx >= 0 && idx < _connected.Length && _connected[idx];
+    }
+
     /// <summary>世界坐标(米)处的领土 owner;越界 = gaia(0)。</summary>
     public int GetOwner(Fixed x, Fixed z)
     {

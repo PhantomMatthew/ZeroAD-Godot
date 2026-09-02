@@ -1562,6 +1562,9 @@ public sealed partial class Main : Node3D
 	{
 		var terrain = _sim.Terrain;
 		if (terrain == null) return;
+		// 通行类水深/岸线规则的真实水位(原版 CTerrain water level;pathfinder.xml 的
+		// ship MinWaterDepth / building-shore MaxShoreDistance 依赖)。
+		terrain.SetWaterLevel(ZeroAD.Sim.Maths.Fixed.FromFloat(waterHeight));
 
 		// Reconfigure terrain dimensions to the actual map, then size the grid to match.
 		int tilesPerSide = pmp.TilesPerSide;
@@ -1619,6 +1622,7 @@ public sealed partial class Main : Node3D
 
 	private void FillPassabilityAllLand(PmpMap? pmp = null, float waterHeight = -999f)
 	{
+		_sim.Terrain?.SetWaterLevel(ZeroAD.Sim.Maths.Fixed.FromFloat(waterHeight));
 		var terrain = _sim.Terrain;
 		if (terrain == null) return;
 		// rmgen 图也要先把 TerrainComponent 配成真实尺寸:缺省 64×4=256m,而 rmgen 图

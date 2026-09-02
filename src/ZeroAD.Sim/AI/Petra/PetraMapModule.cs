@@ -16,19 +16,112 @@ public static class PetraMapModule
     private const int TerritoryPlayerMask = 0x1F;
     private const int TerritoryBlinkingMask = 0x40;
 
-    /// <summary>创建建造选址障碍图（原版 createObstructionMap）。
-    /// 从 passability grid + territory grid 构建：在可建造领地内且可通行的 cell 标 255。
-    /// 简化版：用 passability grid 直接构建（暂不做 territory 过滤和 building-land mask）。</summary>
+    /// <summary>创建建造选址障碍图(原版 petra/mapModule.js createObstructionMap 全量移植):
+    /// 领土图逐 cell 按模板的 buildTerritory(own/ally/neutral/enemy)过滤(未连通区
+    /// 按 buildNeutral 门控),其覆盖的 navcell 再过通行类位图(land → building-land,
+    /// shore → building-shore)+ 陆区 accessIndex 匹配;合格 navcell 标 255。
+    /// 尾段:模板带 BuildRestrictions/Distance 时,FromClass 同类建筑周围
+    /// MinDistance 内负影响(原版 addInfluence -255)。</summary>
     public static InfoMap CreateObstructionMap(GameState gameState, ushort? accessIndex, AITemplate? template)
     {
-        // 完整版需要：
-        //   1. gameState.GetPassabilityClassMask("building-land") / ("building-shore")
-        //   2. territoryMap.data 逐 cell 过滤（own/ally/neutral/enemy 领地）
-        //   3. buildDistance/MinDistance 排除
-        // 当前简化：用 Default class mask 的 passability grid 直接构建。
-        var grid = gameState.Cm;  // TODO: 经 PathfinderComponent 取 grid
-        // 简化版：返回空 InfoMap（Phase 2 后续接入完整 passability/territory）
-        return new InfoMap(1, 1, 1);
+        var pf = SimSystem.Pathfinder;
+        var territory = SimSystem.Territory;
+        var grid = pf?.PassabilityGrid;
+        if (pf == null || territory == null || grid == null)
+            return new InfoMap(1, 1, 1);   // 网格未建(测试环境)→ 空图
+
+        // 模板侧默认(原版:createObstructionMap 的缺省块)。
+        string placementType = "land";
+        bool buildOwn = true, buildAlly = true, buildNeutral = true, buildEnemy = false;
+        if (template != null)
+        {
+            placementType = template.Get("BuildRestrictions/PlacementType") ?? "land";
+            string territories = template.BuildTerritories ?? "own ally neutral";
+            buildOwn = territories.Contains("own");
+            buildAlly = territories.Contains("ally");
+            buildNeutral = territories.Contains("neutral");
+            buildEnemy = territories.Contains("enemy");
+        }
+
+        bool shore = placementType == "shore";
+        var obstructionMask = pf.GetPassabilityClassMask(shore ? "building-shore" : "building-land");
+        int navW = grid.W;
+        int ratio = TerritoryManager.CellSize;   // territory cell 4m ÷ navcell 1m = 4
+        var tiles = new byte[navW * navW];
+
+        int tW = territory.GridWidth;
+        for (int k = 0; k < tW * tW; k++)
+        {
+            int tilePlayer = territory.GetOwnerByIndex(k);
+            bool isConnected = territory.IsConnectedByIndex(k);
+            if (tilePlayer == gameState.PlayerId)
+            {
+                if (!buildOwn || !buildNeutral && !isConnected) continue;
+            }
+            else if (tilePlayer != 0 && gameState.IsPlayerMutualAlly(tilePlayer))
+            {
+                if (!buildAlly || !buildNeutral && !isConnected) continue;
+            }
+            else if (tilePlayer == 0)
+            {
+                if (!buildNeutral) continue;
+            }
+            else if (!buildEnemy) continue;
+
+            int tx = ratio * (k % tW);
+            int tz = ratio * (k / tW);
+            for (int ix = 0; ix < ratio; ix++)
+                for (int iz = 0; iz < ratio; iz++)
+                {
+                    int i = tx + ix + (tz + iz) * navW;
+                    // 陆类过滤陆区(岸类不过滤——dock 建在岸线上,原版同款)。
+                    if (!shore && accessIndex != null && gameState.Accessibility != null)
+                    {
+                        ushort region = gameState.Accessibility.GetAccessValue(
+                            (i % navW) + 0.5f, (i / navW) + 0.5f);
+                        if (region != accessIndex.Value) continue;
+                    }
+                    if (Pathfinding.PathfindingCore.IsPassable(grid.Get(i % navW, i / navW), obstructionMask))
+                        tiles[i] = 255;
+                }
+        }
+
+        var map = new InfoMap(navW, navW, 1, tiles);
+        map.SetMaxVal(255);
+
+        // buildDistance:同类(FromClass)建筑 MinDistance 内禁建(原版尾段)。
+        if (template != null)
+        {
+            float minDist = template.GetFloat("BuildRestrictions/Distance/MinDistance");
+            string? fromClass = template.Get("BuildRestrictions/Distance/FromClass");
+            if (minDist > 0 && fromClass != null)
+            {
+                float oRadius = ObstructionRadiusMin(template);
+                minDist -= oRadius;
+                if (minDist > 0)
+                {
+                    int cellDist = 1 + (int)(minDist / 1f);   // navcell 1m
+                    foreach (var ent in gameState.GetOwnStructures()
+                        .Filter(e => e.HasClass(fromClass)).Values())
+                    {
+                        if (ent.Position2D == default) continue;
+                        map.AddInfluence((int)ent.Position2D.X.ToFloat(),
+                            (int)ent.Position2D.Y.ToFloat(), cellDist, -255, "constant");
+                    }
+                }
+            }
+        }
+        return map;
+    }
+
+    /// <summary>模板障碍半径最小值(原版 obstructionRadius().min:Square 取半宽深小值,
+    /// Circle 取半径;无 → 0)。</summary>
+    private static float ObstructionRadiusMin(AITemplate template)
+    {
+        float w = template.GetFloat("Obstruction/Static/@width");
+        float d = template.GetFloat("Obstruction/Static/@depth");
+        if (w > 0 || d > 0) return System.Math.Min(w, d) / 2f;
+        return template.GetFloat("Obstruction/Circle/@radius");
     }
 
     /// <summary>封装领土图为 InfoMap（原版 createTerritoryMap）。

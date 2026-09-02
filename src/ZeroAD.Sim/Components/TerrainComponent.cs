@@ -60,6 +60,14 @@ public sealed class TerrainComponent : ComponentBase, IComponentMessageHandler
         _heights = grid;
     }
 
+    /// <summary>水平面高度(米;地面低于它即水域)。原版 CTerrain 的水位——通行类水深规则
+    /// (ship MinWaterDepth / building-land MaxWaterDepth=0)与岸线距离的真实数据源;此前
+    /// TerrainClass.Water 二分丢了深度。由建图侧(PMP/rmgen 都知道水面高)在 RebuildGrid 前设置;
+    /// 未设置时水深判定回落到 passability 网格的 Water 类(深 5m 近似,旧行为)。</summary>
+    public Fixed WaterLevel { get; private set; } = Fixed.Zero;
+    public bool HasWaterLevel { get; private set; }
+    public void SetWaterLevel(Fixed waterLevel) { WaterLevel = waterLevel; HasWaterLevel = true; }
+
     /// <summary>世界坐标处地形高度(双线性插值,定点;无网格 → 0)。</summary>
     public Fixed GetHeight(Fixed x, Fixed z)
     {

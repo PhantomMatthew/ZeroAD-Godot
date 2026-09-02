@@ -27,13 +27,29 @@ namespace ZeroAD.Sim.Components
         private readonly ComponentManager _cm;
 
         // --- M3 pathfinding pipeline ---
-        private readonly PassabilityGridBuilder _gridBuilder = new();
+        /// <summary>通行类注册表(pathfinder.xml 数据驱动;缺数据根用内建默认,
+        /// 与上游逐值一致)。SetPassabilityConfig 由 SimBridge 在建世界时注入数据根路径。</summary>
+        private PathfinderConfig _config = PathfinderConfig.Default();
+        private PassabilityGridBuilder _gridBuilder = new();
         private readonly HierarchicalPathfinder _hier = new();
         private readonly LongPathfinder _long = new();
         private readonly VertexPathfinder _vertex = new();
 
         public PassabilityClassDef DefaultClass => _gridBuilder.Default;
         public PassabilityClassDef ShipClass => _gridBuilder.Ship;
+
+        /// <summary>注入 pathfinder.xml 数据根(mods 目录);下次 RebuildGrid 生效。
+        /// 原版 CCmpPathfinder 从 VFS 读 simulation/data/pathfinder.xml;此处走文件系统。</summary>
+        public void SetPassabilityConfig(string? dataModsDir)
+        {
+            _config = PathfinderConfig.Load(dataModsDir);
+            _gridBuilder = new PassabilityGridBuilder(_config);
+        }
+
+        /// <summary>原版 getPassabilityClassMask:类名 → 位掩码(未知名 → default)。</summary>
+        public Pathfinding.PassClass GetPassabilityClassMask(string name) => _config.MaskOf(name);
+        /// <summary>类名 → 定义;未知 → null。</summary>
+        public PassabilityClassDef? GetClassByName(string name) => _config.ByName(name);
 
         /// <summary>当前 passability grid（AI 地图分析用）。RebuildGrid 前为 null。</summary>
         public Grid<NavcellData>? PassabilityGrid => _gridBuilder.Grid;
@@ -85,14 +101,23 @@ namespace ZeroAD.Sim.Components
         /// terrain + obstructions. Mirrors <c>CCmpPathfinder::CheckBuildingPlacement</c>.
         /// </summary>
         public PlacementResult CheckBuildingPlacement(Fixed x, Fixed z, Fixed hw, Fixed hh, ObstructionTag? skipTag = null,
-            uint allowedGroup = 0)
+            uint allowedGroup = 0, string passClass = "building-land")
         {
             if (Terrain != null)
             {
                 if (!Terrain.IsInBounds(new FixedVector2D(x - hw, z - hh)) ||
                     !Terrain.IsInBounds(new FixedVector2D(x + hw, z + hh)))
                     return PlacementResult.FailOutOfBounds;
-                if (!Terrain.IsFootprintOnLand(x, z, hw, hh))
+                // 通行类地形规则(原版 CCmpPathfinder::CheckBuildingPlacement 按类查 navcell
+                // 位图):building-land=离地 4m+且无水,building-shore=离水 8m 内(码头)等。
+                // 网格未建(测试环境)回退旧 IsFootprintOnLand。
+                if (_gridBuilder.Grid != null)
+                {
+                    var cls = _config.ByName(passClass) ?? _config.ByName("building-land")!;
+                    if (!FootprintPassableOnGrid(x, z, hw, hh, cls.Mask))
+                        return PlacementResult.FailTerrain;
+                }
+                else if (passClass != "building-shore" && !Terrain.IsFootprintOnLand(x, z, hw, hh))
                     return PlacementResult.FailTerrain;
             }
 
@@ -109,6 +134,29 @@ namespace ZeroAD.Sim.Components
                 if (hits.Count > 0) return PlacementResult.FailObstructsFoundation;
             }
             return PlacementResult.Success;
+        }
+
+        /// <summary>footprint 四角( + 中心)所在 navcell 对该类全可通行(原版按类查位图)。
+        /// 采样点取四角内缩 0.5m + 中心,足抵小 footprint 的 navcell 粒度误差。</summary>
+        private bool FootprintPassableOnGrid(Fixed x, Fixed z, Fixed hw, Fixed hh,
+            Pathfinding.PassClass mask)
+        {
+            var grid = _gridBuilder.Grid!;
+            Fixed inset = Fixed.FromFraction(1, 2);
+            var pts = new[]
+            {
+                (x - hw + inset, z - hh + inset), (x + hw - inset, z - hh + inset),
+                (x - hw + inset, z + hh - inset), (x + hw - inset, z + hh - inset),
+                (x, z),
+            };
+            foreach (var (px, pz) in pts)
+            {
+                int ni = PathfindingCore.WorldToNavcell(px);
+                int nj = PathfindingCore.WorldToNavcell(pz);
+                if (ni < 0 || nj < 0 || ni >= grid.W || nj >= grid.H) return false;
+                if (!PathfindingCore.IsPassable(grid.Get(ni, nj), mask)) return false;
+            }
+            return true;
         }
 
         // --- M3 pathfinding ---
@@ -142,7 +190,9 @@ namespace ZeroAD.Sim.Components
             {
                 try
                 {
-                    _hier.Recompute(_gridBuilder.Grid, _gridBuilder.AllClasses);
+                    // 连通性只对单位寻路类建(原版全类;建筑/AI 类不参与寻路查询,
+                    // 跳过省 5/9 的洪泛开销,寻路结果逐位等价)。
+                    _hier.Recompute(_gridBuilder.Grid, _gridBuilder.UnitClasses);
                     _long.Reload(_gridBuilder.Grid);
                 }
                 catch (System.Exception ex)
@@ -154,26 +204,102 @@ namespace ZeroAD.Sim.Components
             }
         }
 
-        /// <summary>地形 tile → TerrainTileInfo 采样(全量 Rebuild 与增量刷新共用;
-        /// class → 近似深度/坡度:land=0、water=deep、impassable=cliff)。</summary>
+        /// <summary>地形 tile → TerrainTileInfo 采样(全量 Rebuild 与增量刷新共用)。
+        /// 有水位 + 高度网格时算真实值(原版 CTerrain 同款):
+        ///   水深 = max(0, 水位 − 四角均值高);坡度 = (四角最高−最低)/tile 边长;
+        ///   岸线距离 = 水陆 BFS 距离变换(米)。
+        /// 无水位数据回退旧近似(land=0/water=深 5/impassable=坡度 2)。</summary>
         private TerrainTileInfo[,] BuildTerrainTiles(int tiles)
         {
             var terrain = new TerrainTileInfo[tiles, tiles];
             float ts = Terrain!.TileSize;
+            bool real = Terrain.HasWaterLevel;
+            Fixed water = Terrain.WaterLevel;
             for (int j = 0; j < tiles; j++)
                 for (int i = 0; i < tiles; i++)
                 {
-                    var cls = Terrain.GetClass(
-                        Fixed.FromFloat(i * ts + ts * 0.5f),
-                        Fixed.FromFloat(j * ts + ts * 0.5f));
-                    terrain[i, j] = cls switch
+                    if (!real)
                     {
-                        TerrainClass.Land => new TerrainTileInfo(Fixed.Zero, Fixed.Zero, Fixed.Zero),
-                        TerrainClass.Water => new TerrainTileInfo(Fixed.FromInt(5), Fixed.Zero, Fixed.Zero),
-                        _ => new TerrainTileInfo(Fixed.Zero, Fixed.FromInt(2), Fixed.Zero),
-                    };
+                        var cls = Terrain.GetClass(
+                            Fixed.FromFloat(i * ts + ts * 0.5f),
+                            Fixed.FromFloat(j * ts + ts * 0.5f));
+                        terrain[i, j] = cls switch
+                        {
+                            TerrainClass.Land => new TerrainTileInfo(Fixed.Zero, Fixed.Zero, Fixed.Zero),
+                            TerrainClass.Water => new TerrainTileInfo(Fixed.FromInt(5), Fixed.Zero, Fixed.Zero),
+                            _ => new TerrainTileInfo(Fixed.Zero, Fixed.FromInt(2), Fixed.Zero),
+                        };
+                        continue;
+                    }
+                    // 四角采样(原版 CTerrain::GetSlopeFixed 同款数据源)。
+                    Fixed h00 = Terrain.GetHeight(Fixed.FromFloat(i * ts), Fixed.FromFloat(j * ts));
+                    Fixed h10 = Terrain.GetHeight(Fixed.FromFloat((i + 1) * ts), Fixed.FromFloat(j * ts));
+                    Fixed h01 = Terrain.GetHeight(Fixed.FromFloat(i * ts), Fixed.FromFloat((j + 1) * ts));
+                    Fixed h11 = Terrain.GetHeight(Fixed.FromFloat((i + 1) * ts), Fixed.FromFloat((j + 1) * ts));
+                    Fixed hi = h00; if (h10 > hi) hi = h10; if (h01 > hi) hi = h01; if (h11 > hi) hi = h11;
+                    Fixed lo = h00; if (h10 < lo) lo = h10; if (h01 < lo) lo = h01; if (h11 < lo) lo = h11;
+                    Fixed slope = (hi - lo) / Fixed.FromFloat(ts);
+                    Fixed avg = (h00 + h10 + h01 + h11) / 4;
+                    Fixed depth = water > avg ? water - avg : Fixed.Zero;
+                    // 悬崖 passability 类仍优先(坡度网格是表现层从真实高度图推的,含悬崖标记)。
+                    if (Terrain.GetClass(Fixed.FromFloat(i * ts + ts * 0.5f),
+                            Fixed.FromFloat(j * ts + ts * 0.5f)) == TerrainClass.Impassable
+                        && slope < Fixed.FromInt(2))
+                        slope = Fixed.FromInt(2);
+                    terrain[i, j] = new TerrainTileInfo(depth, slope, Fixed.Zero);
                 }
+            if (real)
+                ComputeShoreDistances(terrain, tiles, ts);
             return terrain;
+        }
+
+        /// <summary>岸线距离变换:多源 BFS 从水格向外扩,陆格记到最近水格的米数
+        /// (building-land MinShoreDistance=4 / building-shore MaxShoreDistance=8 的数据源)。
+        /// 水格 shore=0;纯陆图(无水)全部 = 巨大值(满足 MinShoreDistance)。</summary>
+        private static void ComputeShoreDistances(TerrainTileInfo[,] terrain, int tiles, float ts)
+        {
+            var dist = new int[tiles, tiles];
+            var queue = new System.Collections.Generic.Queue<(int x, int z)>();
+            for (int j = 0; j < tiles; j++)
+                for (int i = 0; i < tiles; i++)
+                    if (terrain[i, j].WaterDepth > Fixed.Zero)
+                    {
+                        dist[i, j] = 0;
+                        queue.Enqueue((i, j));
+                        terrain[i, j] = new TerrainTileInfo(
+                            terrain[i, j].WaterDepth, terrain[i, j].Slope, Fixed.Zero);
+                    }
+                    else dist[i, j] = int.MaxValue;
+            if (queue.Count == 0)
+            {
+                for (int j = 0; j < tiles; j++)
+                    for (int i = 0; i < tiles; i++)
+                        terrain[i, j] = new TerrainTileInfo(terrain[i, j].WaterDepth,
+                            terrain[i, j].Slope, Fixed.FromInt(1 << 20));
+                return;
+            }
+            while (queue.Count > 0)
+            {
+                var (x, z) = queue.Dequeue();
+                for (int dj = -1; dj <= 1; dj++)
+                    for (int di = -1; di <= 1; di++)
+                    {
+                        if (di == 0 && dj == 0) continue;
+                        int ni = x + di, nj = z + dj;
+                        if (ni < 0 || nj < 0 || ni >= tiles || nj >= tiles) continue;
+                        int nd = dist[x, z] + 1;
+                        if (nd < dist[ni, nj])
+                        {
+                            dist[ni, nj] = nd;
+                            queue.Enqueue((ni, nj));
+                        }
+                    }
+            }
+            for (int j = 0; j < tiles; j++)
+                for (int i = 0; i < tiles; i++)
+                    if (dist[i, j] != int.MaxValue)
+                        terrain[i, j] = new TerrainTileInfo(terrain[i, j].WaterDepth,
+                            terrain[i, j].Slope, Fixed.FromFloat(dist[i, j] * ts));
         }
 
         // 增量刷新:obstruction 列表变化区(坐标+朝向+尺寸)的 navcell 覆盖矩形。
@@ -245,7 +371,9 @@ namespace ZeroAD.Sim.Components
             {
                 try
                 {
-                    _hier.Recompute(_gridBuilder.Grid, _gridBuilder.AllClasses);
+                    // 连通性只对单位寻路类建(原版全类;建筑/AI 类不参与寻路查询,
+                    // 跳过省 5/9 的洪泛开销,寻路结果逐位等价)。
+                    _hier.Recompute(_gridBuilder.Grid, _gridBuilder.UnitClasses);
                     _long.Reload(_gridBuilder.Grid);
                 }
                 catch (System.Exception ex)

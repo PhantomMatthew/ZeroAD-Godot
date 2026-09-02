@@ -27,8 +27,12 @@ namespace ZeroAD.Sim
         public readonly Fixed X, Z;
         public readonly FixedVector2D U, V;    // unit axes
         public readonly Fixed Hw, Hh;          // half-width (along U), half-height (along V)
-        public ObstructionSquare(Fixed x, Fixed z, FixedVector2D u, FixedVector2D v, Fixed hw, Fixed hh)
-        { X = x; Z = z; U = u; V = v; Hw = hw; Hh = hh; }
+        /// <summary>阻挡旗标(BlockPathfinding/BlockFoundation…);通行类注册表按
+        /// ObstructionKind 选旗——pathfinding 类印 BlockPathfinding,建筑类印 BlockFoundation。</summary>
+        public readonly ObstructionFlags Flags;
+        public ObstructionSquare(Fixed x, Fixed z, FixedVector2D u, FixedVector2D v, Fixed hw, Fixed hh,
+            ObstructionFlags flags = ObstructionFlags.DefaultBlock)
+        { X = x; Z = z; U = u; V = v; Hw = hw; Hh = hh; Flags = flags; }
     }
 
     /// <summary>Dynamic circle-shaped obstruction (units). Lightweight: units move often.</summary>
@@ -305,7 +309,7 @@ namespace ZeroAD.Sim
         {
             var list = new System.Collections.Generic.List<ObstructionSquare>(_staticShapes.Count);
             foreach (var ss in _staticShapes.Values)
-                list.Add(new ObstructionSquare(ss.X, ss.Z, ss.U, ss.V, ss.Hw, ss.Hh));
+                list.Add(new ObstructionSquare(ss.X, ss.Z, ss.U, ss.V, ss.Hw, ss.Hh, ss.Flags));
             return list;
         }
 
