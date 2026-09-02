@@ -202,14 +202,22 @@ public sealed class TraderComponent : ComponentBase, IComponentMessageHandler
     public bool CanTrade(ComponentManager cm, EntityId target)
     {
         var market = cm.QueryInterface<MarketComponent>(target);
+        // 迷雾镜像(原版 QueryMiragedInterface:镜像承载市场类型快照,迷雾中可贸)。
         if (market == null)
-            return false;
+        {
+            var mirage = cm.QueryInterface<MirageComponent>(target);
+            if (mirage == null || mirage.FrozenMarketTypes.Length == 0) return false;
+        }
         if (cm.QueryInterface<FoundationComponent>(target) != null)
             return false;
 
         var identity = cm.QueryInterface<IdentityComponent>(Entity);
-        bool organicLand = identity?.HasClass("Organic") == true && market.HasType("land");
-        bool shipNaval = identity?.HasClass("Ship") == true && market.HasType("naval");
+        bool organicLand = identity?.HasClass("Organic") == true
+            && (market?.HasType("land") == true
+                || cm.QueryInterface<MirageComponent>(target)?.HasMarketType("land") == true);
+        bool shipNaval = identity?.HasClass("Ship") == true
+            && (market?.HasType("naval") == true
+                || cm.QueryInterface<MirageComponent>(target)?.HasMarketType("naval") == true);
         if (!organicLand && !shipNaval)
             return false;
 
@@ -281,6 +289,20 @@ public sealed class TraderComponent : ComponentBase, IComponentMessageHandler
         return true;
     }
 
+    /// <summary>Port of Trader.SwitchMarket:路由中 old → new(迷雾镜像互换);
+    /// UnitAI 订单同步改目标。</summary>
+    public void SwitchMarket(ComponentManager cm, EntityId oldMarket, EntityId newMarket)
+    {
+        if (FirstMarket == oldMarket) FirstMarket = newMarket;
+        else if (SecondMarket == oldMarket) SecondMarket = newMarket;
+        else return;
+        // 镜像不挂真 MarketComponent——trader 记账仅换实体号;货物量按新位重算。
+        cm.QueryInterface<MarketComponent>(oldMarket)?.RemoveTrader(Entity);
+        cm.QueryInterface<MarketComponent>(newMarket)?.AddTrader(Entity);
+        cm.QueryInterface<UnitAIComponent>(Entity)?.SwitchMarketOrder(oldMarket, newMarket);
+        HasGain = false;
+    }
+
     /// <summary>Port of RemoveMarket(市场被毁/外交变化):从路由摘除,字段前移对齐 splice。</summary>
     public void RemoveMarket(ComponentManager cm, EntityId market)
     {
@@ -297,6 +319,8 @@ public sealed class TraderComponent : ComponentBase, IComponentMessageHandler
             SecondMarket = null;
             if (Index > 0) Index = 0;
         }
+        // 原版:路由摘除通知 UnitAI(航线订单同步)。
+        cm.QueryInterface<UnitAIComponent>(Entity)?.MarketRemoved(cm, market);
         HasGain = false;
     }
 

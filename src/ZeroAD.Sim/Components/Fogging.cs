@@ -1,3 +1,4 @@
+using System.Linq;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Sim.Components;
@@ -50,6 +51,9 @@ public sealed class FoggingComponent : ComponentBase, IComponentMessageHandler
         if (player < 1 || player > LosGrid.MaxPlayers) return;
         if (vis == LosVisibility.Visible)
         {
+            // 镜像退场 → 贸易商切回真市场(原版 mirage swap-back)。
+            if ((MiragedMask & Bit(player)) != 0 && MirageOf[player] is { } mirageId)
+                NotifyMirageUnloaded(player, cm, mirageId);
             MiragedMask &= ~Bit(player);
             SeenMask |= Bit(player);
         }
@@ -67,7 +71,36 @@ public sealed class FoggingComponent : ComponentBase, IComponentMessageHandler
         MiragedMask |= Bit(player);
         MirageOf[player] ??= EntityAssembler.SpawnMirage(cm, rm, Entity, player, TemplateName);
         EntityAssembler.RefreshMirageData(cm, Entity, MirageOf[player]!.Value);
+        // 原版 Mirage.js 语义:市场入雾 → 该玩家路由含真市场的贸易商切到镜像
+        // (Trader.SwitchMarket + UnitAI.SwitchMarketOrder 改订单目标)。
+        var market = cm.QueryInterface<MarketComponent>(Entity);
+        if (market != null)
+            foreach (var e in cm.AllEntities)
+            {
+                var trader = cm.QueryInterface<TraderComponent>(e);
+                if (trader == null) continue;
+                var own = cm.QueryInterface<OwnershipComponent>(e);
+                if (own?.PlayerId != player) continue;
+                if (trader.HasMarket(Entity))
+                    trader.SwitchMarket(cm, Entity, MirageOf[player]!.Value);
+            }
         rm.RequestVisibilityUpdate(Entity);
+    }
+
+    /// <summary>镜像退场(重现/销毁):贸易商从镜像切回真市场。</summary>
+    public void NotifyMirageUnloaded(int player, ComponentManager cm, EntityId mirageId)
+    {
+        var market = cm.QueryInterface<MarketComponent>(Entity);
+        if (market == null) return;
+        foreach (var e in cm.AllEntities)
+        {
+            var trader = cm.QueryInterface<TraderComponent>(e);
+            if (trader == null) continue;
+            var own = cm.QueryInterface<OwnershipComponent>(e);
+            if (own?.PlayerId != player) continue;
+            if (trader.HasMarket(mirageId))
+                trader.SwitchMarket(cm, mirageId, Entity);
+        }
     }
 
     /// <summary>Fogging.js OnOwnershipChanged: gaining a real owner activates fogging;
@@ -152,6 +185,12 @@ public sealed class MirageComponent : ComponentBase, IComponentMessageHandler
     public int FrozenHealthCurrent;
     public int FrozenHealthMax;
     public int FrozenResourceAmount = -1; // -1 = not a resource
+    /// <summary>父是市场时的交易类型快照(land/naval;原版 mirage 带 Market 件,
+    /// 迷雾中贸易商照常交易)。空 = 非市场。</summary>
+    public string FrozenMarketTypes = "";
+    public bool HasMarketType(string type) =>
+        FrozenMarketTypes.Split(' ', System.StringSplitOptions.RemoveEmptyEntries)
+            .Contains(type);
 
     /// <summary>Mirage.js OnVisibilityChanged: going HIDDEN for our player means the
     /// real entity is back in sight — notify the swap-back, or self-destruct when orphaned.</summary>

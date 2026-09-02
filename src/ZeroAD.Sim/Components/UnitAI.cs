@@ -253,6 +253,39 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         PushOrder(new UnitOrder { Type = "Garrison", Target = holder, Queued = queued, Force = true });
     public void Heal(EntityId target, bool queued = false) =>
         PushOrder(new UnitOrder { Type = "Heal", Target = target, Queued = queued, Force = true });
+    /// <summary>原版 UnitAI.SwitchMarketOrder:航线订单目标 old → new(迷雾镜像互换;
+    /// 当前订单与排队订单都改)。</summary>
+    public void SwitchMarketOrder(EntityId oldMarket, EntityId newMarket)
+    {
+        var cur = CurrentOrder;
+        if (cur is { Type: "Trade" } && cur.Target == oldMarket)
+            _orderQueue.First!.Value = cur with { Target = newMarket };
+        var node = _orderQueue.First;
+        while (node != null)
+        {
+            if (node.Value.Type == "Trade" && node.Value.Target == oldMarket)
+                node.Value = node.Value with { Target = newMarket };
+            node = node.Next;
+        }
+    }
+
+    /// <summary>原版 UnitAI.MarketRemoved:市场没了——摘掉指向它的 Trade 订单;
+    /// 当前订单指向它 → FinishOrder(航线中断由 Trader.RemoveMarket 的字段前移兜底)。</summary>
+    public void MarketRemoved(ComponentManager cm, EntityId market)
+    {
+        var node = _orderQueue.First;
+        while (node != null)
+        {
+            var next = node.Next;
+            if (node.Value.Type == "Trade" && node.Value.Target == market)
+                _orderQueue.Remove(node);
+            node = next;
+        }
+        var cur = CurrentOrder;
+        if (cur is { Type: "Trade" } && cur.Target == market)
+            FinishOrder();
+    }
+
     public void Trade(EntityId? market, bool queued = false) =>
         PushOrder(new UnitOrder { Type = "Trade", Target = market, Queued = queued });
     public void Pack() => PushOrder(new UnitOrder { Type = "Pack" });

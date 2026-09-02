@@ -784,6 +784,10 @@ namespace ZeroAD.Sim
                 mc.FrozenHealthMax = health.Max;
             }
             mc.FrozenResourceAmount = cm.QueryInterface<ResourceSupply>(parent)?.Amount ?? -1;
+            // 市场类型冻结(原版 mirage 承载 Market 件;迷雾中贸易商对镜像可贸)。
+            var market = cm.QueryInterface<Components.MarketComponent>(parent);
+            mc.FrozenMarketTypes = market != null
+                ? string.Join(' ', market.TradeTypes) : "";
         }
     }
 }
