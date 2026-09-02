@@ -178,12 +178,28 @@ public sealed partial class SimBridge : Node
 		AuraCatalog? auraCatalog = null;
 		if (templatesPath != null && System.IO.Directory.Exists(templatesPath))
 		{
-			templates = new TemplateLoader(templatesPath);
+			// mod 挂载(原版 mod.enabledmods 分层覆盖):启用表非默认(≠"mod public")时
+			// 走 VFS 分层加载;templatesPath = …/mods/public/simulation/templates,
+			// mods 根 = 三级上级。
+			var enabledMods = GetNodeOrNull<UserConfig>("/root/UserConfig")
+				?.GetEffective("mod.enabledmods");
+			if (enabledMods != null && enabledMods != "mod public" && enabledMods != "mod  public")
+			{
+				string modsRoot = System.IO.Path.GetFullPath(
+					System.IO.Path.Combine(templatesPath, "..", "..", ".."));
+				templates = new ZeroAD.Sim.Content.TemplateLoader(
+					ZeroAD.Sim.Content.VfsResolver.FromConfig(modsRoot, enabledMods));
+				ZeroAD.Sim.Diag.Log("Sim", $"mod layered load: {enabledMods}");
+			}
+			else
+				templates = new TemplateLoader(templatesPath);
 			ZeroAD.Sim.Diag.Log("Sim", $"Loaded templates from: {templatesPath}");
 			int count = 0;
 			foreach (var kvp in templates.Cache) count++;
 			if (count == 0) templates.LoadAllTemplates();
 			ZeroAD.Sim.Diag.Log("Sim", $"Template cache: {templates.Cache.Count} entries");
+				// 引用校验(原版 checkrefs.py 装载期子集:父链/训练建造引用/晋升目标)。
+				ZeroAD.Sim.Content.TemplateValidator.ValidateAndReport(templates);
 
 			// 科技 JSON 与模板同根(simulation/templates → simulation/data/technologies)
 			var techDir = System.IO.Path.GetFullPath(

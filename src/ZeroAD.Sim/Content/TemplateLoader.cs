@@ -12,9 +12,23 @@ namespace ZeroAD.Sim.Content
         private readonly string _templatesRoot;
         private readonly Dictionary<string, ParamNode> _cache = new();
 
+        /// <summary>VFS 分层解析器(mod 挂载;null = 单根目录旧行为)。
+        /// 模板根相对 mods 根固定为 "simulation/templates"。</summary>
+        private readonly VfsResolver? _vfs;
+        private readonly string _relRoot;
+
         public TemplateLoader(string templatesRoot)
         {
             _templatesRoot = templatesRoot;
+            _relRoot = "";
+        }
+
+        /// <summary>分层构造:mod 挂载(mod.enabledmods 升序,末位最高优先)。</summary>
+        public TemplateLoader(VfsResolver vfs, string relRoot = "simulation/templates")
+        {
+            _vfs = vfs;
+            _relRoot = relRoot;
+            _templatesRoot = "(vfs:" + relRoot + ")";   // 仅日志/错误信息用
         }
 
         public ParamNode LoadTemplate(string templateName)
@@ -29,6 +43,16 @@ namespace ZeroAD.Sim.Content
 
         public Dictionary<string, ParamNode> LoadAllTemplates()
         {
+            if (_vfs != null)
+            {
+                // 分层并集(同名高优先覆盖;rel 去 .xml 作模板名)。
+                foreach (var (rel, _) in _vfs.EnumerateLayered(_relRoot, "*.xml"))
+                {
+                    string relPath = rel.Replace(".xml", "");
+                    try { LoadTemplate(relPath); } catch { }
+                }
+                return _cache;
+            }
             if (!Directory.Exists(_templatesRoot)) return _cache;
 
             var files = Directory.GetFiles(_templatesRoot, "*.xml", SearchOption.AllDirectories);
@@ -51,6 +75,22 @@ namespace ZeroAD.Sim.Content
             string relPath = templateName.Replace('/', Path.DirectorySeparatorChar) + ".xml";
             string[] searchDirs = { "special" + Path.DirectorySeparatorChar + "filter", "mixins", "" };
 
+            if (_vfs != null)
+            {
+                foreach (string dir in searchDirs)
+                {
+                    string rel = string.IsNullOrEmpty(dir)
+                        ? _relRoot + "/" + relPath.Replace('\\', '/')
+                        : _relRoot + "/" + dir.Replace('\\', '/') + "/" + relPath.Replace('\\', '/');
+                    // relPath 已是平台分隔;转回正斜杠供 VFS。
+                    string vfsRel = rel.Replace(Path.DirectorySeparatorChar, '/');
+                    string? fullPath = _vfs.ResolveFile(vfsRel);
+                    if (fullPath != null)
+                        return XDocument.Load(fullPath);
+                }
+                return XDocument.Parse("<Entity/>");
+            }
+
             foreach (string dir in searchDirs)
             {
                 string fullPath = string.IsNullOrEmpty(dir)
@@ -70,6 +110,20 @@ namespace ZeroAD.Sim.Content
         {
             string relPath = templateName.Replace('/', Path.DirectorySeparatorChar) + ".xml";
             string[] searchDirs = { "special" + Path.DirectorySeparatorChar + "filter", "mixins", "" };
+            if (_vfs != null)
+            {
+                foreach (string dir in searchDirs)
+                {
+                    string rel = string.IsNullOrEmpty(dir)
+                        ? _relRoot + "/" + relPath
+                        : _relRoot + "/" + dir + "/" + relPath;
+                    string vfsRel = rel.Replace(Path.DirectorySeparatorChar, '/')
+                        .Replace("\\", "/");
+                    if (_vfs.ResolveFile(vfsRel) != null)
+                        return true;
+                }
+                return false;
+            }
             foreach (string dir in searchDirs)
             {
                 string fullPath = string.IsNullOrEmpty(dir)

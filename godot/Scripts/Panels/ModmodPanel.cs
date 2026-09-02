@@ -444,9 +444,11 @@ public sealed partial class ModmodPanel : ModalPanelBase
             return;
         }
         SaveMods();
+        // VFS 分层挂载已落地(sim 数据:模板/科技/光环;下一局生效)。
+        // 美术资源(godot/assets 导入产物)仍需重启进程重导——原版亦重启。
         GameMsgBox.Show(this, 500, 200,
-            Localization.Tr("Mod configuration saved. Runtime mod mounting is not yet supported " +
-                "by this engine — the selection is persisted for when it lands."),
+            Localization.Tr("Mod configuration saved. Data mods apply from the next match; " +
+                "art assets need a game restart to re-import."),
             Localization.Tr("Mods"));
     }
 
