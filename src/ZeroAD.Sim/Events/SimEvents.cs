@@ -241,6 +241,15 @@ namespace ZeroAD.Sim.Events
         public EntityId NewEntity;
     }
 
+    /// <summary>贡品请求(原版 chat.requestTribute 的 sim 内等价:AI 间同进程,
+    /// 事件即达且锁步确定)。</summary>
+    public sealed class TributeRequestedEvent
+    {
+        public int FromPlayer;
+        public int ToPlayer;
+        public string ResourceType = "";
+    }
+
     /// <summary>外交立场变化(原版 MT_DiplomacyChanged 全局消息;DiplomacyComponent
     /// SetStance 后广播)。驻军/炮塔/护卫据以即时逐出非互盟单位。</summary>
     public sealed class DiplomacyChangedEvent
@@ -262,6 +271,7 @@ namespace ZeroAD.Sim.Events
         public event Action<EntityCreatedEvent>? EntityCreated;
         public event Action<AttackLandedEvent>? AttackLanded;
         public event Action<DiplomacyChangedEvent>? DiplomacyChanged;
+        public event Action<TributeRequestedEvent>? TributeRequested;
         public event Action<ConstructionStartedEvent>? ConstructionStarted;
         public event Action<EntityRenamedEvent>? EntityRenamed;
         public event Action<AttackLaunchedEvent>? AttackLaunched;
@@ -292,6 +302,7 @@ namespace ZeroAD.Sim.Events
         public void RaiseEntityCreated(EntityCreatedEvent e) => EntityCreated?.Invoke(e);
         public void RaiseAttackLanded(AttackLandedEvent e) => AttackLanded?.Invoke(e);
         public void RaiseDiplomacyChanged(DiplomacyChangedEvent e) => DiplomacyChanged?.Invoke(e);
+        public void RaiseTributeRequested(TributeRequestedEvent e) => TributeRequested?.Invoke(e);
         public void RaiseConstructionStarted(ConstructionStartedEvent e) => ConstructionStarted?.Invoke(e);
         public void RaiseEntityRenamed(EntityRenamedEvent e) => EntityRenamed?.Invoke(e);
         public void RaiseAttackLaunched(AttackLaunchedEvent e) => AttackLaunched?.Invoke(e);

@@ -1045,6 +1045,18 @@ public sealed class AttackPlan
 
     private void IssueAttackCommands(GameState gameState)
     {
+        // 定点(uniqueTarget:圣物夺取等):直接 Attack 目标并允许捕获
+        // (原版 capture 胜利条件:圣物经 capture 夺取,AttackWalk 不捕获)。
+        if (UniqueTargetId.HasValue)
+        {
+            foreach (var id in UnitCollection)
+            {
+                if (gameState.GetEntityById(id) == null) continue;
+                gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Attack(
+                    (uint)gameState.PlayerId, id, UniqueTargetId.Value, allowCapture: true));
+            }
+            return;
+        }
         if (!TargetPos.HasValue) return;
         foreach (var id in UnitCollection)
         {

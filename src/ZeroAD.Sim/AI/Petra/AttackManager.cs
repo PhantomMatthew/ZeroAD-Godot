@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim.AI.CommonApi;
+using ZeroAD.Sim.Components;
 
 namespace ZeroAD.Sim.AI.Petra;
 
@@ -30,6 +31,10 @@ public sealed class AttackManager
 
     /// <summary>离开计划的单位回收池(原版 outOfPlan;assignUnits 优先回收)。</summary>
     public readonly HashSet<uint> OutOfPlan = new();
+    /// <summary>攻城游击(原版 bombingAttacks:目标建筑 → 攻击中的攻城器 id 集;
+    /// 临时骚扰,不进正式进攻计划)。</summary>
+    public readonly Dictionary<uint, HashSet<uint>> BombingAttacks = new();
+
     /// <summary>已败玩家(原版 defeated;checkEvents 维护)。</summary>
     private readonly HashSet<int> _defeated = new();
     /// <summary>当前重点敌(原版 currentEnemyPlayer:非 Huge 进攻保持集火)。</summary>
@@ -152,6 +157,12 @@ public sealed class AttackManager
             }
         }
 
+        // 攻城游击(原版 update 尾段):闲置远程攻城器骚扰敌建筑(难度 > VeryEasy,
+        // 每 5 回合一次)。
+        if (_config.Difficulty > DifficultyLevel.VeryEasy
+            && (gameState.Net?.CurrentTurn ?? 0) % 5 == 0)
+            AssignBombers(gameState);
+
         // Raid:defenseManager.targetList 有敌地基目标时发起(原版同款)。
         if (unexecuted[AttackPlan.TypeRaid] == 0 && Hq != null
             && Hq.DefenseManager.TargetList.Count > 0)
@@ -176,6 +187,138 @@ public sealed class AttackManager
                 if (_currentEnemyPlayer == ev.IntParam)
                     _currentEnemyPlayer = null;
             }
+    }
+
+    // ── 攻城游击(原版 assignBombers 逐字逻辑)──
+
+    /// <summary>闲置远程攻城器(BoltShooter/StoneThrower)骚扰射程内敌建筑:
+    /// 清理失效/跑偏 → 每个闲攻城器找最近可打建筑,超程则推进到射程边
+    /// (领土安全校验:安全圈不深入敌领,射程点须我领+同陆);同目标 ≤4 人。</summary>
+    private void AssignBombers(GameState gameState)
+    {
+        // 清理:目标死了/不再敌 → 整张撕;单位死了/不再我/单已指 → 摘除。
+        foreach (var (targetId, unitIds) in BombingAttacks.ToList())
+        {
+            var target = gameState.GetEntityById(targetId);
+            if (target == null || !gameState.IsPlayerEnemy(target.Owner))
+            {
+                BombingAttacks.Remove(targetId);
+                continue;
+            }
+            foreach (var entId in unitIds.ToList())
+            {
+                var ent = gameState.GetEntityById(entId);
+                // 原版:最后订单仍指目标且非应急计划 → 保留在册。
+                if (!(ent != null && ent.Owner == gameState.PlayerId
+                    && ent.UnitAIOrderTarget is { } t2 && t2.Value == targetId
+                    && (gameState.Metadata.GetObject(entId, "plan") is not int pl
+                        || pl == -1)))
+                    unitIds.Remove(entId);
+            }
+            if (unitIds.Count == 0)
+                BombingAttacks.Remove(targetId);
+        }
+
+        var territory = SimSystem.Territory;
+        foreach (var ent in gameState.GetOwnUnits().Values()
+            .Where(e => e.HasClass("BoltShooter") || e.HasClass("StoneThrower"))
+            .OrderBy(e => e.Id))
+        {
+            if (ent.Position2D == default || !ent.IsIdle) continue;
+            float range = ent.Template.GetFloat("Attack/Ranged/MaxRange");
+            if (range <= 0) continue;
+            var planMeta = gameState.Metadata.GetObject(ent.Id, "plan");
+            if (planMeta is int pm && (pm == -2 || pm == -3)) continue;
+            if (planMeta is int pp && pp != -1)
+            {
+                var subrole = gameState.Metadata.GetObject(ent.Id, "subrole")?.ToString();
+                if (subrole is WorkerRoles.SubroleCompleting or WorkerRoles.SubroleWalking
+                    or WorkerRoles.SubroleAttacking) continue;
+            }
+            if (BombingAttacks.Values.Any(u => u.Contains(ent.Id))) continue;
+
+            ushort entAccess = gameState.Accessibility?.GetAccessValue(
+                ent.Position2D.X.ToFloat(), ent.Position2D.Y.ToFloat()) ?? (ushort)0;
+            foreach (var structure in gameState.GetEnemyStructures().Values()
+                .OrderBy(st => st.Id))
+            {
+                if (!ent.CanAttackTarget(structure)) continue;
+                if (structure.Position2D == default) continue;
+                // 田:有人采且地主为敌才打(原版 Field 分支)。
+                if (structure.HasClass("Field") && territory != null)
+                {
+                    int owner = territory.GetOwner(
+                        structure.Position2D.X, structure.Position2D.Y);
+                    if (!gameState.IsPlayerEnemy(owner)) continue;
+                }
+
+                float ex = ent.Position2D.X.ToFloat(), ez = ent.Position2D.Y.ToFloat();
+                float sx = structure.Position2D.X.ToFloat(), sz = structure.Position2D.Y.ToFloat();
+                float dist = MathF.Sqrt((ex - sx) * (ex - sx) + (ez - sz) * (ez - sz));
+
+                float moveX = ex, moveZ = ez;
+                bool needMove = dist > range;
+                if (needMove)
+                {
+                    // 原版:安全圈(足迹半径+30)不能深入敌领;射程点须我领+同陆。
+                    float safety = ObstructionRadiusOf(structure) + 30;
+                    float tx = sx + (ex - sx) * safety / dist;
+                    float tz = sz + (ez - sz) * safety / dist;
+                    int tOwner = territory?.GetOwner(
+                        Maths.Fixed.FromFloat(tx), Maths.Fixed.FromFloat(tz)) ?? 0;
+                    if (tOwner != 0 && gameState.IsPlayerEnemy(tOwner)) continue;
+                    tx = sx + (ex - sx) * range / dist;
+                    tz = sz + (ez - sz) * range / dist;
+                    if (territory != null && territory.GetOwner(
+                        Maths.Fixed.FromFloat(tx), Maths.Fixed.FromFloat(tz)) != gameState.PlayerId)
+                        continue;
+                    if (gameState.Accessibility != null
+                        && gameState.Accessibility.GetAccessValue(tx, tz) != entAccess)
+                        continue;
+                    moveX = tx; moveZ = tz;
+                }
+
+                if (!BombingAttacks.TryGetValue(structure.Id, out var attacking))
+                    BombingAttacks[structure.Id] = attacking = new HashSet<uint>();
+                if (attacking.Count > 4) continue;   // 原版:同目标至多 4 台
+                attacking.Add(ent.Id);
+                if (needMove)
+                    gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Move(
+                        (uint)gameState.PlayerId, ent.Id,
+                        Maths.Fixed.FromFloat(moveX), Maths.Fixed.FromFloat(moveZ)));
+                gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Attack(
+                    (uint)gameState.PlayerId, ent.Id, structure.Id));
+                break;
+            }
+        }
+    }
+
+    /// <summary>建筑障碍半径(Obstruction Static 宽深取大之半;原版 footprintRadius 近似)。</summary>
+    private static float ObstructionRadiusOf(AIEntity ent)
+    {
+        float w = ent.Template.GetFloat("Obstruction/Static/@width");
+        float d = ent.Template.GetFloat("Obstruction/Static/@depth");
+        return Math.Max(w, d) / 2f;
+    }
+
+    /// <summary>圣物袭击(原版 victoryManager 的 forced Raid:uniqueTarget 圣物,
+    /// 少量快单位强推——forced Raid 跳过常规编组等待)。</summary>
+    public void StartRelicRaid(GameState gameState, AIEntity relic)
+    {
+        var plan = new AttackPlan(gameState, _totalNumber, AttackPlan.TypeRaid, _config)
+        {
+            UniqueTargetId = relic.Id,
+        };
+        _totalNumber++;
+        plan.Init(gameState, Hq != null ? Hq.Queues : new QueueManager(_config));
+        plan.SetInitialRallyPoint(gameState);
+        plan.Target = relic.Id;
+        plan.TargetPlayer = relic.Owner;
+        plan.TargetPos = relic.Position2D;
+        // 立即进入 Completing(集结 20s,Raid 原版 maxCompletingTime 同款)——
+        // 人员由 UpdatePreparation 的 assignUnits 每轮补充,到点即推。
+        plan.ForceStartImmediate(gameState);
+        UpcomingAttacks[AttackPlan.TypeRaid].Add(plan);
     }
 
     // ── 目标玩家选择(原版 getEnemyPlayer 逐字逻辑)──

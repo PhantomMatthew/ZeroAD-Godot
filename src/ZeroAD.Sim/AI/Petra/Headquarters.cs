@@ -46,6 +46,7 @@ public sealed class Headquarters
     /// 一块像样的湖/海,小水洼不算)。</summary>
     private const int NavalMapMinWaterCells = 200;
 
+    private bool _diplomacyAttached;
     public int Phasing;  // 0=无，>0=正在升级到 phase i
     public int CurrentPhase;
     public bool FirstBaseConfig;
@@ -91,7 +92,9 @@ public sealed class Headquarters
         GarrisonManager = new GarrisonManager(config);
         NavalManager = new NavalManager(config);
         DiplomacyManager = new DiplomacyManager(config);
+        DiplomacyManager.Hq = this;   // 请求-应答回查 pickMostNeededResources
         VictoryManager = new VictoryManager(config);
+        VictoryManager.Hq = this;   // 圣物编排回查 attackManager
         TargetNumWorkers = config.Economy.TargetNumWorkers;
         SupportRatio = config.Economy.SupportRatio;
         TowerLapseTime = config.Military.TowerLapseTime;
@@ -188,6 +191,8 @@ public sealed class Headquarters
             NavalManager.Update(gameState, Queues, events);
         // 外交/胜利(原版顺序压轴:diplomacyManager → victoryManager):
         // 贡品输送/LMS 背叛;奇迹建造/奇迹建造/弑君护主。
+        // 事件订阅挂一次(原版 checkEvents 的 TributeExchanged/request 通道)。
+        if (!_diplomacyAttached) { DiplomacyManager.Attach(gameState); _diplomacyAttached = true; }
         DiplomacyManager.Update(gameState, events);
         VictoryManager.Update(gameState, events, Queues);
         long t11 = prof.ElapsedMilliseconds;
