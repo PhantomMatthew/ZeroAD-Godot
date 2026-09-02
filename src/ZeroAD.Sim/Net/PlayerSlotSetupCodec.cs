@@ -17,6 +17,34 @@ public static class PlayerSlotSetupCodec
     public const int MaxSlots = 4;
 
     /// <summary>Pack the slot table into three parallel arrays. PlayerId is NOT carried.</summary>
+    /// <summary>v2: 追加 AI 难度/性格平行数组(线格式扩展——存档 v13/录像 v3 随升)。</summary>
+    public static (int[] kinds, string[] civs, int[] teams, int[] difficulties, string[] behaviors)
+        PackFull(IReadOnlyList<PlayerSlotSetup> slots)
+    {
+        var (kinds, civs, teams) = Pack(slots);
+        var diffs = new int[slots.Count];
+        var behs = new string[slots.Count];
+        for (int i = 0; i < slots.Count; i++)
+        {
+            diffs[i] = slots[i].AIDifficulty;
+            behs[i] = slots[i].AIBehavior;
+        }
+        return (kinds, civs, teams, diffs, behs);
+    }
+
+    public static List<PlayerSlotSetup> UnpackFull(int[] kinds, string[] civs, int[] teams,
+        int[] difficulties, string[] behaviors)
+    {
+        var slots = Unpack(kinds, civs, teams);
+        for (int i = 0; i < slots.Count && i < difficulties.Length; i++)
+            slots[i] = slots[i] with
+            {
+                AIDifficulty = difficulties[i],
+                AIBehavior = i < behaviors.Length ? behaviors[i] : "",
+            };
+        return slots;
+    }
+
     public static (int[] kinds, string[] civs, int[] teams) Pack(IReadOnlyList<PlayerSlotSetup> slots)
     {
         if (slots.Count > MaxSlots)

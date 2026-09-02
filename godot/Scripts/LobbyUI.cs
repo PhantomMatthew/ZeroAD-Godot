@@ -23,6 +23,9 @@ public sealed partial class LobbyUI : CanvasLayer
     // --- Slot-lobby events (Task #10): host edits slots, host starts the game ---
     /// <summary>Host edited a slot (playerId, kind, civ, team). Wired to
     /// <c>MultiplayerController.HostSetSlot</c>.</summary>
+    /// <summary>Host edited a slot (playerId, kind, civ, team, aiDifficulty, aiBehavior).
+    /// Wired to <c>MultiplayerController.HostSetSlot</c>.</summary>
+    public event System.Action<int, PlayerSlotKind, string, int, int, string>? OnSlotEditFull;
     public event System.Action<int, PlayerSlotKind, string, int>? OnSlotEdit;
     /// <summary>Host clicked Start Game. Wired to <c>MultiplayerController.HostStartGame</c>.</summary>
     public event System.Action? OnStartGameRequested;
@@ -45,6 +48,11 @@ public sealed partial class LobbyUI : CanvasLayer
 
     // Per-slot row controls, indexed by slot PlayerId-1. The host's rows are editable (built once
     // in ShowSlotLobby); the client's rows are disabled and repainted by RefreshSlotDisplay.
+    private static readonly string[] LobbyAiDifficulties =
+        { "Sandbox", "Very Easy", "Easy", "Medium", "Hard", "Very Hard" };
+    private static readonly string[] LobbyAiBehaviors = { "Random", "Aggressive", "Balanced", "Defensive" };
+    private readonly OptionButton?[] _diffOpts = new OptionButton?[PlayerSlotSetupCodec.MaxSlots];
+    private readonly OptionButton?[] _behaviorOpts = new OptionButton?[PlayerSlotSetupCodec.MaxSlots];
     private readonly OptionButton?[] _kindOpts = new OptionButton?[PlayerSlotSetupCodec.MaxSlots];
     private readonly OptionButton?[] _civOpts = new OptionButton?[PlayerSlotSetupCodec.MaxSlots];
     private readonly SpinBox?[] _teamSpins = new SpinBox?[PlayerSlotSetupCodec.MaxSlots];
@@ -1053,17 +1061,43 @@ public sealed partial class LobbyUI : CanvasLayer
         row.AddChild(team);
         _teamSpins[idx] = team;
 
+        // AI 难度/性格(原版 gamesetup_mp 同款;仅 AI 槽可见)。
+        var diff = new OptionButton { CustomMinimumSize = new Vector2(90, 0) };
+        foreach (var d in LobbyAiDifficulties) diff.AddItem(Localization.Tr(d));
+        diff.Selected = slot.AIDifficulty >= 0 ? slot.AIDifficulty : 3;
+        var behavior = new OptionButton { CustomMinimumSize = new Vector2(90, 0) };
+        foreach (var b in LobbyAiBehaviors) behavior.AddItem(Localization.Tr(b));
+        int behIdx = System.Array.FindIndex(LobbyAiBehaviors,
+            b => b.Equals(slot.AIBehavior, System.StringComparison.OrdinalIgnoreCase));
+        behavior.Selected = behIdx >= 0 ? behIdx : 0;
+        diff.Visible = behavior.Visible = slot.Kind == PlayerSlotKind.AI;
+        diff.Disabled = behavior.Disabled = !editable || rowLocked;
+        row.AddChild(diff);
+        row.AddChild(behavior);
+        _diffOpts[idx] = diff;
+        _behaviorOpts[idx] = behavior;
+
         if (editable && !rowLocked)
         {
             // Read fresh control values at emit time (closures capture slot.PlayerId, a constant).
-            void Emit() => OnSlotEdit?.Invoke(
-                slot.PlayerId,
-                (PlayerSlotKind)kind.Selected,
-                civ.Selected > 0 ? CivChoices[civ.Selected - 1].Code : CivChoices[GD.RandRange(0, CivChoices.Length - 1)].Code,
-                (int)team.Value);
+            void Emit()
+            {
+                var kindVal = (PlayerSlotKind)kind.Selected;
+                var civVal = civ.Selected > 0 ? CivChoices[civ.Selected - 1].Code
+                    : CivChoices[GD.RandRange(0, CivChoices.Length - 1)].Code;
+                OnSlotEdit?.Invoke(slot.PlayerId, kindVal, civVal, (int)team.Value);
+                OnSlotEditFull?.Invoke(slot.PlayerId, kindVal, civVal, (int)team.Value,
+                    diff.Selected, LobbyAiBehaviors[behavior.Selected].ToLowerInvariant());
+            }
+            kind.ItemSelected += _ =>
+            {
+                diff.Visible = behavior.Visible = kind.Selected == (int)PlayerSlotKind.AI;
+            };
             kind.ItemSelected += _ => Emit();
             civ.ItemSelected += _ => Emit();
             team.ValueChanged += _ => Emit();
+            diff.ItemSelected += _ => Emit();
+            behavior.ItemSelected += _ => Emit();
         }
 
         parent.AddChild(card);
@@ -1101,6 +1135,8 @@ public sealed partial class LobbyUI : CanvasLayer
             _kindOpts[i] = null;
             _civOpts[i] = null;
             _teamSpins[i] = null;
+            _diffOpts[i] = null;
+            _behaviorOpts[i] = null;
         }
         int n = System.Math.Min(slots.Count, PlayerSlotSetupCodec.MaxSlots);
         for (int i = 0; i < n; i++)

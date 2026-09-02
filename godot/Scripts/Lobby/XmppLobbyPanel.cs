@@ -16,6 +16,7 @@ public sealed partial class XmppLobbyPanel : CanvasLayer
     private LineEdit _chatInput = null!;
     private ItemList _playerList = null!;
     private ItemList _gameList = null!;
+    private ItemList _boardList = null!;
     private RichTextLabel _chatLog = null!;
     private Button _connectBtn = null!;
     private Button _disconnectBtn = null!;
@@ -97,6 +98,23 @@ public sealed partial class XmppLobbyPanel : CanvasLayer
         rightCol.AddChild(_gameList);
         split.AddChild(rightCol);
 
+        // 右二:排行榜(原版 leaderboard 面板;进大厅拉一次,刷新按钮重拉)。
+        var boardCol = new VBoxContainer { CustomMinimumSize = new Vector2(220, 0) };
+        var boardHead = new HBoxContainer();
+        boardHead.AddChild(new Label { Text = "Leaderboard",
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+        var refreshBtn = new Button { Text = "↻", TooltipText = "Refresh leaderboard" };
+        refreshBtn.Pressed += () => _client?.RequestBoardList();
+        boardHead.AddChild(refreshBtn);
+        boardCol.AddChild(boardHead);
+        _boardList = new ItemList
+        {
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(220, 300),
+        };
+        boardCol.AddChild(_boardList);
+        split.AddChild(boardCol);
+
         // 关闭按钮
         var closeBtn = new Button { Text = "Close", SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter };
         closeBtn.Pressed += () => QueueFree();
@@ -138,6 +156,7 @@ public sealed partial class XmppLobbyPanel : CanvasLayer
         _client.OnMessage += OnLobbyMessage;
         _client.OnPlayerListChanged += RefreshPlayerList;
         _client.OnGameListChanged += RefreshGameList;
+        _client.OnBoardListChanged += RefreshBoardList;
         _client.OnConnected += () =>
         {
             CallDeferred(nameof(ShowLobby));
@@ -168,6 +187,15 @@ public sealed partial class XmppLobbyPanel : CanvasLayer
         }
     }
 
+    /// <summary>排行榜刷新(原版 leaderboard 列表:name — rating 行;rating 降序)。</summary>
+    private void RefreshBoardList()
+    {
+        if (_client == null || _boardList == null) return;
+        _boardList.Clear();
+        foreach (var entry in _client.GetBoardList().OrderByDescending(e => e.Rating))
+            _boardList.AddItem($"{entry.Name}  —  {entry.Rating}");
+    }
+
     private void OnDisconnect()
     {
         _client?.Disconnect();
@@ -177,6 +205,7 @@ public sealed partial class XmppLobbyPanel : CanvasLayer
     {
         _lobbyContent.Visible = true;
         _disconnectBtn.Disabled = false;
+        _client?.RequestBoardList();   // 进大厅拉榜(原版同款)
         _connectBtn.Text = "Connected";
     }
 

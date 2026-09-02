@@ -197,6 +197,9 @@ public sealed partial class Main : Node3D
 		_lobby.OnClientConnect += (addr, port, observer) => StartMpClient(addr, port, observer);
 		// Lobby slot editing (host only): each edit re-broadcasts the slot table to clients.
 		_lobby.OnSlotEdit += (id, kind, civ, team) => _mp.HostSetSlot(id, kind, civ, team);
+		// 全参数版(AI 难度/性格;原版 gamesetup_mp 的 aiDifficulties/aiBehaviors)。
+		_lobby.OnSlotEditFull += (id, kind, civ, team, diff, behavior) =>
+			_mp.HostSetSlot(id, kind, civ, team, diff, behavior);
 		_lobby.OnMapEdit += map => _mp.HostSetMap(map);
 		_mp.OnMapChanged += map => _lobby.SetMapDisplay(map);
 		_lobby.OnStartGameRequested += () => _mp.HostStartGame();
@@ -1933,11 +1936,14 @@ public sealed partial class Main : Node3D
 		{
 			if (slot.Kind == ZeroAD.Sim.Net.PlayerSlotKind.AI)
 			{
-				// autostart-aidiff 覆盖(原版 playerAI.difficulty;无项 → Medium 默认)。
+				// 槽位难度/性格(gamesetup+大厅下拉;原版 playerAI.difficulty/behavior);
+				// autostart -autostart-aidiff 为 dev 兜底。
 				var launchCfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
-				_sim.AttachAi(slot.PlayerId,
-					launchCfg.AiDifficulties.TryGetValue(slot.PlayerId, out int diff)
-						? diff : ZeroAD.Sim.AI.Petra.DifficultyLevel.Medium);
+				int diff = slot.AIDifficulty >= 0 ? slot.AIDifficulty
+					: launchCfg.AiDifficulties.TryGetValue(slot.PlayerId, out int d)
+						? d : ZeroAD.Sim.AI.Petra.DifficultyLevel.Medium;
+				_sim.AttachAi(slot.PlayerId, diff,
+					slot.AIBehavior.Length > 0 ? slot.AIBehavior : "random");
 			}
 		}
 

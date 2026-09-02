@@ -18,6 +18,7 @@ public sealed partial class DiplomacyPanel : ModalPanelBase
     private readonly SimBridge _sim;
     private GridContainer _grid = null!;
     private Label _status = null!;
+    private Label _ceasefireLabel = null!;
 
     public DiplomacyPanel(SimBridge sim) => _sim = sim;
 
@@ -26,20 +27,38 @@ public sealed partial class DiplomacyPanel : ModalPanelBase
         var (content, status) = BuildShell("Diplomacy", minWidth: 760);
         _status = status;
 
-        _grid = new GridContainer { Columns = 6, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        _grid = new GridContainer { Columns = 7, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         _grid.AddThemeConstantOverride("h_separation", 12);
         _grid.AddThemeConstantOverride("v_separation", 6);
         content.AddChild(_grid);
 
+        // 停火倒计时(原版 DiplomacyDialogCeasefireCounter;激活时才显)。
+        _ceasefireLabel = MakeLabel("", 14);
+        _ceasefireLabel.AddThemeColorOverride("font_color", new Color(0.95f, 0.85f, 0.4f));
+        content.AddChild(_ceasefireLabel);
+
         AddButton(content, "Close", Close, minWidth: 160);
 
-        // 延后项占位提示。
-        var note = MakeLabel("Ceasefire / spy / attack-request: not yet wired (shown disabled).", 12);
+        // 间谍请求留待盟友视野共享基建(原版 Spies 科技 + 逐对 LOS;未移植,
+        // 记 PORTING-GAPS)。
+        var note = MakeLabel("Spy request: needs per-pair LOS sharing (not yet).", 12);
         note.AddThemeColorOverride("font_color", new Color(0.7f, 0.65f, 0.5f));
         content.AddChild(note);
     }
 
-    protected override void OnOpen() => Rebuild();
+    protected override void OnOpen()
+    {
+        // 停火倒计时(原版 update 每帧;我们打开即填,行内足够)。
+        var cf = _sim.Gui.GetCeasefireState();
+        _ceasefireLabel.Visible = cf.Active;
+        if (cf.Active)
+        {
+            int total = (int)cf.RemainingSeconds;
+            _ceasefireLabel.Text = string.Format(
+                Localization.Tr("Remaining ceasefire time: {0}"), $"{total / 60}:{total % 60:00}");
+        }
+        Rebuild();
+    }
 
     private void Rebuild()
     {
@@ -47,7 +66,7 @@ public sealed partial class DiplomacyPanel : ModalPanelBase
             ((Node)n).QueueFree();
 
         // 表头。
-        foreach (var h in new[] { "Player", "Civ", "Team", "Their Stance", "Our Stance", "Tribute" })
+        foreach (var h in new[] { "Player", "Civ", "Team", "Their Stance", "Our Stance", "Tribute", "Request" })
         {
             var lbl = MakeLabel(h, 14);
             lbl.AddThemeColorOverride("font_color", new Color(0.85f, 0.78f, 0.55f));
@@ -86,6 +105,23 @@ public sealed partial class DiplomacyPanel : ModalPanelBase
             _grid.AddChild(theirLbl);
             _grid.AddChild(MakeStanceButtons(row.PlayerId, row.OurStance, row.IsSelf || row.TeamLocked));
             _grid.AddChild(MakeTributeButtons(row, state.LocalActive));
+            // 攻击请求(原版 DiplomacyPlayerControl 的 attackRequest;只对盟友行显示)。
+            if (!row.IsSelf && row.OurStance == GuiInterface.Stance.Ally)
+            {
+                int pid = row.PlayerId;
+                var askBtn = new Button
+                {
+                    Text = Localization.Tr("Ask to attack"),
+                    Theme = UITheme.GetTheme(),
+                    CustomMinimumSize = new Vector2(0, 24),
+                    TooltipText = Localization.Tr("Ask this ally to attack an enemy of yours."),
+                };
+                StoneButtonStyle.Apply(askBtn, StoneButtonStyle.FindBinariesDir());
+                askBtn.Pressed += () => AskAttack(pid);
+                _grid.AddChild(askBtn);
+            }
+            else
+                _grid.AddChild(new Control());   // 网格占位(列数对齐)
         }
 
         _status.Text = !state.HasLocalPlayer
@@ -150,6 +186,35 @@ public sealed partial class DiplomacyPanel : ModalPanelBase
             hbox.AddChild(btn);
         }
         return hbox;
+    }
+
+    /// <summary>攻击请求(原版 attack-request):目标 = 我方最强敌(实体数最多;
+    /// 原版由请求方在子面板选敌——此处取最强敌简化,AI 侧评估兵力后答复)。</summary>
+    private void AskAttack(int allyId)
+    {
+        var state = _sim.Gui.GetDiplomacyState((int)_sim.LocalPlayerId);
+        int target = -1;
+        int best = -1;
+        foreach (var row in state.Rows)
+        {
+            if (row.IsSelf) continue;
+            if (row.OurStance != GuiInterface.Stance.Enemy) continue;
+            // 近似强度:活跃即候选;取第一个敌人(行序确定)。
+            if (row.IsActive && best < 0) { best = 0; target = row.PlayerId; }
+        }
+        if (target < 0) return;
+        int chosen = target;
+        Dialogs.GameMsgBox.Show(this, 400, 180,
+            string.Format(Localization.Tr("Ask Player {0} to attack Player {1}?"), allyId, chosen),
+            Localization.Tr("Attack Request"),
+            new[] { Localization.Tr("Cancel"), Localization.Tr("Request") },
+            idx =>
+            {
+                if (idx != 1) return;
+                _sim.CommandRequestAttack(chosen);
+                _status.Text = string.Format(
+                    Localization.Tr("Attack request sent to Player {0}."), allyId);
+            });
     }
 
     private static bool IsShiftHeld() =>

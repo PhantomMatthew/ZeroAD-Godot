@@ -38,4 +38,11 @@ public sealed record PlayerSlotSetup
 
     /// <summary>Team id: -1 = no team (FFA), 0+ = allied team (mutual allies via diplomacy seeding).</summary>
     public int Team { get; init; } = -1;
+
+    /// <summary>AI 难度(原版 gamesetup AIDifficulty:0 Sandbox…5 VeryHard;
+    /// 仅 Kind==AI 有意义;-1 = 未设 → 挂接时回落 Medium)。</summary>
+    public int AIDifficulty { get; init; } = -1;
+    /// <summary>AI 性格(原版 AIBehavior:aggressive/balanced/defensive/random;
+    /// "" = random)。</summary>
+    public string AIBehavior { get; init; } = "";
 }

@@ -53,6 +53,9 @@ namespace ZeroAD.Sim.Net
         /// <summary>Gate: 城门锁切换。EntityId=城门, IntParam1: 0=解锁(通行), 1=上锁(阻挡)。
         /// 原版 cmd {type:"lock-gate"/"unlock-gate"}。</summary>
         Gate = 29,
+        /// <summary>请求盟友进攻某敌(原版 chat attack-request;锁步命令,
+        /// 执行器广播 AttackRequestedEvent → AI attackManager 评估)。</summary>
+        AttackRequest = 30,
     }
 
     /// <summary>
@@ -300,6 +303,10 @@ namespace ZeroAD.Sim.Net
                 shape + "|" + string.Join(',', memberIds));
 
         /// <summary>Pack: 攻城器打包(unpack=false)/解包(true)。EntityId=单位。</summary>
+        /// <summary>AttackRequest: IntParam1 = 目标玩家(敌)。</summary>
+        public static NetCommand AttackRequest(uint player, int targetPlayer) =>
+            new(player, NetCommandType.AttackRequest, 0, targetPlayer);
+
         public static NetCommand Pack(uint player, uint unitId, bool unpack) =>
             new(player, NetCommandType.Pack, unitId, unpack ? 1 : 0);
 

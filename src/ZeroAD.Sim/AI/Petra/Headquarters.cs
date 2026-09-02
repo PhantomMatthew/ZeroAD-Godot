@@ -192,7 +192,12 @@ public sealed class Headquarters
         // 外交/胜利(原版顺序压轴:diplomacyManager → victoryManager):
         // 贡品输送/LMS 背叛;奇迹建造/奇迹建造/弑君护主。
         // 事件订阅挂一次(原版 checkEvents 的 TributeExchanged/request 通道)。
-        if (!_diplomacyAttached) { DiplomacyManager.Attach(gameState); _diplomacyAttached = true; }
+        if (!_diplomacyAttached)
+        {
+            DiplomacyManager.Attach(gameState);
+            AttackManager.Attach(gameState);   // 攻击请求通道(原版 events.AttackRequest)
+            _diplomacyAttached = true;
+        }
         DiplomacyManager.Update(gameState, events);
         VictoryManager.Update(gameState, events, Queues);
         long t11 = prof.ElapsedMilliseconds;

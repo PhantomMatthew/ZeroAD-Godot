@@ -58,6 +58,28 @@ public sealed partial class ManualPanel : ModalPanelBase
         // 原版 SGML 把字面 `[` 转义成 `\[`(如 \[on unit]);Godot bbcode 无此转义,还原为字面括号。
         // 含空格的 `[on unit]` 非合法标签,Godot 当字面文本渲染。
         text = text.Replace(@"\[", "[");
+        // 热键占位符替换(原版 manual.js 的 substituteHotkeys:“hotkey.xxx” →
+        // 当前绑定组合;未绑定/未知名保留原文)。直/弯引号两种包裹都收。
+        text = Regex.Replace(text, @"[“""]?(hotkey\.[a-z0-9_.]+)[”""]?",
+            m => FormatHotkey(m.Groups[1].Value, m.Value));
         return text;
+    }
+
+    /// <summary>hotkey action → 当前绑定显示串(UserConfig 有效值 → Parse → Format;
+    /// 未知/未绑定 → 原文返回)。</summary>
+    private static string FormatHotkey(string action, string fallback)
+    {
+        try
+        {
+            var cfg = (Engine.GetMainLoop() as SceneTree)?.Root
+                .GetNodeOrNull<UserConfig>("/root/UserConfig");
+            if (cfg == null) return fallback;
+            string combo = cfg.GetEffective(action);
+            if (combo.Length == 0) return fallback;
+            var evt = Options.HotkeyCombo.Parse(combo);
+            if (evt == null) return fallback;
+            return Options.HotkeyCombo.Format(evt);
+        }
+        catch (Exception) { return fallback; }
     }
 }

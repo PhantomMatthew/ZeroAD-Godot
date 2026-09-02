@@ -67,6 +67,8 @@ public sealed class XmppLobbyClient : IDisposable
     public event Action<LobbyMessage>? OnMessage;
     public event Action? OnPlayerListChanged;
     public event Action? OnGameListChanged;
+    /// <summary>排行榜到达(BoardList IQ 应答解析后)。</summary>
+    public event Action? OnBoardListChanged;
     public event Action? OnConnected;
     public event Action<string>? OnDisconnected;
 
@@ -232,6 +234,7 @@ public sealed class XmppLobbyClient : IDisposable
             }
             _boardList.Clear();
             _boardList.AddRange(entries);
+            OnBoardListChanged?.Invoke();
         }
     }
 

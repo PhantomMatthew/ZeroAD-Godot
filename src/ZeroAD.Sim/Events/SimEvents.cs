@@ -241,6 +241,20 @@ namespace ZeroAD.Sim.Events
         public EntityId NewEntity;
     }
 
+    /// <summary>攻击请求(原版 chat attack-request 的 sim 内等价;盟友请 AI 攻某敌)。</summary>
+    public sealed class AttackRequestedEvent
+    {
+        public int SourcePlayer;
+        public int TargetPlayer;
+    }
+    /// <summary>攻击请求答复(原版 attackAnswer;accepted = 兵力够立即推)。</summary>
+    public sealed class AttackAnsweredEvent
+    {
+        public int SourcePlayer;
+        public int TargetPlayer;
+        public bool Accepted;
+    }
+
     /// <summary>贡品请求(原版 chat.requestTribute 的 sim 内等价:AI 间同进程,
     /// 事件即达且锁步确定)。</summary>
     public sealed class TributeRequestedEvent
@@ -272,6 +286,8 @@ namespace ZeroAD.Sim.Events
         public event Action<AttackLandedEvent>? AttackLanded;
         public event Action<DiplomacyChangedEvent>? DiplomacyChanged;
         public event Action<TributeRequestedEvent>? TributeRequested;
+        public event Action<AttackRequestedEvent>? AttackRequested;
+        public event Action<AttackAnsweredEvent>? AttackAnswered;
         public event Action<ConstructionStartedEvent>? ConstructionStarted;
         public event Action<EntityRenamedEvent>? EntityRenamed;
         public event Action<AttackLaunchedEvent>? AttackLaunched;
@@ -303,6 +319,8 @@ namespace ZeroAD.Sim.Events
         public void RaiseAttackLanded(AttackLandedEvent e) => AttackLanded?.Invoke(e);
         public void RaiseDiplomacyChanged(DiplomacyChangedEvent e) => DiplomacyChanged?.Invoke(e);
         public void RaiseTributeRequested(TributeRequestedEvent e) => TributeRequested?.Invoke(e);
+        public void RaiseAttackRequested(AttackRequestedEvent e) => AttackRequested?.Invoke(e);
+        public void RaiseAttackAnswered(AttackAnsweredEvent e) => AttackAnswered?.Invoke(e);
         public void RaiseConstructionStarted(ConstructionStartedEvent e) => ConstructionStarted?.Invoke(e);
         public void RaiseEntityRenamed(EntityRenamedEvent e) => EntityRenamed?.Invoke(e);
         public void RaiseAttackLaunched(AttackLaunchedEvent e) => AttackLaunched?.Invoke(e);

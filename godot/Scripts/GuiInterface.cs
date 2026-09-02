@@ -263,6 +263,14 @@ public sealed class GuiInterface
             local?.Wood ?? 0, local?.Food ?? 0, local?.Stone ?? 0, local?.Metal ?? 0);
     }
 
+    /// <summary>停战状态(原版 GetSimState().ceasefireActive/TimeRemaining;
+    /// 外交面板倒计时读此)。</summary>
+    public (bool Active, float RemainingSeconds) GetCeasefireState()
+    {
+        var endGame = _cm.EndGame;
+        return (endGame.CeasefireActive, endGame.CeasefireRemaining);
+    }
+
     // ── 玩家花名册(原版 GetSimulationState 的 players 段;Match Settings 页只读摘要)──
 
     /// <summary>玩家花名册一行(名字色由面板自取;人口/状态为运行时值)。</summary>

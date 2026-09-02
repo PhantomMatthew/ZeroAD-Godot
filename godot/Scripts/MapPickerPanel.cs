@@ -66,7 +66,12 @@ public sealed partial class MapPickerPanel : Panel
     private PanelContainer _pageHost = null!;
     private VerticalTabStrip _tabStrip = null!;
 
-    // 每行的控件(kind/civ/team),索引 = 行号。
+    // 每行的控件(kind/civ/team/diff/behavior),索引 = 行号。
+    private static readonly string[] AiDifficulties =
+        { "Sandbox", "Very Easy", "Easy", "Medium", "Hard", "Very Hard" };
+    private static readonly string[] AiBehaviors = { "Random", "Aggressive", "Balanced", "Defensive" };
+    private readonly List<OptionButton> _diffOpts = new();
+    private readonly List<OptionButton> _behaviorOpts = new();
     private readonly List<OptionButton> _kindOpts = new();
     private readonly List<OptionButton> _civOpts = new();
     private readonly List<OptionButton> _teamOpts = new();
@@ -957,8 +962,26 @@ public sealed partial class MapPickerPanel : Panel
             team.Selected = mapTeam >= 0 && mapTeam <= 3 ? mapTeam + 1 : 0;
             hbox.AddChild(team);
 
+            // AI 难度/性格(原版 gamesetup aiDifficulties/aiBehaviors;仅 AI 行可见)。
+            var diff = new OptionButton { CustomMinimumSize = new Vector2(96, 0),
+                TooltipText = "AI difficulty." };
+            foreach (var d in AiDifficulties) diff.AddItem(Localization.Tr(d));
+            diff.Selected = 3;   // Medium(原版默认)
+            var behavior = new OptionButton { CustomMinimumSize = new Vector2(96, 0),
+                TooltipText = "AI behavior." };
+            foreach (var b in AiBehaviors) behavior.AddItem(Localization.Tr(b));
+            behavior.Selected = 0;   // Random(原版默认)
+            diff.Visible = behavior.Visible = kind.Selected == 1;
+            kind.ItemSelected += sel =>
+            {
+                diff.Visible = behavior.Visible = sel == 1;
+            };
+            hbox.AddChild(diff);
+            hbox.AddChild(behavior);
+
             _slotRows.AddChild(card);
             _kindOpts.Add(kind); _civOpts.Add(civ); _teamOpts.Add(team);
+            _diffOpts.Add(diff); _behaviorOpts.Add(behavior);
         }
     }
 
@@ -996,6 +1019,10 @@ public sealed partial class MapPickerPanel : Panel
                 Kind = kind,
                 Civ = civ,
                 Team = teamSel - 1,
+                // AI 槽:难度/性格随槽走(原版 playerAI.difficulty/behavior)。
+                AIDifficulty = kind == PlayerSlotKind.AI ? _diffOpts[i].Selected : -1,
+                AIBehavior = kind == PlayerSlotKind.AI
+                    ? AiBehaviors[_behaviorOpts[i].Selected].ToLowerInvariant() : "",
             });
         }
         return humans == 1 ? slots : null;   // 恰好一个本地玩家才允许开局

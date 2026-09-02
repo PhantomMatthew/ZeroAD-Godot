@@ -32,7 +32,7 @@ namespace ZeroAD.Sim.Net
     public static class ReplayFile
     {
         public const string Magic = "0ADREPL";
-        public const uint Version = 2;   // v2: AIComponent 增 HQ 尾段(初始状态载荷格式随存档 v12)
+        public const uint Version = 3;   // v3: 槽位增 AI 难度/性格(随存档 v13)   // v2: AIComponent 增 HQ 尾段(初始状态载荷格式随存档 v12)
 
         /// <summary>开始录制：写 magic + header + 初始状态，返回 ReplayWriter 供逐回合追加命令。</summary>
         public static ReplayWriter BeginRecording(Stream stream, ReplayMeta meta, ComponentManager cm)
@@ -87,7 +87,10 @@ namespace ZeroAD.Sim.Net
                 var kind = (PlayerSlotKind)br.ReadByte();
                 string civ = br.ReadString();
                 int team = br.ReadInt32();
-                slots.Add(new PlayerSlotSetup { PlayerId = i + 1, Kind = kind, Civ = civ, Team = team });
+                int aiDiff = br.ReadInt32();
+                string aiBehavior = br.ReadString();
+                slots.Add(new PlayerSlotSetup { PlayerId = i + 1, Kind = kind, Civ = civ, Team = team,
+                    AIDifficulty = aiDiff, AIBehavior = aiBehavior });
             }
             long timeUnix = br.ReadInt64();
             string description = br.ReadString();

@@ -98,6 +98,11 @@ namespace ZeroAD.Sim.Net
                 case NetCommandType.Patrol: ApplyPatrol(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.Formation: ApplyFormation(cmd); break;
                 case NetCommandType.Pack: ApplyPack(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.AttackRequest:
+                    // 盟友请求进攻(原版 events.AttackRequest 广播点)。
+                    _cm.Events.RaiseAttackRequested(new Events.AttackRequestedEvent
+                    { SourcePlayer = (int)cmd.Player, TargetPlayer = cmd.IntParam1 });
+                    break;
                 case NetCommandType.Upgrade: ApplyUpgrade(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.Gate: ApplyGate(new EntityId(cmd.EntityId), cmd); break;
             }

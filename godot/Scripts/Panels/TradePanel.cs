@@ -101,6 +101,18 @@ public sealed partial class TradePanel : ModalPanelBase
         AddButton(content, "Close", Close, minWidth: 160);
     }
 
+    /// <summary>价格漂移 UI(原版 TradeDialog 的漂移价回显):面板开着时 1s 重算
+    /// 报价(BarterSystem 漂移随成交变动;此前开页一次静态,漂移不可见)。</summary>
+    public override void _Process(double delta)
+    {
+        if (!Visible) return;
+        _driftAccum += (float)delta;
+        if (_driftAccum < 1f) return;
+        _driftAccum = 0;
+        RebuildBuyButtons();
+    }
+    private float _driftAccum;
+
     protected override void OnOpen()
     {
         // 拉取当前贸易品比例(内核 PlayerComponent.GetTradingGoods 经 Gui 转发)。

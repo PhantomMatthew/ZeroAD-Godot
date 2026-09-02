@@ -61,7 +61,7 @@ public sealed class AIComponent : ComponentBase
     /// (AddComponent 触发 OnInit);save/load 路径由 prepareComponent 重注入(见 SaveGameManager.Load)。
     /// difficulty = Petra 难度(原版 playerAI.difficulty;缺省 Medium)。</summary>
     public void Configure(ComponentManager cm, NetTurnManager net,
-        int difficulty = AI.Petra.DifficultyLevel.Medium)
+        int difficulty = AI.Petra.DifficultyLevel.Medium, string behavior = "random")
     {
         _cm = cm;
         _net = net;
@@ -72,7 +72,7 @@ public sealed class AIComponent : ComponentBase
         _attack = new AttackManager(cm, net);
         Events.Attach(cm);
         // 初始化 Petra 完整版（Phase 4 接入）
-        _petraConfig = new AI.Petra.PetraConfig(difficulty);
+        _petraConfig = new AI.Petra.PetraConfig(difficulty, behavior);
         _hq = new AI.Petra.Headquarters(_petraConfig);
     }
 

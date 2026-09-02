@@ -379,16 +379,17 @@ public sealed partial class MultiplayerController : Node
     /// refresh their lobby UI; the host refreshes its own UI via the local event raise.</summary>
     private void BroadcastLobbyState()
     {
-        var (kinds, civs, teams) = PlayerSlotSetupCodec.Pack(_slots);
+        var (kinds, civs, teams, diffs, behs) = PlayerSlotSetupCodec.PackFull(_slots);
         var peers = _peerToPlayer.Keys.ToArray();
         var players = _peerToPlayer.Values.Select(v => (int)v).ToArray();
-        Rpc(nameof(ReceiveLobbyState), peers, players, kinds, civs, teams, _mapPath,
+        Rpc(nameof(ReceiveLobbyState), peers, players, kinds, civs, teams, diffs, behs, _mapPath,
             LobbyOptions.PackInts(), LobbyOptions.PackStrings());
         OnLobbyStateChanged?.Invoke(_slots);
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void ReceiveLobbyState(int[] peers, int[] players, int[] kinds, string[] civs, int[] teams, string mapPath,
+    private void ReceiveLobbyState(int[] peers, int[] players, int[] kinds, string[] civs, int[] teams,
+        int[] difficulties, string[] behaviors, string mapPath,
         int[] optionInts, string[] optionStrings)
     {
         _peerToPlayer.Clear();
@@ -396,7 +397,7 @@ public sealed partial class MultiplayerController : Node
             _peerToPlayer[peers[i]] = (uint)players[i];
         long myPeer = Multiplayer.GetUniqueId();
         _localPlayerId = _peerToPlayer.TryGetValue((int)myPeer, out var pid) ? pid : 1;
-        _slots = PlayerSlotSetupCodec.Unpack(kinds, civs, teams);
+        _slots = PlayerSlotSetupCodec.UnpackFull(kinds, civs, teams, difficulties, behaviors);
         if (_mapPath != mapPath)
         {
             _mapPath = mapPath;
@@ -441,12 +442,14 @@ public sealed partial class MultiplayerController : Node
 
     /// <summary>Host-only: edit one slot's kind/civ/team. Slot 1 is locked Human (the host).
     /// Emits a lobby broadcast so clients see the change.</summary>
-    public void HostSetSlot(int playerId, PlayerSlotKind kind, string civ, int team)
+    public void HostSetSlot(int playerId, PlayerSlotKind kind, string civ, int team,
+        int aiDifficulty = -1, string aiBehavior = "")
     {
         if (!_isHost || !_lobbyActive) return;
         int idx = _slots.FindIndex(s => s.PlayerId == playerId);
         if (idx < 0 || playerId == 1) return;
-        _slots[idx] = _slots[idx] with { Kind = kind, Civ = civ, Team = team };
+        _slots[idx] = _slots[idx] with { Kind = kind, Civ = civ, Team = team,
+            AIDifficulty = aiDifficulty, AIBehavior = aiBehavior };
         BroadcastLobbyState();
     }
 
@@ -471,17 +474,18 @@ public sealed partial class MultiplayerController : Node
         // 广播/Rpc 携带解析后的表,双端 InitWorld 拿到同一份真文明代码(确定性一致),
         // skirmish 占位替换不会落到 structures/random/* 这种不存在的模板上。
         _slots = CivRandom.Resolve(_slots);
-        var (kinds, civs, teams) = PlayerSlotSetupCodec.Pack(_slots);
-        Rpc(nameof(ReceiveGameStart), _seed, kinds, civs, teams, _mapPath);
+        var (kinds, civs, teams, diffs, behs) = PlayerSlotSetupCodec.PackFull(_slots);
+        Rpc(nameof(ReceiveGameStart), _seed, kinds, civs, teams, diffs, behs, _mapPath);
         OnGameStart?.Invoke(_seed, _localPlayerId, _slots, _mapPath); // host starts its own game
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void ReceiveGameStart(uint seed, int[] kinds, string[] civs, int[] teams, string mapPath)
+    private void ReceiveGameStart(uint seed, int[] kinds, string[] civs, int[] teams,
+        int[] difficulties, string[] behaviors, string mapPath)
     {
         _seed = seed;
         _lobbyActive = false;
-        _slots = PlayerSlotSetupCodec.Unpack(kinds, civs, teams);
+        _slots = PlayerSlotSetupCodec.UnpackFull(kinds, civs, teams, difficulties, behaviors);
         _mapPath = mapPath;
         long myPeer = Multiplayer.GetUniqueId();
         // 观战者不占槽:localPlayerId = 0(全图视野由 Main 按 0 开图;不产命令)。

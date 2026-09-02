@@ -177,6 +177,55 @@ public sealed class AttackManager
 
     // ── 事件(原版 checkEvents:玩家战败标记)──
 
+    // ── 攻击请求(原版 checkEvents 的 AttackRequest 段):盟友请求攻某敌——
+    // 筹备中的计划改指目标玩家,可动兵力 >12 即强推(forceStart);答复发起方
+    /// 经 sim 事件(原版 chat.answerAttackRequest;AI 间同进程)。</summary>
+    private void OnAttackRequest(GameState gameState, int sourcePlayer, int targetPlayer)
+    {
+        if (!gameState.IsPlayerAlly(sourcePlayer) || !gameState.IsPlayerEnemy(targetPlayer))
+            return;
+        int available = 0;
+        int? other = null;
+        foreach (var plan in UpcomingAttacks.Values.SelectMany(l => l))
+        {
+            if (plan.State == AttackPlan.AttackState.Completing)
+            {
+                if (plan.TargetPlayer == targetPlayer)
+                    available += plan.UnitCollection.Count;
+                else if (plan.TargetPlayer != null && plan.TargetPlayer != targetPlayer)
+                    other = plan.TargetPlayer;
+                continue;
+            }
+            plan.TargetPlayer = targetPlayer;   // 筹备中计划改指(原版同款)
+            if (plan.UnitCollection.Count > 2)
+                available += plan.UnitCollection.Count;
+        }
+        if (available > 12)
+        {
+            foreach (var plan in UpcomingAttacks.Values.SelectMany(l => l))
+            {
+                if (plan.State == AttackPlan.AttackState.Completing
+                    || plan.TargetPlayer != targetPlayer || plan.UnitCollection.Count < 3)
+                    continue;
+                plan.ForceStartImmediate(gameState);   // 立即推(原版 forceStart)
+            }
+        }
+        // 答复发起方(原版 attackAnswer chat;我们走 sim 事件,AI 侧记录即可)。
+        gameState.Cm.Events.RaiseAttackAnswered(new Events.AttackAnsweredEvent
+        {
+            SourcePlayer = gameState.PlayerId,
+            TargetPlayer = targetPlayer,
+            Accepted = available > 12,
+        });
+    }
+
+    /// <summary>事件订阅(攻击请求走 sim 事件总线,原版 events.AttackRequest)。</summary>
+    public void Attach(GameState gameState)
+    {
+        gameState.Cm.Events.AttackRequested += e =>
+            OnAttackRequest(gameState, e.SourcePlayer, e.TargetPlayer);
+    }
+
     private void CheckEvents(GameState gameState, AIEventBuffer events)
     {
         foreach (var ev in events.Events)

@@ -2317,12 +2317,13 @@ public sealed partial class SimBridge : Node
 	/// 解析玩家实体 → new AIComponent → Configure(_sim, _netTurn)(AddComponent 前注入,与
 	/// AuraComponent.Configure 同模式)→ AddComponent。TickAI 每回合推进;save/load 由
 	/// SaveGameManager.Load 的 prepareComponent 重注入 Configure。</summary>
-	public void AttachAi(int playerId, int difficulty = ZeroAD.Sim.AI.Petra.DifficultyLevel.Medium)
+	public void AttachAi(int playerId, int difficulty = ZeroAD.Sim.AI.Petra.DifficultyLevel.Medium,
+		string behavior = "random")
 	{
 		var playerEntity = _sim.GetPlayerEntityId(playerId);
 		if (playerEntity == null) return;
 		var ai = new AIComponent();
-		ai.Configure(_sim, _netTurn, difficulty);
+		ai.Configure(_sim, _netTurn, difficulty, behavior);
 		if (_sharedState != null)
 			ai.ConfigureSharedState(_sharedState);   // Petra HQ 主循环的激活钥匙
 		_sim.AddComponent(playerEntity.Value, ai);
@@ -2493,6 +2494,11 @@ public sealed partial class SimBridge : Node
 	// ── 第二梯队菜单面板:外交/贸易命令包装(玩家级,无 entity) ────────────────
 
 	/// <summary>外交立场(原版 cmd type:"diplomacy")。stance 取 DiplomacyComponent 常量。</summary>
+	/// <summary>请求盟友 AI 进攻某敌(原版外交面板 attack-request;锁步命令,
+	/// AI 评估筹备兵力 >12 即强推)。</summary>
+	public void CommandRequestAttack(int targetPlayer) =>
+		SubmitCommand(NetCommand.AttackRequest(LocalPlayerId, targetPlayer));
+
 	public void CommandSetStance(int targetPlayer, int stance) =>
 		SubmitCommand(NetCommand.SetStance(LocalPlayerId, targetPlayer, stance));
 
