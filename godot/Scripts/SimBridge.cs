@@ -2402,6 +2402,15 @@ public sealed partial class SimBridge : Node
 	public void CommandSetRallyPoint(EntityId building, EntityId? target) =>
 		SubmitCommand(NetCommand.SetRallyPoint(LocalPlayerId, building.Value, target?.Value ?? 0));
 
+	/// <summary>集结点全量版(原版 input.js 的 rally 指令类型化 + Shift 追加):
+	/// commandType ∈ walk/gather/repair/garrison/attack/patrol/trade/collect-treasure;
+	/// target 实体优先(其位置随指令入队),否则用地面坐标;append=true 追加到队列尾。</summary>
+	public void CommandSetRallyPointFull(EntityId building, EntityId? target, float x, float z,
+		string commandType, string resourceType = "", bool append = false) =>
+		SubmitCommand(NetCommand.SetRallyPointFull(LocalPlayerId, building.Value,
+			target?.Value ?? 0, ZeroAD.Sim.Maths.Fixed.FromFloat(x),
+			ZeroAD.Sim.Maths.Fixed.FromFloat(z), commandType, resourceType, append));
+
 	/// <summary>Set a ground rally point (right-click empty ground on a production
 	/// building). x/z are world coords; mirrors <see cref="CommandBuild"/>'s float→Fixed
 	/// conversion (对齐原版集合点语义).</summary>

@@ -332,11 +332,12 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         }
         var spawned = cm.SpawnEntity(current.TemplateName, sx, sz, ownerId);
 
-        if (rally != null && !rally.Position.IsZero)
-        {
-            var ai = cm.QueryInterface<UnitAIComponent>(spawned);
-            ai?.Walk(new Maths.FixedVector2D(rally.Position.X, rally.Position.Y));
-        }
+        // 原版 RallyPoint.OrderToRallyPoint:出厂单位按集结队列下发排队指令链
+        // (多点 + 逐点指令类型;空队列 → 不动)。
+        // 门槛用"任一玩家有集结点"(OrderToRallyPoint 内部走属主回落链——
+        // 集结点存建筑属主名下,出厂单位属主通常一致,兼容键 -1 兜底旧路径)。
+        if (rally != null && rally.HasAnyPositions)
+            rally.OrderToRallyPoint(cm, spawned);
     }
 
     public override void Serialize(ISerializer s)

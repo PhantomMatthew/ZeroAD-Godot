@@ -182,6 +182,16 @@ namespace ZeroAD.Sim.Net
         public static NetCommand SetRallyPoint(uint player, uint buildingId, uint targetEntityId) =>
             new(player, NetCommandType.SetRallyPoint, buildingId, (int)targetEntityId);
 
+        /// <summary>SetRallyPoint 全量版(原版 RallyPoint.AddPosition/AddData):
+        /// commandType 集结点指令(walk/gather/repair/garrison/attack/patrol/trade…),
+        /// resourceType 随 gather-near;append=true 追加到队列尾(原版 Shift+点击);
+        /// false = 重置为单点。打包:TemplateName = "cmd;res",IntParam2 bit0 = append。</summary>
+        public static NetCommand SetRallyPointFull(uint player, uint buildingId, uint targetEntityId,
+            Fixed x, Fixed z, string commandType, string resourceType = "", bool append = false) =>
+            new(player, NetCommandType.SetRallyPoint, buildingId, (int)targetEntityId,
+                append ? 1 : 0, x.InternalValue, z.InternalValue,
+                string.IsNullOrEmpty(resourceType) ? commandType : commandType + ";" + resourceType);
+
         /// <summary>SetRallyPoint on empty ground: IntParam1 = 0 (signals ground rally),
         /// FixedParam1/2 = world x/z as <see cref="Fixed.InternalValue"/>. Same type/enum as
         /// the entity variant, so lockstep bundling and save serialization are unchanged;

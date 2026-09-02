@@ -3172,14 +3172,44 @@ public sealed partial class Main : Node3D
 			var rally = _sim.Sim.QueryInterface<RallyPointComponent>(only);
 			if (rally != null)
 			{
-				// 命中资源实体 → 集结到该资源(采集集结);其余一律地面集结。
-				// 关键:点在建筑自身 15m 拾取半径内时 targetEntity=建筑自己(无 supply),
-				// 旧逻辑落空不设集结——门口点集结点永远失败。
-				if (targetEntity.HasValue
-					&& _sim.Sim.QueryInterface<ResourceSupply>(targetEntity.Value) != null)
-					_sim.CommandSetRallyPoint(only, targetEntity);
-				else
-					_sim.CommandSetRallyPointPosition(only, worldPos.Value.X, worldPos.Value.Z);
+				// 集结点指令类型化(原版 input.js getActionInfo 同款分派):
+				//   资源实体 → gather(带 resourceType);己方建筑地基/受损 → repair;
+				//   可驻军己/盟建筑 → garrison;敌实体 → attack;空地面 → walk。
+				// Shift = 追加到队列尾(原版 Shift+点击多点排队);无 Shift 重设单点。
+				bool append = Input.IsPhysicalKeyPressed(Key.Shift);
+				float wx = worldPos.Value.X, wz = worldPos.Value.Z;
+				if (targetEntity.HasValue)
+				{
+					var tEnt = targetEntity.Value;
+					var supply = _sim.Sim.QueryInterface<ResourceSupply>(tEnt);
+					var tOwner = _sim.Sim.QueryInterface<OwnershipComponent>(tEnt);
+					var tHealth = _sim.Sim.QueryInterface<HealthComponent>(tEnt);
+					var tFoundation = _sim.Sim.QueryInterface<FoundationComponent>(tEnt);
+					var tGarrison = _sim.Sim.QueryInterface<GarrisonHolderComponent>(tEnt);
+					if (supply != null)
+					{
+						string resType = supply.SpecificType ?? "";
+						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "gather", resType, append);
+						return;
+					}
+					bool hostile = tOwner != null && _sim.Sim.Players.IsEnemy((int)_sim.LocalPlayerId, tOwner.PlayerId);
+					if (!hostile && (tFoundation != null || tHealth is { Current: > 0 } && tHealth.Current < tHealth.Max))
+					{
+						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "repair", "", append);
+						return;
+					}
+					if (!hostile && tGarrison != null)
+					{
+						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "garrison", "", append);
+						return;
+					}
+					if (hostile)
+					{
+						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "attack", "", append);
+						return;
+					}
+				}
+				_sim.CommandSetRallyPointFull(only, null, wx, wz, "walk", "", append);
 				return;
 			}
 		}

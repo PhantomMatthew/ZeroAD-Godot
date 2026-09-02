@@ -355,27 +355,47 @@ namespace ZeroAD.Sim.Net
         {
             var rally = _cm.QueryInterface<RallyPointComponent>(building);
             if (rally == null) return;
-            EntityId? target = null;
-            if (cmd.IntParam1 != 0)
+            EntityId? target = cmd.IntParam1 != 0 ? new EntityId((uint)cmd.IntParam1) : null;
+            var x = Fixed.Zero.WithInternalValue(cmd.FixedParam1);
+            var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
+            bool append = (cmd.IntParam2 & 1) != 0;
+
+            // 扩展字段(TemplateName = "cmd;res"):原版 getActionInfo 的指令类型 +
+            // 资源子类。空/未知 → 旧行为(单点 walk/采集锚)。
+            string commandType = "walk";
+            string resourceType = "";
+            if (!string.IsNullOrEmpty(cmd.TemplateName))
             {
-                // Entity rally (resource gather anchor): rally to the target entity position.
-                target = new EntityId((uint)cmd.IntParam1);
+                var parts = cmd.TemplateName.Split(';');
+                commandType = parts[0];
+                if (parts.Length > 1) resourceType = parts[1];
+            }
+
+            int player = _cm.QueryInterface<OwnershipComponent>(building)?.PlayerId ?? -1;
+            if (!append)
+                rally.Unset(player);   // 原版:无 Shift 重设单点(清空队列)。
+
+            if (target.HasValue)
+            {
                 var pos = _cm.QueryInterface<PositionComponent>(target.Value);
-                if (pos != null)
-                    rally.Set(new FixedVector2D(pos.Position.X, pos.Position.Z));
+                if (pos == null) return;
+                x = pos.Position.X; z = pos.Position.Z;
             }
-            else if (cmd.FixedParam1 != 0 || cmd.FixedParam2 != 0)
+            else if (x == Fixed.Zero && z == Fixed.Zero && cmd.TemplateName == "")
             {
-                // Ground rally (right-click empty ground): rally to world x/z.
-                var x = Fixed.Zero.WithInternalValue(cmd.FixedParam1);
-                var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
-                rally.Set(new FixedVector2D(x, z));
+                // 旧清零路径(无坐标无目标无指令):等价旧"清空"。
+                rally.Unset(player);
+                _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "set-rallypoint", Target = null });
+                return;
             }
-            else
+
+            rally.AddPosition(new FixedVector2D(x, z), player);
+            rally.AddData(new RallyPointComponent.RallyPointData
             {
-                // Clear: reset to zero so Position.IsZero reads as "no rally point".
-                rally.Set(new FixedVector2D(Fixed.Zero, Fixed.Zero));
-            }
+                Command = commandType,
+                Target = target?.Value ?? 0,
+                ResourceType = resourceType,
+            }, player);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "set-rallypoint", Target = target });
         }
 
