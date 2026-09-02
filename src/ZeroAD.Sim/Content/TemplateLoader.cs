@@ -968,6 +968,10 @@ namespace ZeroAD.Sim.Content
                     stats.AutoBuildRate = autoNode.GetChild("Rate").ToFixed().ToFloat();
             }
 
+            // MotionBall(原版 type="test" 滚坡测试组件;节点存在即装配)。
+            if (node.GetChild("MotionBall").IsOk)
+                stats.HasMotionBall = true;
+
             // UnitMotionFlying(飞行单位;MaxSpeed)。
             var flyNode = node.GetChild("UnitMotionFlying");
             if (flyNode.IsOk)
@@ -1237,6 +1241,8 @@ namespace ZeroAD.Sim.Content
         public float AlertRaiseRange = 120f, AlertEndRange = 180f, AlertSearchRange = 100f;
         /// <summary>UnitMotionFlying(鸟群等飞行单位)。</summary>
         public bool HasUnitMotionFlying;
+        /// <summary>模板含 <MotionBall/> 节点(原版 test 组件标记;demo/test 地图滚球)。</summary>
+        public bool HasMotionBall;
         public float FlyingMaxSpeed = 15f;
         /// <summary>Promotion(军衔):晋升链(空 = 到顶)与阈值(继承链合并:
         /// template_unit_infantry 基类 RequiredXp=100,各兵种可覆盖)。</summary>

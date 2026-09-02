@@ -1231,7 +1231,11 @@ public sealed partial class SimBridge : Node
 	private void TickGarrisonHolders(float dt)
 	{
 		foreach (var entity in _sim.AllEntities)
+		{
 			_sim.QueryInterface<GarrisonHolderComponent>(entity)?.Tick(dt, _sim);
+			// MotionBall(原版 type="test" 的滚坡测试组件;test 地图用)。
+			_sim.QueryInterface<MotionBallComponent>(entity)?.Tick(dt, _sim);
+		}
 	}
 
 	private void TickTurrets(float dt)

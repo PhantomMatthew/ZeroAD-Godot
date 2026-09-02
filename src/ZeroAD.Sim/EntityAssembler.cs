@@ -44,6 +44,9 @@ namespace ZeroAD.Sim
             // Guard(原版 template_unit 基模板自带 <Guard/>):双向护卫簿记
             // (被护方受击转发 → 护卫反击)。
             cm.AddComponent(entity, new GuardComponent());
+            // MotionBall(原版 test 组件;模板带 <MotionBall/> 才挂——仅 demo/test 地图)。
+            if (stats?.HasMotionBall == true)
+                cm.AddComponent(entity, new MotionBallComponent());
 
             string name = stats?.Name ?? (isSoldier ? "Soldier" : isVillager ? "Villager" : "Unit");
             int maxHp = stats?.MaxHealth ?? (isSoldier ? 80 : 50);
