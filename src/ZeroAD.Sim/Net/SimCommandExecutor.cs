@@ -760,20 +760,56 @@ namespace ZeroAD.Sim.Net
             int required = stats?.FormationRequiredMemberCount ?? int.MaxValue;
             if (stats == null || members.Count < required) return;
 
-            float ax = 0, az = 0;
-            foreach (var m in members)
+            // 原版 GetFormationUnitAIs 分簇:按可达陆区分簇,每簇一队;
+            // 同批簇队互登孪生(twin merge 的判定域)。无分层寻路(测试环境)→ 单簇。
+            var clusters = new System.Collections.Generic.List<System.Collections.Generic.List<EntityId>>();
+            var hier = SimSystem.Pathfinder;
+            if (hier?.PassabilityGrid != null)
             {
-                var p = _cm.QueryInterface<PositionComponent>(m);
-                if (p == null) continue;
-                ax += p.Position.X.ToFloat();
-                az += p.Position.Z.ToFloat();
+                var byRegion = new System.Collections.Generic.Dictionary<uint,
+                    System.Collections.Generic.List<EntityId>>();
+                foreach (var m in members)
+                {
+                    var pos = _cm.QueryInterface<PositionComponent>(m);
+                    // 分层寻路的全局陆区(0 = 不可达/界外——各归一簇)。
+                    uint region = pos != null
+                        ? hier.GetLandRegion(pos.Position.X, pos.Position.Z) : 0;
+                    if (!byRegion.TryGetValue(region, out var list))
+                        byRegion[region] = list = new System.Collections.Generic.List<EntityId>();
+                    list.Add(m);
+                }
+                clusters.AddRange(byRegion.Values);
             }
-            ax /= members.Count;
-            az /= members.Count;
-            var controller = _cm.SpawnEntity(template, ax, az, owner);
-            var formation = _cm.QueryInterface<FormationComponent>(controller);
-            if (formation == null) return;
-            formation.SetMembers(_cm, members);
+            else
+                clusters.Add(members);
+
+            // 每簇建队(够员才建),互登孪生。
+            var formationEnts = new System.Collections.Generic.List<EntityId>();
+            foreach (var cluster in clusters)
+            {
+                if (cluster.Count < required) continue;
+                float ax = 0, az = 0;
+                foreach (var m in cluster)
+                {
+                    var p = _cm.QueryInterface<PositionComponent>(m);
+                    if (p == null) continue;
+                    ax += p.Position.X.ToFloat();
+                    az += p.Position.Z.ToFloat();
+                }
+                ax /= cluster.Count;
+                az /= cluster.Count;
+                var controller = _cm.SpawnEntity(template, ax, az, owner);
+                var formation = _cm.QueryInterface<FormationComponent>(controller);
+                if (formation == null) continue;
+                formation.SetMembers(_cm, cluster);
+                formationEnts.Add(controller);
+            }
+            // 孪生互登(原版 RegisterTwinFormation 于建队后)。
+            foreach (var fc in formationEnts)
+                foreach (var other in formationEnts)
+                    if (other != fc)
+                        _cm.QueryInterface<FormationComponent>(fc)
+                            ?.RegisterTwinFormation(_cm, other);
         }
     }
 }

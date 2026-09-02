@@ -53,6 +53,58 @@ public sealed class AuraComponent : ComponentBase
         _cm = cm;
     }
 
+    /// <summary>有编队光环(原版 HasFormationAura:任一挂名 type=="formation")。</summary>
+    public bool HasFormationAura(AuraCatalog catalog) =>
+        _names.Any(n => catalog.Auras.TryGetValue(n, out var def) && def.Type == "formation");
+
+    /// <summary>原版 ApplyFormationAura:编队光环应用到编队成员(affects 类过滤 +
+    /// affectedPlayers 属主过滤;modId 含源实体,编队解散/成员离队时成对移除)。
+    /// 不走 Tick——只由 Formation 成员变更驱动(原版同款)。</summary>
+    public void ApplyFormationAura(ComponentManager cm, AuraCatalog catalog, IReadOnlyList<EntityId> memberIds)
+    {
+        var owner = cm.QueryInterface<OwnershipComponent>(Entity);
+        if (owner == null || owner.PlayerId <= 0) return;
+        foreach (var name in _names)
+        {
+            if (!catalog.Auras.TryGetValue(name, out var def)) continue;
+            if (def.Type != "formation" || def.Modifications.Count == 0) continue;
+            var affected = ComputeAffectedPlayers(cm, def.AffectedPlayers, owner.PlayerId);
+            string modId = ModId(def);
+            var targets = new HashSet<EntityId>();
+            foreach (var member in memberIds)
+            {
+                var id = cm.QueryInterface<IdentityComponent>(member);
+                if (id == null || !AffectsTarget(def.Affects, id)) continue;
+                var o = cm.QueryInterface<OwnershipComponent>(member);
+                if (o == null || !affected.Contains(o.PlayerId)) continue;
+                targets.Add(member);
+            }
+            if (targets.Count == 0) continue;
+            foreach (var t in targets)
+            {
+                cm.Modifiers.AddModifiers(modId, def.Modifications, t);
+                Track(modId, t, true);
+            }
+        }
+    }
+
+    /// <summary>原版 RemoveFormationAura:成对移除(成员离队/编队解散)。</summary>
+    public void RemoveFormationAura(ComponentManager cm, AuraCatalog catalog,
+        IReadOnlyList<EntityId> memberIds)
+    {
+        foreach (var name in _names)
+        {
+            if (!catalog.Auras.TryGetValue(name, out var def)) continue;
+            if (def.Type != "formation") continue;
+            string modId = ModId(def);
+            foreach (var t in memberIds)
+            {
+                cm.Modifiers.RemoveAllModifiers(modId, t);
+                Track(modId, t, false);
+            }
+        }
+    }
+
     /// <summary>每 tick 应用/移除光环。由 SimBridge.TickAuras 显式调用(对齐 TickResearch)。</summary>
     public void Tick(ComponentManager cm, RangeManager range, AuraCatalog catalog)
     {

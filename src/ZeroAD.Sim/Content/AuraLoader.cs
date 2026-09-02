@@ -34,7 +34,7 @@ public sealed record AuraCatalog(IReadOnlyDictionary<string, AuraDefinition> Aur
 /// <summary>
 /// 加载 <c>simulation/data/auras/**/*.json</c>(对齐原版 AuraTemplates.js)。
 /// 单文件坏 / type 缺失 / 未知 type → 跳过(与 <see cref="TechnologyLoader"/> 同款容错)。
-/// MVP 仅收 range/global/player 三型(覆盖 137/151 ≈ 91%);formation/garrison*/turreted*
+/// 收 range/global/player/formation 四型;garrison*/turreted* 跳过(内核无对应载体)。
 /// 跳过(内核无 holder 组件)。
 /// </summary>
 public static class AuraLoader
@@ -72,8 +72,10 @@ public static class AuraLoader
             return null;
         string type = t.GetString()!;
 
-        // MVP:只收 range/global/player。其余(formation/garrison*/turreted*)内核无对应组件。
-        if (type != "range" && type != "global" && type != "player")
+        // 收 range/global/player/formation。其余(garrison*/turreted*)内核无对应组件。
+        // formation 光环由 Formation 组件驱动(ApplyFormationAura 于编队成员),
+        // 不走 Tick 的 range 查询(原版 Aura.type="formation" 同款——只在编队时应用)。
+        if (type != "range" && type != "global" && type != "player" && type != "formation")
             return null;
 
         var affects = ModificationParser.TryGetAffects(root, out var af) ? af : Array.Empty<string>();

@@ -63,8 +63,11 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
 
     // --- 运行态 ---
     public readonly List<EntityId> Members = new();
+    /// <summary>带编队光环的成员(原版 formationMembersWithAura;其光环
+    /// 只施加于编队成员,离队/解散摘除)。</summary>
+    private readonly List<EntityId> _membersWithAura = new();
     public readonly List<EntityId> FinishedEntities = new();  // 已到位的成员(原版 Set;我们 List+去重)
-    public readonly List<EntityId> TwinFormations = new();    // 附近同模板编队(合并未移植,仅存)
+    public readonly List<EntityId> TwinFormations = new();    // 同批分簇编队(原版 twinFormations)
     public int MaxRowsUsed;
     public readonly List<int> MaxColumnsUsed = new();         // 每行实际列数
     public float Width, Depth;                                // 最近一次重排的偏移包围盒
@@ -167,7 +170,16 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
         Members.Clear();
         Members.AddRange(ents);
         foreach (var ent in Members)
+        {
             cm.QueryInterface<UnitAIComponent>(ent)?.SetFormationController(Entity);
+            // 编队光环(原版 SetMembers 段):带光环成员入列并对全队应用。
+            var auras = cm.QueryInterface<AuraComponent>(ent);
+            if (auras != null && cm.Auras != null && auras.HasFormationAura(cm.Auras))
+            {
+                if (!_membersWithAura.Contains(ent)) _membersWithAura.Add(ent);
+                auras.ApplyFormationAura(cm, cm.Auras, Members);
+            }
+        }
         Offsets = null;
         MoveToMembersCenter(cm);
         ComputeMotionParameters(cm);
@@ -179,13 +191,28 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
     public void AddMembers(ComponentManager cm, List<EntityId> ents, bool renamed = false)
     {
         if (!renamed) Offsets = null;
+        // 原版 AddMembers:已有光环成员对新队员重应用,新队员带光环则入列+应用。
+        if (cm.Auras != null)
+        {
+            foreach (var bearer in _membersWithAura)
+                cm.QueryInterface<AuraComponent>(bearer)
+                    ?.ApplyFormationAura(cm, cm.Auras, ents);
+        }
         Members.AddRange(ents);
         foreach (var ent in ents)
         {
             var ai = cm.QueryInterface<UnitAIComponent>(ent);
-            if (ai == null) continue;
-            ai.SetFormationController(Entity);
-            ai.EnterFormationMemberIdleIfIdle();
+            if (ai != null)
+            {
+                ai.SetFormationController(Entity);
+                ai.EnterFormationMemberIdleIfIdle();
+            }
+            var auras = cm.QueryInterface<AuraComponent>(ent);
+            if (auras != null && cm.Auras != null && auras.HasFormationAura(cm.Auras))
+            {
+                if (!_membersWithAura.Contains(ent)) _membersWithAura.Add(ent);
+                auras.ApplyFormationAura(cm, cm.Auras, Members);
+            }
         }
         ComputeMotionParameters(cm);
     }
@@ -197,12 +224,19 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
     {
         if (ents.Count == 0) return;
         if (!renamed) Offsets = null;
+        // 原版 RemoveMembers:先对离队者摘全员光环(离队即失效);
+        // 光环携带者离队 → 其对全队的施加一并摘除。
+        if (cm.Auras != null)
+            foreach (var bearer in _membersWithAura)
+                cm.QueryInterface<AuraComponent>(bearer)
+                    ?.RemoveFormationAura(cm, cm.Auras, ents);
         Members.RemoveAll(ents.Contains);
         foreach (var ent in ents)
         {
             FinishedEntities.Remove(ent);
             cm.QueryInterface<UnitAIComponent>(ent)?.UnsetFormationController();
             _classCache.Remove(ent);
+            _membersWithAura.Remove(ent);
         }
         if (renamed) return;
         if (Members.Count < RequiredMemberCount && !_disbanding)
@@ -218,6 +252,7 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
     /// 我们用 _disbanding 守卫去掉递归与双毁,语义一致。</summary>
     public void Disband(ComponentManager cm)
     {
+        DeleteTwinFormations(cm);
         _disbanding = true;
         RemoveMembers(cm, new List<EntityId>(Members));
         _disbanding = false;
@@ -294,6 +329,24 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
         Depth = yMax - yMin;
     }
 
+    /// <summary>原版 RegisterTwinFormation:互登对方为孪生(分簇编队同批建立时)。
+    /// 合并判定时只遍历孪生表(原版同款)。</summary>
+    public void RegisterTwinFormation(ComponentManager cm, EntityId other)
+    {
+        var of = cm.QueryInterface<FormationComponent>(other);
+        if (of == null || other == Entity) return;
+        if (!TwinFormations.Contains(other)) TwinFormations.Add(other);
+        if (!of.TwinFormations.Contains(Entity)) of.TwinFormations.Add(Entity);
+    }
+
+    /// <summary>原版 DeleteTwinFormations:解散时互摘。</summary>
+    public void DeleteTwinFormations(ComponentManager cm)
+    {
+        foreach (var ent in TwinFormations)
+            cm.QueryInterface<FormationComponent>(ent)?.TwinFormations.Remove(Entity);
+        TwinFormations.Clear();
+    }
+
     /// <summary>Port of UpdateTwinFormationsForMerge:行进中的编队与近旁同模板同主编队
     /// 合并(距离 < 双方半边长之和 + FormationSeparation);被吸收方空员解散。
     /// 每拍至多并一队;双方都行进时只在 id 小的一侧检查(防双向重复)。</summary>
@@ -310,11 +363,12 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
         float myHalf = MathF.Max(Width, Depth) / 2f;
         float baseDist = myHalf + FormationSeparation;
 
-        foreach (var other in cm.AllEntities)
+        // 原版只遍历 twinFormations(同批分簇编队)——非孪生编队永不合并。
+        foreach (var other in TwinFormations.ToList())
         {
             if (other == Entity) continue;
             var of = cm.QueryInterface<FormationComponent>(other);
-            if (of == null) continue;
+            if (of == null) { TwinFormations.Remove(other); continue; }   // 死编队摘除(原版 splice)
             var oIdent = cm.QueryInterface<IdentityComponent>(other);
             if (oIdent == null || oIdent.TemplateName != myIdent.TemplateName) continue;
             var oOwn = cm.QueryInterface<OwnershipComponent>(other);

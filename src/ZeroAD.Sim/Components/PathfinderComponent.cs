@@ -46,6 +46,18 @@ namespace ZeroAD.Sim.Components
             _gridBuilder = new PassabilityGridBuilder(_config);
         }
 
+        /// <summary>世界坐标 → 陆地区域 id(分层寻路的 global region;0 = 未建网格/
+        /// 不可达)。编队分簇/可达性分组用(原版 getLandAccess 的内核侧等价)。</summary>
+        public uint GetLandRegion(Fixed x, Fixed z)
+        {
+            if (_gridBuilder.Grid == null) return 0;
+            int nx = Pathfinding.PathfindingCore.WorldToNavcell(x);
+            int nz = Pathfinding.PathfindingCore.WorldToNavcell(z);
+            if (nx < 0 || nz < 0 || nx >= _gridBuilder.Grid.W || nz >= _gridBuilder.Grid.H)
+                return 0;
+            return _hier.GetGlobalRegion(nx, nz, DefaultClass.Mask);
+        }
+
         /// <summary>原版 getPassabilityClassMask:类名 → 位掩码(未知名 → default)。</summary>
         public Pathfinding.PassClass GetPassabilityClassMask(string name) => _config.MaskOf(name);
         /// <summary>类名 → 定义;未知 → null。</summary>
