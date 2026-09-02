@@ -68,6 +68,7 @@ public partial class ZeroADEditorPlugin : EditorPlugin
 
             var sz = GetViewport().GetVisibleRect().Size; var center = new Vector2(sz.X / 2, sz.Y / 2);
             var focus0 = cam.Focus!.Value;
+            float dist0 = cam.Distance;
             GD.Print($"[cam-smoke] focus before: ({focus0.X:F1},{focus0.Y:F1},{focus0.Z:F1})");
 
             // 模拟滚轮放大(无 Shift → 走缩放分支)。
@@ -84,23 +85,25 @@ public partial class ZeroADEditorPlugin : EditorPlugin
                 await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
             var focus1 = cam.Focus!.Value;
+            float dist1 = cam.Distance;
             GD.Print($"[cam-smoke] focus after : ({focus1.X:F1},{focus1.Y:F1},{focus1.Z:F1})");
+            GD.Print($"[cam-smoke] distance: {dist0:F1} -> {dist1:F1}");
 
-            // 断言:z 方向位移必须很小(收敛方向是向图心鼠标点,量级 ≤ factor×focus 距离,
-            // 不是 0.15×WorldSize 那种飞越)。x/z 都该在 [0, worldSize] 内且不越界漂移。
+            // 真正的回归判据:滚轮必须真的改变视距(缩放),且 sim 焦点仍守界。
+            bool zoomed = dist1 < dist0 - 0.5f;   // WheelUp 应缩短视距
             float dz = Mathf.Abs(focus1.Z - focus0.Z);
             float dx = Mathf.Abs(focus1.X - focus0.X);
             bool inBounds = focus1.X >= 0 && focus1.X <= worldSize &&
                             focus1.Z >= 0 && focus1.Z <= worldSize;
-            GD.Print($"[cam-smoke] |dx|={dx:F1} |dz|={dz:F1} inBounds={inBounds}");
-            if (inBounds && dz < worldSize * 0.5f && dx < worldSize * 0.5f)
+            GD.Print($"[cam-smoke] |dx|={dx:F1} |dz|={dz:F1} inBounds={inBounds} zoomed={zoomed}");
+            if (inBounds && zoomed && dz < worldSize * 0.5f && dx < worldSize * 0.5f)
             {
                 GD.Print("[cam-smoke] PASS");
                 rc = 0;
             }
             else
             {
-                GD.PrintErr("[cam-smoke] FAIL: focus drifted out of bounds on scroll");
+                GD.PrintErr($"[cam-smoke] FAIL: zoomed={zoomed} inBounds={inBounds}");
             }
         }
         catch (Exception ex)

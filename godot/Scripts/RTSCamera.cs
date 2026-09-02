@@ -8,6 +8,8 @@ namespace ZeroAD.Godot;
 	{
 		public Vector3? Focus => _focus;
 		public float Yaw => _yaw;
+		/// <summary>当前视距(米)——缩放验证/冒烟测试用。</summary>
+		public float Distance => _distance;
 
 		/// <summary>跟随选中单位(原版 camera.follow 热键 setCameraFollow):
 		/// 平滑逼近目标;任何滚轮/移动输入打断跟随(原版"Break out of following
