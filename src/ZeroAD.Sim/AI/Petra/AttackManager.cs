@@ -42,6 +42,10 @@ public sealed class AttackManager
 
     private int _totalNumber;
     private int _rushNumber;
+    /// <summary>原版 attackPlansEncounteredWater(hack 旗):陆攻计划因目标不可达
+    /// (隔水)失败而置位;NavalManager 消费 → 提最低运输船数(海图换面)。
+    /// 上游 master 只写不读(死旗);我们把消费端接上(记录在案)。</summary>
+    public bool AttackPlansEncounteredWater;
     /// <summary>已发起的 rush 数(原版 rushNumber;HQ 人口规划的 alpha 门用)。</summary>
     public int RushNumber => _rushNumber;
     /// <summary>rush 次数上限(原版 maxRushes;难度相关)。</summary>
@@ -112,6 +116,20 @@ public sealed class AttackManager
                 }
                 else if (step == AttackPlan.PreparationResult.Failed)
                 {
+                    // 隔水失败(Overseas=0 且目标与自己不同陆区)→ 置海图旗。
+                    if (attack.Overseas == 0 && attack.TargetPos is { } tpos)
+                    {
+                        var pf = SimSystem.Pathfinder;
+                        var myPos = gameState.GetOwnStructures().Values()
+                            .FirstOrDefault(e2 => e2.Position2D != default);
+                        if (pf != null && myPos != null)
+                        {
+                            uint myRegion = pf.GetLandRegion(myPos.Position2D.X, myPos.Position2D.Y);
+                            uint tgtRegion = pf.GetLandRegion(tpos.X, tpos.Y);
+                            if (myRegion != 0 && tgtRegion != 0 && myRegion != tgtRegion)
+                                AttackPlansEncounteredWater = true;
+                        }
+                    }
                     attack.Abort(gameState, this, queues);
                     UpcomingAttacks[type].RemoveAt(i--);
                 }

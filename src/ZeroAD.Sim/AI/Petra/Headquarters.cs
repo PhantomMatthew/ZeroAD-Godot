@@ -97,6 +97,7 @@ public sealed class Headquarters
         DefenseManager.Hq = this;   // 原版 defenseManager 经 HQ 回查(switchToAttack/isDefendable)
         GarrisonManager = new GarrisonManager(config);
         NavalManager = new NavalManager(config);
+        NavalManager.HqResolver = () => this;   // 海图换面旗消费回查(原版 navalManager.HQ)
         DiplomacyManager = new DiplomacyManager(config);
         DiplomacyManager.Hq = this;   // 请求-应答回查 pickMostNeededResources
         VictoryManager = new VictoryManager(config);
@@ -1143,6 +1144,7 @@ public sealed class Headquarters
         AttackManager.Serialize(s);
         DefenseManager.Serialize(s);
         NavalManager.Serialize(s);
+        VictoryManager.Serialize(s);
     }
 
     /// <summary>重建(写序逐位一致)。gameState 用于队列计划/编组的模板成本重算——
@@ -1167,6 +1169,7 @@ public sealed class Headquarters
         AttackManager.Deserialize(d, gameState);
         DefenseManager.Deserialize(d, gameState);
         NavalManager.Deserialize(d);
+        VictoryManager.Deserialize(d);
     }
 
     /// <summary>危险位置判定(原版 isDangerousLocation 简化版:半径内有敌防御火力建筑)。</summary>

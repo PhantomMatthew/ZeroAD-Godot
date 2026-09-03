@@ -390,7 +390,7 @@ public sealed class DefenseManager
             if (ent.HasClass("StoneThrower") || ent.HasClass("FishingBoat")) continue;
             if (gameState.Metadata.GetObject(ent.Id, "transport") != null
                 || gameState.Metadata.GetObject(ent.Id, "transporter") != null) continue;
-            if (Hq != null && Hq.VictoryManager.CriticalEnts.Contains(ent.Id)) continue;
+            if (Hq != null && Hq.VictoryManager.IsCritical(ent.Id)) continue;
             if (plan is int pv && pv != -1)
             {
                 var subrole = gameState.Metadata.GetObject(ent.Id, "subrole")?.ToString();

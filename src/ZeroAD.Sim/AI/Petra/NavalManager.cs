@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim.AI.CommonApi;
+using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.AI.Petra;
@@ -140,8 +141,42 @@ public sealed class NavalManager
 
     /// <summary>主更新（原版 navalManager.update:checkLevels → maintainFleet →
     /// buildNavalStructures 的顺序在此简并）。</summary>
+    /// <summary>HQ 反链(消费 attackManager.AttackPlansEncounteredWater 用;
+    /// 原版 navalManager.HQ)。HQ 构造注入。</summary>
+    public Func<Headquarters?>? HqResolver;
+
     public void Update(GameState gameState, QueueManager queues, AIEventBuffer events)
     {
+        // 海图换面(原版 attackPlansEncounteredWater 的应有消费端):陆攻隔水失败
+        // 且确有海外敌 → 途经海域最低运输船数 +1(累加;驱动训练/摆渡)。
+        var hq = HqResolver?.Invoke();
+        if (hq != null && hq.AttackManager.AttackPlansEncounteredWater)
+        {
+            hq.AttackManager.AttackPlansEncounteredWater = false;
+            var pf = SimSystem.Pathfinder;
+            var myPos = gameState.GetOwnStructures().Values()
+                .FirstOrDefault(e => e.Position2D != default);
+            if (pf != null && myPos != null)
+            {
+                uint myRegion = pf.GetLandRegion(myPos.Position2D.X, myPos.Position2D.Y);
+                foreach (var enemy in gameState.GetEnemies())
+                {
+                    var enemyPos = gameState.GetStructures().Values()
+                        .Where(e => e.Owner == enemy && e.Position2D != default)
+                        .OrderBy(e => e.Id).FirstOrDefault();
+                    if (enemyPos == null) continue;
+                    uint tgtRegion = pf.GetLandRegion(
+                        enemyPos.Position2D.X, enemyPos.Position2D.Y);
+                    if (tgtRegion == 0 || tgtRegion == myRegion) continue;
+                    ushort sea = GetSeaBetweenIndices(gameState, (ushort)myRegion, (ushort)tgtRegion);
+                    if (sea == 0) continue;
+                    // 该海域当前值 +1(原版 minimalTransportShips 只增不减)。
+                    SetMinimalTransportShips(sea,
+                        MinimalTransportShips.GetValueOrDefault(sea) + 1);
+                }
+            }
+        }
+
         var docks = gameState.GetOwnEntitiesByClass("Dock").Values().ToList();
         var ships = gameState.GetOwnEntitiesByClass("Ship").Values().ToList();
 
