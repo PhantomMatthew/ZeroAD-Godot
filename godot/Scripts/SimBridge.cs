@@ -1040,9 +1040,27 @@ public sealed partial class SimBridge : Node
 	}
 
 	/// <summary>纯视觉装饰物(actor|/rmgen 装饰实体):不进 sim,只摆 actor 节点。
-	/// template 为去掉 actor| 前缀后的 actor 模板名(经 ModelLibrary 解析)。</summary>
+	/// template 为去掉 actor| 前缀后的 actor 模板名(经 ModelLibrary 解析)。
+	/// 粒子 actor(原版 art/actors/particle/*.xml——雨/雪/尘暴/云等天气装饰;
+	/// 无网格,GLB 转换自然缺失 → 不落 fallback 盒子,直接装配粒子)。</summary>
 	public void SpawnDecorative(string template, float x, float z, float yaw = 0f)
 	{
+		if (template.StartsWith("particle/", StringComparison.Ordinal))
+		{
+			string actorName = template["particle/".Length..];
+			if (actorName.EndsWith(".xml", StringComparison.Ordinal))
+				actorName = actorName[..^4];
+			var particles = EnvironmentParticles.BuildForActor(actorName);
+			if (particles != null)
+			{
+				float py = TerrainHeightService.Sample(x, z);
+				particles.Position = new Vector3(x, particles.Position.Y + py, z);
+				UnitContainer.AddChild(particles);
+				_decorativeNodes.Add(particles);
+			}
+			return;
+		}
+
 		bool isTree = template.Contains("tree", StringComparison.OrdinalIgnoreCase);
 		var color = isTree ? new Color(0.15f, 0.45f, 0.12f) : new Color(0.35f, 0.55f, 0.2f);
 
@@ -1150,8 +1168,12 @@ public sealed partial class SimBridge : Node
 	private void OnUnitVisualExiting(Node node)
 	{
 		if (node is not Node3D n3) return;
-		if (_shadowProxies.Remove(n3, out var proxy) && GodotObject.IsInstanceValid(proxy))
-			proxy.QueueFree();
+		if (_shadowProxies.Remove(n3, out var proxy))
+		{
+			ShadowProxyManager.ReleaseProxyRoot(proxy);   // 骨架对登记摘除(蒙皮代理)
+			if (GodotObject.IsInstanceValid(proxy))
+				proxy.QueueFree();
+		}
 	}
 
 	public override void _Process(double delta)

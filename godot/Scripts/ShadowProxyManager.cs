@@ -13,7 +13,7 @@ namespace ZeroAD.Godot;
 /// (不可见但仍写阴影贴图——最小场景实证:layer2 立方体不可见却给邻物投影)。
 /// 数学:S=diag(1,1,−1),proxy.Global = visual.Global·S、代理子节点局部 = S·T·S、网格顶点预乘 S,
 /// 三层 S 相消(S²=I)后代理世界顶点 ≡ 视觉世界顶点(手性逐顶点一致,非近似)。
-/// 蒙皮网格的代理无骨架 → 以绑定姿势投影(站立剪影,2m 单位尺度下与动画影不可分辨)。
+/// 蒙皮网格:代理携带共轭骨架(rest/绑定/逐帧姿势全 S·T·S),投影随动画姿势——上游同款行为(GPUSkinnedModelRenderer 以当前骨阵投影)。
 /// </summary>
 public static class ShadowProxyManager
 {
@@ -22,16 +22,37 @@ public static class ShadowProxyManager
 
     private static readonly Basis S = new(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, -1f);
     private static readonly Dictionary<Mesh, Mesh> _mirrorCache = new();
+    private static readonly Dictionary<Skin, Skin> _mirrorSkinCache = new();
+    /// <summary>蒙皮代理的骨架对(proxyRoot → (视觉骨架, 代理骨架) 列表),SyncFrom 逐帧共轭同步。</summary>
+    private static readonly Dictionary<Node3D, List<(Skeleton3D Vis, Skeleton3D Proxy)>> _skinnedPairs = new();
 
     /// <summary>为 visualRoot 子树构建代理树(不入树、不同步;调用方负责 AddChild + SyncFrom)。
     /// visualRoot 自身是 MeshInstance3D 时(如地形)返回的代理根本身也是 MeshInstance3D。</summary>
     public static Node3D CreateProxyRoot(Node3D visualRoot)
     {
+        var map = new Dictionary<Node, Node>();
         Node3D root = visualRoot is MeshInstance3D rootMi && IsCasterCandidate(rootMi)
             ? CreateProxyMi(rootMi)
             : new Node3D();
         root.Name = visualRoot.Name + "_shadow";
-        BuildChildren(visualRoot, root);
+        map[visualRoot] = root;
+        BuildChildren(visualRoot, root, map);
+        // 第二遍:蒙皮实例的 Skeleton 路径改指代理骨架,骨架对登记到 SyncFrom。
+        var pairs = new List<(Skeleton3D, Skeleton3D)>();
+        foreach (var (vis, proxy) in map)
+        {
+            if (vis is Skeleton3D vsk && proxy is Skeleton3D psk)
+                pairs.Add((vsk, psk));
+            if (vis is MeshInstance3D mi && proxy is MeshInstance3D pmi
+                && mi.Skin != null && !mi.Skeleton.IsEmpty
+                && mi.GetNodeOrNull<Skeleton3D>(mi.Skeleton) is { } visSkel
+                && map.TryGetValue(visSkel, out var proxySkelNode))
+            {
+                pmi.Skeleton = pmi.GetPathTo((Skeleton3D)proxySkelNode);
+                pmi.Skin = GetMirroredSkin(mi.Skin);
+            }
+        }
+        if (pairs.Count > 0) _skinnedPairs[root] = pairs;
         return root;
     }
 
@@ -41,19 +62,58 @@ public static class ShadowProxyManager
         var g = visualRoot.GlobalTransform;
         proxyRoot.GlobalTransform = new Transform3D(g.Basis * S, g.Origin);
         proxyRoot.Visible = visualRoot.Visible;
+        // 蒙皮代理:逐骨骼共轭同步(P' = S·P·S)——投影随动画姿势(上游同款)。
+        if (proxyRoot.Visible && _skinnedPairs.TryGetValue(proxyRoot, out var pairs))
+        {
+            foreach (var (vis, proxy) in pairs)
+            {
+                int bones = vis.GetBoneCount();
+                for (int i = 0; i < bones; i++)
+                    proxy.SetBoneGlobalPose(i, Conjugate(vis.GetBoneGlobalPose(i)));
+            }
+        }
     }
 
-    private static void BuildChildren(Node3D src, Node3D dst)
+    /// <summary>代理树析构时调用(实体视觉出树):骨架对登记摘除。</summary>
+    public static void ReleaseProxyRoot(Node3D proxyRoot) => _skinnedPairs.Remove(proxyRoot);
+
+    private static void BuildChildren(Node3D src, Node3D dst, Dictionary<Node, Node> map)
     {
         foreach (var child in src.GetChildren())
         {
             if (child is not Node3D n3) continue;
-            Node3D proxy = n3 is MeshInstance3D mi && IsCasterCandidate(mi)
-                ? CreateProxyMi(mi)
-                : new Node3D();
-            proxy.Transform = Conjugate(n3.Transform);
+            Node3D proxy;
+            if (n3 is Skeleton3D skel)
+            {
+                // 蒙皮骨架:整骨架克隆,rest 姿势逐骨共轭(S·rest·S)。蒙皮顶点世界位置
+                // 由骨架链决定,节点自身变换被绕过 → 代理骨架局部变换取恒等。
+                var psk = new Skeleton3D { Name = skel.Name + "_shadow" };
+                dst.AddChild(psk);
+                int bones = skel.GetBoneCount();
+                for (int i = 0; i < bones; i++)
+                {
+                    psk.AddBone(skel.GetBoneName(i));
+                    int parent = skel.GetBoneParent(i);
+                    if (parent >= 0) psk.SetBoneParent(i, parent);
+                    psk.SetBoneRest(i, Conjugate(skel.GetBoneRest(i)));
+                }
+                proxy = psk;
+            }
+            else if (n3 is MeshInstance3D mi && IsCasterCandidate(mi))
+            {
+                proxy = CreateProxyMi(mi);
+                // 蒙皮实例局部恒等(蒙皮绕过节点变换);刚性实例照旧共轭。
+                proxy.Transform = mi.Skin != null && !mi.Skeleton.IsEmpty
+                    ? Transform3D.Identity
+                    : Conjugate(n3.Transform);
+            }
+            else
+            {
+                proxy = new Node3D { Transform = Conjugate(n3.Transform) };
+            }
             dst.AddChild(proxy);
-            BuildChildren(n3, proxy);
+            map[n3] = proxy;
+            BuildChildren(n3, proxy, map);
         }
     }
 
@@ -72,6 +132,19 @@ public static class ShadowProxyManager
 
     /// <summary>S·T·S 共轭:原点 (x,y,z)→(x,y,−z),基向量 z 行/列取负(det 保持 +1)。</summary>
     private static Transform3D Conjugate(Transform3D t) => new(S * t.Basis * S, S * t.Origin);
+
+    /// <summary>Skin 的镜像副本(绑定姿势逐骨共轭 B' = S·B·S;骨骼名/计数不变)。
+    /// 蒙皮数学:代理顶点世界 = 代理骨架.Global·(S·P·S)·(S·B⁻¹·S)·(S·v)
+    /// ≡ 视觉骨架.Global·P·B⁻¹·v(三层 S 相消)——与视觉逐顶点一致。</summary>
+    private static Skin GetMirroredSkin(Skin src)
+    {
+        if (_mirrorSkinCache.TryGetValue(src, out var cached)) return cached;
+        var dup = (Skin)src.Duplicate();
+        for (int i = 0; i < dup.GetBindCount(); i++)
+            dup.SetBindPose(i, Conjugate(dup.GetBindPose(i)));
+        _mirrorSkinCache[src] = dup;
+        return dup;
+    }
 
     /// <summary>网格的 z 翻转烘焙副本(按源网格缓存,全会话共享):顶点/法线 z 取反、
     /// 切线 z 与副法线手性 w 取反、三角形绕序反转(保持正面朝向与深度 pass 剔除正确)。
