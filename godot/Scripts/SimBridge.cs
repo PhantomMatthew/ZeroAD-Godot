@@ -286,7 +286,7 @@ public sealed partial class SimBridge : Node
 		float worldSize = gridSize * cellSize;
 		_terrain = new TerrainComponent();
 		_terrain.Configure(gridSize, cellSize);
-		_pathfinder = new PathfinderComponent(_sim);
+		_pathfinder = new PathfinderComponent(_sim) { AsyncPathDriver = true };
 		_pathfinder.SetTerrain(_terrain);
 		// pathfinder.xml 通行类注册表(数据驱动):templatesPath =
 		// …/mods/public/simulation/templates → 三级上级即 mods 根;缺失 → 内建默认。
@@ -1298,6 +1298,9 @@ public sealed partial class SimBridge : Node
 
 	private void TickSimulation(float dt)
 	{
+		// 异步路径汇缴(次回合首相;上游 SendRequestedPaths 同款位置:join 后台任务,
+		// 按入队序投递给 UnitMotion.OnPathResult;未完则主线程补跑——内容与顺序确定)。
+		T("pathharvest", () => _pathfinder.HarvestPathResults());
 		T("dead", () => RemoveDeadEntities());
 		T("motions", () => TickUnitMotions(dt));
 		// Unit pushing (ports CCmpUnitMotionManager::Move/Push): after every unit has stepped,
@@ -1355,7 +1358,11 @@ public sealed partial class SimBridge : Node
 		// 寻路网格增量更新(上游 Simulation2.cpp:613 同款回合末位置):
 		// 回合内 ObstructionManager 累计的脏区(建筑增删/门开关/地基)在此统一烘焙;
 		// 零脏区零开销。回合内网格对寻路只读,异步路径任务才可安全跨回合跑。
-		T("pathgrid", () => _pathfinder.UpdateGrid());
+		T("pathgrid", () =>
+		{
+			_pathfinder.UpdateGrid();               // 网格冻结
+			_pathfinder.StartAsyncPathComputation(); // 本回合入队请求后台求解(次回合首相投递)
+		});
 	}
 
 	// TEMP-PROF:逐阶段计时(tick 内哪个阶段吃掉秒级时间)。

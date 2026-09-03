@@ -217,6 +217,23 @@ namespace ZeroAD.Sim.Components
             }
         }
 
+        /// <summary>无 TerrainComponent 的建网入口(测试/无头驱动):地形 tile 直给,
+        /// 其余与 RebuildGrid 一致(hier 全量 + long 重载 + 缓存世代++ + 脏区清零)。</summary>
+        public void RebuildGridFromTiles(TerrainTileInfo[,] terrain, int tiles,
+            IEnumerable<ObstructionSquare> obstructions)
+        {
+            _gridBuilder.Build(terrain, tiles, obstructions);
+            Obstructions?.SetPathfinderMargin(_gridBuilder.MaxClearanceNavcells);
+            Obstructions?.ClearPathfinderDirtiness();
+            _pathGen++;
+            _pathCache.Clear();
+            if (_gridBuilder.Grid != null)
+            {
+                _hier.Recompute(_gridBuilder.Grid, _gridBuilder.UnitClasses);
+                _long.Reload(_gridBuilder.Grid);
+            }
+        }
+
         /// <summary>地形 tile → TerrainTileInfo 采样(全量 Rebuild 与增量刷新共用)。
         /// 有水位 + 高度网格时算真实值(原版 CTerrain 同款):
         ///   水深 = max(0, 水位 − 四角均值高);坡度 = (四角最高−最低)/tile 边长;
@@ -354,6 +371,126 @@ namespace ZeroAD.Sim.Components
         public WaypointPath ComputePath(FixedVector2D start, in PathGoal goal)
             => ComputePath(start, goal, _gridBuilder.Default.Mask);
 
+        // --- 异步路径请求(上游 ComputePathAsync/SendRequestedPaths 体系) ---
+        // 模型:请求入队(回合内任意时刻)→ 回合末 StartAsyncPathComputation 后台求解
+        // (网格此时已冻结)→ 次回合首相 HarvestPathResults 汇缴并按槽序投递。
+        // 确定性:索引槽位结果数组,投递顺序 = 入队顺序,与线程执行序无关;
+        // 后台未跑完 → 主线程补跑后 join(上游同款兜底,SendRequestedPaths L836-840)。
+        // 缓存命中的请求始终同步即答(不进队列)——memo 是纯函数缓存,不影响确定性。
+        private sealed class LongPathRequest
+        {
+            public uint Ticket;
+            public int X0, Z0;
+            public PathGoal Goal;
+            public PassClass PassClass;
+            public EntityId Notify;
+        }
+
+        /// <summary>一次路径结果(ticket + 通知实体 + 路径;上游 PathResult)。</summary>
+        public readonly struct PathResultItem
+        {
+            public readonly uint Ticket;
+            public readonly EntityId Notify;
+            public readonly WaypointPath Path;
+            public PathResultItem(uint ticket, EntityId notify, WaypointPath path)
+            { Ticket = ticket; Notify = notify; Path = path; }
+        }
+
+        private readonly List<LongPathRequest> _longRequests = new();
+        private PathResultItem[] _longResults = System.Array.Empty<PathResultItem>();
+        private uint _nextAsyncTicket = 1;
+        private System.Threading.Tasks.Task? _asyncWork;
+        /// <summary>同回合同步即答预算(原版 pathfinder.xml MaxSameTurnMoves=20:
+        /// 回合内头 20 个请求立即同步求解投递——新订单响应即时;超出者异步次回合投递)。</summary>
+        public int MaxSameTurnPaths = 20;
+        private int _sameTurnUsed;
+        /// <summary>异步驱动在位标记(SimBridge.InitWorld 置真 = 收割/启动相每回合跑)。
+        /// 内核-only 驱动(无头组件测试)为假 → 全部请求同步即答(旧行为逐字保留;
+        /// 否则无人收割,pending 请求永不投递)。MP 全端同走 SimBridge,一致性不破。</summary>
+        public bool AsyncPathDriver;
+
+        /// <summary>异步请求长程路径。返回 false = 已入队(ticket 输出),结果次回合
+        /// HarvestPathResults 投递;返回 true = 同步即答(缓存命中或预算内),path 有效。
+        /// 上游 ComputePathAsync + MaxSameTurnMoves 同回合即答通道的合并。</summary>
+        public bool RequestLongPath(EntityId notify, FixedVector2D start, in PathGoal goal,
+            PassClass passClass, out WaypointPath path, out uint ticket)
+        {
+            ticket = 0;
+            if (_gridBuilder.Grid == null || !AsyncPathDriver)
+            {
+                path = ComputePath(start, goal, passClass);
+                return true;   // 无网格 / 无异步驱动:同步即答
+            }
+            int si = PathfindingCore.WorldToNavcell(start.X);
+            int sj = PathfindingCore.WorldToNavcell(start.Y);
+            var key = PathCacheKey(si, sj, in goal, passClass);
+            if (_pathCache.ContainsKey(key) || _sameTurnUsed < MaxSameTurnPaths)
+            {
+                if (!_pathCache.ContainsKey(key)) _sameTurnUsed++;
+                path = ComputePath(start, goal, passClass);
+                return true;
+            }
+            ticket = _nextAsyncTicket++;
+            _longRequests.Add(new LongPathRequest
+            {
+                Ticket = ticket, X0 = si, Z0 = sj, Goal = goal, PassClass = passClass,
+                Notify = notify,
+            });
+            path = new WaypointPath();
+            return false;
+        }
+
+        /// <summary>回合末(网格冻结后)启动后台求解。单后台任务顺序求解:
+        /// 结果写入索引槽位,投递序与完成序解耦;LongPathfinder 的常驻 scratch
+        /// (GetQueue 的 30MB 数组)按实例驻留,多 worker 需各自实例——暂单 worker,
+        /// memo 缓存已吸收重复求解。</summary>
+        public void StartAsyncPathComputation()
+        {
+            if (_longRequests.Count == 0) return;
+            if (_asyncWork != null) return;   // 防御:未汇缴不再开(正常流不会发生)
+            int count = _longRequests.Count;
+            _longResults = new PathResultItem[count];
+            var requests = _longRequests.ToArray();
+            var hier = _hier;
+            var results = _longResults;
+            _asyncWork = System.Threading.Tasks.Task.Run(() =>
+            {
+                for (int i = 0; i < requests.Length; i++)
+                {
+                    var req = requests[i];
+                    var path = _long.ComputePath(hier, req.X0, req.Z0, req.Goal, req.PassClass);
+                    results[i] = new PathResultItem(req.Ticket, req.Notify, path);
+                }
+            });
+        }
+
+        /// <summary>次回合首相:汇缴 + 按槽序投递。后台未完 → 主线程补跑 join
+        /// (确定性:投递内容/顺序与线程时序无关)。返回投递数(诊断)。</summary>
+        public int HarvestPathResults()
+        {
+            _sameTurnUsed = 0;
+            if (_asyncWork == null) return 0;
+            if (!_asyncWork.IsCompleted)
+            {
+                // 主线程补跑(上游:worker 落后时 main 帮跑)。
+                _asyncWork.Wait();
+            }
+            else _asyncWork.Wait();   // join(异常不外溢到 tick 驱动)
+            _asyncWork = null;
+            int delivered = 0;
+            foreach (var r in _longResults)
+            {
+                _cm.QueryInterface<UnitMotion>(r.Notify)?.OnPathResult(r.Ticket, r.Path);
+                delivered++;
+            }
+            _longRequests.Clear();
+            _longResults = System.Array.Empty<PathResultItem>();
+            return delivered;
+        }
+
+        /// <summary>测试/诊断:已入队待投递的请求数(汇缴清零)。</summary>
+        public int PendingPathRequests => _longRequests.Count;
+
         /// <summary>Compute a long-range path for a specific passability class.</summary>
         public WaypointPath ComputePath(FixedVector2D start, in PathGoal goal, PassClass passClass)
         {
@@ -364,10 +501,7 @@ namespace ZeroAD.Sim.Components
             // 寻路是纯函数(start,goal,class,grid)→path;大地图全图 A* 每次 ~20ms,
             // AI 每回合重发同目标订单 ×150 次 → 秒级纯浪费。按输入 memo,网格重建时失效。
             // 确定性:键即全部输入(含目标形状),缓存不改变结果。
-            var key = (si, sj, (int)goal.Type,
-                goal.X.InternalValue, goal.Z.InternalValue,
-                goal.Hw.InternalValue, goal.Hh.InternalValue,
-                passClass.Mask, _pathGen);
+            var key = PathCacheKey(si, sj, in goal, passClass);
             if (_pathCache.TryGetValue(key, out var cached))
             {
                 ProfHits++;
@@ -381,6 +515,13 @@ namespace ZeroAD.Sim.Components
             _pathCache[key] = path;
             return path;
         }
+
+        private (int, int, int, long, long, long, long, ushort, int) PathCacheKey(
+            int si, int sj, in PathGoal goal, PassClass passClass) =>
+            (si, sj, (int)goal.Type,
+                goal.X.InternalValue, goal.Z.InternalValue,
+                goal.Hw.InternalValue, goal.Hh.InternalValue,
+                passClass.Mask, _pathGen);
 
         private readonly Dictionary<(int, int, int, long, long, long, long, ushort, int), WaypointPath> _pathCache = new();
         /// <summary>性能探针:寻路缓存命中/未命中与求解耗时。</summary>

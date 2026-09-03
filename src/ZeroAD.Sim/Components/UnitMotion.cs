@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ZeroAD.Sim.Maths;
+using ZeroAD.Sim.Pathfinding;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Sim.Components;
@@ -60,6 +61,13 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     private float _pathAge;                         // seconds since the last full ComputePath
     private Fixed _lastGoalX, _lastGoalZ;
     private bool _hasLastGoal;
+
+    // --- 异步路径请求(上游 CCmpUnitMotion m_ExpectedPathTicket 语义) ---
+    // 超出同回合即答预算(MaxSameTurnPaths=20)的求解入队,结果次回合由
+    // PathfinderComponent.HarvestPathResults 投递到 OnPathResult。等待期间继续走
+    // 旧路标(上游:pending 时 PerformMove 照旧);旧路标耗尽 → 直线暂行(不站桩)。
+    // 瞬态不序列化(同 waypoints 惯例;冷加载后由节流到期自然重请求)。0 = 无待答。
+    private uint _pendingPathTicket;
 
     // --- 阻挡缓释(原版 CCmpUnitMotion C++ 侧防卡 + UnitAI obstructionMitigationAttempted)---
     // A. 不可达目标不穿墙:长程求解为空且直线受阻时,沿直线取最远合法点走到即停
@@ -145,31 +153,20 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         {
             var start = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
             var goal = Pathfinding.PathGoal.Point(target.X, target.Y);
-            var path = pathfinder.ComputePath(start, goal, ResolvePassClass(pathfinder));
-            // WaypointPath.Waypoints is stored start→goal; consume front-to-back (matching the
-            // existing _waypoints contract). Each waypoint is world-space Fixed → float.
-            foreach (var wp in path.Waypoints)
-                _waypoints.Add((wp.X.ToFloat(), wp.Z.ToFloat()));
-            if (_waypoints.Count == 0)
+            var pc = ResolvePassClass(pathfinder);
+            if (pathfinder.RequestLongPath(Entity, start, goal, pc, out var path, out uint ticket))
             {
-                // 长程求解为空:起点≈终点 → 直线即达;否则目标不可达——不直线穿墙,
-                // 沿直线钳到最远合法点(缓释 A);完全堵死 → 不动(订单随后 FinishOrder)。
-                float dxs = target.X.ToFloat() - start.X.ToFloat();
-                float dzs = target.Y.ToFloat() - start.Y.ToFloat();
-                if (dxs * dxs + dzs * dzs < 1f)
-                {
+                // 同回合即答(缓存命中/预算内):立即安装路径(旧同步行为)。
+                _pendingPathTicket = 0;
+                AdoptPath(pathfinder, path, start, target, pc);
+            }
+            else
+            {
+                // 异步 pending:保留旧路标继续走(上游 pending 语义——此前这里清空,
+                // 单位会在结果到达前站桩);旧路标已耗尽 → 直线暂行到目标。
+                _pendingPathTicket = ticket;
+                if (_currentWaypoint >= _waypoints.Count)
                     _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
-                    return;
-                }
-                if (TryClampToReachable(pathfinder, start, target, ResolvePassClass(pathfinder), out var clamped))
-                {
-                    _waypoints.Add((clamped.X.ToFloat(), clamped.Y.ToFloat()));
-                    TargetPos = clamped;   // 到点判定按可达点(原目标不可达)
-                }
-                else
-                {
-                    HasMoveTarget = false;
-                }
             }
             return;
         }
@@ -194,11 +191,58 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         }
     }
 
+    /// <summary>安装一次求解结果(即答与异步投递共用)。空路径的缓释 A
+    /// (钳到最远可达点/不动)与原内联路径逐字一致。</summary>
+    private void AdoptPath(PathfinderComponent pathfinder, WaypointPath path,
+        FixedVector2D start, FixedVector2D target, PassClass pc)
+    {
+        _waypoints.Clear();
+        _currentWaypoint = 0;
+        foreach (var wp in path.Waypoints)
+            _waypoints.Add((wp.X.ToFloat(), wp.Z.ToFloat()));
+        if (_waypoints.Count == 0)
+        {
+            // 长程求解为空:起点≈终点 → 直线即达;否则目标不可达——不直线穿墙,
+            // 沿直线钳到最远合法点(缓释 A);完全堵死 → 不动(订单随后 FinishOrder)。
+            float dxs = target.X.ToFloat() - start.X.ToFloat();
+            float dzs = target.Y.ToFloat() - start.Y.ToFloat();
+            if (dxs * dxs + dzs * dzs < 1f)
+            {
+                _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+                return;
+            }
+            if (TryClampToReachable(pathfinder, start, target, pc, out var clamped))
+            {
+                _waypoints.Add((clamped.X.ToFloat(), clamped.Y.ToFloat()));
+                TargetPos = clamped;   // 到点判定按可达点(原目标不可达)
+            }
+            else
+            {
+                HasMoveTarget = false;
+            }
+        }
+    }
+
+    /// <summary>异步路径结果投递(PathfinderComponent.HarvestPathResults → 此处)。
+    /// 上游 CCmpUnitMotion::PathResult:ticket 过期(期间又有新请求)即丢弃。</summary>
+    public void OnPathResult(uint ticket, WaypointPath path)
+    {
+        if (ticket != _pendingPathTicket || ticket == 0) return;   // 过期结果
+        _pendingPathTicket = 0;
+        if (!HasMoveTarget) return;   // Stop 过——结果作废
+        var pathfinder = SimSystem.Pathfinder;
+        var posComp = SimSystem.GetComponent<PositionComponent>(Entity);
+        if (pathfinder == null || posComp == null) return;
+        var start = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
+        AdoptPath(pathfinder, path, start, TargetPos, ResolvePassClass(pathfinder));
+    }
+
     public void Stop()
     {
         HasMoveTarget = false;
         CurrentSpeed = Fixed.Zero;
         _waypoints.Clear();
+        _pendingPathTicket = 0;   // 在途结果到时自然作废(ticket 校验)
         // Drop the cached goal so the next MoveToPoint always solves a fresh path (a Stop
         // means the caller deliberately cancelled movement, not a chase tick).
         _hasLastGoal = false;
