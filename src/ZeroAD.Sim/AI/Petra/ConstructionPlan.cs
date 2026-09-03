@@ -38,7 +38,37 @@ public sealed class ConstructionPlan : QueuePlan
     public override bool IsInvalid(GameState gameState)
         => gameState.GetTemplate(Type) == null;
 
-    public override bool IsGo(GameState gameState) => true;
+    /// <summary>原版 queueplanBuilding.js isGo 的 houseNeeded 门(buildMoreHouses 的
+    /// 床位逼近才动工):房屋类可建 + 人口上限高于现上限(有限制才提前盖)+
+    /// 空闲床位(上限 + 在建房的人口加成 − 现人口)分档阈值(saveResources≤10;
+    /// 人口>55 ≤21;>30 ≤15;否则 ≤10)。</summary>
+    public override bool IsGo(GameState gameState)
+    {
+        if (GoRequirement != "houseNeeded") return true;
+        var hq = gameState.Hq;
+        if (hq == null) return true;
+        if (!hq.CanBuild(gameState, "structures/{civ}/house")
+            && !hq.CanBuild(gameState, "structures/{civ}/apartment"))
+            return false;
+        if (gameState.GetPopulationMax() <= gameState.GetPopulationLimit())
+            return false;
+
+        int freeSlots = gameState.GetPopulationLimit() - gameState.GetPopulation();
+        foreach (var ent in gameState.GetOwnFoundations().Values())
+        {
+            // 在建地基的建成后人口加成计入空闲(原版 getBuiltTemplate().getPopulationBonus)。
+            var stats = gameState.Templates?.ExtractStats(ent.Template.TemplateName);
+            if (stats != null) freeSlots += stats.PopulationBonus;
+        }
+
+        if (hq.SaveResources)
+            return freeSlots <= 10;
+        if (gameState.GetPopulation() > 55)
+            return freeSlots <= 21;
+        if (gameState.GetPopulation() > 30)
+            return freeSlots <= 15;
+        return freeSlots <= 10;
+    }
 
     public override bool CanStart(GameState gameState)
     {

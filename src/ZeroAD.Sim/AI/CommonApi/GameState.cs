@@ -31,6 +31,10 @@ public sealed class GameState
 
     private readonly List<string> _phases;
 
+    /// <summary>HQ 反链(原版 gameState.ai.HQ;ConstructionPlan.IsGo 的 houseNeeded
+    /// 评估等需要 HQ 状态。AIComponent 建 HQ 后注入)。</summary>
+    public ZeroAD.Sim.AI.Petra.Headquarters? Hq { get; set; }
+
     public GameState(ComponentManager cm, TemplateLoader templates, TechCatalog techCatalog,
         int playerId, EntityMetadata metadata, AIEventBuffer events, Accessibility? accessibility)
     {
@@ -47,6 +51,46 @@ public sealed class GameState
     public int GetPopulation() => Cm.GetPlayerEntity(PlayerId)?.PopUsed ?? 0;
     public int GetPopulationLimit() => Cm.GetPlayerEntity(PlayerId)?.PopulationLimit ?? 0;
     public int GetPopulationMax() => Cm.GetPlayerEntity(PlayerId)?.MaxPopCap ?? 300;
+
+    /// <summary>记账人口(原版 getAccountedPopulation:现人口 + 在训单位的人口成本;
+    /// 建房/相位判定的提前量口径)。</summary>
+    public int GetAccountedPopulation()
+    {
+        int pop = GetPopulation();
+        foreach (var fac in GetOwnTrainingFacilities().Values())
+        {
+            var pq = Cm.QueryInterface<Components.ProductionQueue>(new EntityId(fac.Id));
+            if (pq == null) continue;
+            foreach (var item in pq.Queue)
+            {
+                var stats = Templates?.ExtractStats(item.TemplateName);
+                pop += (stats?.PopulationCost ?? 1) * item.Count;
+            }
+        }
+        return pop;
+    }
+
+    /// <summary>相位科技的实体需求(原版 getPhaseEntityRequirements:phase 科技的
+    /// requirements 里 EntityClass+EntityNumber 项;升阶需 N 个某类建筑时用)。
+    /// phase 名(如 "phase_town")→ (class,count) 列表。</summary>
+    public IReadOnlyList<(string Class, int Count)> GetPhaseEntityRequirements(string phaseName)
+    {
+        var result = new List<(string, int)>();
+        if (TechCatalog == null) return result;
+        void Walk(IReadOnlyList<ZeroAD.Sim.Content.TechRequirement> reqs)
+        {
+            foreach (var r in reqs)
+            {
+                if (r.EntityClass != null && r.EntityNumber > 0)
+                    result.Add((r.EntityClass, r.EntityNumber));
+                if (r.All != null) Walk(r.All);
+                if (r.Any != null) Walk(r.Any);
+            }
+        }
+        if (TechCatalog.Technologies.TryGetValue(phaseName, out var def))
+            Walk(def.Requirements);
+        return result;
+    }
 
     // ── 模板 ──
 

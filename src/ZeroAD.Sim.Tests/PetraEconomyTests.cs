@@ -205,6 +205,35 @@ public sealed class PetraEconomyTests
     }
 
     [Fact]
+    public void Hq_BuildMoreHouses_HouseNeededGate_GatesStart()
+    {
+        // houseNeeded 启动门(原版 queueplanBuilding isGo):计划排上但床位充裕时
+        // 不启动(无地基出现);床位逼近阈值才动工。
+        var w = NewAiWorld();
+        if (w == null) return;
+        w.Gs.Hq = w.Hq;   // IsGo 的 HQ 反链(AIComponent 正式路径同款注入)
+
+        var player = w.Cm.GetPlayerEntity(2)!;
+        // 床位充裕(limit-used 大)→ 队列可有计划但不动工。
+        // 注意原版门:popMax > popLimit 才盖(无限制地图不盖)——limit 设 100 < 300 上限。
+        player.PopUsed = 10;
+        player.PopulationLimit = 100;
+        for (int turn = 0; turn < 10; turn++)
+        {
+            w.Hq.Update(w.Gs, w.Events);
+            w.Net.AdvanceTurn();
+        }
+        bool foundation = w.Cm.AllEntities.Any(e =>
+            w.Cm.QueryInterface<FoundationComponent>(e) != null
+            && w.Cm.QueryInterface<IdentityComponent>(e)?.TemplateName.Contains("/house") == true);
+        Assert.False(foundation, "床位充裕时 houseNeeded 计划不得动工");
+        // 队列里有挂门计划。
+        var hq2 = w.Hq.Queues.GetQueue("house");
+        Assert.True(hq2 != null && hq2.Plans.Count > 0, "计划应已排(带启动门)");
+        Assert.Equal("houseNeeded", hq2!.Plans[0].GoRequirement);
+    }
+
+    [Fact]
     public void Hq_BuildMoreHouses_SpawnsHouseFoundation_WhenBedsLow()
     {
         var w = NewAiWorld();

@@ -126,6 +126,7 @@ public sealed class AIComponent : ComponentBase
         if (_hq != null && _sharedState != null && _petraConfig != null)
         {
             var gameState = _sharedState.CreateGameState(_cm, (int)playerId, Metadata, Events);
+            gameState.Hq = _hq;   // 原版 gameState.ai.HQ 等价(houseNeeded 等计划门用)
             if (gameState != null)
             {
                 gameState.Net = _net;   // AI 命令通道(Plans 经此 SubmitAiCommand)

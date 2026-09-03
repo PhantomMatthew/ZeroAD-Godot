@@ -100,7 +100,7 @@ public sealed class QueueManager
             foreach (var j in _queues.Keys)
             {
                 var queue = _queues[j];
-                if (!queue.HasQueuedUnits || queue.Paused) { CheckExcess(j, res, avail); continue; }
+                if (!queue.HasQueuedUnits || queue.Paused) { CheckExcess(j, res, avail, gameState); continue; }
 
                 // maxAccountWanted = 首计划成本 + 60% 次计划成本
                 var queueCost = MaxAccountWanted(queue, gameState, 0.6);
@@ -437,13 +437,12 @@ public sealed class QueueManager
         return cost;
     }
 
-    private void CheckExcess(string queueName, string res, int available)
+    private void CheckExcess(string queueName, string res, int available, GameState gameState)
     {
-        // 超额账户回收（distributeResource 里内联逻辑的抽取）
-        var queueCost = new ResourcesManager();  // 空 = 无计划
+        // 超额账户回收(暂停/空队列的计划仍占着账户时不收——原版语义保留);
+        // gameState 从调用方传入(IsGo 评估需要——houseNeeded 等启动门读 sim 态)。
         if (!_queues[queueName].HasQueuedUnits) return;
-        var cost = MaxAccountWanted(_queues[queueName], null!, 0.6);
-        // 这里 null! 不对——CheckExcess 在 distributeResource 里内联处理，不单独调用
+        _ = MaxAccountWanted(_queues[queueName], gameState, 0.6);
     }
 
     private static int ResValue(ResourcesManager r, string res) => res switch

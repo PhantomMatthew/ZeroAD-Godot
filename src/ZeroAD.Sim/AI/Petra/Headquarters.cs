@@ -392,14 +392,79 @@ public sealed class Headquarters
             queue.Plans[1].Number = System.Math.Min(queue.Plans[1].Number, size);
     }
 
+    /// <summary>原版 buildMoreHouses(headquarters.js:1428-1519)逐字:
+    /// 公寓优先(可建+模板可用),否则 house;人口上限 ≥ 现上限才有建房意义
+    /// (无限制地图不盖);队列 <3 计划(pop>80 时 <5)即补,计划带
+    /// GoRequirement="houseNeeded"(床位逼近才动工,见 ConstructionPlan.IsGo);
+    /// 相位实体需求缺口时清队首计划的启动门凑数(升阶要 N 个 House 类);
+    /// 空闲床位(上限+在建房加成−记账人口)<5 → 不可建就研人口科技(我方
+    /// ResearchManager.Update 已无条件优先人口科技,此处仅记)否则优先级 ×2,
+    /// 否则恢复 config 默认。</summary>
     private void BuildMoreHouses(GameState gameState)
     {
-        // 原版 buildMoreHouses:剩余床位逼近缓冲(原版按 pop 规模 5-20)即建房;
-        // house 队列非空时不重复加。
-        int freeBeds = gameState.GetPopulationLimit() - gameState.GetPopulation();
-        if (freeBeds > 8) return;
-        if (HasPendingPlan("house")) return;
-        Queues.AddPlan("house", new ConstructionPlan(gameState, "structures/{civ}/house"));
+        string houseTemplateString = "structures/{civ}/apartment";
+        if (!gameState.IsTemplateAvailable(gameState.ApplyCiv(houseTemplateString))
+            || !CanBuild(gameState, houseTemplateString))
+        {
+            houseTemplateString = "structures/{civ}/house";
+            if (!gameState.IsTemplateAvailable(gameState.ApplyCiv(houseTemplateString)))
+                return;
+        }
+        if (gameState.GetPopulationMax() <= gameState.GetPopulationLimit())
+            return;
+
+        var houseQueue = Queues.GetQueue("house");
+        int numPlanned = houseQueue?.Plans.Count ?? 0;
+        if (numPlanned < 3 || (numPlanned < 5 && gameState.GetPopulation() > 80))
+        {
+            var plan = new ConstructionPlan(gameState, houseTemplateString)
+            { GoRequirement = "houseNeeded" };
+            Queues.AddPlan("house", plan);
+        }
+
+        // 相位实体需求:升阶要 N 个某类建筑且 House 属该类 → 清计划的启动门凑数。
+        if (numPlanned > 0 && Phasing != 0 && houseQueue != null)
+        {
+            string phaseName = gameState.GetPhaseName(Phasing);
+            var entityReqs = gameState.GetPhaseEntityRequirements(phaseName);
+            if (entityReqs.Count > 0)
+            {
+                var houseTemplate = gameState.GetTemplate(
+                    gameState.ApplyCiv(houseTemplateString));
+                int needed = 0;
+                foreach (var req in entityReqs)
+                {
+                    if (houseTemplate == null || !houseTemplate.HasClass(req.Class)) continue;
+                    int count = gameState.GetOwnStructures()
+                        .Filter(e => e.HasClass(req.Class)).Length;
+                    if (count < req.Count) needed = System.Math.Max(needed, req.Count - count);
+                }
+                for (int i = 0; i < houseQueue.Plans.Count; i++)
+                {
+                    if (houseQueue.Plans[i].IsGo(gameState))
+                        needed--;
+                    else if (needed > 0)
+                    {
+                        houseQueue.Plans[i].GoRequirement = null;
+                        needed--;
+                    }
+                }
+            }
+        }
+
+        // 床位过紧:优先级临时 ×2(原版经 researchPopulationBonus 补科技——我方
+        // ResearchManager.Update 已无条件优先人口科技,此处仅优先级)。
+        string house = gameState.ApplyCiv(houseTemplateString);
+        int houseFoundations = gameState.GetOwnFoundations()
+            .Filter(e => e.HasClass("House")).Length;
+        int popBonus = gameState.GetTemplate(house)?.GetInt("Cost/PopulationBonus") ?? 0;
+        int freeSlots = gameState.GetPopulationLimit() + houseFoundations * popBonus
+            - gameState.GetAccountedPopulation();
+        int priority = freeSlots < 5
+            ? 2 * Config.Priorities["house"]
+            : Config.Priorities["house"];
+        if (priority != Queues.GetPriority("house"))
+            Queues.ChangePriority("house", priority);
     }
 
     private void BuildFarmstead(GameState gameState)

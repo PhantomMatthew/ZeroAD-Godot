@@ -59,7 +59,7 @@ public static class SaveGameManager
     // 位置流错位,按版本号拒收。
     // v9(2026-08-03):DamageBlock 增 Fire 通道(状态效果燃烧)——capture 后多 1 个 I32。
     // v10(2026-08-07):Foundation/Builder 工人表序列化(多工人递减 n^0.7/n)。
-    private const uint Version = 16; // v16: UnitMotion waypoints 定点序列化(读档续走) // v15: 转向物理 // v14: UnitMotion 增推挤 Weight // v13: 槽位增 AI 难度/性格 // v12: AIComponent 增 HQ 尾段(AI 计划/队列/攻防军/运输骑缝)
+    private const uint Version = 17; // v17: QueuePlan.GoRequirement(houseNeeded 启动门) // v16: waypoints // v15: 转向物理 // v14: UnitMotion 增推挤 Weight // v13: 槽位增 AI 难度/性格 // v12: AIComponent 增 HQ 尾段(AI 计划/队列/攻防军/运输骑缝)
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 
