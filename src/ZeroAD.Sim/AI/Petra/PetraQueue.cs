@@ -6,9 +6,12 @@ namespace ZeroAD.Sim.AI.Petra;
 
 /// <summary>生产队列（原版 petra/queue.js，166 行）。
 /// 持有按优先级排序的 QueuePlan 列表。QueueManager 管理 N 个命名 Queue。</summary>
-public sealed class PetraQueue
+    public sealed class PetraQueue
 {
     public readonly List<QueuePlan> Plans = new();
+    /// <summary>队列名 + 管理器回链(QueueToReset 优先级的复位通道;QueueManager 创建时接线)。</summary>
+    public string Name = "";
+    public QueueManager? Manager;
     public bool Paused;
 
     public void AddPlan(QueuePlan? plan)
@@ -46,7 +49,9 @@ public sealed class PetraQueue
         while (Plans.Count > 0)
         {
             if (!Plans[0].IsInvalid(gameState)) return;
+            var dropped = Plans[0];
             Plans.RemoveAt(0);
+            Manager?.OnPlanRemoved(Name, dropped);   // QueueToReset 优先级复位
         }
     }
 
@@ -58,6 +63,7 @@ public sealed class PetraQueue
         {
             var plan = Plans[0];
             Plans.RemoveAt(0);
+            Manager?.OnPlanRemoved(Name, plan);   // QueueToReset 优先级复位
             plan.Start(gameState);
             return true;
         }

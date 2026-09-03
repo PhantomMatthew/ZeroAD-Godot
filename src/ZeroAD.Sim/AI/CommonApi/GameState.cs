@@ -180,6 +180,12 @@ public sealed class GameState
         => Col("p" + player, e => e.Owner == player);
     public EntityCollection GetStructures()
         => Col("structures", e => e.IsStructure);
+    /// <summary>己方地基按类过滤(原版 getOwnFoundationsByClass;BuildDefenses 的
+    /// 在建门控用)。</summary>
+    public EntityCollection GetOwnFoundationsByClass(string cls)
+        => Col("ownFoundClass:" + cls, e => e.Owner == PlayerId
+            && e.HasClass("Foundation") && e.HasClass(cls));
+
     public EntityCollection GetOwnFoundations()
         => Col("ownFoundations", e => e.Owner == PlayerId && e.IsFoundation);
     public EntityCollection GetOwnEntitiesByClass(string cls)

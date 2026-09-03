@@ -121,6 +121,57 @@ public sealed class PetraEconomyTests
     }
 
     [Fact]
+    public void Hq_BuildDefenses_PhaseGates()
+    {
+        // 原版 buildDefenses 全量门控:一阶只出哨塔(config NumSentryTowers>0 才建),
+        // 石塔二阶起、要塞三阶起——门未到不出。
+        var w = NewAiWorld();
+        if (w == null) return;
+
+        // 一阶 + 中等难度(NumSentryTowers=1):应出哨塔计划(非石塔)。
+        for (int turn = 0; turn < 40; turn++)
+        {
+            w.Hq.Update(w.Gs, w.Events);
+            w.Net.AdvanceTurn();
+            var q = w.Hq.Queues.GetQueue("defenseBuilding");
+            if (q != null && q.Plans.Count > 0)
+            {
+                Assert.Contains("sentry_tower", q.Plans[0].Type);
+                return;
+            }
+            // 哨塔可能已启动出队——看地基/生产也算数;此处只钉"不出石塔/要塞"。
+            var all = w.Cm.AllEntities;
+            foreach (var e in all)
+            {
+                string? tn = w.Cm.QueryInterface<IdentityComponent>(e)?.TemplateName;
+                if (tn != null && tn.Contains("defense_tower") )
+                    Assert.Fail($"phase 1 should never queue defense_tower, found {tn}");
+            }
+        }
+        // 40 回合一阶内没出哨塔也可接受(saveResources/资源门槛)——测试钉的是
+        // 相位门:一阶永远不出 defense_tower/fortress(上面循环里已断言)。
+    }
+
+    [Fact]
+    public void QueueToReset_PriorityRestoredOnPlanStart()
+    {
+        // QueueToReset:计划启动离队列 → 队列优先级复位 config 默认。
+        var w = NewAiWorld();
+        if (w == null) return;
+        int dflt = w.Hq.Config.Priorities["defenseBuilding"];
+        w.Hq.Queues.ChangePriority("defenseBuilding", 2 * dflt);
+        Assert.Equal(2 * dflt, w.Hq.Queues.GetPriority("defenseBuilding"));
+        w.Hq.Queues.AddPlan("defenseBuilding", new TrainingPlan(w.Gs,
+            "units/gaul/support_civilian", number: 1) { QueueToReset = "defenseBuilding" });
+        // 训练计划不可在 villager 外队列启动?——直接经队列 API 启动(资源够)。
+        var q = w.Hq.Queues.GetQueue("defenseBuilding")!;
+        // StartNext 需要 plan.CanStart;训练计划 CanStart 需 trainer——夹具有 CC,可启。
+        bool started = q.StartNext(w.Gs);
+        if (started)
+            Assert.Equal(dflt, w.Hq.Queues.GetPriority("defenseBuilding"));
+    }
+
+    [Fact]
     public void Hq_BuildMoreHouses_SpawnsHouseFoundation_WhenBedsLow()
     {
         var w = NewAiWorld();

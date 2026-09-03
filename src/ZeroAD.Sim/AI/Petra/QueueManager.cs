@@ -27,7 +27,7 @@ public sealed class QueueManager
         _config = config;
         foreach (var kvp in config.Priorities)
         {
-            _queues[kvp.Key] = new PetraQueue();
+            _queues[kvp.Key] = new PetraQueue { Name = kvp.Key, Manager = this };
             _priorities[kvp.Key] = kvp.Value;
             _accounts[kvp.Key] = new ResourcesManager();
         }
@@ -317,7 +317,7 @@ public sealed class QueueManager
     public void AddQueue(string name, int priority)
     {
         if (_queues.ContainsKey(name)) return;
-        _queues[name] = new PetraQueue();
+        _queues[name] = new PetraQueue { Name = name, Manager = this };
         _priorities[name] = priority;
         _accounts[name] = new ResourcesManager();
         SortQueues();
@@ -338,6 +338,18 @@ public sealed class QueueManager
     }
 
     public int GetPriority(string name) => _priorities.GetValueOrDefault(name, 0);
+
+    /// <summary>计划离队列(启动/作废)回调:QueueToReset 队列优先级复位到 config 默认
+    /// (原版 queueManager 的 queueToReset 语义——BuildDefenses 的临时优先级调整回收)。</summary>
+    public void OnPlanRemoved(string queueName, QueuePlan plan)
+    {
+        if (plan.QueueToReset is not { } resetQueue) return;
+        if (!_queues.ContainsKey(resetQueue)) return;
+        if (!_config.Priorities.TryGetValue(resetQueue, out int dflt)) return;
+        if (_priorities.GetValueOrDefault(resetQueue) == dflt) return;
+        _priorities[resetQueue] = dflt;
+        SortQueues();
+    }
 
     public PetraQueue? GetQueue(string name)
         => _queues.GetValueOrDefault(name);

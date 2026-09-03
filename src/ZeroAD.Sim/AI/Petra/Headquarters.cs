@@ -707,14 +707,80 @@ public sealed class Headquarters
             new ConstructionPlan(gameState, "structures/{civ}/temple"));
     }
 
+    /// <summary>原版 buildDefenses(headquarters.js:1592-1649)逐字:要塞(三阶+):
+    /// 间隔时间随数量拉长、上限 = 活跃基地数+1+extraFortresses 且 <人口/25,
+    /// 地基 <2;哨塔(仅一阶):config 数量门 + lapse 间隔(saveResources 拉长);
+    /// 石塔(二阶+):间隔随数量拉长、上限 = 2×活跃基地+3+extraTowers 且 <人口/8,
+    /// 地基 <3;超上限 2×base+3 时降队列优先级(QueueToReset 回收)。
+    /// saveResources 且无易物 → 全停;队列已有 → 全停。</summary>
     private void BuildDefenses(GameState gameState)
     {
-        // 原版:按 ExtraTowers(难度×防御性格)补防御塔。
-        int towers = CountOwnStructuresByClass(gameState, "DefenseTower");
-        if (towers >= 2 + ExtraTowers) return;
-        if (HasPendingPlan("defenseBuilding")) return;
-        Queues.AddPlan("defenseBuilding",
-            new ConstructionPlan(gameState, "structures/{civ}/defense_tower"));
+        if (SaveResources && !CanBarter || HasPendingPlan("defenseBuilding"))
+            return;
+
+        // 要塞(三阶或正研三阶;原版:!saveResources 才有)。
+        if (!SaveResources && (CurrentPhase > 2
+            || gameState.IsResearching(gameState.GetPhaseName(3))))
+        {
+            if (CanBuild(gameState, "structures/{civ}/fortress"))
+            {
+                int numFortresses = gameState.GetOwnEntitiesByClass("Fortress").Length;
+                if ((numFortresses == 0 || gameState.ElapsedTime >
+                        (1 + 0.10 * numFortresses) * FortressLapseTime + FortressStartTime)
+                    && numFortresses < NumActiveBases(gameState) + 1 + ExtraFortresses
+                    && numFortresses < gameState.GetPopulation() / 25
+                    && gameState.GetOwnFoundationsByClass("Fortress").Length < 2)
+                {
+                    FortressStartTime = (int)gameState.ElapsedTime;
+                    if (numFortresses == 0)
+                        Queues.ChangePriority("defenseBuilding",
+                            2 * Config.Priorities["defenseBuilding"]);
+                    var plan = new ConstructionPlan(gameState, "structures/{civ}/fortress")
+                    { QueueToReset = "defenseBuilding" };
+                    Queues.AddPlan("defenseBuilding", plan);
+                    return;
+                }
+            }
+        }
+
+        // 哨塔(仅一阶;原版 config numSentryTowers=0 即禁用)。
+        if (Config.Military.NumSentryTowers > 0 && CurrentPhase < 2
+            && CanBuild(gameState, "structures/{civ}/sentry_tower"))
+        {
+            // 原版数所有 Tower+WallTower(哨塔/石塔/墙塔同账)。
+            int numTowers = gameState.GetOwnEntitiesByClass("Tower").Length
+                + gameState.GetOwnEntitiesByClass("WallTower").Length;
+            int lapse = SaveResources
+                ? (int)((1 + 0.5 * numTowers) * TowerLapseTime) : TowerLapseTime;
+            if (numTowers < Config.Military.NumSentryTowers
+                && gameState.ElapsedTime > lapse + FortStartTime)
+            {
+                FortStartTime = (int)gameState.ElapsedTime;
+                Queues.AddPlan("defenseBuilding",
+                    new ConstructionPlan(gameState, "structures/{civ}/sentry_tower"));
+            }
+            return;
+        }
+
+        // 石塔(二阶+)。
+        if (CurrentPhase < 2 || !CanBuild(gameState, "structures/{civ}/defense_tower"))
+            return;
+        int numStoneTowers = gameState.GetOwnEntitiesByClass("StoneTower").Length;
+        int towerLapse = SaveResources ? (1 + numStoneTowers) * TowerLapseTime : TowerLapseTime;
+        if ((numStoneTowers == 0 || gameState.ElapsedTime >
+                (1 + 0.1 * numStoneTowers) * towerLapse + TowerStartTime)
+            && numStoneTowers < 2 * NumActiveBases(gameState) + 3 + ExtraTowers
+            && numStoneTowers < gameState.GetPopulation() / 8
+            && gameState.GetOwnFoundationsByClass("Tower").Length < 3)
+        {
+            TowerStartTime = (int)gameState.ElapsedTime;
+            if (numStoneTowers > 2 * NumActiveBases(gameState) + 3)
+                Queues.ChangePriority("defenseBuilding",
+                    (int)System.Math.Round(0.7 * Config.Priorities["defenseBuilding"]));
+            var plan = new ConstructionPlan(gameState, "structures/{civ}/defense_tower")
+            { QueueToReset = "defenseBuilding" };
+            Queues.AddPlan("defenseBuilding", plan);
+        }
     }
 
     private void ConstructTrainingBuildings(GameState gameState)

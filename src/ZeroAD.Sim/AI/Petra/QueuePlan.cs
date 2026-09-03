@@ -12,6 +12,9 @@ public abstract class QueuePlan
     public string Type = "";        // 解析后的模板名（{civ} 已替换）
     public string Category = "";    // "unit"/"building"/"technology"
     public int Number = 1;
+    /// <summary>原版 plan.queueToReset:本计划离队列(启动/作废)时,该队列优先级
+    /// 复位到 config 默认(BuildDefenses 的临时提/降优先级靠它回收)。</summary>
+    public string? QueueToReset;
     public ResourcesManager Cost = new();
     public Dictionary<string, object> Metadata = new();
 
@@ -33,6 +36,7 @@ public abstract class QueuePlan
                 s.NumberFixed("pz", pos.Value.Y);
             }
         }
+        s.StringASCII("qreset", QueueToReset ?? "");   // 存档 v15(AI 计划尾段随本波)
         s.NumberI32("metaCount", Metadata.Count);
         foreach (var kv in Metadata.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
@@ -79,6 +83,8 @@ public abstract class QueuePlan
         }
         else
             plan = new ResearchPlan(gameState, type);
+        string qreset = d.StringASCII("qreset");
+        plan.QueueToReset = qreset.Length > 0 ? qreset : null;
         int metaCount = d.NumberI32("metaCount");
         for (int i = 0; i < metaCount; i++)
         {
