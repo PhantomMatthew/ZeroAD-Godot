@@ -263,11 +263,39 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
     // 布阵(原版 ArrangeFormation / UpdateFormation / MoveToMembersCenter)
     // =========================================================================
 
-    /// <summary>Port of UpdateFormation:原版有 IsRearrangementAllowed 闸门(控制器/成员
-    /// 作战态阻止重排);我们的控制器只支持 Walk,成员只有 FormationWalk,闸门恒真——
-    /// 作战态闸门随编队作战一起做。</summary>
+    /// <summary>Port of UpdateFormation:IsRearrangementAllowed 闸门落地(原版
+    /// Formation.js:1109-1193)——控制器处于 COMBAT.ATTACKING,或 >5% 成员处于
+    /// 作战/采集/修理/治疗态时禁止重排(force 直通)。原版 noRearrangeStates 逐字。</summary>
     public void UpdateFormation(ComponentManager cm, bool moveCenter = false, bool force = false)
-        => ArrangeFormation(cm, moveCenter, force, null);
+    {
+        if (!force && !IsRearrangementAllowed(cm)) return;
+        ArrangeFormation(cm, moveCenter, force, null);
+    }
+
+    /// <summary>Port of IsRearrangementAllowed:控制器作战禁排;成员关键态
+    /// (COMBAT.ATTACKING/CHASING/APPROACHING、HEAL.HEALING、GATHER、REPAIR 前缀)
+    /// 占比 >5% 禁排(容差覆盖"少数成员卡住仍战"的边角)。</summary>
+    public bool IsRearrangementAllowed(ComponentManager cm)
+    {
+        var ctrlAI = cm.QueryInterface<UnitAIComponent>(Entity);
+        if (ctrlAI != null && ctrlAI.FsmStateName.Contains("COMBAT.ATTACKING"))
+            return false;
+        if (Members.Count == 0) return true;
+
+        int critical = 0;
+        foreach (var ent in Members)
+        {
+            var ai = cm.QueryInterface<UnitAIComponent>(ent);
+            if (ai == null) continue;
+            string st = ai.FsmStateName;
+            if (st.Contains("COMBAT.ATTACKING") || st.Contains("COMBAT.CHASING")
+                || st.Contains("COMBAT.APPROACHING") || st.Contains("HEAL.HEALING")
+                || st.Contains("GATHER") || st.Contains("REPAIR"))
+                critical++;
+        }
+        // 原版:(criticalMembers / totalMembers) > 0.05 → 禁排。
+        return critical * 20 <= Members.Count;
+    }
 
     /// <summary>Port of ArrangeFormation:必要时控制器跳到成员质心并朝目标转向(转角过大
     /// 作废偏移);偏移缺失则重算;向每成员发 FormationWalk(force=替换队列,否则排尾),

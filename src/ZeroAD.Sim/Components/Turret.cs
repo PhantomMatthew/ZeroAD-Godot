@@ -282,7 +282,7 @@ public sealed class TurretableComponent : ComponentBase, IComponentMessageHandle
         Ejectable = ejectable;
         TurretPointName = holder.GetOccupiedTurretPointName(Entity);
 
-        SimSystem.GetComponent<UnitAIComponent>(Entity)?.SetTurretStance();
+        SimSystem.GetComponent<UnitAIComponent>(Entity)?.SetTurretStance(cm);
         SimSystem.GetComponent<ObstructionComponent>(Entity)?.SetActive(false);
         UpdatePosition(cm);
         return true;
@@ -317,7 +317,7 @@ public sealed class TurretableComponent : ComponentBase, IComponentMessageHandle
         }
 
         var ai = SimSystem.GetComponent<UnitAIComponent>(Entity);
-        ai?.ResetTurretStance();
+        ai?.ResetTurretStance(cm);
         SimSystem.GetComponent<ObstructionComponent>(Entity)?.SetActive(true);
 
         Holder = null;

@@ -833,11 +833,13 @@ public sealed partial class SimBridge : Node
 			Territory = stats?.BuildRestrictionsTerritory ?? "",
 		});
 		obstruction.EnsureRegistered();
-		// 城门(原版 Gate.js):GateComponent + 默认未锁(可通行 → 阻挡失活)。
+		// 城门(原版 Gate.js 全量):GateComponent + 初始未锁关门——阻挡注册保留,
+		// 未锁关门 = 移动挡/寻路放(原版 UnlockGate(quiet) 语义;此前 SetActive(false)
+		// 把整个门洞+翼墙全放开,寻路直接穿墙段)。
 		if (stats != null && stats.HasGate)
 		{
-			_sim.AddComponent(entity, new GateComponent());
-			obstruction.SetActive(false);
+			_sim.AddComponent(entity, new GateComponent { PassRange = stats.GatePassRange });
+			obstruction.SetDisableBlockMovementPathfinding(false, true);
 		}
 
 		// 攻击组件(CC/箭塔/防御塔等有 Attack 的建筑):此前 SpawnScenarioBuilding 不装
@@ -1290,6 +1292,23 @@ public sealed partial class SimBridge : Node
 		}
 	}
 
+	private float _gateTickAccum;
+
+	/// <summary>门 tick:0.5s 节拍逐门 OperateGate(原版 OnRangeUpdate 事件驱动的
+	/// 轮询等价;关门重试由节拍天然承担——门洞占用时保持开)。</summary>
+	private void TickGates(float dt)
+	{
+		_gateTickAccum += dt;
+		if (_gateTickAccum < 0.5f) return;
+		_gateTickAccum = 0f;
+		foreach (var entity in _sim.AllEntities)
+		{
+			var gate = _sim.QueryInterface<GateComponent>(entity);
+			if (gate != null)
+				gate.OperateGate(_sim);
+		}
+	}
+
 	private void TickTurrets(float dt)
 	{
 		foreach (var entity in _sim.AllEntities)
@@ -1333,6 +1352,9 @@ public sealed partial class SimBridge : Node
 		// 炮塔跟拍(原版 Position.SetTurretParent 的引擎联动):在点单位锁到持有者
 		// 位置+旋转偏移。放 UpdateVisibilityData 前:随行位移本周期即被 LOS 重算吃到。
 		T("turrets", () => TickTurrets(dt));
+		// 城门自动开关(原版 Gate.js 的 active range query → 此处 0.5s 轮询;
+		// 门数极少,轮询比查询订阅基建便宜得多)。
+		T("gates", () => TickGates(dt));
 		// 资源涓流(原版 ResourceTrickle 定时器的回合制近似:奇观/牲口棚等按间隔发资源)。
 		T("trickle", () => TickResourceTrickles(dt));
 		T("closure", () => TickGameplayClosure(dt));

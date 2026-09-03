@@ -30,6 +30,36 @@ namespace ZeroAD.Sim.Components
         public uint ControlGroup;       // 0 = self (default assigned in OnInit)
         public uint ControlGroup2;      // 0 = none
         public bool Active = true;
+        /// <summary>原版 DisableBlockMovement/DisableBlockPathfinding(门自动开关的核心):
+        /// 覆盖式禁用——注册形状用 EffectiveFlags(基旗减去禁用项);模板可预置
+        /// (Obstruction 子元素),运行时由 GateComponent 等切换。</summary>
+        public bool DisableBlockMovement;
+        public bool DisableBlockPathfinding;
+
+        /// <summary>实际生效旗标(原版查询时的 disable 覆盖语义)。</summary>
+        public ObstructionFlags EffectiveFlags()
+        {
+            var f = Flags;
+            if (DisableBlockMovement) f &= ~ObstructionFlags.BlockMovement;
+            if (DisableBlockPathfinding) f &= ~ObstructionFlags.BlockPathfinding;
+            return f;
+        }
+
+        /// <summary>原版 ICmpObstruction::SetDisableBlockMovementPathfinding:
+        /// 切换禁用并强制形状重注册(重注册走 EffectiveFlags + 自动打脏寻路网格)。</summary>
+        public void SetDisableBlockMovementPathfinding(bool disableMovement, bool disablePathfinding)
+        {
+            if (DisableBlockMovement == disableMovement && DisableBlockPathfinding == disablePathfinding)
+                return;
+            DisableBlockMovement = disableMovement;
+            DisableBlockPathfinding = disablePathfinding;
+            if (!_registered) return;
+            // 重挂形状让 EffectiveFlags 生效(打脏由 manager Remove/Add 自动完成)。
+            SimSystem.Obstructions?.RemoveShape(_tag);
+            _registered = false;
+            _tag = default;
+            EnsureRegistered();
+        }
 
         /// <summary>同玩家墙体共用的控制组(高位命名空间,撞不了实体 id):同组墙件
         /// 互不阻挡——原版墙体拼链(段搭进塔楼)依赖此。Placement 校验同组豁免。</summary>
@@ -75,17 +105,27 @@ namespace ZeroAD.Sim.Components
             {
                 Fixed hw = Size0 / Fixed.FromInt(2);
                 Fixed hh = Size1 / Fixed.FromInt(2);
-                _tag = mgr.AddStaticShape(Entity, _lastPos.X, _lastPos.Y, u, v, hw, hh, Flags, ControlGroup, ControlGroup2);
+                _tag = mgr.AddStaticShape(Entity, _lastPos.X, _lastPos.Y, u, v, hw, hh, EffectiveFlags(), ControlGroup, ControlGroup2);
             }
             else
             {
-                _tag = mgr.AddUnitShape(Entity, _lastPos.X, _lastPos.Y, Size0, Flags, ControlGroup);
+                _tag = mgr.AddUnitShape(Entity, _lastPos.X, _lastPos.Y, Size0, EffectiveFlags(), ControlGroup);
             }
             _registered = true;
             // Follow this entity's moves so the shape tracks it (units walk, buildings rotate).
             if (SimSystem.Sim is { } cm)
                 cm.PositionChanged += OnPositionChanged;
             return true;
+        }
+
+        /// <summary>原版 ICmpObstruction::SetControlGroup:切换控制组(已注册形状同步到
+        /// manager;未注册只更新字段,EnsureRegistered 时带上)。</summary>
+        public void SetControlGroup(uint group)
+        {
+            if (ControlGroup == group) return;
+            ControlGroup = group;
+            if (_registered)
+                SimSystem.Obstructions?.SetControlGroup(_tag, group);
         }
 
         /// <summary>Port of CCmpObstruction::SetActive: deactivate drops the registered shape
@@ -196,6 +236,8 @@ namespace ZeroAD.Sim.Components
             s.NumberU32("grp", ControlGroup);
             s.NumberU32("grp2", ControlGroup2);
             s.Bool("active", Active);
+            s.Bool("dbm", DisableBlockMovement);     // 存档 v14
+            s.Bool("dbp", DisableBlockPathfinding);
         }
 
         public override void Deserialize(IDeserializer d)
@@ -207,6 +249,8 @@ namespace ZeroAD.Sim.Components
             ControlGroup = d.NumberU32("grp");
             ControlGroup2 = d.NumberU32("grp2");
             Active = d.Bool("active");
+            DisableBlockMovement = d.Bool("dbm");
+            DisableBlockPathfinding = d.Bool("dbp");
         }
 
         public void HandleMessage(IMessage message) { }

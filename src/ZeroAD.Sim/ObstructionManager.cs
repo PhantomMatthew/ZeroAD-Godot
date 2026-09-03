@@ -346,6 +346,65 @@ namespace ZeroAD.Sim
             }
         }
 
+        /// <summary>切换形状控制组(原版 ICmpObstructionManager 同名;编队成员入队时
+        /// 切到编队控制器 id——同组成员互不阻挡互推;离队还原为自身 id)。
+        /// 控制组不进空间索引,纯字段更新。</summary>
+        public void SetControlGroup(ObstructionTag tag, uint group)
+        {
+            if (tag.IsStatic && _staticShapes.TryGetValue(tag.N, out var ss))
+                ss.Group = group;
+            else if (tag.IsUnit && _unitShapes.TryGetValue(tag.N, out var us))
+                us.Group = group;
+        }
+
+        /// <summary>原版 GetEntitiesBlockingConstruction(门关门前置检查):与自身形状重叠
+        /// 且 BlockConstruction 的实体(自身控制组豁免——墙件不挡门,原版注释同款)。
+        /// 注意:形状注册时已按 EffectiveFlags 折算(disable 覆盖天然生效)。</summary>
+        public List<EntityId> GetEntitiesBlockingConstruction(ObstructionTag tag)
+        {
+            var result = new List<EntityId>();
+            if (tag.IsStatic && _staticShapes.TryGetValue(tag.N, out var self))
+            {
+                var bb = Geometry.GetHalfBoundingBox(self.U, self.V, new FixedVector2D(self.Hw, self.Hh));
+                Fixed r = bb.X > bb.Y ? bb.X : bb.Y;
+                _scratch.Clear();
+                _staticSubdivision.GetInRange(_scratch, self.X - r, self.Z - r, self.X + r, self.Z + r);
+                foreach (uint raw in _scratch)
+                {
+                    if (raw == tag.N) continue;
+                    var other = _staticShapes[raw];
+                    if ((other.Flags & ObstructionFlags.BlockConstruction) == 0) continue;
+                    if (other.Group == self.Group || other.Group2 == self.Group) continue;
+                    if (!Geometry.TestSquareSquare(
+                            new FixedVector2D(self.X, self.Z), self.U, self.V,
+                            new FixedVector2D(self.Hw, self.Hh),
+                            new FixedVector2D(other.X, other.Z), other.U, other.V,
+                            new FixedVector2D(other.Hw, other.Hh)))
+                        continue;
+                    result.Add(other.Entity);
+                }
+                // 移动中的单位也挡关门(原版:GetEntitiesBlockingConstruction 含单位形状)。
+                _scratch.Clear();
+                _unitSubdivision.GetInRange(_scratch, self.X - r, self.Z - r, self.X + r, self.Z + r);
+                foreach (uint raw in _scratch)
+                {
+                    var other = _unitShapes[raw];
+                    if ((other.Flags & ObstructionFlags.BlockConstruction) == 0) continue;
+                    if (other.Group == self.Group) continue;
+                    if (!Geometry.TestSquareSquare(
+                            new FixedVector2D(self.X, self.Z), self.U, self.V,
+                            new FixedVector2D(self.Hw, self.Hh),
+                            new FixedVector2D(other.X, other.Z),
+                            new FixedVector2D(Fixed.FromInt(1), Fixed.Zero),
+                            new FixedVector2D(Fixed.Zero, Fixed.FromInt(1)),
+                            new FixedVector2D(other.Clearance, other.Clearance)))
+                        continue;
+                    result.Add(other.Entity);
+                }
+            }
+            return result;
+        }
+
         public void SetUnitMovingFlag(ObstructionTag tag, bool moving)
         {
             if (_unitShapes.TryGetValue(tag.N, out var us))

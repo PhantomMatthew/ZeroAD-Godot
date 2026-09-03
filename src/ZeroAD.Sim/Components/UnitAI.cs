@@ -127,15 +127,27 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     /// <summary>Port of UnsetGarrisoned(SetMobile)。由 Garrisonable.UnGarrison 调用。</summary>
     public void UnsetGarrisoned() => IsGarrisoned = false;
 
-    /// <summary>Port of SetTurretStance:SetImmobile(站姿切换不移植,见 IsTurret)。</summary>
-    public void SetTurretStance()
+    /// <summary>炮塔站姿(原版 UnitAI.SetTurretStance 全量,UnitAI.js:6187-6200):
+    /// SetImmobile + 强制切到首个 respondStandGround 站姿(standground)——塔上单位
+    /// 原地自动接敌,不追不动;旧站姿存底,下塔还原。</summary>
+    private string? _previousStance;
+    public void SetTurretStance(ComponentManager cm)
     {
         IsTurret = true;
         StopMoving(this);
+        if (CurrentStanceFlags.RespondStandGround) return;
+        _previousStance = Stance;
+        SetStance("standground", cm);
     }
 
-    /// <summary>Port of ResetTurretStance:SetMobile(站姿还原则略)。</summary>
-    public void ResetTurretStance() => IsTurret = false;
+    /// <summary>Port of ResetTurretStance:SetMobile + 还原旧站姿。</summary>
+    public void ResetTurretStance(ComponentManager cm)
+    {
+        IsTurret = false;
+        if (_previousStance == null) return;
+        SetStance(_previousStance, cm);
+        _previousStance = null;
+    }
 
     // --- 编队(Formation.js 联动;MS5 落地) ---
 
@@ -148,9 +160,13 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     public bool IsFormationController { get; private set; }
 
     /// <summary>Port of UnitAI.SetFormationController(由 FormationComponent.SetMembers/
-    /// AddMembers 调用)。原版同时把 Obstruction ControlGroup 切到控制器(编队成员
-    /// 互穿),我们的 Obstruction 不换控制组(记录在案)。</summary>
-    public void SetFormationController(EntityId controller) => FormationController = controller;
+    /// AddMembers 调用)。原版同款把 Obstruction ControlGroup 切到控制器
+    /// (UnitAI.js:5427-5432:编队成员互不阻挡/互推;离队还原为自身 id)。</summary>
+    public void SetFormationController(EntityId controller)
+    {
+        FormationController = controller;
+        SimSystem.GetComponent<ObstructionComponent>(Entity)?.SetControlGroup(controller.Value);
+    }
 
     /// <summary>Port of UnitAI.UnsetFormationController:清链接并派 FormationLeave
     /// FSM 消息(FORMATIONMEMBER 树:停走/丢 FormationWalk 回 INDIVIDUAL.IDLE;
@@ -158,6 +174,8 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     public void UnsetFormationController()
     {
         FormationController = null;
+        // 还原控制组为自身(原版 UnsetFormationController:SetControlGroup(this.entity))。
+        SimSystem.GetComponent<ObstructionComponent>(Entity)?.SetControlGroup(Entity.Value);
         s_fsm.ProcessMessage(this, new FsmMessage { Type = "FormationLeave", Cm = SimSystem.Sim }, "FormationLeave");
     }
 

@@ -403,8 +403,14 @@ namespace ZeroAD.Sim.Content
             }
 
             // Gate(城门标记;GateComponent 装配/门面板按钮用)
-            if (node.GetChild("Gate").IsOk)
+            var gateNode = node.GetChild("Gate");
+            if (gateNode.IsOk)
+            {
                 stats.HasGate = true;
+                var passRange = gateNode.GetChild("PassRange");
+                if (passRange.IsOk)
+                    stats.GatePassRange = passRange.ToFixed().ToFloat();
+            }
 
             var attack = node.GetChild("Attack");
             if (attack.IsOk)
@@ -1477,6 +1483,8 @@ namespace ZeroAD.Sim.Content
         public float UpgradeTime;
         /// <summary>Gate 节点存在(城门模板;GateComponent 装配与 gate 面板按钮用)。</summary>
         public bool HasGate;
+        /// <summary>Gate/PassRange 开门感应半径(原版默认 20m)。</summary>
+        public float GatePassRange = 20f;
 
         // Footprint: physical extent for spawn-point search + click hit-testing.
         // Shape: "" (none), "square" (Size0=width, Size1=depth), "circle" (Size0=radius).
