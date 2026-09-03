@@ -8,7 +8,7 @@
 | 组件 | 缺口 |
 |---|---|
 | ~~UnitAI~~ ✅ | Pickup 接送(乘客发起+运输侧 PICKUP 双子态+取消即完成握手)、编队控制组 obstruction 切换、炮塔站姿(standground 强切+还原)——本波全落 |
-| **UnitMotion** | ~~异步路径~~✅ ~~朝向物理~~✅(PerformMove 转向块逐字:原地转/cos 减速/到站面向);余:waypoints 序列化(瞬态为刻意设计) |
+| ~~UnitMotion~~ ✅ | ~~异步路径~~ ~~朝向物理~~ ~~waypoints 序列化~~(v16 定点骑缝,读档续走+哈希连续)——全落 |
 | ~~UnitSeparation~~ ✅ | push-pressure 全量(编队豁免/交叉 nudge/per-template Weight/压力累积减速/CheckMovement 钳)+ 20m 空间分格——本波全落 |
 | ~~Formation~~ ✅ | LoadFormation 换模板(executor 单编队换形分支)+ IsRearrangementAllowed(>5% 关键态禁排)——本波全落 |
 | ~~Garrison/Turret/Gate~~ ✅ | initGarrison/initTurrets(场景 XML 解析+生成末统一应用)、门自动开关(盟友感应+门洞占用重试+阻挡旗态机)——本波全落 |
@@ -56,8 +56,8 @@
 ~~P1 性能三件套 + §3B 组件尾巴批量~~(2026-09-03 全落:增量寻路/异步路径/推挤压力
 + 门自动开关/编队组切换/炮塔站姿/重排闸门/LoadFormation/initGarrison/Pickup)。
 存量最大项(2026-09-03 更新,TerritoryManager/转向/天气/阴影/人口规划均已落):
-~~BuildDefenses~~✅ ~~StartingStrategy saveResources 联动~~✅ ——Petra 经济面
-除 BuildMoreHouses 的 houseNeeded 细化外基本对齐。余:~~§4 序列化覆盖
+~~BuildDefenses~~✅ ~~StartingStrategy saveResources 联动~~✅ ~~BuildMoreHouses
+houseNeeded~~✅(计划 GoRequirement 启动门)——Petra 经济面对齐。余:~~§4 序列化覆盖
 (U64/I64/Float/Double 全实现链+位级哈希,本波;backref 共享对象无消费方,
 按需再加)~~、~~GuiInterface 桥扩面(Minimap 回合缓存批量快照+CC 定位+选择集
 能力 DTO 一趟扫描,Minimap 直读清零、HUD 47→31 且余者为选择重建段)~~、
