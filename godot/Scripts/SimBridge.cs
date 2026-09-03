@@ -1352,6 +1352,10 @@ public sealed partial class SimBridge : Node
 		// drives Fogging/Mirage bookkeeping and presentation-layer show/hide. Cheap no-op
 		// when nothing moved.
 		T("los2", () => _range.UpdateVisibilityData());
+		// 寻路网格增量更新(上游 Simulation2.cpp:613 同款回合末位置):
+		// 回合内 ObstructionManager 累计的脏区(建筑增删/门开关/地基)在此统一烘焙;
+		// 零脏区零开销。回合内网格对寻路只读,异步路径任务才可安全跨回合跑。
+		T("pathgrid", () => _pathfinder.UpdateGrid());
 	}
 
 	// TEMP-PROF:逐阶段计时(tick 内哪个阶段吃掉秒级时间)。
@@ -1727,11 +1731,8 @@ public sealed partial class SimBridge : Node
 			if (owner != null)
 				_sim.RecomputePlayerPopBonus(owner.PlayerId);
 
-			// The completed building registered a static obstruction (via SpawnScenarioBuilding →
-			// ObstructionComponent.EnsureRegistered). Refresh the pathfinder's navcell grid:
-			// snapshot diff → only the changed region patches (P1; zero-cost when nothing moved,
-			// per-tick safe). Fall back to full RebuildGrid if the grid isn't built yet.
-			_pathfinder.RefreshObstructions();
+			// 完工建筑的静态阻挡经 ObstructionComponent.EnsureRegistered → ObstructionManager
+			// 自动打脏;回合末 T("pathgrid") 的 UpdateGrid 统一增量重烘焙(此处零操作)。
 
 			AutoAssignIdleBuilders(x, z);
 		}

@@ -237,8 +237,12 @@ public sealed class HierarchicalPathfinder
                     }
             }
 
+        // 定序洪泛:gid 编号只用于相等比较,但编号顺序必须跨运行/跨全量-增量路径稳定
+        // (HashSet 迭代序不受保证)——排序后洪泛,锁定确定性。
+        var ordered = new List<long>(allRegions);
+        ordered.Sort();
         var queue = new Queue<long>();
-        foreach (long start in allRegions)
+        foreach (long start in ordered)
         {
             if (visited.Contains(start)) continue;
             uint gid = nextGlobal++;
@@ -259,6 +263,111 @@ public sealed class HierarchicalPathfinder
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// <summary>增量更新(上游 HierarchicalPathfinder::Update,HierarchicalPathfinder.cpp:451-521):
+    /// 只处理脏 chunk:摘除旧区域的全局表/边 → 重洪泛 chunk 内区域 → 重建四邻边 →
+    /// 全局区域全量重标(区域图洪泛,开销 µs 级;上游只做受影响区,注释自认脏 chunk
+    /// 可能诱发全图连通洪泛——直接全标更简单且同样确定)。</summary>
+    public void Update(Grid<NavcellData> grid,
+        IReadOnlyList<(int I0, int J0, int I1, int J1)> dirtyRects,
+        IEnumerable<PassabilityClassDef> classes)
+    {
+        if (_states.Count == 0 || grid.W != _navW || grid.H != _navH)
+        {
+            Recompute(grid, classes);
+            return;
+        }
+        int navW = grid.W, navH = grid.H;
+        foreach (var cls in classes)
+        {
+            if (!_states.TryGetValue(cls.Mask.Mask, out var st)) continue;
+            // 脏 chunk 集(定序遍历)。
+            var dirtyChunks = new SortedSet<long>();
+            foreach (var (i0, j0, i1, j1) in dirtyRects)
+            {
+                int c0 = System.Math.Max(0, i0 / ChunkSize), c1 = System.Math.Min(st.ChunksW - 1, i1 / ChunkSize);
+                int d0 = System.Math.Max(0, j0 / ChunkSize), d1 = System.Math.Min(st.ChunksH - 1, j1 / ChunkSize);
+                for (int cj = d0; cj <= d1; cj++)
+                    for (int ci = c0; ci <= c1; ci++)
+                        dirtyChunks.Add(((long)ci << 20) | (uint)cj);
+            }
+            if (dirtyChunks.Count == 0) continue;
+
+            foreach (long key in dirtyChunks)
+            {
+                int ci = (int)(key >> 20), cj = (int)(uint)(key & 0xFFFFF);
+                RemoveChunkRegions(st, ci, cj);
+                st.SetChunk(ci, cj, FloodChunkRegions(grid, cls.Mask, ci, cj, navW, navH));
+            }
+            foreach (long key in dirtyChunks)
+            {
+                int ci = (int)(key >> 20), cj = (int)(uint)(key & 0xFFFFF);
+                RebuildChunkEdges(grid, cls.Mask, st, ci, cj);
+            }
+            BuildGlobalRegions(st);
+        }
+    }
+
+    /// <summary>摘除 chunk 的全部旧区域:全局区域表 + 边图双向清理
+    /// (上游 Update 的 "remove all regions from the global region map / remove all edges")。</summary>
+    private static void RemoveChunkRegions(ClassState st, int ci, int cj)
+    {
+        var oldChunk = st.GetChunk(ci, cj);
+        var oldIds = new HashSet<ushort>();
+        for (int dz = 0; dz < ChunkSize; dz++)
+            for (int dx = 0; dx < ChunkSize; dx++)
+                if (oldChunk[dx, dz] != 0) oldIds.Add(oldChunk[dx, dz]);
+        foreach (ushort r in oldIds)
+        {
+            long k = RegionKey(ci, cj, r);
+            st.GlobalRegions.Remove(k);
+            if (st.Edges.TryGetValue(k, out var neighbors))
+            {
+                foreach (long nb in neighbors)
+                    if (st.Edges.TryGetValue(nb, out var back)) back.Remove(k);
+                st.Edges.Remove(k);
+            }
+        }
+    }
+
+    /// <summary>重建 chunk 的四邻边(全量 BuildEdges 只扫东/南去重;单 chunk 更新
+    /// 须扫四向——AddEdge 的 HashSet 双向去重,与邻居 chunk 的重扫互补安全)。</summary>
+    private static void RebuildChunkEdges(Grid<NavcellData> grid, PassClass mask, ClassState st,
+        int ci, int cj)
+    {
+        _ = grid; _ = mask;   // 边只由区域网格决定(与 BuildEdges 一致,grid 参数留签名对齐)
+        var chunk = st.GetChunk(ci, cj);
+        for (int dz = 0; dz < ChunkSize; dz++)
+        {
+            ushort r1 = chunk[ChunkSize - 1, dz];
+            if (r1 != 0 && ci + 1 < st.ChunksW)
+            {
+                ushort r2 = st.GetChunk(ci + 1, cj)[0, dz];
+                if (r2 != 0) AddEdge(st, RegionKey(ci, cj, r1), RegionKey(ci + 1, cj, r2));
+            }
+            ushort r0 = chunk[0, dz];
+            if (r0 != 0 && ci > 0)
+            {
+                ushort r2 = st.GetChunk(ci - 1, cj)[ChunkSize - 1, dz];
+                if (r2 != 0) AddEdge(st, RegionKey(ci, cj, r0), RegionKey(ci - 1, cj, r2));
+            }
+        }
+        for (int dx = 0; dx < ChunkSize; dx++)
+        {
+            ushort r1 = chunk[dx, ChunkSize - 1];
+            if (r1 != 0 && cj + 1 < st.ChunksH)
+            {
+                ushort r2 = st.GetChunk(ci, cj + 1)[dx, 0];
+                if (r2 != 0) AddEdge(st, RegionKey(ci, cj, r1), RegionKey(ci, cj + 1, r2));
+            }
+            ushort r0 = chunk[dx, 0];
+            if (r0 != 0 && cj > 0)
+            {
+                ushort r2 = st.GetChunk(ci, cj - 1)[dx, ChunkSize - 1];
+                if (r2 != 0) AddEdge(st, RegionKey(ci, cj, r0), RegionKey(ci, cj - 1, r2));
             }
         }
     }

@@ -119,6 +119,14 @@ public sealed class Grid<T>
         return false;
     }
 
+    /// <summary>深拷贝（terrain-only 基线快照用——增量补丁从这里恢复脏格）。</summary>
+    public Grid<T> Clone()
+    {
+        var copy = new Grid<T>(W, H);
+        Array.Copy(_data, copy._data, _data.Length);
+        return copy;
+    }
+
     /// <summary>按线性索引访问原始数据（AI 的 passabilityMap.data[i] 等价物）。
     /// 行主序：index = j * W + i。AI 地图分析（TerrainAnalysis/Accessibility）需此访问。</summary>
     public ref readonly T this[int linearIndex] => ref _data[linearIndex];

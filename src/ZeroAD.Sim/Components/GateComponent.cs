@@ -17,9 +17,9 @@ namespace ZeroAD.Sim.Components
             if (Locked == locked) return;
             Locked = locked;
             var obstruction = cm.QueryInterface<ObstructionComponent>(Entity);
+            // SetActive → ObstructionManager 形状摘除/重挂 → 自动打脏;
+            // 回合末 PathfinderComponent.UpdateGrid 增量重烘焙(不再 mid-turn 全量重建)。
             obstruction?.SetActive(locked);
-            // 静态阻挡烘焙网格依赖活性——切换即重建(与建筑生成/拆除同款)。
-            SimSystem.Pathfinder?.RebuildGrid();
         }
 
         public override void Serialize(ISerializer s) => s.Bool("locked", Locked);

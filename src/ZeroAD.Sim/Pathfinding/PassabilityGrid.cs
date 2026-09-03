@@ -34,6 +34,15 @@ public sealed class PassabilityGridBuilder
     /// <summary>The current passability grid (navcell → bitmask). Null until Build.</summary>
     public Grid<NavcellData>? Grid { get; private set; }
 
+    /// <summary>纯地形基线(地形栅格化 + 地形侧 clearance 膨胀,无 obstruction)。
+    /// 增量补丁从这里恢复脏格再重戳(上游 m_TerrainOnlyGrid 同款,CCmpPathfinder.cpp:576-580)。
+    /// 语义等价说明:旧管线是 dilate(地形∪障碍),新管线是 dilate(地形)∪dilate(障碍)
+    /// ——8 连通环形膨胀(Chebyshev dilation)对并集可分配,逐位相同,测试钉死。</summary>
+    public Grid<NavcellData>? TerrainOnly { get; private set; }
+
+    /// <summary>全类最大 clearance(navcell,Chebyshev 半径;脏区相交测试的外扩量)。</summary>
+    public int MaxClearanceNavcells { get; private set; }
+
     /// <summary>Navcells per side (square map). 0 until Build.</summary>
     public int NavcellsPerSide { get; private set; }
 
@@ -89,18 +98,54 @@ public sealed class PassabilityGridBuilder
                     }
             }
 
-        // --- 2. Stamp static obstructions per class(kind 选旗:pathfinding/foundation)。 ---
+        // --- 2. 地形侧 clearance 膨胀(先于障碍印戳——两格模型,见 TerrainOnly 注释)。 ---
+        foreach (var cls in _config.Classes)
+            ExpandImpassable(grid, cls);
+
+        int maxClear = 0;
+        foreach (var cls in _config.Classes)
+            maxClear = System.Math.Max(maxClear, cls.Clearance.ToIntRoundToInfinity());
+        MaxClearanceNavcells = maxClear;
+        TerrainOnly = grid.Clone();
+
+        // --- 3. Stamp static obstructions per class(印戳自带 clearance 扩展 =
+        // 该形状的 Chebyshev 膨胀,与旧"先印后整体膨胀"逐位等价)。 ---
         foreach (var ob in obstructions)
             foreach (var cls in _config.Classes)
                 StampObstruction(grid, ob, cls);
 
-        // --- 3. Expand by clearance (dilate impassable region outward). ---
-        // Done per-class after all stamps so one class's clearance doesn't bleed into another's
-        // pre-expansion state.
-        foreach (var cls in _config.Classes)
-            ExpandImpassable(grid, cls);
-
         Grid = grid;
+    }
+
+    /// <summary>增量补丁(上游 CCmpPathfinder::UpdateGrid 的非 globallyDirty 路径):
+    /// 脏区 navcell 矩形先回滚地形基线,再重戳与其(按最大 clearance 外扩)相交的
+    /// 全部静态形状。只 OR 不清——恢复由基线拷贝负责。</summary>
+    public void PatchRect(int i0, int j0, int i1, int j1,
+        IEnumerable<ObstructionSquare> obstructions)
+    {
+        var grid = Grid;
+        var terrainOnly = TerrainOnly;
+        if (grid == null || terrainOnly == null) return;
+        i0 = System.Math.Max(0, i0); j0 = System.Math.Max(0, j0);
+        i1 = System.Math.Min(grid.W - 1, i1); j1 = System.Math.Min(grid.H - 1, j1);
+        if (i0 > i1 || j0 > j1) return;
+
+        for (int j = j0; j <= j1; j++)
+            for (int i = i0; i <= i1; i++)
+                grid.Set(i, j, terrainOnly.Get(i, j));
+
+        int margin = MaxClearanceNavcells;
+        foreach (var ob in obstructions)
+        {
+            var bb = Geometry.GetHalfBoundingBox(ob.U, ob.V, new FixedVector2D(ob.Hw, ob.Hh));
+            int x0 = PathfindingCore.WorldToNavcell(ob.X - bb.X) - margin;
+            int z0 = PathfindingCore.WorldToNavcell(ob.Z - bb.Y) - margin;
+            int x1 = PathfindingCore.WorldToNavcell(ob.X + bb.X) + margin;
+            int z1 = PathfindingCore.WorldToNavcell(ob.Z + bb.Y) + margin;
+            if (x1 < i0 || x0 > i1 || z1 < j0 || z0 > j1) continue;
+            foreach (var cls in _config.Classes)
+                StampObstruction(grid, ob, cls);
+        }
     }
 
     // Stamp an axis-aligned approximation of an obstruction square onto the grid for one class.
@@ -114,12 +159,14 @@ public sealed class PassabilityGridBuilder
             : ObstructionFlags.None;
         if (flag == ObstructionFlags.None) return;
         if ((ob.Flags & flag) == 0) return;
-        // AABB half-extents from the oriented box.
+        // AABB half-extents from the oriented box;按该类 clearance 外扩
+        // (= 形状集合的 Chebyshev 膨胀,等价旧管线的事后 ExpandImpassable)。
+        int expand = cls.Clearance.ToIntRoundToInfinity();
         var bb = Geometry.GetHalfBoundingBox(ob.U, ob.V, new FixedVector2D(ob.Hw, ob.Hh));
-        int x0 = PathfindingCore.WorldToNavcell(ob.X - bb.X);
-        int z0 = PathfindingCore.WorldToNavcell(ob.Z - bb.Y);
-        int x1 = PathfindingCore.WorldToNavcell(ob.X + bb.X);
-        int z1 = PathfindingCore.WorldToNavcell(ob.Z + bb.Y);
+        int x0 = PathfindingCore.WorldToNavcell(ob.X - bb.X) - expand;
+        int z0 = PathfindingCore.WorldToNavcell(ob.Z - bb.Y) - expand;
+        int x1 = PathfindingCore.WorldToNavcell(ob.X + bb.X) + expand;
+        int z1 = PathfindingCore.WorldToNavcell(ob.Z + bb.Y) + expand;
         for (int nj = z0; nj <= z1; nj++)
             for (int ni = x0; ni <= x1; ni++)
             {

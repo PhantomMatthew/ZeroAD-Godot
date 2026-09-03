@@ -220,6 +220,54 @@ namespace ZeroAD.Sim
             foreach (var kvp in _staticShapes) AddStaticToSubdivision(kvp.Key, kvp.Value);
         }
 
+        // --- 增量寻路脏区(上游 CCmpObstructionManager 的 m_UpdateInformations 移植) ---
+        // navcell 矩形列表;MakeDirty* 在形状 add/move/remove 时打点(旗标门:
+        // 只有 BlockPathfinding/BlockFoundation 形状才弄脏——移动中的单位形状不带
+        // 这两旗,不会逐 tick 刷屏)。PathfinderComponent.UpdateGrid 每回合末
+        // TakeDirtiness 取走并清空(上游 MergeAndClear 语义)。
+        private readonly List<(int I0, int J0, int I1, int J1)> _pathfinderDirtyRects = new();
+        private int _pathfinderMarginNav = 2;   // 最大 clearance + 1 安全边(由寻路侧注入)
+
+        /// <summary>寻路侧注入脏区外扩余量(全类最大 clearance,navcell)。
+        /// 上游 m_MaxClearance 等价物。</summary>
+        public void SetPathfinderMargin(int maxClearanceNavcells)
+            => _pathfinderMarginNav = Math.Max(1, maxClearanceNavcells + 1);
+
+        public bool HasPathfinderDirtiness => _pathfinderDirtyRects.Count > 0;
+
+        /// <summary>取走累计脏区并清空(上游 UpdateInformations/MergeAndClear)。</summary>
+        public List<(int I0, int J0, int I1, int J1)> TakePathfinderDirtiness()
+        {
+            var copy = new List<(int, int, int, int)>(_pathfinderDirtyRects);
+            _pathfinderDirtyRects.Clear();
+            return copy;
+        }
+
+        /// <summary>脏区全清(全量 RebuildGrid 后调用,免积压)。</summary>
+        public void ClearPathfinderDirtiness() => _pathfinderDirtyRects.Clear();
+
+        private void MarkPathfinderDirty(Fixed x, Fixed z, Fixed halfW, Fixed halfH,
+            ObstructionFlags flags)
+        {
+            if ((flags & (ObstructionFlags.BlockPathfinding | ObstructionFlags.BlockFoundation)) == 0)
+                return;
+            int margin = _pathfinderMarginNav;
+            int i0 = Pathfinding.PathfindingCore.WorldToNavcell(x - halfW) - margin;
+            int j0 = Pathfinding.PathfindingCore.WorldToNavcell(z - halfH) - margin;
+            int i1 = Pathfinding.PathfindingCore.WorldToNavcell(x + halfW) + margin;
+            int j1 = Pathfinding.PathfindingCore.WorldToNavcell(z + halfH) + margin;
+            _pathfinderDirtyRects.Add((i0, j0, i1, j1));
+        }
+
+        private void MarkStaticDirty(in StaticShape s)
+        {
+            var bb = Geometry.GetHalfBoundingBox(s.U, s.V, new FixedVector2D(s.Hw, s.Hh));
+            MarkPathfinderDirty(s.X, s.Z, bb.X, bb.Y, s.Flags);
+        }
+
+        private void MarkUnitDirty(in UnitShape s)
+            => MarkPathfinderDirty(s.X, s.Z, s.Clearance, s.Clearance, s.Flags);
+
         // --- Shape CRUD ---
 
         public ObstructionTag AddUnitShape(EntityId entity, Fixed x, Fixed z, Fixed clearance,
@@ -230,6 +278,7 @@ namespace ZeroAD.Sim
             var shape = new UnitShape { Entity = entity, X = x, Z = z, Clearance = clearance, Flags = flags, Group = group };
             _unitShapes[raw] = shape;
             AddUnitToSubdivision(raw, shape);
+            MarkUnitDirty(shape);
             return new ObstructionTag(raw);
         }
 
@@ -243,6 +292,7 @@ namespace ZeroAD.Sim
             AddStaticToSubdivision(raw, shape);
             // Also mark the legacy grid so UnitMotion's A* still routes around it.
             RasterizeStaticToLegacyGrid(shape);
+            MarkStaticDirty(shape);
             return new ObstructionTag(raw);
         }
 
@@ -250,15 +300,20 @@ namespace ZeroAD.Sim
         {
             if (tag.IsStatic && _staticShapes.TryGetValue(tag.N, out var ss))
             {
+                // 原位与新位都弄脏(上游 MakeDirty 双侧:旧区须清,新区须戳)。
+                MarkStaticDirty(ss);
                 RemoveStaticFromSubdivision(tag.N, ss);
                 ss.X = x; ss.Z = z; ss.U = u; ss.V = v;
                 AddStaticToSubdivision(tag.N, ss);
+                MarkStaticDirty(ss);
             }
             else if (tag.IsUnit && _unitShapes.TryGetValue(tag.N, out var us))
             {
+                MarkUnitDirty(us);
                 RemoveUnitFromSubdivision(tag.N, us);
                 us.X = x; us.Z = z;
                 AddUnitToSubdivision(tag.N, us);
+                MarkUnitDirty(us);
             }
         }
 
@@ -266,9 +321,11 @@ namespace ZeroAD.Sim
         {
             if (_unitShapes.TryGetValue(tag.N, out var us))
             {
+                MarkUnitDirty(us);
                 RemoveUnitFromSubdivision(tag.N, us);
                 us.X = x; us.Z = z;
                 AddUnitToSubdivision(tag.N, us);
+                MarkUnitDirty(us);
             }
         }
 
@@ -276,12 +333,14 @@ namespace ZeroAD.Sim
         {
             if (tag.IsStatic && _staticShapes.TryGetValue(tag.N, out var ss))
             {
+                MarkStaticDirty(ss);
                 RemoveStaticFromSubdivision(tag.N, ss);
                 UnrasterizeStaticFromLegacyGrid(ss);
                 _staticShapes.Remove(tag.N);
             }
             else if (tag.IsUnit && _unitShapes.TryGetValue(tag.N, out var us))
             {
+                MarkUnitDirty(us);
                 RemoveUnitFromSubdivision(tag.N, us);
                 _unitShapes.Remove(tag.N);
             }

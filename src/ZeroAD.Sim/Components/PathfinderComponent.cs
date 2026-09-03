@@ -195,7 +195,8 @@ namespace ZeroAD.Sim.Components
 
             var obstructions = Obstructions.GetAllStaticObstructions();
             _gridBuilder.Build(BuildTerrainTiles(tiles), tiles, obstructions);
-            _lastObstructionSnapshot = SnapshotObstructions(obstructions);
+            Obstructions.SetPathfinderMargin(_gridBuilder.MaxClearanceNavcells);
+            Obstructions.ClearPathfinderDirtiness();   // 全量重建吞掉累计脏区
             _pathGen++;            // 寻路缓存世代++(旧条目永不命中)
             _pathCache.Clear();
             if (_gridBuilder.Grid != null)
@@ -314,118 +315,38 @@ namespace ZeroAD.Sim.Components
                             terrain[i, j].Slope, Fixed.FromFloat(dist[i, j] * ts));
         }
 
-        // 增量刷新:obstruction 列表变化区(坐标+朝向+尺寸)的 navcell 覆盖矩形。
-        // 快照按坐标序存,变化检测 = 逐位比对。
-        private List<(Fixed X, Fixed Z, Fixed Hw, Fixed Hh)> _lastObstructionSnapshot = new();
-
-        private static List<(Fixed X, Fixed Z, Fixed Hw, Fixed Hh)> SnapshotObstructions(
-            IEnumerable<ObstructionSquare> obstructions)
+        /// <summary>增量更新(上游 CCmpPathfinder::UpdateGrid 的非全量路径):
+        /// ObstructionManager 累计的脏 navcell 矩形 → 逐矩形从地形基线恢复 +
+        /// 重戳相交形状 → 分层寻路按脏 chunk 局部重连 → 长程缓存失效。
+        /// 零脏区零开销;网格未建回落全量。每回合末由 SimBridge 调一次
+        /// (上游 Simulation2.cpp:613 同款位置——回合内网格对寻路只读)。</summary>
+        public void UpdateGrid()
         {
-            var snap = new List<(Fixed X, Fixed Z, Fixed Hw, Fixed Hh)>();
-            foreach (var ob in obstructions)
-                snap.Add((ob.X, ob.Z, ob.Hw, ob.Hh));
-            snap.Sort((a, b) => a.X.InternalValue != b.X.InternalValue
-                ? a.X.InternalValue.CompareTo(b.X.InternalValue)
-                : a.Z.InternalValue.CompareTo(b.Z.InternalValue));
-            return snap;
-        }
-
-        /// <summary>增量刷新(P1):obstruction 快照差分 → 仅重建变化区 navcell 覆盖的
-        /// tile 补丁(hier/long 仍全量重连;grid 补丁化省去整图 rasterize+stamp+expand)。
-        /// 快照一致 → 无操作(零开销);grid 未建 → 回落全量 RebuildGrid。</summary>
-        public void RefreshObstructions()
-        {
-            if (Obstructions == null) return;
-            var current = SnapshotObstructions(Obstructions.GetAllStaticObstructions());
-            if (_gridBuilder.Grid == null || _lastObstructionSnapshot.Count == 0)
+            var mgr = Obstructions;
+            if (mgr == null || !mgr.HasPathfinderDirtiness) return;
+            var dirty = mgr.TakePathfinderDirtiness();
+            if (_gridBuilder.Grid == null || _gridBuilder.TerrainOnly == null)
             {
                 RebuildGrid();   // 未初始化:全量
                 return;
             }
 
-            // 差分:长度变 → 变化点起全部(保守);逐项比 → 变化坐标集。
-            bool changed = current.Count != _lastObstructionSnapshot.Count;
-            int diffIndex = _lastObstructionSnapshot.Count;
-            if (!changed)
-            {
-                for (int i = 0; i < current.Count; i++)
-                {
-                    if (current[i] != _lastObstructionSnapshot[i])
-                    {
-                        changed = true;
-                        diffIndex = i;
-                        break;
-                    }
-                }
-            }
-            if (!changed) return;   // 零开销
-            // 保守:变化点起的覆盖矩形并入。
-            float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
-            for (int i = Math.Min(diffIndex, current.Count - 1); i >= 0 && i < current.Count; i++)
-            {
-                // 新/旧两侧的坐标都须覆盖(移除/移动的形状在旧坐标也要清)。
-                MarkBounds(_lastObstructionSnapshot, i, ref minX, ref minZ, ref maxX, ref maxZ);
-                MarkBounds(current, i, ref minX, ref minZ, ref maxX, ref maxZ);
-            }
-            // 清余差:新列表短 → 旧列表尾部(被删的)覆盖;长 → 新列表尾部(新增的)。
-            for (int i = diffIndex; i < Math.Max(current.Count, _lastObstructionSnapshot.Count); i++)
-            {
-                if (i < _lastObstructionSnapshot.Count)
-                    MarkBounds(_lastObstructionSnapshot, i, ref minX, ref minZ, ref maxX, ref maxZ);
-                if (i < current.Count)
-                    MarkBounds(current, i, ref minX, ref minZ, ref maxX, ref maxZ);
-            }
-            _lastObstructionSnapshot = current;
-            PatchGrid(minX, minZ, maxX, maxZ, Obstructions.GetAllStaticObstructions());
-            _pathGen++;
+            var obstructions = mgr.GetAllStaticObstructions();
+            foreach (var (i0, j0, i1, j1) in dirty)
+                _gridBuilder.PatchRect(i0, j0, i1, j1, obstructions);
+            _pathGen++;            // 寻路缓存世代++(旧条目永不命中)
             _pathCache.Clear();
-            if (_gridBuilder.Grid != null)
+            try
             {
-                try
-                {
-                    // 连通性只对单位寻路类建(原版全类;建筑/AI 类不参与寻路查询,
-                    // 跳过省 5/9 的洪泛开销,寻路结果逐位等价)。
-                    _hier.Recompute(_gridBuilder.Grid, _gridBuilder.UnitClasses);
-                    _long.Reload(_gridBuilder.Grid);
-                }
-                catch (System.Exception ex)
-                {
-                    Diag.Warn("Pathfinder", $"hierarchical/long refresh failed: {ex.Message}");
-                }
+                // 连通性只对单位寻路类建(同 RebuildGrid 注释)。
+                _hier.Update(_gridBuilder.Grid, dirty, _gridBuilder.UnitClasses);
+                _long.Reload(_gridBuilder.Grid);
             }
-        }
-
-        private static void MarkBounds(List<(Fixed X, Fixed Z, Fixed Hw, Fixed Hh)> snap, int i,
-            ref float minX, ref float minZ, ref float maxX, ref float maxZ)
-        {
-            if (i < 0 || i >= snap.Count) return;
-            float x = snap[i].X.ToFloat(), z = snap[i].Z.ToFloat();
-            float hw = snap[i].Hw.ToFloat(), hh = snap[i].Hh.ToFloat();
-            // clearance 扩展半径(约 1m 每类)再加 1 navcell 安全边。
-            float margin = Math.Max(hw, hh) + 2f;
-            if (x - margin < minX) minX = x - margin;
-            if (z - margin < minZ) minZ = z - margin;
-            if (x + margin > maxX) maxX = x + margin;
-            if (z + margin > maxZ) maxZ = z + margin;
-        }
-
-        /// <summary>网格补丁:把 [minX..maxX]×[minZ..maxZ] 的 tile 区按 地形 + 当前
-        /// obstruction 集 重刷。tile 粒度(16 navcell/tile;原版同粒度栅格化)。</summary>
-        private void PatchGrid(float minX, float minZ, float maxX, float maxZ,
-            IEnumerable<ObstructionSquare> currentObstructions)
-        {
-            if (Terrain == null || _gridBuilder.Grid == null) return;
-            float ts = Terrain.TileSize;
-            int tiles = Terrain.MapSize;
-            int tx0 = Math.Max(0, (int)MathF.Floor(minX / ts));
-            int tz0 = Math.Max(0, (int)MathF.Floor(minZ / ts));
-            int tx1 = Math.Min(tiles - 1, (int)MathF.Ceiling(maxX / ts));
-            int tz1 = Math.Min(tiles - 1, (int)MathF.Ceiling(maxZ / ts));
-            // 按 tile 区重建:与 RebuildGrid 同款 Build 的局部化——重置补丁 tile 的
-            // navcell 通行性(先地形,再全量 obstruction 重戳 + 再扩展)。简实现:
-            // 直接走全量 Build 的补丁子集过于耦合,保守 = 整图 Build(快照已变,仍是
-            // 局部触发;真性能点在差分检测的零开销路径)。
-            _gridBuilder.Build(BuildTerrainTiles(tiles), tiles, currentObstructions);
+            catch (System.Exception ex)
+            {
+                Diag.Warn("Pathfinder", $"incremental grid update failed: {ex.Message}; falling back to full rebuild");
+                RebuildGrid();
+            }
         }
 
         /// <summary>Compute a long-range path from a world position to a goal. Returns waypoints
