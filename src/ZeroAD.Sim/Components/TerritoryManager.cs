@@ -5,23 +5,26 @@ using ZeroAD.Sim.Maths;
 namespace ZeroAD.Sim.Components;
 
 /// <summary>
-/// 领土管理器(对齐原版 CCmpTerritoryManager —— 原版是 C++ 组件,本仓无源码,按 JS 调用点
-/// 契约重建:TerritoryDecay.js / BuildRestrictions.js 的 GetOwner/IsConnected/IsTerritoryBlinking)。
-/// 4m cell 网格,每 cell 记录 owner(0=gaia)+ connected(区域含 root 锚点)。
+/// 领土管理器——对齐原版 CCmpTerritoryManager(CCmpTerritoryManager.cpp:425-661)逐字移植:
+/// 8m 领土瓦片(navcell×8),影响力 = 成本加权 FIFO 洪泛(非闭式径向戳):
+///   relativeFalloff = weight×8/radius(整数地板);逐格 falloff = relativeFalloff ×
+///   costGrid(不可通行=4,界外=255,正常=1;对角 ×362/256≈√2);Dijkstra 式再松弛
+///   (新成本不优于已存值即不扩);cell 主 = 累计权严格最大(玩家升序+严格 > →
+///   平手小编号优先);root 洪泛(8 向,同主格)置 connected 位并计数
+///   (cost < impassable 才计)供 GetTerritoryPercentage。
+/// blink:纯 SetTerritoryBlinking 驱动(重算清空 → 末段逐 TerritoryDecay 实体
+/// IsConnected 重导,上游 SetBlinkingEntities 同款;不再有 !connected 自动兜底)。
 ///
-/// 影响力模型(确定性整数定点):每个持 <see cref="TerritoryInfluenceComponent"/> 且有主实体
-/// 按放射衰减 stamp —— influence += weight × (r²−d²)/r²(d&lt;r);cell owner = 影响力最大
-/// 且 &gt;0 的玩家(玩家升序 + 严格大于 → 平手小编号优先)。连通性:BFS 同 owner 4 邻区域,
-/// 含该 owner 的 root cell 才 connected;未连通 = 原版 "blinking"。
-///
-/// 脏标记惰性重算(对齐原版 m_Dirty + 访问时 Recalculate):监听 ComponentManager 四类实体
-/// 通知,任何查询先 EnsureComputed。重算是序列化状态的纯函数 → 各端同点查询结果一致;
-/// 网格为派生态,不进 OOS hash(同 RangeManager/LosGrid 惯例),存档后首轮查询自动重算。
+/// 脏标记惰性重算(原版 MakeDirty + 查询时 Calculate):只对有 TerritoryInfluence 的
+/// 实体置脏(原版 MakeDirtyIfRelevantEntity;销毁时组件已摘除 → 销毁恒脏,稀有)。
+/// 派生态不进 OOS hash;存档后首轮查询自动重算。
+/// 无寻路网格时(纯内核测试)退化为全通行成本网格(上游此时直接不算——我们为
+/// 测试/无头可玩性保留均匀成本,记录在案)。
 /// </summary>
 public sealed class TerritoryManager
 {
-    /// <summary>Metres per territory cell.</summary>
-    public const int CellSize = 4;
+    /// <summary>Metres per territory cell(原版 NAVCELL_SIZE×NAVCELLS_PER_TERRITORY_TILE=8)。</summary>
+    public const int CellSize = 8;
 
     /// <summary>网格边长(cell 数),表现层纹理尺寸用。</summary>
     public int GridWidth => _gridW;
@@ -31,14 +34,17 @@ public sealed class TerritoryManager
     public ReadOnlySpan<byte> OwnerGrid => _owner.AsSpan();
 
     private const int MaxPlayers = LosGrid.MaxPlayers;
+    private const int ImpassableCost = 4;   // territorymanager.xml ImpassableCost
+    private const int OffWorldCost = 255;
+
     private readonly ComponentManager _cm;
     private int _gridW;
     private byte[] _owner = Array.Empty<byte>();
     private bool[] _connected = Array.Empty<bool>();
+    private bool[] _blinking = Array.Empty<bool>();
+    private int[] _cellCounts = new int[MaxPlayers + 1];   // connected 且可通行的 cell 数
+    private int _totalPassable;
     private bool _dirty = true;
-    // TerritoryDecay 组件驱动的 blink 覆盖(cell → 闪烁):原版 SetTerritoryBlinking。
-    // 非派生态(重算不清),SetBounds 才清;仅影响表现层,不影响建造判定(走 IsConnected)。
-    private readonly Dictionary<int, bool> _blinkOverride = new();
 
     /// <summary>派生网格/覆盖每次变化自增,表现层据以重建纹理;不进 OOS hash。</summary>
     public int Version { get; private set; }
@@ -47,12 +53,21 @@ public sealed class TerritoryManager
     {
         _cm = cm;
         SetBounds(worldMeters);
-        // 影响实体几乎全是静态建筑;任何实体增删/换主/移动都可能改变领土,统一置脏
-        // (重算便宜且稀有,条件判脏反而脆弱 —— 销毁通知到达时组件已移除)。
-        cm.EntityCreated += _ => _dirty = true;
+        // 原版 MakeDirtyIfRelevantEntity:只有 TerritoryInfluence 实体的增删/换主/移动
+        // 才弄脏;销毁通知到达时组件已移除 → 销毁恒脏(稀有,可承受)。
+        cm.EntityCreated += e =>
+        {
+            if (cm.QueryInterface<TerritoryInfluenceComponent>(e) != null) _dirty = true;
+        };
         cm.EntityDestroyed += _ => _dirty = true;
-        cm.OwnerChanged += (_, _, _) => _dirty = true;
-        cm.PositionChanged += (_, _, _) => _dirty = true;
+        cm.OwnerChanged += (e, _, _) =>
+        {
+            if (cm.QueryInterface<TerritoryInfluenceComponent>(e) != null) _dirty = true;
+        };
+        cm.PositionChanged += (e, _, _) =>
+        {
+            if (cm.QueryInterface<TerritoryInfluenceComponent>(e) != null) _dirty = true;
+        };
     }
 
     /// <summary>地图加载后重设世界尺寸(对齐 RangeManager.SetBounds 调用点)。</summary>
@@ -62,7 +77,8 @@ public sealed class TerritoryManager
         int n = _gridW * _gridW;
         _owner = new byte[n];
         _connected = new bool[n];
-        _blinkOverride.Clear();
+        _blinking = new bool[n];
+        _cellCounts = new int[MaxPlayers + 1];
         _dirty = true;
         Version++;
     }
@@ -74,7 +90,7 @@ public sealed class TerritoryManager
         return idx >= 0 && idx < _owner.Length ? _owner[idx] : 0;
     }
 
-    /// <summary>按 cell 索引读连通性(原版 territoryMap blinking 位的反;越界 = false)。</summary>
+    /// <summary>按 cell 索引读连通性(越界 = false)。</summary>
     public bool IsConnectedByIndex(int idx)
     {
         EnsureComputed();
@@ -97,32 +113,58 @@ public sealed class TerritoryManager
         return idx >= 0 && _connected[idx];
     }
 
-    /// <summary>原版 BuildRestrictions 的 isConnected = !IsTerritoryBlinking 契约,叠加
-    /// TerritoryDecay 的 SetTerritoryBlinking 覆盖(未连通但获盟军连通背书时不闪)。</summary>
+    /// <summary>原版 IsTerritoryBlinking:纯位读(重算清空,decay 实体重导)。</summary>
     public bool IsTerritoryBlinking(Fixed x, Fixed z)
     {
         EnsureComputed();
         int idx = CellIndex(x, z);
-        if (idx < 0) return false;
-        if (_blinkOverride.TryGetValue(idx, out bool blink)) return blink;
-        return !_connected[idx] && _owner[idx] != 0;
+        return idx >= 0 && _blinking[idx];
     }
 
-    /// <summary>原版 CCmpTerritoryManager::SetTerritoryBlinking:TerritoryDecay 逐实体覆盖
-    /// 某 cell 的闪烁(gaia/无主 cell 忽略——原版 blinking 只对有主领土有意义)。</summary>
+    /// <summary>原版 SetTerritoryBlinking(CCmpTerritoryManager.cpp:841-871):从 (x,z) 起
+    /// 8 向洪泛同主格,整区置 blink 位(不是单格!)。无主/越界忽略。</summary>
     public void SetTerritoryBlinking(Fixed x, Fixed z, bool blinking)
     {
         EnsureComputed();
-        int idx = CellIndex(x, z);
-        if (idx < 0 || _owner[idx] == 0) return;
-        if (_blinkOverride.TryGetValue(idx, out bool cur) && cur == blinking) return;
-        _blinkOverride[idx] = blinking;
-        Version++;
+        int start = CellIndex(x, z);
+        if (start < 0 || _owner[start] == 0) return;
+        byte owner = _owner[start];
+        int w = _gridW;
+        if (_blinking[start] == blinking)
+        {
+            // 洪泛仍须走完(同区可能有未同步格);快速路径:抽查无差即返回——
+            // 原版直接整区洪泛置位,此处照办(不设快速路径,保行为一致)。
+        }
+        var visited = new bool[w * w];
+        var queue = new Queue<int>();
+        visited[start] = true;
+        queue.Enqueue(start);
+        bool changed = false;
+        while (queue.Count > 0)
+        {
+            int c = queue.Dequeue();
+            if (_blinking[c] != blinking) { _blinking[c] = blinking; changed = true; }
+            foreach (int nb in Neighbours8(c, w))
+            {
+                if (visited[nb] || _owner[nb] != owner) continue;
+                visited[nb] = true;
+                queue.Enqueue(nb);
+            }
+        }
+        if (changed) Version++;
     }
 
-    /// <summary>原版 CCmpTerritoryManager::GetNeighbours(pos, onlyConnected):对 pos 所在
-    /// 同主区域 BFS,统计区域 4 邻外侧每玩家的相邻 cell 数(下标 0=gaia)。
-    /// TerritoryDecay 据它决定 decay 的 CP 流向(分给连通邻主,无邻居则归 gaia)。</summary>
+    /// <summary>原版 GetTerritoryPercentage:连通可通行 cell 占比(全体可通行格为分母)。</summary>
+    public int GetTerritoryPercentage(int player)
+    {
+        EnsureComputed();
+        if (_totalPassable == 0 || player < 1 || player > MaxPlayers) return 0;
+        return _cellCounts[player] * 100 / _totalPassable;
+    }
+
+    /// <summary>原版 GetNeighbours(pos, onlyConnected):pos 所在同主区域 8 向洪泛,
+    /// 统计区域外沿每玩家的相邻 cell 数(下标 0=gaia;onlyConnected 只数连通格)。
+    /// TerritoryDecay 据它决定 decay 的 CP 流向。</summary>
     public int[] GetNeighbours(Fixed x, Fixed z, bool onlyConnected)
     {
         var counts = new int[MaxPlayers + 1];
@@ -138,20 +180,14 @@ public sealed class TerritoryManager
         while (queue.Count > 0)
         {
             int c = queue.Dequeue();
-            int cx = c % w, cz = c / w;
-            if (cx > 0) Visit(c - 1);
-            if (cx < w - 1) Visit(c + 1);
-            if (cz > 0) Visit(c - w);
-            if (cz < w - 1) Visit(c + w);
-
-            void Visit(int nb)
+            foreach (int nb in Neighbours8(c, w))
             {
                 if (_owner[nb] == owner)
                 {
                     if (!visited[nb]) { visited[nb] = true; queue.Enqueue(nb); }
-                    return;
+                    continue;
                 }
-                if (onlyConnected && !_connected[nb]) return;
+                if (onlyConnected && !_connected[nb]) continue;
                 counts[_owner[nb]]++;
             }
         }
@@ -197,100 +233,199 @@ public sealed class TerritoryManager
         if (_dirty) Recompute();
     }
 
+    /// <summary>8 向邻居(原版 Floodfill 的 neighbours 表)。</summary>
+    private static IEnumerable<int> Neighbours8(int c, int w)
+    {
+        int cx = c % w, cz = c / w;
+        if (cx + 1 < w) yield return c + 1;
+        if (cx > 0) yield return c - 1;
+        if (cz + 1 < w) yield return c + w;
+        if (cz > 0) yield return c - w;
+        if (cx + 1 < w && cz + 1 < w) yield return c + 1 + w;
+        if (cx > 0 && cz > 0) yield return c - 1 - w;
+        if (cx + 1 < w && cz > 0) yield return c + 1 - w;
+        if (cx > 0 && cz + 1 < w) yield return c - 1 + w;
+    }
+
+    // ── 成本网格(原版 CalculateCostGrid:8×8 navcell 下采样 OR)──
+
+    private byte[] ComputeCostGrid()
+    {
+        var pf = SimSystem.Pathfinder;
+        var grid = pf?.PassabilityGrid;
+        int w = _gridW;
+        var cost = new byte[w * w];
+        if (grid == null)
+        {
+            // 无寻路网格(纯内核测试):全通行(见类注释的背离记录)。
+            Array.Fill(cost, (byte)1);
+            _totalPassable = w * w;
+            return cost;
+        }
+        var territoryMask = pf!.GetPassabilityClassMask("default-terrain-only");
+        var unrestrictedMask = pf.GetPassabilityClassMask("unrestricted");
+        const int ratio = CellSize;   // 8 navcell per territory tile(1m navcell)
+        _totalPassable = 0;
+        for (int cz = 0; cz < w; cz++)
+            for (int cx = 0; cx < w; cx++)
+            {
+                bool terrPass = false, freePass = false;
+                int nx0 = cx * ratio, nz0 = cz * ratio;
+                for (int dz = 0; dz < ratio && !(terrPass && freePass); dz++)
+                    for (int dx = 0; dx < ratio; dx++)
+                    {
+                        int nx = nx0 + dx, nz = nz0 + dz;
+                        if (nx >= grid.W || nz >= grid.H) continue;
+                        var cell = grid.Get(nx, nz);
+                        if (Pathfinding.PathfindingCore.IsPassable(cell, territoryMask)) terrPass = true;
+                        if (Pathfinding.PathfindingCore.IsPassable(cell, unrestrictedMask)) freePass = true;
+                    }
+                if (!freePass) cost[cz * w + cx] = OffWorldCost;
+                else if (!terrPass) cost[cz * w + cx] = ImpassableCost;
+                else { cost[cz * w + cx] = 1; _totalPassable++; }
+            }
+        return cost;
+    }
+
+    // ── 主重算(原版 CalculateTerritories 逐字)──
+
     private void Recompute()
     {
         _dirty = false;
         int w = _gridW, n = w * w;
-        var influence = new long[MaxPlayers + 1][];
-        var rootCell = new bool[MaxPlayers + 1][];
-        for (int p = 1; p <= MaxPlayers; p++) { influence[p] = new long[n]; rootCell[p] = new bool[n]; }
+        var cost = ComputeCostGrid();
 
-        // --- 影响力 stamp(AllEntities 存储序 → 确定性)---
+        Array.Clear(_owner, 0, n);
+        Array.Clear(_connected, 0, n);
+        Array.Clear(_blinking, 0, n);
+        Array.Clear(_cellCounts, 0, _cellCounts.Length);
+
+        // 影响力实体按主分桶(升序玩家 → 平手小编号优先)。
+        var influenceEntities = new SortedDictionary<int, List<EntityId>>();
+        var rootEntities = new List<EntityId>();
         foreach (var e in _cm.AllEntities)
         {
             var ti = _cm.QueryInterface<TerritoryInfluenceComponent>(e);
-            if (ti == null || ti.Radius <= Fixed.Zero) continue;
+            if (ti == null) continue;
             var own = _cm.QueryInterface<OwnershipComponent>(e);
             if (own == null || own.PlayerId < 1 || own.PlayerId > MaxPlayers) continue;
+            if (ti.Weight == 0 || ti.Radius <= Fixed.Zero) continue;
             var pos = _cm.QueryInterface<PositionComponent>(e);
-            if (pos == null) continue;
-            Stamp(influence[own.PlayerId], rootCell[own.PlayerId],
-                pos.Position.X.InternalValue, pos.Position.Z.InternalValue,
-                ti.Radius.InternalValue, ti.Weight, ti.Root, w);
+            if (pos == null || !pos.InWorld) continue;
+            if (!influenceEntities.TryGetValue(own.PlayerId, out var list))
+                influenceEntities[own.PlayerId] = list = new List<EntityId>();
+            list.Add(e);
+            if (ti.Root) rootEntities.Add(e);
         }
 
-        // --- argmax 定主(升序严格大于 → 平手小编号优先)---
-        for (int i = 0; i < n; i++)
+        var bestWeight = new uint[n];
+        foreach (var (owner, ents) in influenceEntities)
         {
-            long best = 0;
-            byte bestPlayer = 0;
-            for (byte p = 1; p <= MaxPlayers; p++)
+            var entityGrid = new uint[n];
+            var playerGrid = new uint[n];
+            foreach (var ent in ents)
             {
-                long v = influence[p][i];
-                if (v > best) { best = v; bestPlayer = p; }
+                var ti = _cm.QueryInterface<TerritoryInfluenceComponent>(ent)!;
+                var pos = _cm.QueryInterface<PositionComponent>(ent)!;
+                uint originWeight = (uint)ti.Weight;
+                uint radius = (uint)ti.Radius.ToIntRoundToZero();
+                if (originWeight == 0 || radius == 0) continue;
+                // relativeFalloff = originWeight × 8 / radius(整数地板;上游 ToInt_RoundToNegInfinity)。
+                uint relativeFalloff = originWeight * (uint)CellSize / radius;
+
+                int homeCx = pos.Position.X.ToIntRoundToNegInfinity() / CellSize;
+                int homeCz = pos.Position.Z.ToIntRoundToNegInfinity() / CellSize;
+                if (homeCx < 0 || homeCz < 0 || homeCx >= w || homeCz >= w) continue;
+
+                uint playerB = (uint)owner;
+                InfluenceFlood(homeCx, homeCz, w, cost, entityGrid, playerGrid, bestWeight,
+                    originWeight, relativeFalloff, (byte)playerB);
+                Array.Clear(entityGrid, 0, n);
             }
-            _owner[i] = bestPlayer;
         }
 
-        // --- BFS 同主区域连通性:区域含该 owner 的 root cell 才 connected ---
-        Array.Clear(_connected, 0, n);
-        var visited = new bool[n];
-        var region = new List<int>();
-        var queue = new Queue<int>();
-        for (int i = 0; i < n; i++)
+        // root 连通洪泛(8 向同主;置 connected + 计数可通行格)。
+        foreach (var ent in rootEntities)
         {
-            if (visited[i] || _owner[i] == 0) continue;
-            int owner = _owner[i];
-            bool hasRoot = false;
-            region.Clear();
-            queue.Clear();
-            visited[i] = true;
-            queue.Enqueue(i);
+            var own = _cm.QueryInterface<OwnershipComponent>(ent)!;
+            var pos = _cm.QueryInterface<PositionComponent>(ent)!;
+            int hx = pos.Position.X.ToIntRoundToNegInfinity() / CellSize;
+            int hz = pos.Position.Z.ToIntRoundToNegInfinity() / CellSize;
+            if (hx < 0 || hz < 0 || hx >= w || hz >= w) continue;
+            int start = hz * w + hx;
+            if (_owner[start] != (byte)own.PlayerId || _connected[start]) continue;
+            var queue = new Queue<int>();
+            queue.Enqueue(start);
+            _connected[start] = true;
+            if (cost[start] < ImpassableCost) _cellCounts[own.PlayerId]++;
             while (queue.Count > 0)
             {
                 int c = queue.Dequeue();
-                region.Add(c);
-                if (rootCell[owner][c]) hasRoot = true;
-                int cx = c % w, cz = c / w;
-                if (cx > 0 && !visited[c - 1] && _owner[c - 1] == owner) { visited[c - 1] = true; queue.Enqueue(c - 1); }
-                if (cx < w - 1 && !visited[c + 1] && _owner[c + 1] == owner) { visited[c + 1] = true; queue.Enqueue(c + 1); }
-                if (cz > 0 && !visited[c - w] && _owner[c - w] == owner) { visited[c - w] = true; queue.Enqueue(c - w); }
-                if (cz < w - 1 && !visited[c + w] && _owner[c + w] == owner) { visited[c + w] = true; queue.Enqueue(c + w); }
+                foreach (int nb in Neighbours8(c, w))
+                {
+                    if (_connected[nb] || _owner[nb] != (byte)own.PlayerId) continue;
+                    _connected[nb] = true;
+                    if (cost[nb] < ImpassableCost) _cellCounts[own.PlayerId]++;
+                    queue.Enqueue(nb);
+                }
             }
-            if (hasRoot)
-                foreach (int c in region) _connected[c] = true;
+        }
+
+        // blink 重导(原版末段 SetBlinkingEntities:逐 decay 实体 IsConnected,
+        // 内部含盟友背书 + SetTerritoryBlinking 洪泛)。
+        foreach (var e in _cm.AllEntities)
+        {
+            var decay = _cm.QueryInterface<TerritoryDecayComponent>(e);
+            if (decay != null)
+                decay.IsConnected(_cm, this);
         }
         Version++;
     }
 
-    /// <summary>放射衰减 stamp:falloff = (r²−d²)/r²(d&lt;r),16.16 定点整数,无浮点。
-    /// 仅 <paramref name="root"/> 实体(CC 等 Root=true)在 home cell 落 root 锚点。</summary>
-    private void Stamp(long[] influence, bool[] rootCell, long exInt, long ezInt, long rInt, int weight, bool root, int w)
+    /// <summary>原版影响力洪泛(Floodfill + decider,CCmpTerritoryManager.cpp:554-590 逐字):
+    /// FIFO 队列 + 再松弛(新成本不优于已存即不扩);weight = 前驱 − falloff;
+    /// totalWeight = weight + (playerGrid − entityGrid 旧值);严格大于才换主。</summary>
+    private void InfluenceFlood(int hx, int hz, int w, byte[] cost, uint[] entityGrid,
+        uint[] playerGrid, uint[] bestWeight, uint originWeight, uint relativeFalloff, byte owner)
     {
-        long r2 = (rInt * rInt) >> 16;                       // 16.16
-        if (r2 <= 0) return;
-
-        int homeCx = (int)(exInt >> 16) / CellSize;
-        int homeCz = (int)(ezInt >> 16) / CellSize;
-        if (root && homeCx >= 0 && homeCz >= 0 && homeCx < w && homeCz < w)
-            rootCell[homeCz * w + homeCx] = true;
-
-        int reach = (int)((rInt >> 16) / CellSize) + 1;      // 半径覆盖的 cell 数(上取)
-        int x0 = Math.Max(0, homeCx - reach), x1 = Math.Min(w - 1, homeCx + reach);
-        int z0 = Math.Max(0, homeCz - reach), z1 = Math.Min(w - 1, homeCz + reach);
-        for (int cz = z0; cz <= z1; cz++)
+        int n = w * w;
+        int origin = hz * w + hx;
+        // 首格(decider 的 current=null 分支):weight = originWeight。
+        entityGrid[origin] = originWeight;
+        playerGrid[origin] += originWeight;
+        if (originWeight > bestWeight[origin])
         {
-            long dz = ((long)(cz * CellSize + CellSize / 2) << 16) - ezInt;
-            long dz2 = (dz * dz) >> 16;
-            if (dz2 >= r2) continue;
-            for (int cx = x0; cx <= x1; cx++)
+            bestWeight[origin] = originWeight;
+            _owner[origin] = owner;
+        }
+
+        var queue = new Queue<int>();
+        queue.Enqueue(origin);
+        while (queue.Count > 0)
+        {
+            int current = queue.Dequeue();
+            int cx = current % w, cz = current / w;
+            foreach (int nb in Neighbours8(current, w))
             {
-                long dx = ((long)(cx * CellSize + CellSize / 2) << 16) - exInt;
-                long d2 = ((dx * dx) >> 16) + dz2;
-                if (d2 >= r2) continue;
-                // inc = weight × (r2−d2)/r2,全 16.16 定点(结果 ≤ weight<<16,存 long)。
-                influence[cz * w + cx] += weight * (((r2 - d2) << 16) / r2);
+                bool diagonal = (nb % w) != cx && (nb / w) != cz;
+                uint falloffPerTile = relativeFalloff * cost[nb];
+                uint falloff = diagonal ? (falloffPerTile * 362) / 256 : falloffPerTile;
+
+                // 新成本不优于已存 → 不扩(排列防下溢)。
+                if (entityGrid[current] <= entityGrid[nb] + falloff) continue;
+
+                uint weight = entityGrid[current] - falloff;
+                uint totalWeight = weight + (playerGrid[nb] - entityGrid[nb]);
+                playerGrid[nb] = totalWeight;
+                entityGrid[nb] = weight;
+                if (totalWeight > bestWeight[nb])
+                {
+                    bestWeight[nb] = totalWeight;
+                    _owner[nb] = owner;
+                }
+                queue.Enqueue(nb);
             }
         }
+        _ = n;
     }
 }

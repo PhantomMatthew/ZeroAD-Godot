@@ -65,10 +65,12 @@ public sealed class TerritoryManagerTests
     public void SingleInfluence_OwnsNearbyCells_NotFar()
     {
         var (cm, tm) = NewWorld();
-        AddInfluencer(cm, owner: 1, x: 32, z: 32, radius: 16);
+        // 上游量纲:weight 10000(CC 级);falloff=10000×8/16=5000/瓦 → 达 2 瓦(16m)。
+        // (weight=1 在上游模型是退化值:falloff 整除为 0 → 全图铺——真实模板永不如此。)
+        AddInfluencer(cm, owner: 1, x: 32, z: 32, radius: 16, weight: 10000);
 
         Assert.Equal(1, tm.GetOwner(M(32), M(32)));   // 中心
-        Assert.Equal(1, tm.GetOwner(M(40), M(32)));   // 半径内(d=8<16)
+        Assert.Equal(1, tm.GetOwner(M(40), M(32)));   // 半径内(1 瓦)
         Assert.Equal(0, tm.GetOwner(M(60), M(60)));   // 远
     }
 
@@ -76,21 +78,21 @@ public sealed class TerritoryManagerTests
     public void ArgMax_CloserPlayerWins_Tie_LowerPlayerId()
     {
         var (cm, tm) = NewWorld();
-        // 网格按 4m cell 量化,cell 中心 = 4k+2。对称摆位 (30,32)/(38,32) → cell(8,8)
-        // 中心 (34,34) 与两者精确等距(d²=20 定点),构成真平手。
-        AddInfluencer(cm, 1, x: 30, z: 32, radius: 20);
-        AddInfluencer(cm, 2, x: 38, z: 32, radius: 20);
+        // 8m 瓦片量化:(16,32)→瓦(2,4),(48,32)→瓦(6,4);r=24 → falloff 3333/瓦,
+        // 达 3 瓦。中点瓦(4,4)两侧各 2 瓦路径 → 真平手 → 小编号。
+        AddInfluencer(cm, 1, x: 16, z: 32, radius: 24, weight: 10000);
+        AddInfluencer(cm, 2, x: 48, z: 32, radius: 24, weight: 10000);
 
-        Assert.Equal(1, tm.GetOwner(M(26), M(34)));   // cell(6,8):d1²=20 < d2²=148
-        Assert.Equal(2, tm.GetOwner(M(42), M(34)));   // cell(10,8):d2²=20 < d1²=148
-        Assert.Equal(1, tm.GetOwner(M(34), M(34)));   // cell(8,8):等距平手 → 小编号
+        Assert.Equal(1, tm.GetOwner(M(12), M(32)));   // p1 侧 1 瓦
+        Assert.Equal(2, tm.GetOwner(M(52), M(32)));   // p2 侧(p2 自家瓦)
+        Assert.Equal(1, tm.GetOwner(M(32), M(32)));   // 等距平手 → 小编号
     }
 
     [Fact]
     public void Weight_Beats_SmallDistanceEdge()
     {
         var (cm, tm) = NewWorld();
-        AddInfluencer(cm, 1, x: 26, z: 32, radius: 20, weight: 1);        // 近但轻
+        AddInfluencer(cm, 1, x: 26, z: 32, radius: 20, weight: 10000);    // 近但轻
         AddInfluencer(cm, 2, x: 36, z: 32, radius: 20, weight: 40000);    // 稍远但重
 
         Assert.Equal(2, tm.GetOwner(M(28), M(32)));   // 重量级决胜(对齐 house 40000 vs CC 10000)
@@ -100,14 +102,18 @@ public sealed class TerritoryManagerTests
     public void RootRegion_Connected_LoneInfluence_Unconnected()
     {
         var (cm, tm) = NewWorld();
-        AddInfluencer(cm, 1, x: 16, z: 16, radius: 24, root: true);       // CC:root 锚点
-        AddInfluencer(cm, 1, x: 48, z: 48, radius: 8, weight: 40000);     // 孤立 house:无 root
+        AddInfluencer(cm, 1, x: 16, z: 16, radius: 24, weight: 10000, root: true);  // CC:root 锚点
+        // 8m 瓦片 + 8 向连通(上游):同主斜接即并区——house 放到 (56,56)(瓦 7,7),
+        // 与 CC 波及边(瓦 5,5)之间隔 gaia 瓦 (6,6),才是真"孤立飞地"。
+        AddInfluencer(cm, 1, x: 56, z: 56, radius: 8, weight: 40000);     // 孤立 house:无 root
 
         Assert.True(tm.IsConnected(M(16), M(16)));     // root 区域连通
         Assert.False(tm.IsTerritoryBlinking(M(16), M(16)));
-        Assert.Equal(1, tm.GetOwner(M(48), M(48)));    // house 区域有主…
-        Assert.False(tm.IsConnected(M(48), M(48)));    // …但无 root → 未连通(blinking)
-        Assert.True(tm.IsTerritoryBlinking(M(48), M(48)));
+        Assert.Equal(1, tm.GetOwner(M(56), M(56)));    // house 区域有主…
+        Assert.False(tm.IsConnected(M(56), M(56)));    // …但无 root → 未连通
+        // 新语义(上游):blink 只由 SetTerritoryBlinking 驱动(decay 实体逐帧重导);
+        // 无 decay 实体的未连通领土不闪(旧的"未连通即闪"自动兜底已删)。
+        Assert.False(tm.IsTerritoryBlinking(M(56), M(56)));
     }
 
     [Fact]
@@ -118,7 +124,7 @@ public sealed class TerritoryManagerTests
         foreach (var (cm, _) in new[] { (cm1, tm1), (cm2, tm2) })
         {
             AddInfluencer(cm, 1, x: 16, z: 16, radius: 24, weight: 10000, root: true);
-            AddInfluencer(cm, 2, x: 48, z: 48, radius: 30, weight: 1, root: true);
+            AddInfluencer(cm, 2, x: 48, z: 48, radius: 30, weight: 10000, root: true);
             AddInfluencer(cm, 1, x: 40, z: 16, radius: 8, weight: 40000);
         }
         for (float x = 2; x < 64; x += 4)
@@ -135,7 +141,7 @@ public sealed class TerritoryManagerTests
     public void CanBuildHere_Own_Connected_Ok_Gaia_NeedsNeutral()
     {
         var (cm, tm) = NewWorld();
-        AddInfluencer(cm, 1, x: 32, z: 32, radius: 24, root: true);
+        AddInfluencer(cm, 1, x: 32, z: 32, radius: 24, weight: 10000, root: true);
 
         Assert.True(tm.CanBuildHere("own", 1, M(32), M(32)));        // 自家连通
         Assert.False(tm.CanBuildHere("own", 1, M(60), M(60)));       // gaia 不给 own
@@ -161,7 +167,7 @@ public sealed class TerritoryManagerTests
         AddPlayerWithDiplomacy(cm, 2);
         AddPlayerWithDiplomacy(cm, 3);
         cm.Players.SeedDiplomacyFromTeams(new Dictionary<int, int> { [1] = 0, [2] = 0, [3] = 1 });
-        AddInfluencer(cm, 2, x: 32, z: 32, radius: 24, root: true);   // P2 领土
+        AddInfluencer(cm, 2, x: 32, z: 32, radius: 24, weight: 10000, root: true);   // P2 领土
 
         Assert.True(tm.CanBuildHere("ally", 1, M(32), M(32)));        // 互盟 → ally 可建
         Assert.False(tm.CanBuildHere("own", 1, M(32), M(32)));        // 盟友领土 ≠ own

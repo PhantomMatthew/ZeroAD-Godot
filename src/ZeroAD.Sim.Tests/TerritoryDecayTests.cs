@@ -86,7 +86,7 @@ public sealed class TerritoryDecayTests
         var (cm, tm) = NewWorld();
         // P1 飞地(无 root)贴 P2 连通领土:cell 边界各算一条。
         AddInfluencer(cm, 1, x: 30, z: 32, radius: 8, weight: 40000);
-        AddInfluencer(cm, 2, x: 46, z: 32, radius: 12, weight: 1, root: true);
+        AddInfluencer(cm, 2, x: 46, z: 32, radius: 12, weight: 10000, root: true);
 
         var counts = tm.GetNeighbours(M(30), M(32), onlyConnected: true);
         Assert.True(counts[2] > 0);          // 邻着 P2 连通领土
@@ -101,16 +101,20 @@ public sealed class TerritoryDecayTests
     }
 
     [Fact]
-    public void BlinkOverride_SetClear_FallsBackToUnconnected()
+    public void Blink_SetClear_RegionFlood_GaiaIgnored()
     {
+        // 上游语义:SetTerritoryBlinking 洪泛整片同主区域置位;blink 不再从连通性
+        // 自动推导(无 decay 实体的未连通领土不闪)。
         var (cm, tm) = NewWorld();
-        AddInfluencer(cm, 1, x: 32, z: 32, radius: 8, weight: 40000);  // 孤立飞地
+        AddInfluencer(cm, 1, x: 32, z: 32, radius: 24, weight: 10000, root: true);
 
-        Assert.True(tm.IsTerritoryBlinking(M(32), M(32)));   // 无覆盖 → 未连通即闪
-        tm.SetTerritoryBlinking(M(32), M(32), false);
-        Assert.False(tm.IsTerritoryBlinking(M(32), M(32)));  // 覆盖关
+        Assert.False(tm.IsTerritoryBlinking(M(32), M(32)));  // 连通领土不闪
         tm.SetTerritoryBlinking(M(32), M(32), true);
         Assert.True(tm.IsTerritoryBlinking(M(32), M(32)));
+        // 洪泛:同主远端格也闪。
+        Assert.True(tm.IsTerritoryBlinking(M(40), M(32)));
+        tm.SetTerritoryBlinking(M(32), M(32), false);
+        Assert.False(tm.IsTerritoryBlinking(M(40), M(32)));
         Assert.False(tm.IsTerritoryBlinking(M(4), M(4)));    // gaia cell 不闪
         tm.SetTerritoryBlinking(M(4), M(4), true);           // gaia 覆盖被忽略
         Assert.False(tm.IsTerritoryBlinking(M(4), M(4)));
