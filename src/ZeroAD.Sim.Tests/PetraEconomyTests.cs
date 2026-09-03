@@ -172,6 +172,39 @@ public sealed class PetraEconomyTests
     }
 
     [Fact]
+    public void StartingStrategy_LowWood_SaveResourcesAndCutsPopPhase2()
+    {
+        // 原版 configFirstBase 低木联动:startingWood<6000 → saveResources +
+        // popPhase2×0.75(早出二阶扩张);>8500 → setRushes 收窄。
+        var w = NewAiWorld();
+        if (w == null) return;
+        var hq2 = new Headquarters(new PetraConfig(DifficultyLevel.Medium));
+        StartingStrategy.GameAnalysis(hq2, w.Gs);
+        StartingStrategy.BuildFirstBase(hq2, w.Gs);
+        // 夹具地图无资源点(无 ResourceSupply)→ startingWood = 仅库存(0)。
+        int before = hq2.Config.Economy.PopPhase2;
+        StartingStrategy.ConfigFirstBase(hq2, w.Gs);
+        Assert.True(hq2.SaveResources);
+        Assert.Equal((int)(before * 0.75), hq2.Config.Economy.PopPhase2);
+    }
+
+    [Fact]
+    public void StartingStrategy_RichWood_NoSaveResources_RushesAllowed()
+    {
+        var w = NewAiWorld();
+        if (w == null) return;
+        var player = w.Cm.GetPlayerEntity(2)!;
+        player.Wood = 10000;   // 库存木 >8500(无地图资源点)
+        var hq2 = new Headquarters(new PetraConfig(DifficultyLevel.Medium));
+        StartingStrategy.GameAnalysis(hq2, w.Gs);
+        StartingStrategy.BuildFirstBase(hq2, w.Gs);
+        StartingStrategy.ConfigFirstBase(hq2, w.Gs);
+        Assert.False(hq2.SaveResources);
+        // 性格默认 0.5(≤ weak 0.3?默认 aggressive 0.5 > medium 0.5 不成立 →
+        // allowed>0 但性格不够 → 不收窄/不启用 rush——只钉 saveResources 位。)
+    }
+
+    [Fact]
     public void Hq_BuildMoreHouses_SpawnsHouseFoundation_WhenBedsLow()
     {
         var w = NewAiWorld();

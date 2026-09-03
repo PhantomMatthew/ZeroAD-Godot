@@ -49,9 +49,33 @@ public sealed class AttackManager
     private int _attackNumber;
     /// <summary>rush 规模表(原版 rushSize 随 rushNumber 递增)。</summary>
     private static readonly int[] RushSizes = { 6, 10, 14 };
+    /// <summary>setRushes 覆盖(原版 attackManager.setRushes,开局木量充足时的
+    /// rush 收窄);null = 用难度默认。</summary>
+    private int? _maxRushesOverride;
+    private int[]? _rushSizesOverride;
+
+    /// <summary>原版 setRushes:性格进取度 × 允许值收窄 rush 上限与规模。</summary>
+    public void SetRushes(int allowed)
+    {
+        if (_config.Personality.Aggressive > _config.PersonalityCut.Strong && allowed > 2)
+        {
+            _maxRushesOverride = 3;
+            _rushSizesOverride = new[] { 16, 20, 24 };
+        }
+        else if (_config.Personality.Aggressive > _config.PersonalityCut.Medium && allowed > 1)
+        {
+            _maxRushesOverride = 2;
+            _rushSizesOverride = new[] { 18, 22 };
+        }
+        else if (_config.Personality.Aggressive > _config.PersonalityCut.Weak && allowed > 0)
+        {
+            _maxRushesOverride = 1;
+            _rushSizesOverride = new[] { 20 };
+        }
+    }
     /// <summary>rush 上限(原版 maxRushes:难度驱动;Easy 0 / Medium 1 / Hard+ 2)。</summary>
-    private int MaxRushes => _config.Difficulty <= DifficultyLevel.Easy ? 0
-        : _config.Difficulty <= DifficultyLevel.Medium ? 1 : 2;
+    private int MaxRushes => _maxRushesOverride ?? (_config.Difficulty <= DifficultyLevel.Easy ? 0
+        : _config.Difficulty <= DifficultyLevel.Medium ? 1 : 2);
 
     public AttackManager(PetraConfig config) => _config = config;
 
@@ -125,7 +149,8 @@ public sealed class AttackManager
             && unexecuted[AttackPlan.TypeRush] == 0)
         {
             var plan = new AttackPlan(gameState, _totalNumber, AttackPlan.TypeRush, _config,
-                rushTargetSize: RushSizes[Math.Min(_rushNumber, RushSizes.Length - 1)]);
+                rushTargetSize: (_rushSizesOverride ?? RushSizes)[
+                Math.Min(_rushNumber, (_rushSizesOverride ?? RushSizes).Length - 1)]);
             plan.Init(gameState, queues);
             plan.SetInitialRallyPoint(gameState);
             UpcomingAttacks[AttackPlan.TypeRush].Add(plan);

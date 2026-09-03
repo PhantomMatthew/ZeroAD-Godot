@@ -29,7 +29,7 @@
 
 ## 3. Petra AI(§5)
 
-- ~~人口规划~~✅(trainMoreWorkers 全量:在训/在队计数、popPhase2 一阶门、saveResources、饱和闸、support/soldier 指数饱和、自适应批量);余:BuildDefenses 塔楼全量门控、StartingStrategy 低木 saveResources 联动。
+- ~~人口规划~~✅(trainMoreWorkers 全量:在训/在队计数、popPhase2 一阶门、saveResources、饱和闸、support/soldier 指数饱和、自适应批量);~~BuildDefenses 塔楼全量门控~~✅(要塞/哨塔/石塔相位+数量+间隔+地基闸+QueueToReset 优先级回收);~~StartingStrategy 低木 saveResources 联动~~✅(开局食物/木材评估全量:needFarm/needFish/needCorral/maxFields/popPhase2×0.75/setRushes 收窄+停战门;handleNewBase 复位)。
 - 圣物治疗者编排细节、海图换面 attackPlansEncounteredWater。
 - (bombingAttacks/外交请求-应答/圣物夺取编排已于 142df83 落地。)
 
@@ -56,5 +56,7 @@
 ~~P1 性能三件套 + §3B 组件尾巴批量~~(2026-09-03 全落:增量寻路/异步路径/推挤压力
 + 门自动开关/编队组切换/炮塔站姿/重排闸门/LoadFormation/initGarrison/Pickup)。
 存量最大项(2026-09-03 更新,TerritoryManager/转向/天气/阴影/人口规划均已落):
-**BuildDefenses 塔楼门控全量**、Petra StartingStrategy saveResources 联动、
-触发器表达力之外的 §4 序列化覆盖(U64/I64/Float)、GuiInterface 桥扩面。
+~~BuildDefenses~~✅ ~~StartingStrategy saveResources 联动~~✅ ——Petra 经济面
+除 BuildMoreHouses 的 houseNeeded 细化外基本对齐。余:§4 序列化覆盖
+(U64/I64/Float)、GuiInterface 桥扩面、Territory 边界描线(轮廓追踪)、
+UnitMotion waypoints 序列化(刻意瞬态)。

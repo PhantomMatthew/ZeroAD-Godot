@@ -58,6 +58,12 @@ public sealed class Headquarters
     public bool SaveResources;
     public bool NeedFarm;
     public bool NeedCorral;
+    /// <summary>原版 saveSpace(领土/空间紧张时建筑更省地;configFirstBase 估,
+    /// 新基地落成复位)。</summary>
+    public bool SaveSpace;
+    /// <summary>原版 maxFields(0=false;1=田让位于市场后;2=小地图限田)。
+    /// configFirstBase 按 startingSize 设。</summary>
+    public int MaxFields;
     public bool NeedFish;
 
     // 建造计时
@@ -1059,6 +1065,8 @@ public sealed class Headquarters
         s.Bool("firstBaseConfig", FirstBaseConfig);
         s.NumberI32("targetWorkers", TargetNumWorkers);
         s.Bool("saveResources", SaveResources);
+        s.Bool("saveSpace", SaveSpace);     // 存档 v15
+        s.NumberI32("maxFields", MaxFields);
         s.NumberI32("fortStart", FortStartTime);
         s.NumberI32("towerStart", TowerStartTime);
         s.NumberI32("towerLapse", TowerLapseTime);
@@ -1081,6 +1089,8 @@ public sealed class Headquarters
         FirstBaseConfig = d.Bool("firstBaseConfig");
         TargetNumWorkers = d.NumberI32("targetWorkers");
         SaveResources = d.Bool("saveResources");
+        SaveSpace = d.Bool("saveSpace");
+        MaxFields = d.NumberI32("maxFields");
         FortStartTime = d.NumberI32("fortStart");
         TowerStartTime = d.NumberI32("towerStart");
         TowerLapseTime = d.NumberI32("towerLapse");
@@ -1187,6 +1197,14 @@ public sealed class Headquarters
 
     public BaseManager CreateBase(GameState gameState, uint anchorId)
     {
+        // 原版 HQ.handleNewBase:非首基地建成 → saveResources/saveSpace/maxFields
+        // 复位(寄望新基地解资源/空间紧张)。
+        if (HqResolver?.Invoke(gameState) is { } hq && hq.FirstBaseConfig)
+        {
+            hq.SaveResources = false;
+            hq.SaveSpace = false;
+            hq.MaxFields = 0;
+        }
         var b = new BaseManager(gameState, this, _nextBaseId++);
         b.AnchorId = anchorId;
         Bases.Add(b);
