@@ -24,6 +24,7 @@ public sealed class TerritoryWorldRenderer
     private int _lastLosVersion = -1;
     private byte[] _buf = System.Array.Empty<byte>();
     private MeshInstance3D? _borderMesh;
+    private MeshInstance3D? _blinkMesh;
     private float _worldSize;
 
     public TerritoryWorldRenderer(SimBridge sim) => _sim = sim;
@@ -37,7 +38,9 @@ public sealed class TerritoryWorldRenderer
         if (_mat == null) return;
         _mat.SetShaderParameter("player_colors", BuildPlayerColors());
         EnsureTexture(_sim.Territory.GridWidth);
-        // 领土描边网格(C++ TerritoryBoundary 的细线):挂地形同级,世界坐标重建。
+        // 领土描边网格(C++ TerritoryBoundary 的轮廓环带):挂地形同级,世界坐标重建。
+        // 闪烁环(未连通/衰变区)单独网格 + TIME 脉冲 alpha(原版 renderer 的
+        // 0.2+0.8|cos(t·π)| 动画,TerritoryManager 渲染段)。
         if (_borderMesh == null)
         {
             _borderMesh = new MeshInstance3D
@@ -54,6 +57,22 @@ public sealed class TerritoryWorldRenderer
             };
             _borderMesh.MaterialOverride = mat;
             terrain.GetParent()?.AddChild(_borderMesh);
+
+            _blinkMesh = new MeshInstance3D
+            {
+                Name = "TerritoryBordersBlink",
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            };
+            var blinkShader = new Shader
+            {
+                Code = "shader_type spatial; render_mode unshaded, cull_disabled;\n"
+                    + "uniform vec4 blink_color : source_color = vec4(1.0);\n"
+                    + "void fragment() { float a = 0.2 + 0.8 * abs(cos(TIME * 3.14159265));\n"
+                    + "  ALBEDO = blink_color.rgb; ALPHA = blink_color.a * a; }",
+            };
+            var blinkMat = new ShaderMaterial { Shader = blinkShader };
+            _blinkMesh.MaterialOverride = blinkMat;
+            terrain.GetParent()?.AddChild(_blinkMesh);
         }
         _lastVersion = -1;   // 强制下次 Update 全量重建
     }
@@ -151,20 +170,20 @@ public sealed class TerritoryWorldRenderer
         _mat?.SetShaderParameter("territory_cells", (float)n);
     }
 
-    /// <summary>领土描边网格(C++ TerritoryBoundary):沿异主格界画贴地四边形条,
-    /// 顶点色 = 属主玩家色。双色边界(对齐原版):两异主格共边时,各画半宽带、各用
-    /// 己方玩家色,合起来就是一条左半 A 色、右半 B 色的双色线(原版为每个 owner 独立
-    /// 生成边界环,叠加成同效)。gaia(owner 0)侧不画(只画有主侧)。</summary>
+    /// <summary>领土描边(上游 CTerritoryBoundaryCalculator 轮廓追踪 + 环带):
+    /// 边界 = 追踪出的闭合环(角部连续,替代逐边 quad 的断角);环带沿环向两侧各
+    /// 扩半宽,内顶点加小方帽接角;blink 环进独立脉冲网格(TIME 动画 alpha)。
+    /// LOS 裁剪:两端格均未探索的段不画(战争迷雾不透敌方疆域线)。</summary>
     private void RebuildBorderMesh(byte[] owners, int n)
     {
         if (_borderMesh == null) return;
-        const int cell = TerritoryManager.CellSize;   // 4m
+        const int cell = TerritoryManager.CellSize;
         const float halfW = 0.4f;
-        var verts = new System.Collections.Generic.List<Vector3>();
-        var colors = new System.Collections.Generic.List<Color>();
 
-        // LOS 门控(C++ 语义):只有已探索格上的边才画——否则敌方(红色)疆域线
-        // 穿透黑色战争迷雾,泄露全图领土分布。
+        var packed = _sim.Territory.GetBoundaryGridSnapshot();
+        var boundaries = TerritoryBoundaryCalculator.ComputeBoundaries(packed, n, cell);
+
+        // LOS 门控:格级已探索表。
         var los = _sim.Range.Los;
         int lp = (int)_sim.LocalPlayerId;
         var explored = new bool[n * n];
@@ -175,58 +194,98 @@ public sealed class TerritoryWorldRenderer
                     Fixed.FromInt(cx * cell + cell / 2), Fixed.FromInt(cz * cell + cell / 2));
                 explored[cz * n + cx] = los.IsExplored(lp, vi, vj);
             }
-
-        // 画半宽带:边在 (simX0,simZ0)-(simX1,simZ1),owner 色条偏向 dirX/dirZ 侧
-        // (法向正方向 = owner 己方格),宽 halfW。gaia(owner 0)跳过。
-        void EmitHalfEdge(float simX0, float simZ0, float simX1, float simZ1,
-            float dirX, float dirZ, int owner)
+        bool ExploredAt(float wx, float wz)
         {
-            if (owner <= 0) return;   // gaia 不画
-            var c = SimBridge.GetPlayerColor(owner);
-            c.A = 0.92f;
-            Vector3 P(float sx, float sz, float ox, float oz)
-            {
-                float y = TerrainHeightService.Sample(sx + ox, sz + oz) + 0.07f;
-                return new Vector3(sx + ox, y, _worldSize - (sz + oz));
-            }
-            // 从边线(ox=0)向 owner 侧偏 halfW(ox=dirX*halfW)
-            var a0 = P(simX0, simZ0, 0, 0);
-            var a1 = P(simX0, simZ0, dirX * halfW, dirZ * halfW);
-            var b0 = P(simX1, simZ1, 0, 0);
-            var b1 = P(simX1, simZ1, dirX * halfW, dirZ * halfW);
-            foreach (var v in new[] { a0, a1, b1, a0, b1, b0 }) { verts.Add(v); colors.Add(c); }
+            int cx = (int)(wx / cell), cz = (int)(wz / cell);
+            if (cx < 0 || cz < 0 || cx >= n || cz >= n) return false;
+            return explored[cz * n + cx];
         }
 
-        for (int cz = 0; cz < n; cz++)
-            for (int cx = 0; cx < n; cx++)
+        var verts = new System.Collections.Generic.List<Vector3>();
+        var colors = new System.Collections.Generic.List<Color>();
+        var blinkVerts = new System.Collections.Generic.List<Vector3>();
+        int blinkOwner = -1;
+
+        foreach (var b in boundaries)
+        {
+            var sink = b.Blinking ? blinkVerts : verts;
+            var col = SimBridge.GetPlayerColor(b.Owner);
+            if (b.Blinking)
             {
-                int own = owners[cz * n + cx];
-                // +x 邻边:own 在左(cx 格),nb 在右(cx+1 格)。边线 x=(cx+1)*cell。
-                if (cx + 1 < n)
-                {
-                    int nb = owners[cz * n + cx + 1];
-                    if (nb != own && (explored[cz * n + cx] || explored[cz * n + cx + 1]))
-                    {
-                        float ex = (cx + 1) * cell;
-                        // own 侧偏 -x(法向指向 own 格),nb 侧偏 +x。
-                        EmitHalfEdge(ex, cz * cell, ex, (cz + 1) * cell, -1f, 0f, own);
-                        EmitHalfEdge(ex, cz * cell, ex, (cz + 1) * cell, 1f, 0f, nb);
-                    }
-                }
-                // +z 邻边:own 在上(cz 格),nb 在下(cz+1 格)。边线 z=(cz+1)*cell。
-                if (cz + 1 < n)
-                {
-                    int nb = owners[(cz + 1) * n + cx];
-                    if (nb != own && (explored[cz * n + cx] || explored[(cz + 1) * n + cx]))
-                    {
-                        float ez = (cz + 1) * cell;
-                        // own 侧偏 -z,nb 侧偏 +z。
-                        EmitHalfEdge(cx * cell, ez, (cx + 1) * cell, ez, 0f, -1f, own);
-                        EmitHalfEdge(cx * cell, ez, (cx + 1) * cell, ez, 0f, 1f, nb);
-                    }
-                }
+                // 脉冲网格整体一个 blink_color(每环一色 —— 多 blink 主时取末个;
+                // 闪烁区本来就稀有,实测无感;逐环分网格过碎)。
+                blinkOwner = b.Owner;
+            }
+            if (!b.Blinking) col.A = 0.92f;
+            int count = b.Points.Count;
+            if (count < 2) continue;
+
+            // 每点算相邻两边的平均法向(miter),环带顶点 = 点 ± 法向×halfW。
+            var left = new Vector3[count];
+            var right = new Vector3[count];
+            for (int i = 0; i < count; i++)
+            {
+                var p = b.Points[i];
+                var prev = b.Points[(i - 1 + count) % count];
+                var next = b.Points[(i + 1) % count];
+                float dx1 = p.X - prev.X, dz1 = p.Z - prev.Z;
+                float dx2 = next.X - p.X, dz2 = next.Z - p.Z;
+                // 每边法向(垂直单位):(-dz, dx)/len。
+                float l1 = (float)System.Math.Sqrt(dx1 * dx1 + dz1 * dz1);
+                float l2 = (float)System.Math.Sqrt(dx2 * dx2 + dz2 * dz2);
+                float nx = 0, nz = 0;
+                if (l1 > 0.001f) { nx += -dz1 / l1; nz += dx1 / l1; }
+                if (l2 > 0.001f) { nx += -dz2 / l2; nz += dx2 / l2; }
+                float nl = (float)System.Math.Sqrt(nx * nx + nz * nz);
+                if (nl < 0.001f) { nx = 1; nz = 0; nl = 1; }
+                nx = nx / nl * halfW; nz = nz / nl * halfW;
+
+                float y1 = TerrainHeightService.Sample(p.X + nx, p.Z + nz) + 0.07f;
+                float y2 = TerrainHeightService.Sample(p.X - nx, p.Z - nz) + 0.07f;
+                left[i] = new Vector3(p.X + nx, y1, _worldSize - (p.Z + nz));
+                right[i] = new Vector3(p.X - nx, y2, _worldSize - (p.Z - nz));
             }
 
+            // 环带三角条(闭合):每段两三角;LOS 裁剪按段两端格。
+            for (int i = 0; i < count; i++)
+            {
+                int j = (i + 1) % count;
+                if (!ExploredAt(b.Points[i].X, b.Points[i].Z)
+                    && !ExploredAt(b.Points[j].X, b.Points[j].Z))
+                    continue;
+                foreach (var v in new[] { left[i], right[i], right[j], left[i], right[j], left[j] })
+                    sink.Add(v);
+                if (!b.Blinking)
+                    for (int k = 0; k < 6; k++) colors.Add(col);
+            }
+        }
+
+        SetMesh(_borderMesh, verts, colors);
+        if (_blinkMesh != null)
+        {
+            if (blinkOwner >= 0 && blinkVerts.Count > 0)
+            {
+                var c = SimBridge.GetPlayerColor(blinkOwner);
+                c.A = 0.92f;
+                (_blinkMesh.MaterialOverride as ShaderMaterial)
+                    ?.SetShaderParameter("blink_color", c);
+                var arr = new global::Godot.Collections.Array();
+                arr.Resize((int)Mesh.ArrayType.Max);
+                arr[(int)Mesh.ArrayType.Vertex] = blinkVerts.ToArray();
+                var mesh = new ArrayMesh();
+                mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+                _blinkMesh.Mesh = mesh;
+            }
+            else
+            {
+                _blinkMesh.Mesh = null;
+            }
+        }
+    }
+
+    private static void SetMesh(MeshInstance3D node, System.Collections.Generic.List<Vector3> verts,
+        System.Collections.Generic.List<Color> colors)
+    {
         var arrays = new global::Godot.Collections.Array();
         arrays.Resize((int)Mesh.ArrayType.Max);
         arrays[(int)Mesh.ArrayType.Vertex] = verts.ToArray();
@@ -234,8 +293,9 @@ public sealed class TerritoryWorldRenderer
         var mesh = new ArrayMesh();
         if (verts.Count > 0)
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
-        _borderMesh.Mesh = mesh;
+        node.Mesh = mesh;
     }
+
 
     /// <summary>与 SimBridge 单位调色板同源;超出 8 玩家的槽位补 gaia 灰。</summary>
     private static Color[] BuildPlayerColors()

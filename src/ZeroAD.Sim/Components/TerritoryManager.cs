@@ -83,6 +83,23 @@ public sealed class TerritoryManager
         Version++;
     }
 
+    /// <summary>位打包领土网格快照(边界描线用;位布局 = 上游 ICmpTerritoryManager:
+    /// owner 0-4 | connected 位5 | blink 位6)。派生快照,调用方按 Version 门控重建。</summary>
+    public byte[] GetBoundaryGridSnapshot()
+    {
+        EnsureComputed();
+        int n = _gridW * _gridW;
+        var packed = new byte[n];
+        for (int i = 0; i < n; i++)
+        {
+            byte v = _owner[i];
+            if (_connected[i]) v |= TerritoryBoundaryCalculator.ConnectedMask;
+            if (_blinking[i]) v |= TerritoryBoundaryCalculator.BlinkingMask;
+            packed[i] = v;
+        }
+        return packed;
+    }
+
     /// <summary>按 cell 索引读 owner(AI 的 territoryMap.data[i] 等价物;越界 = gaia)。</summary>
     public int GetOwnerByIndex(int idx)
     {

@@ -61,4 +61,6 @@
 (U64/I64/Float/Double 全实现链+位级哈希,本波;backref 共享对象无消费方,
 按需再加)~~、~~GuiInterface 桥扩面(Minimap 回合缓存批量快照+CC 定位+选择集
 能力 DTO 一趟扫描,Minimap 直读清零、HUD 47→31 且余者为选择重建段)~~、
-Territory 边界描线(轮廓追踪)、UnitMotion waypoints 序列化(刻意瞬态)。
+~~Territory 边界描线~~✅(CTerritoryBoundaryCalculator 逐字:底边起点+Moore
+变体逆时针闭环追踪+processed 位+曲率自校验;blink 判别位分环;渲染侧环带
+miter+LOS 段裁剪+blink 环 TIME 脉冲 shader)、UnitMotion waypoints 序列化(刻意瞬态)。
