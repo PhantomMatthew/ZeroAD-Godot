@@ -1341,6 +1341,8 @@ namespace ZeroAD.Sim.Content
         /// <summary>BuildingAI/GarrisonArrowClasses:计入加箭的类别(tokens,如 "Infantry"/"Soldier")。</summary>
         public string GarrisonArrowClasses = "";
         public float WalkSpeed = 8f;
+        /// <summary>UnitMotion/Weight 推挤权重(原版缺省 10;大者难推也推得狠)。</summary>
+        public ZeroAD.Sim.Maths.Fixed MovementWeight = ZeroAD.Sim.Maths.Fixed.FromInt(10);
         /// <summary>模板声明 &lt;UnitMotion&gt;(单位/船;建筑无 → 不显示 Speed 行)。</summary>
         public bool HasUnitMotion;
         /// <summary>UnitMotion/RunMultiplier(template_unit 默认 1.67,继承合并后可读)。

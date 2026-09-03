@@ -76,6 +76,8 @@ namespace ZeroAD.Sim
                 motion.Speed = Fixed.FromFloat(stats.WalkSpeed);
                 // PassabilityClass(船="ship" → 水路寻路/水面出生)。
                 motion.PassClassName = stats.PassabilityClass;
+                // 推挤权重(原版 GetWeight;推挤力按双方 Weight 动量配比)。
+                motion.Weight = stats.MovementWeight;
             }
 
             // Vision: seers get a Fixed-range VisionComponent (RangeManager counts their

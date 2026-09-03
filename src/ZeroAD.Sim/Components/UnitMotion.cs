@@ -32,6 +32,15 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     /// Default 陆地类——船在陆网格上无解,永远卡岸)。装配时由模板写入,随存档序列化。</summary>
     public string PassClassName = "default";
 
+    /// <summary>推挤权重(原版 UnitMotion/Weight,"10 is the base value"):
+    /// 大者更难被推也推得更狠(象兵 vs 步兵)。装配自模板,随存档序列化。</summary>
+    public Fixed Weight = Fixed.FromInt(10);
+
+    /// <summary>推挤压力(原版 pushingPressure,u8 语义 0..255):扎堆越深压力越大,
+    /// >10 线性减速(地板 1.5m/s),回合末 ×0.6 衰减。UnitSeparation 写,EffectiveSpeed 读。
+    /// 瞬态不序列化(冷加载后一回合内由推挤重建——同 waypoints 惯例)。</summary>
+    public int PushingPressure;
+
     /// <summary>当前单位的通行类掩码(ship → Ship 水类;其余 → Default 陆地类)。</summary>
     /// <summary>模板通行类名 → 位掩码(原版 pathfinder.xml 9 类注册表;
     /// default/large/ship/ship-small/unrestricted 等单位类直接按名查,未知名 → default)。</summary>
@@ -331,6 +340,9 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
 
         CurrentSpeed = Speed;
 
+        // 压力衰减(原版 PostMove 后每回合 ×0.6;整数 ×3/5 截断)。
+        if (PushingPressure > 0) PushingPressure = PushingPressure * 3 / 5;
+
         // 卡死看门狗(缓释 B):窗口实际位移不足 → 一次侧绕。
         _stuckTimer += dt;
         if (!_stuckAnchorValid) { _stuckAnchor = newPos2D; _stuckAnchorValid = true; }
@@ -401,8 +413,25 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     private Fixed EffectiveSpeed()
     {
         var cm = SimSystem.Sim;
-        if (cm == null) return Speed;
-        return Fixed.FromFloat(cm.Modifiers.Apply("UnitMotion/WalkSpeed", Speed.ToFloat(), Entity));
+        var baseSpeed = cm == null ? Speed
+            : Fixed.FromFloat(cm.Modifiers.Apply("UnitMotion/WalkSpeed", Speed.ToFloat(), Entity));
+        return ApplyPushingPressure(baseSpeed);
+    }
+
+    /// <summary>压力减速(原版 CCmpUnitMotion::PerformMove L1236-1255 逐字):
+    /// pressure ≤10 不减速;以上线性压到地板 min(模板速, 1.5m/s)——
+    /// maxPressure = 255−10−80 = 165,slowdown = 165 − min(165, max(0, p−10))。</summary>
+    private Fixed ApplyPushingPressure(Fixed basicSpeed)
+    {
+        if (PushingPressure <= 0) return basicSpeed;
+        const int pressureMinThreshold = 10;
+        const int maxPressure = 255 - pressureMinThreshold - 80;   // 165
+        int over = PushingPressure - pressureMinThreshold;
+        if (over < 0) over = 0;
+        int slowdown = maxPressure - (over > maxPressure ? maxPressure : over);
+        var slowed = basicSpeed.Multiply(Fixed.FromInt(slowdown) / Fixed.FromInt(maxPressure));
+        var floor = Speed < Fixed.FromFraction(3, 2) ? Speed : Fixed.FromFraction(3, 2);
+        return slowed > floor ? slowed : floor;
     }
 
     public override void Serialize(ISerializer s)
@@ -412,6 +441,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         s.NumberFixed("tx", TargetPos.X);
         s.NumberFixed("tz", TargetPos.Y);
         s.StringASCII("passclass", PassClassName);
+        s.NumberFixed("weight", Weight);   // 存档 v14
     }
 
     public override void Deserialize(IDeserializer d)
@@ -420,6 +450,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         HasMoveTarget = d.Bool("moving");
         TargetPos = new FixedVector2D(d.NumberFixed("tx"), d.NumberFixed("tz"));
         PassClassName = d.StringASCII("passclass");
+        Weight = d.NumberFixed("weight");
     }
 
     public void HandleMessage(IMessage message) { }
@@ -451,6 +482,8 @@ public static class SimSystem
         _terrain = null;
         // 易物价差归零(全局静态经济状态;同上——新世界不带旧账)。
         BarterSystem.Reset();
+        // 推挤 initialPos 驻留表归零(跨世界的实体 id 可能复用,旧位置会污染首回合)。
+        UnitSeparation.Reset();
     }
     public static ComponentManager? Sim => _cm;
     public static ObstructionManager? Obstructions => _obstructions;
