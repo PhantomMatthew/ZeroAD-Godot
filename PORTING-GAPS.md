@@ -89,7 +89,28 @@
 - [x] STUN 打洞接入直连流程(4b19ce4:host 建服探测公网地址+大厅状态展示)
 - [x] 局中掉线优雅降级(4b19ce4:槽位转 AI 接管+全端广播);真正断线重连
   (状态转移+回合追赶)超出上游 0.29 能力面(原版亦无)——标 beyond-upstream
-- [ ] Templates:`actor|...` 模板装载、template_not_found 占位语义、schema 校验(Xeromyces 对应物)、hotloading
+- [ ] Templates:`actor|...` 模板装载、template_not_found 占位语义
+- [x] **模板 schema 全量校验(Xeromyces 级)**(本波):`Content/Schema/`——
+  RelaxNG 子集校验器(RngPattern/RngValidator:语料全构造 element/attribute/optional/
+  choice/zeroOrMore/oneOrMore/interleave/ref/text/data+param/value/empty/list/anyName;
+  结构-内容分离两阶段匹配,interleave 按名分划,空文本元素合法);
+  组件 Schema 受限 JS 求值提取(ComponentSchemaExtractor:字符串/反引号/注释/
+  Resources.BuildSchema/BuildChoicesSchema/RequirementsHelper/AttackHelper/同文件
+  prototype 引用;MotionBall.js → MotionBallScripted 注册名)+ 原生 GetSchema 逐字表
+  (NativeComponentSchemas:12 真 schema + 系统空壳);grammar = GenerateSchema 骨架
+  (decimal/nonNegativeDecimal/positiveDecimal/anything + 每组件 interleave define +
+  anyName 根 + optional parent);strict 拒载(上游语义,m_TemplateSchemaValidity memo)。
+  校验对象是**合并树**(含 ParamNode 修复:@datatype 保留 + mul_round op 补全)。
+  sweep:全部具体模板 0 错误;177 个 template_* 抽象父 + special/actor 上游同结局
+  拒载(从不独立请求,记录在测试注释)。mixins//special/filter/ 图层不独立校验
+  (上游同)。测试:SchemaValidatorTests 23 + ExtractorTests 15 + HotloadTests 5 +
+  SweepTests 3(全语料金丝雀)。
+- [x] **模板 hotloading**(超越上游——上游 15 年 TODO,ICmpTemplateManager.h:127):
+  TemplateLoader.Invalidate/InvalidateAll + Godot 侧 TemplateHotReloader
+  (FileSystemWatcher 分层监视 templates/+components/,300ms 去抖,mixin/filter/组件
+  变更全失效+grammar 重建,strict 重校验进 Diag,RebuildAllVisuals 视觉重组装;
+  仅 debug 构建 + 单机——MP 热载必 OOS)。存量实体 sim 字段重灌仍缺
+  (上游同款 TODO;EntityAssembler add-only,需逐组件 InitFromStats 通道——留 backlog)
 
 ---
 

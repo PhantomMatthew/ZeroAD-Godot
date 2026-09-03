@@ -107,6 +107,25 @@ public sealed partial class SimBridge : Node
 	public Node3D? ShadowRoot { get; set; }
 	private readonly Dictionary<Node3D, Node3D> _shadowProxies = new();
 	public TemplateLoader? Templates { get; private set; }
+	/// <summary>模板根路径(hotreload 等开发工具用;InitWorld 后非空)。</summary>
+	public string? TemplatesPath => _templatesPath;
+
+	/// <summary>启用模板 hotreload(开发期工具,原版 15 年 TODO 的超越实现)。
+	/// 门:调试构建 + 单机(模板数据进 sim 状态,MP 热载必 OOS)。</summary>
+	public void EnableTemplateHotReload()
+	{
+		if (!OS.IsDebugBuild() || _netTurn.Role != NetRole.Standalone) return;
+		if (_templatesPath == null || Templates == null) return;
+		string modsRoot = System.IO.Path.GetFullPath(
+			System.IO.Path.Combine(_templatesPath, "..", "..", ".."));
+		var cfg = GetNodeOrNull<UserConfig>("/root/UserConfig")?.GetEffective("mod.enabledmods");
+		var mods = cfg is { Length: > 0 } c
+			? c.Split(' ', System.StringSplitOptions.RemoveEmptyEntries)
+			: new[] { "mod", "public" };
+		var reloader = new TemplateHotReloader();
+		AddChild(reloader);
+		reloader.Install(this, modsRoot, mods);
+	}
 
 	public ComponentManager Sim => _sim;
 
@@ -183,16 +202,33 @@ public sealed partial class SimBridge : Node
 			// mods 根 = 三级上级。
 			var enabledMods = GetNodeOrNull<UserConfig>("/root/UserConfig")
 				?.GetEffective("mod.enabledmods");
+			string modsRoot = System.IO.Path.GetFullPath(
+				System.IO.Path.Combine(templatesPath, "..", "..", ".."));
+			ZeroAD.Sim.Content.VfsResolver? schemaVfs = null;
 			if (enabledMods != null && enabledMods != "mod public" && enabledMods != "mod  public")
 			{
-				string modsRoot = System.IO.Path.GetFullPath(
-					System.IO.Path.Combine(templatesPath, "..", "..", ".."));
-				templates = new ZeroAD.Sim.Content.TemplateLoader(
-					ZeroAD.Sim.Content.VfsResolver.FromConfig(modsRoot, enabledMods));
+				schemaVfs = ZeroAD.Sim.Content.VfsResolver.FromConfig(modsRoot, enabledMods);
+				templates = new ZeroAD.Sim.Content.TemplateLoader(schemaVfs);
 				ZeroAD.Sim.Diag.Log("Sim", $"mod layered load: {enabledMods}");
 			}
 			else
+			{
 				templates = new TemplateLoader(templatesPath);
+				// 缺省挂载序(等价原版 "mod public"):schema 构建需要组件/资源目录的
+				// 分层视图,与模板加载同根。
+				schemaVfs = new ZeroAD.Sim.Content.VfsResolver(modsRoot, null);
+			}
+			// Xeromyces 级 schema 校验(原版 CCmpTemplateManager 装载语义:合并树校验,
+			// 每模板 memo,strict = 无效模板拒载)。grammar = JS 组件 Schema 提取
+			// (simulation/components/*.js,分层)+ 原生组件表 + resources.json。
+			{
+				var schema = ZeroAD.Sim.Content.Schema.TemplateSchema.Build(schemaVfs);
+				foreach (var w in schema.Warnings)
+					ZeroAD.Sim.Diag.Warn("Templates", "schema: " + w);
+				templates.EnableSchemaValidation(schema, strict: true);
+				ZeroAD.Sim.Diag.Log("Sim",
+					$"Template schema: {schema.Grammar.Defines.Count} defines (strict validation on)");
+			}
 			ZeroAD.Sim.Diag.Log("Sim", $"Loaded templates from: {templatesPath}");
 			int count = 0;
 			foreach (var kvp in templates.Cache) count++;

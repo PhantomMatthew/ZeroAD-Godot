@@ -168,7 +168,10 @@ public sealed class ParamNode
 
         foreach (var attr in element.Attributes())
         {
-            if (attr.Name.LocalName is "replace" or "filtered" or "disable" or "merge" or "datatype" or "op")
+            // 上游 ParamNode.cpp 只跳过 replace/op/merge/filtered——datatype 必须保留
+            // (合并树里 @datatype="tokens" 仍在;Xeromyces grammar 把那 14 处 datatype
+            // 声明为必需属性,丢掉会让合并树校验全挂)。
+            if (attr.Name.LocalName is "replace" or "filtered" or "disable" or "merge" or "op")
                 continue;
             string name = "@" + attr.Name.LocalName;
             mentionedNames.Add(name);
@@ -231,6 +234,9 @@ public sealed class ParamNode
             case "add": r = cur + mod; break;
             case "sub": r = cur - mod; break;
             case "mul": r = cur.Multiply(mod); break;
+            // 上游三大 op 之一(ParamNode.cpp:MUL_ROUND):乘后取最近整数。
+            // chariot mixin 等用它调整资源消耗;漏掉会退回字面值 "1.2" → schema 校验拒。
+            case "mul_round": r = Fixed.FromInt(cur.Multiply(mod).ToIntRoundToNearest()); break;
             case "div": r = mod == Fixed.Zero ? cur : cur / mod; break;
             case "min": r = cur <= mod ? cur : mod; break;
             case "max": r = cur >= mod ? cur : mod; break;

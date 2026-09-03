@@ -515,6 +515,7 @@ public sealed partial class Main : Node3D
 			effectiveSlots = CivRandom.Resolve(effectiveSlots);
 		_sim.InitWorld(templatesPath, seed, playerId, role, effectiveSlots);
 		_worldSlots = effectiveSlots;   // rmgen 玩家 civ 列表(SetupRmgenTerrain)等用
+		_sim.EnableTemplateHotReload();   // 开发期模板热载(debug+单机;内部自门)
 		ZeroAD.Sim.Diag.Log("Tutorial", "InitWorld done");
 
 		if (isMultiplayer)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Xml.Linq;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Templates;
@@ -31,17 +32,39 @@ namespace ZeroAD.Sim.Content
             _templatesRoot = "(vfs:" + relRoot + ")";   // 仅日志/错误信息用
         }
 
+        /// <summary>批量枚举装载期间不校验(装载 ≠ 请求;上游校验发生在 GetTemplate
+        /// 访问时。否则抽象父 template_* 会被拒成空节点并刷告警——它们本就
+        /// "individually invalid",从不被独立请求)。</summary>
+        private bool _suppressValidation;
+
         public ParamNode LoadTemplate(string templateName)
         {
             if (_cache.TryGetValue(templateName, out var cached))
+            {
+                // 缓存命中也过校验 memo:批量装载期跳过的模板在首次真正被请求时校验
+                // (上游 m_TemplateSchemaValidity 同此语义:访问时一次性判定)。
+                if (!CheckSchemaValid(templateName, cached) && _validationStrict)
+                    return new ParamNode();
                 return cached;
+            }
 
             var resolved = ParamNode.ResolveTemplate(templateName, LoadXmlDocument);
+            // Schema 校验(上游:合并树校验,无效即拒载)。strict 下无效 → 缓存空节点
+            // (与缺失模板同语义,上游 GetTemplate 返回 NULL)。
+            if (!CheckSchemaValid(templateName, resolved) && _validationStrict)
+                resolved = new ParamNode();
             _cache[templateName] = resolved;
             return resolved;
         }
 
         public Dictionary<string, ParamNode> LoadAllTemplates()
+        {
+            _suppressValidation = true;
+            try { return LoadAllTemplatesCore(); }
+            finally { _suppressValidation = false; }
+        }
+
+        private Dictionary<string, ParamNode> LoadAllTemplatesCore()
         {
             if (_vfs != null)
             {
@@ -1145,6 +1168,64 @@ namespace ZeroAD.Sim.Content
         }
 
         public IReadOnlyDictionary<string, ParamNode> Cache => _cache;
+
+        // ── Schema 校验(原版 CCmpTemplateManager 的 m_Validator + m_TemplateSchemaValidity)──
+
+        private Schema.TemplateSchemaValidator? _schemaValidator;
+        private bool _validationStrict;
+        /// <summary>每模板名有效性记忆(上游 m_TemplateSchemaValidity:只算一次)。</summary>
+        private readonly Dictionary<string, bool> _validityMemo = new();
+
+        /// <summary>启用 Xeromyces 级 schema 校验(strict:无效模板按缺失处理——上游
+        /// GetTemplate 返回 NULL 的语义;非 strict:仅 Diag 告警)。在 LoadAllTemplates
+        /// 之前调用才会全量生效;之后调用则对后续新加载的模板生效。</summary>
+        public void EnableSchemaValidation(Schema.TemplateSchema schema, bool strict)
+        {
+            _schemaValidator = new Schema.TemplateSchemaValidator(schema);
+            _validationStrict = strict;
+            _validityMemo.Clear();
+        }
+
+        /// <summary>hotload 入口:使单个模板的缓存与校验记忆失效(下次访问重载重校验)。
+        /// 上游模板 XML 从不热载(15 年 TODO,ICmpTemplateManager.h:127);此处超越上游:
+        /// 失效后新 spawn 即得新参数(存量实体重灌见 PORTING-GAPS)。</summary>
+        public void Invalidate(string templateName)
+        {
+            _cache.Remove(templateName);
+            _validityMemo.Remove(templateName);
+        }
+
+        /// <summary>全量失效(mod 切换/批量重载)。</summary>
+        public void InvalidateAll()
+        {
+            _cache.Clear();
+            _validityMemo.Clear();
+        }
+
+        /// <summary>加载后校验( memo 命中直接返回有效性)。返回 false = 无效。</summary>
+        internal bool CheckSchemaValid(string templateName, ParamNode merged)
+        {
+            if (_schemaValidator == null || _suppressValidation) return true;
+            // 继承图层(mixins/special filter)从不独立校验(上游同,见 TemplateSchemaValidator)。
+            if (!Schema.TemplateSchemaValidator.IsStandaloneTemplateName(templateName)) return true;
+            if (_validityMemo.TryGetValue(templateName, out bool memo)) return memo;
+
+            var errors = _schemaValidator.ValidateOne(merged);
+            bool valid = errors.Count == 0;
+            _validityMemo[templateName] = valid;
+            if (!valid)
+            {
+                // 上游:LOGERROR("Failed to validate entity template '%s'") + 结构化错误。
+                void report(string msg) { if (_validationStrict) Diag.Err("Templates", msg); else Diag.Warn("Templates", msg); }
+                report($"Failed to validate entity template '{templateName}' ({errors.Count} error(s))" +
+                    (_validationStrict ? " — refused (strict)" : ""));
+                foreach (string e in errors.Take(5))
+                    report($"  {templateName}: {e}");
+                if (errors.Count > 5)
+                    report($"  {templateName}: … and {errors.Count - 5} more");
+            }
+            return valid;
+        }
     }
 
     public sealed class TemplateStats
