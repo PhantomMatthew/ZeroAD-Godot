@@ -56,7 +56,10 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     private Pathfinding.PassClass ResolvePassClass(PathfinderComponent pf) =>
         pf.GetPassabilityClassMask(PassClassName);
 
-    private readonly List<(float x, float z)> _waypoints = new();
+    /// <summary>路标(定点;原版 m_LongPath/m_ShortPath 序列化——读档续走不重复寻路,
+    /// 存档-不存档两端演化逐位一致;此前 float 瞬态,读档后单位停摆到下次重请求)。
+    /// 瞬态残留:pending ticket(读档丢弃,节流到期重请求)与 stuck/sidestep 看门狗。</summary>
+    private readonly List<FixedVector2D> _waypoints = new();
     private int _currentWaypoint;
 
     // --- Path-request throttle (perf, not semantics) ---
@@ -70,8 +73,8 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     // the existing waypoints (or a cheap direct beeline if they're exhausted). If the goal
     // jumped beyond RepathGoalThreshold since the last solve we recompute immediately (the
     // target genuinely relocated, not just crept). All-throttle state is transient cache:
-    // it is NOT serialized (waypoints aren't either), so it never touches the OOS hash and
-    // re-converges to a full solve on the first MoveToPoint after a load.
+    // 节流态本身不序列化(读档后首节流派即重请求,与上游节流语义一致)——
+    // 路标本体现在序列化(v16;见字段注释)。
     private const float RepathInterval = 0.3f;     // seconds between full A* solves
     private const float RepathGoalThreshold = 5f;  // metres; bigger shift → re-solve now
     private static readonly long RepathGoalThresholdSqInternal =
@@ -93,7 +96,8 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     // B. 卡死看门狗:有目标但 StuckWindowSec 窗口位移 < StuckMinProgress(人群夹死)
     //    → 垂直方向试探侧绕点(±3m/±6m 首个直线可达),到侧点后自动重解原目标。
     //    每次全新求解只试一次(_mitigationAttempted 随 full-solve 重置)。
-    // 全部为瞬态:不序列化,不进 OOS 哈希(同 waypoints 惯例)。
+    // 看门狗/侧绕态为瞬态(不序列化;读档后首次卡死重新触发)——路标本体
+    // 已序列化(v16),这些只是防卡缓释。
     private const float StuckWindowSec = 0.6f;
     private const float StuckMinProgress = 0.05f;
     private float _stuckTimer;
@@ -121,7 +125,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         {
             _waypoints.Clear();
             _currentWaypoint = 0;
-            _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+            _waypoints.Add(target);
             MaintainFlyingAltitude();
             return;
         }
@@ -139,7 +143,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
             // close on a target that crept within threshold), extend with a direct beeline so
             // the unit keeps moving instead of stalling until the interval elapses.
             if (_currentWaypoint >= _waypoints.Count)
-                _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+                _waypoints.Add(target);
             return;
         }
 
@@ -158,7 +162,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         var posComp = SimSystem.GetComponent<PositionComponent>(Entity);
         if (posComp == null)
         {
-            _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+            _waypoints.Add(target);
             return;
         }
 
@@ -184,7 +188,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
                 // 单位会在结果到达前站桩);旧路标已耗尽 → 直线暂行到目标。
                 _pendingPathTicket = ticket;
                 if (_currentWaypoint >= _waypoints.Count)
-                    _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+                    _waypoints.Add(target);
             }
             return;
         }
@@ -199,13 +203,14 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
 
             var path = obstructions.FindPath(sx, sz, ex, ez);
             foreach (var (px, pz) in path)
-                _waypoints.Add((obstructions.GridToWorld(px), obstructions.GridToWorld(pz)));
-            _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+                _waypoints.Add(new FixedVector2D(Fixed.FromFloat(obstructions.GridToWorld(px)),
+                    Fixed.FromFloat(obstructions.GridToWorld(pz))));
+            _waypoints.Add(target);
         }
         else
 #pragma warning restore CS0618
         {
-            _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+            _waypoints.Add(target);
         }
     }
 
@@ -217,7 +222,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         _waypoints.Clear();
         _currentWaypoint = 0;
         foreach (var wp in path.Waypoints)
-            _waypoints.Add((wp.X.ToFloat(), wp.Z.ToFloat()));
+            _waypoints.Add(new FixedVector2D(wp.X, wp.Z));
         if (_waypoints.Count == 0)
         {
             // 长程求解为空:起点≈终点 → 直线即达;否则目标不可达——不直线穿墙,
@@ -226,12 +231,12 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
             float dzs = target.Y.ToFloat() - start.Y.ToFloat();
             if (dxs * dxs + dzs * dzs < 1f)
             {
-                _waypoints.Add((target.X.ToFloat(), target.Y.ToFloat()));
+                _waypoints.Add(target);
                 return;
             }
             if (TryClampToReachable(pathfinder, start, target, pc, out var clamped))
             {
-                _waypoints.Add((clamped.X.ToFloat(), clamped.Y.ToFloat()));
+                _waypoints.Add(clamped);
                 TargetPos = clamped;   // 到点判定按可达点(原目标不可达)
             }
             else
@@ -293,9 +298,8 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         var posComp = SimSystem.GetComponent<PositionComponent>(Entity);
         if (posComp == null) return;
 
-        var wp = _waypoints[_currentWaypoint];
+        var wpFixed = _waypoints[_currentWaypoint];   // 定点路标(不再 float 往返)
         var currentPos = new FixedVector2D(posComp.Position.X, posComp.Position.Z);
-        var wpFixed = new FixedVector2D(Fixed.FromFloat(wp.x), Fixed.FromFloat(wp.z));
 
         var diff = wpFixed - currentPos;
         ulong dx2 = (ulong)((long)diff.X.InternalValue * (long)diff.X.InternalValue);
@@ -365,13 +369,12 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
                 // 路径末端。此前无条件瞬移到原始目标:最近可达路径走完后单位穿水/穿墙
                 // 瞬移(陆军直接渡过水带)。
                 var lastWp = _waypoints[_waypoints.Count - 1];
-                float gdx = TargetPos.X.ToFloat() - lastWp.x;
-                float gdz = TargetPos.Y.ToFloat() - lastWp.z;
+                float gdx = TargetPos.X.ToFloat() - lastWp.X.ToFloat();
+                float gdz = TargetPos.Y.ToFloat() - lastWp.Y.ToFloat();
                 bool reachedGoal = gdx * gdx + gdz * gdz <= 1.5f * 1.5f;
                 posComp.Position = reachedGoal
                     ? new FixedVector3D(TargetPos.X, posComp.Position.Y, TargetPos.Y)
-                    : new FixedVector3D(Fixed.FromFloat(lastWp.x), posComp.Position.Y,
-                        Fixed.FromFloat(lastWp.z));
+                    : new FixedVector3D(lastWp.X, posComp.Position.Y, lastWp.Y);
                 HasMoveTarget = false;
                 CurrentSpeed = Fixed.Zero;
                 // 到站面向目标点(原版 StopMoving → FaceTowardsPointFromPos;m_FacePointAfterMove)。
@@ -469,7 +472,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
                 Fixed.FromFloat(fx + px * side), Fixed.FromFloat(fz + pz * side));
             if (!pf.CheckMovement(from, c, pc)) continue;
             _waypoints.Clear();
-            _waypoints.Add((c.X.ToFloat(), c.Y.ToFloat()));
+            _waypoints.Add(c);
             _currentWaypoint = 0;
             _sidestepping = true;
             return;
@@ -512,6 +515,14 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         s.NumberFixed("weight", Weight);   // 存档 v14
         s.NumberFixed("ita", InstantTurnAngle);   // 存档 v15
         s.Bool("fpam", FacePointAfterMove);
+        // 路标(存档 v16):原版 m_LongPath/m_ShortPath 骑缝——读档续走不重复寻路。
+        s.NumberI32("wpCount", _waypoints.Count);
+        foreach (var wp in _waypoints)
+        {
+            s.NumberFixed("wpx", wp.X);
+            s.NumberFixed("wpz", wp.Y);
+        }
+        s.NumberI32("wpCur", _currentWaypoint);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -523,6 +534,14 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         Weight = d.NumberFixed("weight");
         InstantTurnAngle = d.NumberFixed("ita");
         FacePointAfterMove = d.Bool("fpam");
+        _waypoints.Clear();
+        int wpCount = d.NumberI32("wpCount");
+        for (int i = 0; i < wpCount; i++)
+            _waypoints.Add(new FixedVector2D(d.NumberFixed("wpx"), d.NumberFixed("wpz")));
+        _currentWaypoint = d.NumberI32("wpCur");
+        if (_currentWaypoint > _waypoints.Count) _currentWaypoint = _waypoints.Count;
+        // 在途 ticket 读档作废(瞬态;节流到期自然重请求)。
+        _pendingPathTicket = 0;
     }
 
     public void HandleMessage(IMessage message) { }

@@ -63,4 +63,5 @@
 能力 DTO 一趟扫描,Minimap 直读清零、HUD 47→31 且余者为选择重建段)~~、
 ~~Territory 边界描线~~✅(CTerritoryBoundaryCalculator 逐字:底边起点+Moore
 变体逆时针闭环追踪+processed 位+曲率自校验;blink 判别位分环;渲染侧环带
-miter+LOS 段裁剪+blink 环 TIME 脉冲 shader)、UnitMotion waypoints 序列化(刻意瞬态)。
+miter+LOS 段裁剪+blink 环 TIME 脉冲 shader)、~~UnitMotion waypoints 序列化~~✅(v16:定点路标骑缝,读档续走不重复寻路,
+哈希连续;顺路把 float 往返消了——确定性更好)。
