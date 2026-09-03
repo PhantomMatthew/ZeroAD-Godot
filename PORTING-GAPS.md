@@ -135,7 +135,9 @@
 - [x] defenseManager 军队模型(881b8c6:编组/合并/分裂/夺回/转攻,defenseArmy.js 657 行移植)
 - [x] navalManager 跨海运输(e48f00b:TransportPlan 状态机+分船+运船训练;overseas 进攻接入)
 - [x] AI 存档序列化(0104867:计划/队列/攻防军/基地骑缝,存档 v12+录像 v2)
-- [ ] bombingAttacks 攻城游击、diplomacyManager 请求-应答、victoryManager 圣物编排(支线)
+- [x] bombingAttacks 攻城游击、diplomacyManager 请求-应答、victoryManager 圣物编排(142df83:
+  AssignBombers 闲置攻城器射程边骚扰/求援-应答 sim 事件直通/强制 Raid 夺圣物+护卫跟随;
+  余:圣物治疗者编排细节、海图换面 attackPlansEncounteredWater)
 - [x] researchManager 优先级(a3643df:人口/贸易/wanted/兜底四级,原版 update 核心语义)
 
 ---
