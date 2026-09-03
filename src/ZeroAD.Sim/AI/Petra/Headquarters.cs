@@ -259,16 +259,131 @@ public sealed class Headquarters
     private static int CountOwnStructuresByClass(GameState gameState, string className)
         => gameState.GetOwnStructures().Filter(e => e.HasClass(className)).Length;
 
+    /// <summary>原版 trainMoreWorkers(headquarters.js:397-505)逐字移植:
+    /// 计数含在训/在队(plan-less worker role 实体 + 训练设施在训项 + villager/
+    /// citizenSoldier 队列);门控:saveResources 超 popPhase2+10 停 / 超
+    /// targetNumWorkers 停 / 一阶未研二阶达 popPhase2 停 / 饱和闸(在队>50、
+    /// support/soldier 双 >20、在训 >15);support/soldier 选择 = 指数饱和曲线
+    /// (supportRatio×target×(1−exp(−α·total/max)),α 基础 0.85,rush 期 0.7,
+    /// 停战末段渐升向 1);批量自适应(worker<12 → 1,否则 min(5, ⌈worker/10⌉),
+    /// 并钳到两队列的首两个计划——被劫后快速恢复)。</summary>
     private void TrainMoreWorkers(GameState gameState)
     {
-        // 原版 trainMoreWorkers:worker 数未达 targetNumWorkers 时补训练;
-        // 已排队的计入(防超训),villager 队列挂 support_civilian。
-        int numWorkers = gameState.CountOwnEntitiesByRole("worker");
-        if (numWorkers >= TargetNumWorkers) return;
-        if (HasPendingPlan("villager")) return;
-        var plan = new TrainingPlan(gameState, "units/{civ}/support_civilian",
-            number: System.Math.Min(2, TargetNumWorkers - numWorkers));
-        Queues.AddPlan("villager", plan);
+        // 默认模板(原版 requirementsDef/classesDef)。
+        string? templateDef = FindBestTrainableUnit(gameState,
+            new[] { "Support", "Worker" }, new[] { ("costsResource", 1.0) });
+
+        // 计数:plan-less worker 实体。
+        int numberOfWorkers = 0;
+        int numberOfSupports = 0;
+        foreach (var ent in gameState.GetOwnUnits().Values())
+        {
+            if (gameState.Metadata.GetObject(ent.Id, "role")?.ToString() != WorkerRoles.RoleWorker
+                || gameState.Metadata.GetObject(ent.Id, "plan") != null)
+                continue;
+            numberOfWorkers++;
+            if (ent.HasClass("Support"))
+                numberOfSupports++;
+        }
+        // 在训(原版按 item.metadata;我方训练项不带 metadata——以模板 Support 类近似
+        // support 计数,全部单位项计入 numberInTraining,记录差异)。
+        int numberInTraining = 0;
+        foreach (var ent in gameState.GetOwnTrainingFacilities().Values())
+        {
+            var pq = gameState.Cm.QueryInterface<Components.ProductionQueue>(new EntityId(ent.Id));
+            if (pq == null) continue;
+            foreach (var item in pq.Queue)
+            {
+                numberInTraining += item.Count;
+                if (item.TemplateName.Length > 0)
+                {
+                    var stats = gameState.Templates?.ExtractStats(item.TemplateName);
+                    if (stats != null && stats.Classes.Contains("Support"))
+                    {
+                        numberOfWorkers += item.Count;
+                        numberOfSupports += item.Count;
+                    }
+                }
+            }
+        }
+
+        // 批量自适应 + 钳首二计划(原版 plans[0]/plans[1].number = min(·, size))。
+        int size = numberOfWorkers < 12 ? 1
+            : System.Math.Min(5, (int)System.Math.Ceiling(numberOfWorkers / 10.0));
+        ClampFirstTwo(Queues.GetQueue("villager"), size);
+        ClampFirstTwo(Queues.GetQueue("citizenSoldier"), size);
+
+        var villager = Queues.GetQueue("villager");
+        var citizenSoldier = Queues.GetQueue("citizenSoldier");
+        int numberOfQueuedSupports = villager?.CountQueuedUnits() ?? 0;
+        int numberOfQueuedSoldiers = citizenSoldier?.CountQueuedUnits() ?? 0;
+        int numberQueued = numberOfQueuedSupports + numberOfQueuedSoldiers;
+        int numberTotal = numberOfWorkers + numberQueued;
+
+        if (SaveResources && numberTotal > Config.Economy.PopPhase2 + 10)
+            return;
+        if (numberTotal > TargetNumWorkers || (numberTotal >= Config.Economy.PopPhase2
+            && CurrentPhase == 1 && !gameState.IsResearching(gameState.GetPhaseName(2))))
+            return;
+        if (numberQueued > 50 || (numberOfQueuedSupports > 20 && numberOfQueuedSoldiers > 20)
+            || numberInTraining > 15)
+            return;
+
+        // support/soldier 选择:指数饱和曲线。
+        double supportRatio = SupportRatio;
+        double alpha = 0.85;
+        if (!gameState.IsTemplateAvailable(gameState.ApplyCiv("structures/{civ}/field")))
+            supportRatio = System.Math.Min(supportRatio, 0.1);
+        if (AttackManager.RushNumber < AttackManager.MaxRushesCount
+            || AttackManager.UpcomingAttacks[AttackPlan.TypeRush].Count > 0)
+            alpha = 0.7;
+        if (gameState.Cm.EndGame.CeasefireActive)
+        {
+            float remaining = gameState.Cm.EndGame.CeasefireRemaining;
+            alpha += (1 - alpha) * System.Math.Min(
+                System.Math.Max(remaining - 120, 0f), 180f) / 180;
+        }
+        double supportMax = supportRatio * TargetNumWorkers;
+        // 确定性:libm Exp 内核全禁(跨平台低位漂移 → AI 决策 OOS)——SafeMath 泰勒逼近。
+        double supportNum = supportMax * (1 - RmgenMath.SafeMath.Exp(-alpha * numberTotal / supportMax));
+
+        string? template = null;
+        if (templateDef == null || numberOfSupports + numberOfQueuedSupports > supportNum)
+        {
+            // 兵:speed+资源成本加权(<45)或纯强度(≥45);类 = CitizenSoldier+Infantry+
+            // 确定性轮换 Ranged/Melee(原版 pickRandom 是表现层随机——确定性:按
+            // numberTotal 取模轮换)。
+            (string Interest, double Weight)[] requirements = numberTotal < 45
+                ? new[] { ("speed", 0.5), ("costsResource", 0.5), ("costsResource", 0.5) }
+                : new[] { ("strength", 1.0) };
+            string[] pickCycle = { "Ranged", "Melee", "Infantry" };
+            string third = pickCycle[numberTotal % pickCycle.Length];
+            template = FindBestTrainableUnit(gameState,
+                new[] { "CitizenSoldier", "Infantry", third }, requirements);
+        }
+
+        if (template == null && templateDef != null)
+            Queues.AddPlan("villager", new TrainingPlan(gameState, templateDef,
+                metadata: new System.Collections.Generic.Dictionary<string, object>
+                {
+                    ["role"] = WorkerRoles.RoleWorker, ["base"] = 0, ["support"] = true,
+                }, number: size, maxMerge: size));
+        else if (template != null)
+            Queues.AddPlan("citizenSoldier", new TrainingPlan(gameState, template,
+                metadata: new System.Collections.Generic.Dictionary<string, object>
+                {
+                    ["role"] = WorkerRoles.RoleWorker, ["base"] = 0,
+                }, number: size, maxMerge: size));
+    }
+
+    /// <summary>钳队列首两计划的批量(原版 plans[0]/plans[1].number = min(number, size))。</summary>
+    private static void ClampFirstTwo(PetraQueue? queue, int size)
+    {
+        if (queue == null) return;
+        if (queue.Plans.Count > 0)
+            queue.Plans[0].Number = System.Math.Min(queue.Plans[0].Number, size);
+        if (queue.Plans.Count > 1)
+            queue.Plans[1].Number = System.Math.Min(queue.Plans[1].Number, size);
     }
 
     private void BuildMoreHouses(GameState gameState)

@@ -8,11 +8,11 @@
 | 组件 | 缺口 |
 |---|---|
 | ~~UnitAI~~ ✅ | Pickup 接送(乘客发起+运输侧 PICKUP 双子态+取消即完成握手)、编队控制组 obstruction 切换、炮塔站姿(standground 强切+还原)——本波全落 |
-| **UnitMotion** | ~~异步路径请求~~✅(ticket+槽位+预算即答+次回合收割);余:朝向更新(转向速率物理)、waypoints 序列化(当前瞬态为刻意设计) |
+| **UnitMotion** | ~~异步路径~~✅ ~~朝向物理~~✅(PerformMove 转向块逐字:原地转/cos 减速/到站面向);余:waypoints 序列化(瞬态为刻意设计) |
 | ~~UnitSeparation~~ ✅ | push-pressure 全量(编队豁免/交叉 nudge/per-template Weight/压力累积减速/CheckMovement 钳)+ 20m 空间分格——本波全落 |
 | ~~Formation~~ ✅ | LoadFormation 换模板(executor 单编队换形分支)+ IsRearrangementAllowed(>5% 关键态禁排)——本波全落 |
 | ~~Garrison/Turret/Gate~~ ✅ | initGarrison/initTurrets(场景 XML 解析+生成末统一应用)、门自动开关(盟友感应+门洞占用重试+阻挡旗态机)——本波全落 |
-| **TerritoryManager** | 影响力模型/BFS 连通/blink 为重建式近似,需对照 CCmpTerritoryManager.cpp 校准 |
+| ~~TerritoryManager~~ ✅ | 本波校准:成本加权洪泛(8m 瓦+costGrid)+8 向连通+blink 纯驱动+百分比 |
 | ~~PathfinderComponent~~ ✅ | 增量阻挡更新:两格模型+脏区打点+脏 chunk 分层局部重连(本波) |
 | **Barter** | per-player BarterMultiplier 接科技修正值管线 |
 
@@ -29,13 +29,13 @@
 
 ## 3. Petra AI(§5)
 
-- 人口规划(targetNumWorkers 动态)。
+- ~~人口规划~~✅(trainMoreWorkers 全量:在训/在队计数、popPhase2 一阶门、saveResources、饱和闸、support/soldier 指数饱和、自适应批量);余:BuildDefenses 塔楼全量门控、StartingStrategy 低木 saveResources 联动。
 - 圣物治疗者编排细节、海图换面 attackPlansEncounteredWater。
 - (bombingAttacks/外交请求-应答/圣物夺取编排已于 142df83 落地。)
 
 ## 4. 渲染 / 音频 / GUI(§7–8)
 
-- **渲染**:天气系统;蒙皮阴影动画姿势(当前为绑定姿势投影);粒子触发点(水面溅花/烟尘按需求接)。
+- **渲染**:~~天气(上游本无天气系统=静态环境+地图粒子 actor;粒子 actor 装配本波落地)~~;~~蒙皮阴影动画姿势(共轭骨架代理,本波落地)~~;粒子触发点(水面溅花/烟尘按需求接)。
 - **音频**:环境音多轨叠加(现单层)。
 - **GUI**:间谍请求(需逐对 LOS 共享基建);mod.io minisigs Ed25519 验签(现只验存在性);campaigns 末关 endgame 页/useGameSetup 分支(初标"待触发器成熟",触发器总线 66e4f51 后已成熟,可重估)。
 - **GuiInterface 桥**:覆盖面约原版 1/5,HUD/Minimap 热路径仍有零散 QueryInterface 直读(每帧性能敏感段,按需补桥)。
@@ -55,5 +55,6 @@
 
 ~~P1 性能三件套 + §3B 组件尾巴批量~~(2026-09-03 全落:增量寻路/异步路径/推挤压力
 + 门自动开关/编队组切换/炮塔站姿/重排闸门/LoadFormation/initGarrison/Pickup)。
-存量最大项:**TerritoryManager 对照校准**(§3B)与 **UnitMotion 朝向物理**;
-渲染侧天气/蒙皮阴影;Petra 人口规划。
+存量最大项(2026-09-03 更新,TerritoryManager/转向/天气/阴影/人口规划均已落):
+**BuildDefenses 塔楼门控全量**、Petra StartingStrategy saveResources 联动、
+触发器表达力之外的 §4 序列化覆盖(U64/I64/Float)、GuiInterface 桥扩面。

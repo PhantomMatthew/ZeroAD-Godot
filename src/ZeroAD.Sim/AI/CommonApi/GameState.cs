@@ -295,9 +295,12 @@ public sealed class GameState
         {
             var trainable = trainer.Template.TrainableEntities;
             if (trainable == null) continue;
+            // {native} = 建筑自身文明(Trainer.js:503-558;驻扎在占领的异族 CC 上时
+            // native≠owner civ)。{civ} = 玩家文明(ApplyCiv)。
+            string nativeCiv = trainer.Template.Get("Identity/Civ") ?? "";
             foreach (var tmplName in trainable.Split(' ', System.StringSplitOptions.RemoveEmptyEntries))
             {
-                var resolved = ApplyCiv(tmplName);
+                var resolved = ApplyCiv(tmplName).Replace("{native}", nativeCiv);
                 if (!Templates.Cache.ContainsKey(resolved)) continue;
                 var def = GetTemplate(resolved);
                 if (def == null) continue;

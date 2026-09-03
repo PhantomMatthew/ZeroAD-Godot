@@ -79,6 +79,48 @@ public sealed class PetraEconomyTests
     }
 
     [Fact]
+    public void Hq_TrainMoreWorkers_InTrainingSaturation_StopsNewPlans()
+    {
+        // 原版饱和闸:numberInTraining > 15 → 不加单。直接把 CC 生产队列堆过闸,
+        // 观察若干回合内 villager 队列无新单(命令侧:无新 Train)。
+        var w = NewAiWorld();
+        if (w == null) return;
+        var pq = w.Cm.QueryInterface<ProductionQueue>(w.Cc)!;
+        for (int i = 0; i < 4; i++)
+            pq.Enqueue("units/gaul/infantry_spearman_b", 0, 0, 10f, count: 5);   // 20 在训
+        int villagerPlansBefore = w.Hq.Queues.GetQueue("villager")?.CountQueuedUnits() ?? 0;
+        for (int i = 0; i < 6; i++)
+        {
+            w.Hq.Update(w.Gs, w.Events);
+            w.Net.AdvanceTurn();
+        }
+        int villagerPlansAfter = w.Hq.Queues.GetQueue("villager")?.CountQueuedUnits() ?? 0;
+        Assert.True(villagerPlansAfter <= villagerPlansBefore + 1,
+            $"in-training saturation gate should suppress new villager plans ({villagerPlansBefore}→{villagerPlansAfter})");
+        // 对照:无在训时首轮即出村民计划(旧测试已钉训练执行;这里钉"会产生计划")。
+    }
+
+    [Fact]
+    public void Hq_TrainMoreWorkers_AdaptiveBatch_ClampReachesProduction()
+    {
+        // 批量自适应:workers<12 → size=1;预置 5 批量计划被钳到 1,
+        // 效果到达生产项(Count==1)。
+        var w = NewAiWorld();
+        if (w == null) return;
+        w.Hq.Queues.GetQueue("villager")?.AddPlan(new TrainingPlan(w.Gs,
+            "units/{civ}/support_civilian", number: 5));
+        w.Hq.Update(w.Gs, w.Events);
+        for (int i = 0; i < 3; i++)
+        {
+            w.Net.AdvanceTurn();
+        }
+        var pq = w.Cm.QueryInterface<ProductionQueue>(w.Cc)!;
+        var item = pq.Queue.FirstOrDefault(q => q.TemplateName.Contains("support_civilian"));
+        Assert.True(item != null, "clamped villager plan should reach production");
+        Assert.Equal(1, item!.Count);
+    }
+
+    [Fact]
     public void Hq_BuildMoreHouses_SpawnsHouseFoundation_WhenBedsLow()
     {
         var w = NewAiWorld();

@@ -42,6 +42,10 @@ public sealed class AttackManager
 
     private int _totalNumber;
     private int _rushNumber;
+    /// <summary>已发起的 rush 数(原版 rushNumber;HQ 人口规划的 alpha 门用)。</summary>
+    public int RushNumber => _rushNumber;
+    /// <summary>rush 次数上限(原版 maxRushes;难度相关)。</summary>
+    public int MaxRushesCount => MaxRushes;
     private int _attackNumber;
     /// <summary>rush 规模表(原版 rushSize 随 rushNumber 递增)。</summary>
     private static readonly int[] RushSizes = { 6, 10, 14 };
