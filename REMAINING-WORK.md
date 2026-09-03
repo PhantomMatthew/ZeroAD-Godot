@@ -7,21 +7,21 @@
 
 | 组件 | 缺口 |
 |---|---|
-| **UnitAI** | Pickup 接送、编队控制组 obstruction 切换、炮塔站姿 |
-| **UnitMotion**(408 行 vs 原 C++ ~2000) | 异步路径请求架构(现同步解算+0.3s 节流)、朝向更新、waypoints 序列化 |
-| **UnitSeparation** | pushing-pressure、编队豁免、中途 nudge、per-template weight、CheckMovement 不可通行钳制、O(n²)→空间分格 |
-| **Formation** | LoadFormation 换模板、IsRearrangementAllowed |
-| **Garrison/Turret/Gate** | initGarrison/initTurrets、门自动开关 |
+| ~~UnitAI~~ ✅ | Pickup 接送(乘客发起+运输侧 PICKUP 双子态+取消即完成握手)、编队控制组 obstruction 切换、炮塔站姿(standground 强切+还原)——本波全落 |
+| **UnitMotion** | ~~异步路径请求~~✅(ticket+槽位+预算即答+次回合收割);余:朝向更新(转向速率物理)、waypoints 序列化(当前瞬态为刻意设计) |
+| ~~UnitSeparation~~ ✅ | push-pressure 全量(编队豁免/交叉 nudge/per-template Weight/压力累积减速/CheckMovement 钳)+ 20m 空间分格——本波全落 |
+| ~~Formation~~ ✅ | LoadFormation 换模板(executor 单编队换形分支)+ IsRearrangementAllowed(>5% 关键态禁排)——本波全落 |
+| ~~Garrison/Turret/Gate~~ ✅ | initGarrison/initTurrets(场景 XML 解析+生成末统一应用)、门自动开关(盟友感应+门洞占用重试+阻挡旗态机)——本波全落 |
 | **TerritoryManager** | 影响力模型/BFS 连通/blink 为重建式近似,需对照 CCmpTerritoryManager.cpp 校准 |
-| **PathfinderComponent**(建议 P1) | 增量阻挡更新目前是"全量 RebuildGrid"替代 |
+| ~~PathfinderComponent~~ ✅ | 增量阻挡更新:两格模型+脏区打点+脏 chunk 分层局部重连(本波) |
 | **Barter** | per-player BarterMultiplier 接科技修正值管线 |
 
 ## 2. 内核基础设施(§4)
 
 | 项 | 状态 | 缺口 |
 |---|---|---|
-| 寻路异步任务化 | 🟡 | LongPathfinder 请求在回合边界收割,结果确定;未线程池化 |
-| 寻路增量更新 | 🟡 | 阻挡变化应局部刷新导航块(现全量重建) |
+| 寻路异步任务化 | ✅ | ticket+索引槽位+次回合收割(确定性);后台单任务(多 worker 需 per-worker LongPathfinder 实例——30MB scratch 驻留,按需再扩) |
+| 寻路增量更新 | ✅ | 阻挡变化按脏矩形补丁+脏 chunk 局部重连(上游 UpdateGrid/HierUpdate 移植) |
 | push-out / 圆形障碍 | 🟡 | 对照 CCmpObstructionManager 的 shape 体系补齐 |
 | 序列化类型覆盖 | 🟡 | U64/I64/Float、backref 共享对象;如需与原版存档互通再对齐二进制格式(当前自研格式 v13) |
 | TurnManager 节奏/超时 | 🟡 | 回合超时节奏控制、客户端落后踢出策略 |
@@ -53,9 +53,7 @@
 
 ## 建议下一波
 
-按路线表,**P1 性能三件套**挡着"300 单位不卡"目标:
-1. 寻路增量阻挡更新(§2/§4)
-2. UnitMotion 异步架构
-3. UnitSeparation push-pressure + 空间分格
-
-其次:§3B 组件尾巴批量清扫(Pickup/门开关/initGarrison 等一揽子)。
+~~P1 性能三件套 + §3B 组件尾巴批量~~(2026-09-03 全落:增量寻路/异步路径/推挤压力
++ 门自动开关/编队组切换/炮塔站姿/重排闸门/LoadFormation/initGarrison/Pickup)。
+存量最大项:**TerritoryManager 对照校准**(§3B)与 **UnitMotion 朝向物理**;
+渲染侧天气/蒙皮阴影;Petra 人口规划。

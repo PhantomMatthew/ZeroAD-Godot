@@ -88,6 +88,18 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
     }
 
 
+    /// <summary>Port of GarrisonHolder.CanPickup(GarrisonHolder.js:69-75):
+    /// 模板 Pickup + 未满 + 乘客与持有者同主(原版 IsOwnedByPlayer)。</summary>
+    public bool CanPickup(ComponentManager cm, EntityId passenger)
+    {
+        if (!Pickup) return false;
+        var g = cm.QueryInterface<GarrisonableComponent>(passenger);
+        if (g == null || OccupiedSlots(cm) + g.TotalSize(cm) > GetCapacity(cm)) return false;
+        var own = cm.QueryInterface<OwnershipComponent>(Entity);
+        var pown = cm.QueryInterface<OwnershipComponent>(passenger);
+        return own != null && pown != null && own.PlayerId == pown.PlayerId;
+    }
+
     /// <summary>Port of GetCapacity(经修正值管线)。</summary>
     public int GetCapacity(ComponentManager cm) =>
         (int)Math.Round(cm.Modifiers.ApplyPrefix("GarrisonHolder/Max", Max, Entity),

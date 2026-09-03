@@ -17,6 +17,10 @@ namespace ZeroAD.Sim.Content
         public float OrientationY;
         public bool IsActor;
         public bool IsSimulationEntity;
+        /// <summary>预驻防(原版 MapReader &lt;Garrison&gt;):地图初始进驻本实体的单位 uid 表。</summary>
+        public List<uint> InitGarrisonUids = new();
+        /// <summary>预占炮塔(原版 &lt;Turrets&gt;):(点位名, 单位 uid) 对。</summary>
+        public List<(string Point, uint Uid)> InitTurretPairs = new();
     }
 
     public sealed class ScenarioPlayerData
@@ -203,6 +207,21 @@ namespace ZeroAD.Sim.Content
             var orient = ent.Element("Orientation");
             if (orient != null)
                 def.OrientationY = ParseFloat(orient.Attribute("y")?.Value);
+
+            // 原版 MapReader.cpp:1052-1076:Garrison/Turrets 子元素(uid 引用)。
+            var garrison = ent.Element("Garrison");
+            if (garrison != null)
+                foreach (var ge in garrison.Elements())
+                    if (uint.TryParse(ge.Attribute("uid")?.Value, out var guid))
+                        def.InitGarrisonUids.Add(guid);
+            var turrets = ent.Element("Turrets");
+            if (turrets != null)
+                foreach (var tp in turrets.Elements())
+                {
+                    string point = tp.Attribute("turret")?.Value ?? "";
+                    if (uint.TryParse(tp.Attribute("uid")?.Value, out var tuid))
+                        def.InitTurretPairs.Add((point, tuid));
+                }
 
             return def;
         }

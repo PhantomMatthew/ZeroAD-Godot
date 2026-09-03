@@ -513,6 +513,41 @@ public sealed class FormationTests
         Assert.Null(cm.QueryInterface<ObstructionComponent>(ctrl));
     }
 
+    [Fact]
+    public void LoadFormation_SwapsControllerTemplate_KeepsMembers()
+    {
+        // 原版 Formation.LoadFormation:选择集恰为一个现存编队且命令不同阵型 →
+        // 控制器换模板(special/formations/line),成员原样转挂,旧控制器销毁。
+        var cm = SetupRealWorld();
+        if (cm == null) return;
+
+        var members = new List<EntityId>();
+        for (int i = 0; i < 4; i++)
+            members.Add(cm.SpawnEntity("units/spart/infantry_spearman_b", i * 2f, 0f, ownerPlayerId: 1));
+        var ctrl = cm.SpawnEntity("special/formations/box", 5f, 5f, ownerPlayerId: 1);
+        var f = cm.QueryInterface<FormationComponent>(ctrl)!;
+        f.SetMembers(cm, members);
+
+        string lineTemplate = "special/formations/line_closed";
+        var newAi = f.LoadFormation(cm, lineTemplate);
+        Assert.NotNull(newAi);
+        var newCtrl = newAi!.Entity;
+        Assert.NotEqual(ctrl, newCtrl);   // 新实体
+        // 旧控制器销毁,成员转挂新控制器。
+        Assert.Null(cm.QueryInterface<FormationComponent>(ctrl));
+        var newF = cm.QueryInterface<FormationComponent>(newCtrl)!;
+        Assert.Equal(4, newF.Members.Count);
+        foreach (var m in members)
+            Assert.Equal(newCtrl, cm.QueryInterface<UnitAIComponent>(m)!.FormationController);
+        // 新控制器形状 = line。
+        // 模板确证换掉:line_closed 的 WidthDepthRatio=4(box=1;两者 Shape 同为
+        // 继承自 template_formation 的 square)。
+        var newStats = cm.Templates!.ExtractStats("special/formations/line_closed");
+        Assert.Equal(4f, newStats.FormationWidthDepthRatio, 3);
+        Assert.Equal(lineTemplate,
+            cm.QueryInterface<IdentityComponent>(newCtrl)!.TemplateName);
+    }
+
     private static uint[] Ids(List<EntityId> list)
     {
         var arr = new uint[list.Count];

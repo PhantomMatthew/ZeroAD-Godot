@@ -250,6 +250,37 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
     /// <summary>Port of Disband:移除全部成员并销毁控制器实体。原版 Disband→RemoveMembers
     /// 会因成员数 < Required 递归一次(空列表早退)再双 DestroyEntity(靠引擎幂等);
     /// 我们用 _disbanding 守卫去掉递归与双毁,语义一致。</summary>
+    /// <summary>Port of LoadFormation(Formation.js:1095-1099):控制器换模板(阵型形状
+    /// 热切换,成员不散)。原版走 ChangeEntityTemplate + OnEntityRenamed 重挂;
+    /// 此处直接:同位/同向/同主 spawn 新控制器 → 成员转挂 → 毁旧控制器。
+    /// 返回新控制器的 UnitAI(原版返回值同款)。</summary>
+    public UnitAIComponent? LoadFormation(ComponentManager cm, string newTemplate)
+    {
+        var ctrlPos = cm.QueryInterface<PositionComponent>(Entity);
+        if (ctrlPos == null) return null;
+        int owner = cm.QueryInterface<OwnershipComponent>(Entity)?.PlayerId ?? -1;
+        var members = new List<EntityId>(Members);
+        var pos = ctrlPos.Position;
+        var rot = ctrlPos.Rotation;
+        // 原命令(移动目标等)移交:新版控制器接着走。
+        var oldAi = cm.QueryInterface<UnitAIComponent>(Entity);
+        var walkTarget = oldAi?.CurrentOrder?.Position;
+
+        var newCtrl = cm.SpawnEntity(newTemplate, pos.X.ToFloat(), pos.Z.ToFloat(), owner);
+        var newPos = cm.QueryInterface<PositionComponent>(newCtrl);
+        if (newPos != null) newPos.Rotation = rot;
+        var newFormation = cm.QueryInterface<FormationComponent>(newCtrl);
+        var newAi = cm.QueryInterface<UnitAIComponent>(newCtrl);
+        if (newFormation == null || newAi == null) return null;
+
+        // 成员转挂(Disband 会销毁旧控制器——成员先摘再挂)。
+        Disband(cm);
+        newFormation.SetMembers(cm, members);
+        if (walkTarget is { } t)
+            newAi.Walk(t, queued: false);
+        return newAi;
+    }
+
     public void Disband(ComponentManager cm)
     {
         DeleteTwinFormations(cm);

@@ -721,6 +721,45 @@ namespace ZeroAD.Sim.Net
                 return;
             }
 
+            // 原版 GetFormationUnitAIs 的 LoadFormation 分支:选择集恰全在一个现存编队
+            // 且命令了不同阵型 → 控制器换模板(LoadFormation),成员原样转挂。
+            if (shape != "null" && shape != "remove")
+            {
+                var controllers = new System.Collections.Generic.HashSet<EntityId>();
+                bool allInOne = ids.Length > 0;
+                foreach (var s2 in ids)
+                {
+                    if (!uint.TryParse(s2, out uint raw)) { allInOne = false; break; }
+                    var ai = _cm.QueryInterface<UnitAIComponent>(new EntityId(raw));
+                    if (ai?.FormationController is not { } fc) { allInOne = false; break; }
+                    controllers.Add(fc);
+                }
+                if (allInOne && controllers.Count == 1)
+                {
+                    var fc = default(EntityId);
+                    foreach (var c in controllers) fc = c;   // 单元素取出
+                    var formation = _cm.QueryInterface<FormationComponent>(fc);
+                    var identity = _cm.QueryInterface<IdentityComponent>(fc);
+                    string newTemplate = "special/formations/" + shape;
+                    if (formation != null && identity != null
+                        && identity.TemplateName != newTemplate)
+                    {
+                        // 成员须全可编新阵型(原版 CanMoveEntsIntoFormation)。
+                        bool canAll = true;
+                        foreach (var m in formation.Members)
+                        {
+                            var mai = _cm.QueryInterface<UnitAIComponent>(m);
+                            if (mai == null || !mai.CanUseFormation(_cm, shape)) { canAll = false; break; }
+                        }
+                        if (canAll)
+                        {
+                            formation.LoadFormation(_cm, newTemplate);
+                            return;
+                        }
+                    }
+                }
+            }
+
             // 成员过滤:同主(命令玩家)、有 UnitAI、非驻防/炮塔/已在编队,
             // 且模板可编该阵型(原版 GetFormationUnitAIs → UnitAI.CanUseFormation:
             // <Formations disable=""/> 的村民/无列表的攻城器与船 不计数也不入队,

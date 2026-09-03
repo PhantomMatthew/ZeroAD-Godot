@@ -713,6 +713,27 @@ public sealed partial class SimBridge : Node
 			}
 		}
 
+		// 预驻防/预占炮塔(原版 MapReader 的 SetInitEntities + InitGame 应用序):
+		// 全部实体生成完、uid→实体映射定型后统一应用(原版在 OnGlobalInitGame
+		// 广播时执行——我们的生成即 InitGame 时点)。
+		foreach (var def in scenario.Entities)
+		{
+			if (def.InitGarrisonUids.Count == 0 && def.InitTurretPairs.Count == 0) continue;
+			if (!_scenarioUidMap.TryGetValue(def.Uid, out var holder)) continue;
+			foreach (uint guid in def.InitGarrisonUids)
+			{
+				if (!_scenarioUidMap.TryGetValue(guid, out var guest)) continue;
+				// 原版 GarrisonHolder.OnGlobalInitGame:经 Garrisonable.Garrison。
+				_sim.QueryInterface<GarrisonableComponent>(guest)?.Garrison(_sim, holder);
+			}
+			foreach (var (point, tuid) in def.InitTurretPairs)
+			{
+				if (!_scenarioUidMap.TryGetValue(tuid, out var turretUnit)) continue;
+				_sim.QueryInterface<TurretableComponent>(turretUnit)
+					?.OccupyTurret(_sim, holder, point);
+			}
+		}
+
 		ZeroAD.Godot.Actors.ActorDiagnostics.DumpSummary();
 	}
 

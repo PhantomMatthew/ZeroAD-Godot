@@ -113,6 +113,21 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     /// <summary>Port of UnitAI.js isGarrisoned:驻防中冻结订单处理(缓存标志,性能语义同原版)。</summary>
     public bool IsGarrisoned { get; private set; }
 
+    /// <summary>Pickup 接送的持有者(乘客侧;原版 UnitAI.js this.pickup):
+    /// 进入 GARRISON.APPROACHING 且持有者 CanPickup 时登记并通知持有者
+    /// (OnPickupRequested);离开 APPROACHING 任意出口发 OnPickupCanceled
+    /// (取消兼作完成握手——乘客入驻成功也走它)。</summary>
+    public EntityId? PickupHolder { get; private set; }
+
+    /// <summary>清 pickup 登记并通知持有者(原版 leave 段的 PostMessage(PickupCanceled))。</summary>
+    public void ClearPickup(ComponentManager? cm)
+    {
+        if (PickupHolder is not { } holder) return;
+        PickupHolder = null;
+        if (cm != null)
+            cm.QueryInterface<UnitAIComponent>(holder)?.OnPickupCanceled(Entity);
+    }
+
     /// <summary>Port of UnitAI.IsTurret()(缓存):在炮塔点上。不冻结 Tick(炮塔兵可作战),
     /// 仅 SetImmobile + 拒驻军/再上塔指令。原版的站姿切 stand-ground 不移植(站姿系统=P0 桩)。</summary>
     public bool IsTurret { get; private set; }
@@ -158,6 +173,60 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     /// <see cref="InitAsFormationController"/> 设置)。控制器的 IDLE 也要处理 Timer
     /// (定期重排),见 Tick 门。</summary>
     public bool IsFormationController { get; private set; }
+
+    // --- Pickup 接送(运输侧;原版 UnitAI.js OnPickupRequested/OnPickupCanceled/
+    // HasPickupOrder + Order.PickupUnit + INDIVIDUAL.PICKUP 双子态) ---
+
+    /// <summary>原版 HasPickupOrder:队列里有接该乘客的 PickupUnit 单。</summary>
+    public bool HasPickupOrder(EntityId passenger)
+    {
+        foreach (var o in _orderQueue)
+            if (o.Type == "PickupUnit" && o.Target == passenger) return true;
+        return false;
+    }
+
+    /// <summary>原版 OnPickupRequested:已有接该乘客的单 → 忽略;否则在强制前缀后
+    /// 插入 PickupUnit(PushOrderAfterForced——玩家当前的强制单不被抢断)。</summary>
+    public void OnPickupRequested(EntityId passenger)
+    {
+        if (HasPickupOrder(passenger)) return;
+        var order = new UnitOrder { Type = "PickupUnit", Target = passenger, Force = true };
+        // 强制前缀后插入(队列首 = 当前执行单)。
+        var node = _orderQueue.First;
+        while (node != null && node.Value.Force && node.Value.Type == "PickupUnit")
+            node = node.Next;   // 连续 PickupUnit 强制链排尾(同目标去重先行)
+        if (node != null && node.Value.Force)
+        {
+            _orderQueue.AddAfter(node, order);
+        }
+        else
+        {
+            _orderQueue.AddFirst(order);
+        }
+    }
+
+    /// <summary>原版 OnPickupCanceled:当前单是该乘客的接送 → FinishOrder;
+    /// 在队 → 摘除。入驻成功也走这条路(取消 = 完成握手)。</summary>
+    public void OnPickupCanceled(EntityId passenger)
+    {
+        var node = _orderQueue.First;
+        while (node != null)
+        {
+            if (node.Value.Type == "PickupUnit" && node.Value.Target == passenger)
+            {
+                if (node == _orderQueue.First)
+                {
+                    FinishOrder();
+                }
+                else
+                {
+                    _orderQueue.Remove(node);
+                }
+                return;
+            }
+            node = node.Next;
+        }
+    }
 
     /// <summary>Port of UnitAI.SetFormationController(由 FormationComponent.SetMembers/
     /// AddMembers 调用)。原版同款把 Obstruction ControlGroup 切到控制器
@@ -972,6 +1041,13 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 return;
             }
             MoveToTargetEdge(u, t, m.Cm, Fixed.FromFloat(holder.LoadingRange));
+            // 原版 GARRISON.APPROACHING.enter 的 pickup 登记:持有者 CanPickup →
+            // 通知持有者(它会插一单 PickupUnit 来接)。
+            if (holder.CanPickup(m.Cm, u.Entity))
+            {
+                u.PickupHolder = t;
+                m.Cm.QueryInterface<UnitAIComponent>(t)?.OnPickupRequested(u.Entity);
+            }
             u.FsmNextState = "GARRISON.APPROACHING";
         });
         ind.On("Order.OccupyTurret", (u, m) =>
@@ -992,8 +1068,63 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 return;
             }
             MoveToTargetEdge(u, t, m.Cm, Fixed.FromFloat(holder.LoadingRange));
+            if (holder.CanPickup(m.Cm, u.Entity))
+            {
+                u.PickupHolder = t;
+                m.Cm.QueryInterface<UnitAIComponent>(t)?.OnPickupRequested(u.Entity);
+            }
             u.FsmNextState = "GARRISON.APPROACHING";
         });
+        // 原版 Order.PickupUnit(持有者=本实体,目标=乘客):满员 → FinishOrder;
+        // 乘客能自力到达且够近(<200m)→ LOADING 等;否则 APPROACHING 去接。
+        ind.On("Order.PickupUnit", (u, m) =>
+        {
+            if (m.Order!.Target is not { } passenger) { u.FinishOrder(); return; }
+            // 装填类型:驻军优先(GarrisonHolder+乘客 Garrisonable),否则炮塔对。
+            var gh = m.Cm!.QueryInterface<GarrisonHolderComponent>(u.Entity);
+            var th = gh == null ? m.Cm.QueryInterface<TurretHolderComponent>(u.Entity) : null;
+            if (gh == null && th == null) { u.FinishOrder(); return; }
+            bool full = gh != null
+                ? (m.Cm.QueryInterface<GarrisonableComponent>(passenger) is { } g2
+                    && gh.OccupiedSlots(m.Cm) + g2.TotalSize(m.Cm) > gh.GetCapacity(m.Cm))
+                : !th!.TurretPoints.Exists(p2 => p2.Entity == null);
+            if (full) { u.FinishOrder(); return; }
+            float loadRange = gh?.LoadingRange ?? th!.LoadingRange;
+
+            // 原版反查:乘客能自己走过来且直线距离 <200 → 不挪窝,原地 LOADING。
+            var passengerMotion = m.Cm.QueryInterface<UnitMotion>(passenger);
+            bool passengerCanReach = passengerMotion != null;
+            var pf = SimSystem.Pathfinder;
+            if (passengerCanReach && pf != null)
+            {
+                var pp = m.Cm.QueryInterface<PositionComponent>(passenger);
+                var up = m.Cm.QueryInterface<PositionComponent>(u.Entity);
+                if (pp != null && up != null)
+                {
+                    // 同陆区才可自力到达(原版 IsTargetRangeReachable 的可达性近似)。
+                    passengerCanReach = pf.GetLandRegion(pp.Position.X, pp.Position.Z)
+                        == pf.GetLandRegion(up.Position.X, up.Position.Z);
+                }
+            }
+            float dist = -1f;
+            var pp2 = m.Cm.QueryInterface<PositionComponent>(passenger);
+            var up2 = m.Cm.QueryInterface<PositionComponent>(u.Entity);
+            if (pp2 != null && up2 != null)
+            {
+                float dx = pp2.Position.X.ToFloat() - up2.Position.X.ToFloat();
+                float dz = pp2.Position.Z.ToFloat() - up2.Position.Z.ToFloat();
+                dist = MathF.Sqrt(dx * dx + dz * dz);
+            }
+            if (passengerCanReach && dist >= 0f && dist < 200f)
+            {
+                u.FsmNextState = "PICKUP.LOADING";
+                return;
+            }
+            if (passengerMotion == null) { u.FinishOrder(); return; }   // 双方都动不了
+            MoveToTargetEdge(u, passenger, m.Cm, Fixed.FromFloat(loadRange));
+            u.FsmNextState = "PICKUP.APPROACHING";
+        });
+
         ind.On("Order.Heal", (u, m) =>
         {
             // 对齐原版 Order.Heal:目标死亡/自己/不可治疗 → FinishOrder 拒收;
@@ -1110,8 +1241,28 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         // 驻军与占塔共用(原版同,以 order.data.garrison 区分;本移植看 order.Type)。
         // 目标失效/变满 → FinishOrder(原版 Pickup 接送不移植)。
         spec.State("INDIVIDUAL").State("GARRISON").State("APPROACHING")
+            .Leave(u =>
+            {
+                // 原版 GARRISON.APPROACHING.leave:pickup 取消(兼作完成握手)+ 停走。
+                if (u.PickupHolder is { } holder)
+                {
+                    u.ClearPickup(SimSystem.Sim);
+                    _ = holder;
+                }
+                return false;
+            })
             .On("Timer", (u, m) =>
             {
+                // 原版 MovementUpdate 中止条件:持有者已无接送单且不在空闲 → 乘客放弃。
+                if (u.PickupHolder is { } holder2)
+                {
+                    var hai = m.Cm!.QueryInterface<UnitAIComponent>(holder2);
+                    if (hai == null || (!hai.HasPickupOrder(u.Entity) && !hai.IsIdle))
+                    {
+                        u.FinishOrder();
+                        return;
+                    }
+                }
                 if (u.CurrentOrder?.Type == "OccupyTurret")
                 {
                     var tb = m.Cm!.QueryInterface<TurretableComponent>(u.Entity);
@@ -1149,6 +1300,45 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 if (motion != null && !motion.HasMoveTarget)
                     MoveToTargetEdge(u, t, m.Cm, Fixed.FromFloat(holder.LoadingRange));
             });
+        // PICKUP 子树(原版 UnitAI.js INDIVIDUAL.PICKUP;运输侧——接送乘客):
+        // APPROACHING 接近乘客至装填射程 → LOADING 原地等乘客上船。
+        // PickupCanceled 不经 FSM 消息:乘客侧直调 OnPickupCanceled → FinishOrder。
+        spec.State("INDIVIDUAL").State("PICKUP").State("APPROACHING")
+            .On("Timer", (u, m) =>
+            {
+                if (u.CurrentOrder?.Target is not { } passenger) { u.FinishOrder(); return; }
+                var pai = m.Cm!.QueryInterface<UnitAIComponent>(passenger);
+                // 乘客已上船/上塔/死了 → 收单(防御;正常由取消握手先行)。
+                if (pai == null || pai.IsGarrisoned || pai.IsTurret) { u.FinishOrder(); return; }
+                float loadRange = m.Cm.QueryInterface<GarrisonHolderComponent>(u.Entity)?.LoadingRange
+                    ?? m.Cm.QueryInterface<TurretHolderComponent>(u.Entity)?.LoadingRange ?? 2f;
+                if (WithinRange(u.Entity, passenger, m.Cm, (int)System.Math.Ceiling(loadRange)))
+                {
+                    StopMoving(u);
+                    u.FsmNextState = "PICKUP.LOADING";
+                    return;
+                }
+                var motion = m.Cm.QueryInterface<UnitMotion>(u.Entity);
+                if (motion != null && !motion.HasMoveTarget)
+                    MoveToTargetEdge(u, passenger, m.Cm, Fixed.FromFloat(loadRange));
+            });
+        spec.State("INDIVIDUAL").State("PICKUP").State("LOADING")
+            .On("Timer", (u, m) =>
+            {
+                if (u.CurrentOrder?.Target is not { } passenger) { u.FinishOrder(); return; }
+                var pai = m.Cm!.QueryInterface<UnitAIComponent>(passenger);
+                if (pai == null || pai.IsGarrisoned || pai.IsTurret) { u.FinishOrder(); return; }
+                // 满员(期间别人先上了)→ 收单。
+                var gh = m.Cm.QueryInterface<GarrisonHolderComponent>(u.Entity);
+                var th = gh == null ? m.Cm.QueryInterface<TurretHolderComponent>(u.Entity) : null;
+                if (gh == null && th == null) { u.FinishOrder(); return; }
+                bool full = gh != null
+                    ? (m.Cm.QueryInterface<GarrisonableComponent>(passenger) is { } g2
+                        && gh.OccupiedSlots(m.Cm) + g2.TotalSize(m.Cm) > gh.GetCapacity(m.Cm))
+                    : !th!.TurretPoints.Exists(p2 => p2.Entity == null);
+                if (full) u.FinishOrder();
+            });
+
         spec.State("INDIVIDUAL").State("GARRISON").State("GARRISONING")
             .Enter(u =>
             {

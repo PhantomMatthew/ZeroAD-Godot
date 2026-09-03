@@ -59,19 +59,19 @@
 
 | 优先 | 文件(vs 原版) | 缺口 |
 |---|---|---|
-| P1 | **UnitAI.cs** | ✅ CHASING/FINDINGNEWTARGET+Heal/Treasure 续单+偏好索敌(71344aa);余:Pickup 接送/编队控制组切换/炮塔站姿 |
+| P1 | **UnitAI.cs** | ✅ CHASING/FINDINGNEWTARGET+Heal/Treasure 续单+偏好索敌(71344aa)+Pickup 接送/编队控制组切换/炮塔站姿(本波全落) |
 | P1 | **Combat.cs** | ✅ 全清:多攻击型分立(1bbcffc)+溅射范围伤害+弹道延迟(b7b907d)+回血再生(40124c0)+DeathDamage 联动(1754989) |
 | P1 | **Production.cs** | ✅ 逐个出兵 + autoQueue(ea13f60);Upkeep 数据无条目(0 科技/模板带 upkeep,机制存在无需激活) |
 | P1 | **Technology.cs** | ✅ 全清:研究队列+取消退款(68f8e24)+训练 requirements 科技门(521f3b3) |
 | P1 | **PromotionComponent** | ✅ 已落地(40124c0):模板驱动换模板晋升(同位同向同主/血量折算/XP 结转),装配修复 |
 | P1 | **BarterSystem.cs** | ✅ 价漂移已落地(40124c0):每笔推涨+周期回落+存档骑缝;仅 per-player BarterMultiplier 待接(科技修正值管线) |
-| P2 | **UnitMotion.cs**(408 行 vs 原 C++ ~2000) | 异步路径请求架构(现同步解算+0.3s 节流 L41–47)、朝向更新、waypoints 序列化(L38–40 瞬态) |
-| P2 | **UnitSeparation.cs** | pushing-pressure、编队控制组豁免、中途 nudge、per-template weight、CheckMovement 不可通行钳制(TODO L99);O(n²) → 空间分格 |
-| P2 | **Formation.cs** | ✅ scatter + 双编队分簇合并 + 编队光环(6935798);余 LoadFormation 换模板/IsRearrangementAllowed |
-| P2 | **Garrison.cs/Turret.cs/GateComponent.cs** | ✅ 外交翻面即时逐出(e84c6bc);余 Pickup 接送/initGarrison/initTurrets/门自动开关 |
+| P2 | **UnitMotion.cs** | ✅ 异步路径请求(ticket+槽位投递+20/回合即答预算+次回合收割);余:朝向更新(转向速率物理)、waypoints 序列化(瞬态为刻意设计) |
+| P2 | **UnitSeparation.cs** | ✅ push-pressure 全量+20m 空间分格(编队豁免/交叉 nudge/Weight 配比/压力减速/CheckMovement 钳) |
+| P2 | **Formation.cs** | ✅ scatter + 双编队分簇合并 + 编队光环(6935798)+ LoadFormation 换模板 + IsRearrangementAllowed 闸门(本波) |
+| P2 | **Garrison.cs/Turret.cs/GateComponent.cs** | ✅ 外交翻面即时逐出(e84c6bc)+ Pickup/initGarrison/initTurrets/门自动开关(本波全落) |
 | P2 | **BuildingAI.cs** | ✅ 偏好排序+手动集火(752ae63) |
 | P2 | TerritoryManager.cs | 影响力模型/BFS 连通/blink 为重建式近似(L8–10 自述),建议对照 CCmpTerritoryManager.cpp 校准 |
-| P3 | PathfinderComponent.cs | 增量阻挡更新=全量 RebuildGrid 替代(L118–119,P1);通行类仅 default/ship |
+| P3 | PathfinderComponent.cs | ✅ 增量阻挡更新(两格模型+脏区打点+脏 chunk 局部重连,本波);通行类 9 类注册表(d5f0b94) |
 
 ---
 

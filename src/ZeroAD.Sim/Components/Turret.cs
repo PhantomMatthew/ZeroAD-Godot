@@ -40,6 +40,16 @@ public sealed class TurretHolderComponent : ComponentBase, IComponentMessageHand
     public TurretPoint? TurretPointByName(string name) =>
         TurretPoints.Find(p => p.Name == name);
 
+    /// <summary>原版 TurretHolder.CanPickup:模板 Pickup + 有空位 + 同主。</summary>
+    public bool CanPickup(ComponentManager cm, EntityId passenger)
+    {
+        if (!Pickup) return false;
+        if (!TurretPoints.Exists(p => p.Entity == null)) return false;
+        var own = cm.QueryInterface<OwnershipComponent>(Entity);
+        var pown = cm.QueryInterface<OwnershipComponent>(passenger);
+        return own != null && pown != null && own.PlayerId == pown.PlayerId;
+    }
+
     /// <summary>Port of AllowedToOccupyTurretPoint:空位(或替换语义)+ 互盟 + 类别。</summary>
     public bool AllowedToOccupyTurretPoint(ComponentManager cm, EntityId entity,
         TurretPoint? point, bool forReplacement = false)
