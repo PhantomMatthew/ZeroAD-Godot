@@ -11,6 +11,10 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
     public float TotalTime;
     public string ResultTemplate = "";
     public bool IsBuilt;
+    /// <summary>原版 Foundation.committed:首个工人开工即提交——清场(DeleteUponConstruction
+    /// 实体销毁)+ 挤出(GetEntitiesBlockingConstruction 的单位收 LeaveFoundation 走出地基)。
+    /// 序列化(存档 v17 同波)。</summary>
+    public bool Committed;
 
     // 工人表(EntityId → 最近上报的 rate;原版 Foundation.js this.builders Map)。
     // 键序按 EntityId 排序遍历保确定。
@@ -72,6 +76,7 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
     public bool Build(EntityId builderEnt, float rate, float dt)
     {
         if (IsBuilt) return true;
+        if (!Committed) Commit(SimSystem.Sim);   // 首个开工 tick 提交(清场+挤出)
         AddProgress(rate * BuildMultiplier * dt);
         if (_builders.TryGetValue(builderEnt, out float old))
         {
@@ -92,12 +97,33 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
         }
     }
 
+    /// <summary>原版 Foundation.Commit:清场 + 挤出。</summary>
+    public void Commit(ComponentManager? cm)
+    {
+        if (Committed) return;
+        Committed = true;
+        if (cm == null) return;
+        var obs = cm.QueryInterface<ObstructionComponent>(Entity);
+        if (obs == null || SimSystem.Obstructions == null) return;
+        foreach (var ent in SimSystem.Obstructions.GetEntitiesBlockingConstruction(obs.Tag))
+        {
+            var o = cm.QueryInterface<ObstructionComponent>(ent);
+            if (o != null && (o.Flags & ObstructionFlags.DeleteUponConstruction) != 0)
+            {
+                cm.DestroyEntity(ent);
+                continue;
+            }
+            cm.QueryInterface<UnitAIComponent>(ent)?.LeaveFoundation(cm, Entity);
+        }
+    }
+
     public override void Serialize(ISerializer s)
     {
         s.NumberFixed("prog", Maths.Fixed.FromFloat(Progress));
         s.NumberFixed("total", Maths.Fixed.FromFloat(TotalTime));
         s.StringASCII("tmpl", ResultTemplate);
         s.Bool("built", IsBuilt);
+        s.Bool("committed", Committed);   // 存档 v17
         s.NumberFixed("totrate", Maths.Fixed.FromFloat(TotalBuilderRate));
         s.NumberFixed("mult", Maths.Fixed.FromFloat(BuildMultiplier));
         // 工人表:数量 + 升序 (id, rate) 对。
@@ -116,6 +142,7 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
         TotalTime = d.NumberFixed("total").ToFloat();
         ResultTemplate = d.StringASCII("tmpl");
         IsBuilt = d.Bool("built");
+        Committed = d.Bool("committed");
         TotalBuilderRate = d.NumberFixed("totrate").ToFloat();
         BuildMultiplier = d.NumberFixed("mult").ToFloat();
         _builders.Clear();
@@ -282,6 +309,8 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         _repairRegistered = false;
         _foundationRegistered = false;
     }
+
+
 
     public override void Serialize(ISerializer s)
     {

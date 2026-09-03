@@ -31,7 +31,8 @@ public static class TemplateValidator
                 issues.Add(new(name, "parent", $"parent '{parent.Value}' not found"));
 
             // 2) 引用的实体模板存在(训练/建造/升级/晋升链)。
-            CheckRefs(loader, name, node, "ProductionQueue/Entities", issues);
+            CheckRefs(loader, name, node, "Trainer/Entities", issues);   // 训练列表(current data;原版 checkrefs 同键)
+            CheckRefs(loader, name, node, "ProductionQueue/Entities", issues);   // 遗留键(若有)
             CheckRefs(loader, name, node, "Builder/Entities", issues);
             var promo = node.GetChild("Promotion").GetChild("Entity");
             if (promo.IsOk && promo.Value.Length > 0)

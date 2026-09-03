@@ -61,13 +61,16 @@ public static class BarterSystem
         _restoreElapsed = elapsed;
     }
 
-    /// <summary>买入价(truePrice + 固定差 + 漂移;原版 GetPrices buy 公式,multiplier 未接线)。</summary>
-    public static int BuyPrice(ResourceType res)
-        => TruePrice * (DealAmount + ConstantDifference + (int)MathF.Round(_diff.GetValueOrDefault(res))) / DealAmount;
+    /// <summary>买入价(truePrice + 固定差 + 漂移,× 玩家乘数;原版 GetPrices buy 公式)。
+    /// multiplier = 玩家模板/科技修正(Player/BarterMultiplier/Buy/{res};缺省 1)。</summary>
+    public static int BuyPrice(ResourceType res, float multiplier = 1f)
+        => (int)MathF.Round(TruePrice * (DealAmount + ConstantDifference
+            + (int)MathF.Round(_diff.GetValueOrDefault(res))) * multiplier / DealAmount);
 
-    /// <summary>卖出价(truePrice − 固定差 + 漂移;原版 GetPrices sell 公式)。</summary>
-    public static int SellPrice(ResourceType res)
-        => TruePrice * (DealAmount - ConstantDifference + (int)MathF.Round(_diff.GetValueOrDefault(res))) / DealAmount;
+    /// <summary>卖出价(truePrice − 固定差 + 漂移,× 玩家乘数;原版 GetPrices sell 公式)。</summary>
+    public static int SellPrice(ResourceType res, float multiplier = 1f)
+        => (int)MathF.Round(TruePrice * (DealAmount - ConstantDifference
+            + (int)MathF.Round(_diff.GetValueOrDefault(res))) * multiplier / DealAmount);
 
     /// <summary>每笔推涨(原版 ExchangeResources 尾部:sell 侧 +、buy 侧 −)。</summary>
     private static void ApplyDealDrift(ResourceType sell, ResourceType buy, int amount)
@@ -100,7 +103,11 @@ public static class BarterSystem
         if (sell == buy) return;
         if (!player.CanBarter(cm, playerId)) return;
         if (!player.TrySpend(sell, amount)) return;
-        int gained = (int)Math.Round((double)SellPrice(sell) / BuyPrice(buy) * amount, MidpointRounding.AwayFromZero);
+        // 原版:价格 × 玩家乘数(模板/科技),换算比例 = sell×mult.sell / buy×mult.buy。
+        int gained = (int)Math.Round(
+            (double)SellPrice(sell, player.GetBarterMultiplierSell(sell.ToString().ToLowerInvariant()))
+            / BuyPrice(buy, player.GetBarterMultiplierBuy(buy.ToString().ToLowerInvariant()))
+            * amount, MidpointRounding.AwayFromZero);
         player.AddResource(buy, gained);
         // 价漂移:卖出资源涨、买入资源跌(原版 ExchangeResources 尾部)。
         ApplyDealDrift(sell, buy, amount);

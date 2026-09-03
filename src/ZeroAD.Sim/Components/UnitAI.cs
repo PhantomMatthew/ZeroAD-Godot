@@ -174,6 +174,47 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     /// (定期重排),见 Tick 门。</summary>
     public bool IsFormationController { get; private set; }
 
+    /// <summary>原版 UnitAI.LeaveFoundation(地基开工挤出,UnitAI.js:4269-4278):
+    /// 拒走矩阵:非盟友的敌方非动物单位(停战外)不走、打包中/可打包/不可动不走;
+    /// 已在 4m 外不走;否则走出地基(向背离地基中心方向撤到 半对角+4m)。
+    /// 近似记录:敌方判定用互敌(原版 IsOwnedByAllyOfEntity 反面);可打包用 Pack 件。</summary>
+    public void LeaveFoundation(ComponentManager cm, EntityId foundation)
+    {
+        var own = cm.QueryInterface<OwnershipComponent>(Entity);
+        var fown = cm.QueryInterface<OwnershipComponent>(foundation);
+        if (own != null && fown != null && fown.PlayerId > 0
+            && !cm.Players.GetMutualAllies(own.PlayerId).Contains(fown.PlayerId)
+            && own.PlayerId != fown.PlayerId)
+        {
+            // 敌方单位(非动物)在停战外不离开(原版:他们有权留下打建造者)。
+            var identity = cm.QueryInterface<IdentityComponent>(Entity);
+            bool isAnimal = identity != null && identity.MatchesClassList("Animal");
+            if (!isAnimal && !cm.EndGame.CeasefireActive)
+                return;
+        }
+        var pack = cm.QueryInterface<PackComponent>(Entity);
+        if (pack != null && (pack.Packed || pack.Packing)) return;
+        var motion = cm.QueryInterface<UnitMotion>(Entity);
+        if (motion == null || IsGarrisoned || IsTurret) return;
+
+        var pos = cm.QueryInterface<PositionComponent>(Entity);
+        var fpos = cm.QueryInterface<PositionComponent>(foundation);
+        if (pos == null || fpos == null) return;
+        var obs = cm.QueryInterface<ObstructionComponent>(foundation);
+        float halfDiag = obs != null ? obs.GetSize().ToFloat() : 2f;
+
+        float dx = pos.Position.X.ToFloat() - fpos.Position.X.ToFloat();
+        float dz = pos.Position.Z.ToFloat() - fpos.Position.Z.ToFloat();
+        float d = MathF.Sqrt(dx * dx + dz * dz);
+        // 已在界外(半对角 + 4m,原版 g_LeaveFoundationRange)不走。
+        if (d >= halfDiag + 4f) return;
+        if (d < 0.01f) { dx = 1f; dz = 0f; d = 1f; }   // 正中重合:向 +X 撤
+        float esc = halfDiag + 4f;
+        Walk(new FixedVector2D(
+            Fixed.FromFloat(fpos.Position.X.ToFloat() + dx / d * esc),
+            Fixed.FromFloat(fpos.Position.Z.ToFloat() + dz / d * esc)), queued: false);
+    }
+
     // --- Pickup 接送(运输侧;原版 UnitAI.js OnPickupRequested/OnPickupCanceled/
     // HasPickupOrder + Order.PickupUnit + INDIVIDUAL.PICKUP 双子态) ---
 

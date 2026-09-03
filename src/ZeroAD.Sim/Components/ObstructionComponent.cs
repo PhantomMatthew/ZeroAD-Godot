@@ -30,6 +30,11 @@ namespace ZeroAD.Sim.Components
         public uint ControlGroup;       // 0 = self (default assigned in OnInit)
         public uint ControlGroup2;      // 0 = none
         public bool Active = true;
+        /// <summary>多形状子件(原版 Obstructions 元素):(局部 x, z, 宽, 深) 全尺寸。
+        /// 非空时 EnsureRegistered 注册 N 个静态形状(每子件独立 tag——脏区/查询/
+        /// 阻挡判定按件走;门翼与门洞分别成形状,门开只让门洞)。</summary>
+        public System.Collections.Generic.List<(Fixed X, Fixed Z, Fixed W, Fixed D)> SubShapes = new();
+
         /// <summary>原版 DisableBlockMovement/DisableBlockPathfinding(门自动开关的核心):
         /// 覆盖式禁用——注册形状用 EffectiveFlags(基旗减去禁用项);模板可预置
         /// (Obstruction 子元素),运行时由 GateComponent 等切换。</summary>
@@ -56,6 +61,8 @@ namespace ZeroAD.Sim.Components
             if (!_registered) return;
             // 重挂形状让 EffectiveFlags 生效(打脏由 manager Remove/Add 自动完成)。
             SimSystem.Obstructions?.RemoveShape(_tag);
+            foreach (var t in _subTags) SimSystem.Obstructions?.RemoveShape(t);
+            _subTags.Clear();
             _registered = false;
             _tag = default;
             EnsureRegistered();
@@ -66,6 +73,7 @@ namespace ZeroAD.Sim.Components
         public static uint PlayerWallGroup(int playerId) => 0x40000000u | (uint)playerId;
 
         private ObstructionTag _tag;
+        private readonly System.Collections.Generic.List<ObstructionTag> _subTags = new();
         private bool _registered;
         // Track last-known position so we can forward the old XZ on a PositionChanged notification.
         private FixedVector2D _lastPos;
@@ -106,6 +114,12 @@ namespace ZeroAD.Sim.Components
                 Fixed hw = Size0 / Fixed.FromInt(2);
                 Fixed hh = Size1 / Fixed.FromInt(2);
                 _tag = mgr.AddStaticShape(Entity, _lastPos.X, _lastPos.Y, u, v, hw, hh, EffectiveFlags(), ControlGroup, ControlGroup2);
+                // 多形状子件(偏移为实体局部坐标;旋转近似同单形状——轴对齐 + 偏移)。
+                _subTags.Clear();
+                foreach (var sub in SubShapes)
+                    _subTags.Add(mgr.AddStaticShape(Entity, _lastPos.X + sub.X, _lastPos.Y + sub.Z,
+                        u, v, sub.W / Fixed.FromInt(2), sub.D / Fixed.FromInt(2),
+                        EffectiveFlags(), ControlGroup, ControlGroup2));
             }
             else
             {
@@ -141,6 +155,8 @@ namespace ZeroAD.Sim.Components
                 if (SimSystem.Sim != null)
                     SimSystem.Sim.PositionChanged -= OnPositionChanged;
                 SimSystem.Obstructions?.RemoveShape(_tag);
+                foreach (var t in _subTags) SimSystem.Obstructions?.RemoveShape(t);
+                _subTags.Clear();
                 _tag = default;
                 _registered = false;
             }
@@ -222,6 +238,8 @@ namespace ZeroAD.Sim.Components
             if (_registered)
             {
                 SimSystem.Obstructions?.RemoveShape(_tag);
+                foreach (var t in _subTags) SimSystem.Obstructions?.RemoveShape(t);
+                _subTags.Clear();
                 _registered = false;
                 _tag = default;
             }
@@ -238,6 +256,15 @@ namespace ZeroAD.Sim.Components
             s.Bool("active", Active);
             s.Bool("dbm", DisableBlockMovement);     // 存档 v14
             s.Bool("dbp", DisableBlockPathfinding);
+            // 多形状子件(存档 v17):数量 + 逐件 (x,z,w,d)。
+            s.NumberI32("subs", SubShapes.Count);
+            foreach (var sub in SubShapes)
+            {
+                s.NumberFixed("sx", sub.X);
+                s.NumberFixed("sz", sub.Z);
+                s.NumberFixed("sw", sub.W);
+                s.NumberFixed("sd", sub.D);
+            }
         }
 
         public override void Deserialize(IDeserializer d)
@@ -251,6 +278,11 @@ namespace ZeroAD.Sim.Components
             Active = d.Bool("active");
             DisableBlockMovement = d.Bool("dbm");
             DisableBlockPathfinding = d.Bool("dbp");
+            SubShapes.Clear();
+            int subs = d.NumberI32("subs");
+            for (int i = 0; i < subs; i++)
+                SubShapes.Add((d.NumberFixed("sx"), d.NumberFixed("sz"),
+                    d.NumberFixed("sw"), d.NumberFixed("sd")));
         }
 
         public void HandleMessage(IMessage message) { }

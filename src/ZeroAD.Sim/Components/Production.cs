@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Serialization;
 
@@ -414,6 +415,29 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
     public int Stone;
     public int Metal;
     /// <summary>Live pop usage (units owned). Maintained by ownership-change handlers.</summary>
+    /// <summary>易物价乘数(原版 Player.js barterMultiplier:模板 special/players/{civ}
+    /// 基值 + 科技/光环修正值管线重算;键 = 资源码)。</summary>
+    public Dictionary<string, float> BarterMultiplierBuy = new();
+    public Dictionary<string, float> BarterMultiplierSell = new();
+
+    /// <summary>重算易物乘数(原版 OnValueModification 的 BarterMultiplier 分支;
+    /// 研究完成/兜底重算时由 ValueModificationApplier 调用)。</summary>
+    public void RecomputeBarterMultipliers(ComponentManager cm)
+    {
+        foreach (var res in BarterMultiplierBuy.Keys.ToArray())
+            BarterMultiplierBuy[res] = cm.Modifiers.Apply(
+                $"Player/BarterMultiplier/Buy/{res}", BarterMultiplierBuy[res], Entity);
+        foreach (var res in BarterMultiplierSell.Keys.ToArray())
+            BarterMultiplierSell[res] = cm.Modifiers.Apply(
+                $"Player/BarterMultiplier/Sell/{res}", BarterMultiplierSell[res], Entity);
+    }
+
+    /// <summary>易物乘数(原版 GetBarterMultiplier;缺省 1)。</summary>
+    public float GetBarterMultiplierBuy(string res) =>
+        BarterMultiplierBuy.TryGetValue(res, out var v) ? v : 1f;
+    public float GetBarterMultiplierSell(string res) =>
+        BarterMultiplierSell.TryGetValue(res, out var v) ? v : 1f;
+
     public int PopUsed;
     /// <summary>Sum of PopulationComponent.Bonus across the player's buildings.</summary>
     public int PopBonuses;
@@ -651,6 +675,19 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
             s.NumberI32("goods", (int)goods);
             s.NumberI32("proba", proba);
         }
+        // 易物乘数(存档 v17):键序定序,值 float 位级。
+        s.NumberI32("barterBuy_n", BarterMultiplierBuy.Count);
+        foreach (var kv in BarterMultiplierBuy.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            s.StringASCII("bres", kv.Key);
+            s.NumberFloat("bval", kv.Value);
+        }
+        s.NumberI32("barterSell_n", BarterMultiplierSell.Count);
+        foreach (var kv in BarterMultiplierSell.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            s.StringASCII("sres", kv.Key);
+            s.NumberFloat("sval", kv.Value);
+        }
     }
 
     public override void Deserialize(IDeserializer d)
@@ -670,6 +707,16 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
         for (int i = 0; i < tn; i++)
             TradingGoods.Add(new KeyValuePair<ResourceType, int>(
                 (ResourceType)d.NumberI32("goods"), d.NumberI32("proba")));
+        // 易物乘数(存档 v17)。
+        BarterMultiplierBuy.Clear();
+        int bb = d.NumberI32("barterBuy_n");
+        for (int i2 = 0; i2 < bb; i2++)
+            BarterMultiplierBuy[d.StringASCII("bres")] = d.NumberFloat("bval");
+        BarterMultiplierSell.Clear();
+        int bs = d.NumberI32("barterSell_n");
+        for (int i3 = 0; i3 < bs; i3++)
+            BarterMultiplierSell[d.StringASCII("sres")] = d.NumberFloat("sval");
+
     }
 
     public void HandleMessage(IMessage message) { }

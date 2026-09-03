@@ -26,6 +26,9 @@ public sealed class BarterTests
     public void StaticPrices_Are_TruePrice_PlusMinus_ConstantDifference()
     {
         Assert.Equal(110, BarterSystem.BuyPrice(ResourceType.Wood));
+        // 乘数(本波接线):×1.2 买入 =110×1.2=132、卖出 ×0.8 =90×0.8=72。
+        Assert.Equal(132, BarterSystem.BuyPrice(ResourceType.Wood, 1.2f));
+        Assert.Equal(72, BarterSystem.SellPrice(ResourceType.Wood, 0.8f));
         Assert.Equal(90, BarterSystem.SellPrice(ResourceType.Wood));
         Assert.Equal(110, BarterSystem.BuyPrice(ResourceType.Food));
         Assert.Equal(90, BarterSystem.SellPrice(ResourceType.Food));
@@ -40,6 +43,24 @@ public sealed class BarterTests
         BarterSystem.ExchangeResources(cm, p1, playerId: 1, ResourceType.Wood, ResourceType.Food, 100);
         Assert.Equal(900, p1.Wood);
         Assert.Equal(82, p1.Food);
+    }
+
+    [Fact]
+    public void Exchange_PlayerMultiplier_ScalesGain()
+    {
+        // 玩家乘数(原版 GetPrices × multiplier):sell wood ×1.0、buy food ×0.5 →
+        // round(90/(110×0.5)×100) = round(163.6) = 164(买价折半 → 同样木换更多食物)。
+        var (cm, p1) = NewPlayerWithMarket();
+        p1.BarterMultiplierBuy["food"] = 0.5f;
+        p1.Wood = 1000; p1.Food = 0;
+        BarterSystem.ExchangeResources(cm, p1, 1, ResourceType.Wood, ResourceType.Food, 100);
+        Assert.Equal(164, p1.Food);
+        // 反向:sell ×2 → round(180/110×100)=164。
+        var (cm2, p2) = NewPlayerWithMarket();
+        p2.BarterMultiplierSell["wood"] = 2f;
+        p2.Wood = 1000; p2.Food = 0;
+        BarterSystem.ExchangeResources(cm2, p2, 1, ResourceType.Wood, ResourceType.Food, 100);
+        Assert.Equal(164, p2.Food);
     }
 
     [Fact]
@@ -97,4 +118,5 @@ public sealed class BarterTests
         Assert.Equal(900, p1.Wood);
         Assert.Equal(82, p1.Food);
     }
+
 }

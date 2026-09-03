@@ -301,8 +301,11 @@ public sealed class GuiInterface
     {
         var local = _cm.GetPlayerEntity(playerId);
         bool canBarter = local != null && local.CanBarter(_cm, playerId);
+        // 玩家乘数接线(原版 prices.buy/sell × multiplier)。
+        float multSell = local?.GetBarterMultiplierSell(sell.ToString().ToLowerInvariant()) ?? 1f;
+        float multBuy = local?.GetBarterMultiplierBuy(buy.ToString().ToLowerInvariant()) ?? 1f;
         int Gain(int amount) => (int)System.Math.Round(
-            (double)BarterSystem.SellPrice(sell) / BarterSystem.BuyPrice(buy) * amount);
+            (double)BarterSystem.SellPrice(sell, multSell) / BarterSystem.BuyPrice(buy, multBuy) * amount);
         return new BarterQuote(canBarter, Gain(100), Gain(500));
     }
 

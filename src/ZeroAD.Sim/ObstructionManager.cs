@@ -14,6 +14,9 @@ namespace ZeroAD.Sim
         BlockConstruction = 1 << 2,
         BlockPathfinding = 1 << 3,
         Moving = 1 << 4,    // unit is currently moving (pathfinder hint)
+        /// <summary>原版 DeleteUponConstruction:地基开工即销毁(尸体/宝藏等可消失物)。
+        /// FoundationComponent.Commit 用它清场。</summary>
+        DeleteUponConstruction = 1 << 5,
         DefaultBlock = BlockMovement | BlockFoundation | BlockConstruction | BlockPathfinding,
     }
 

@@ -444,7 +444,9 @@ namespace ZeroAD.Sim
                 Size0 = (stats != null && stats.ObstructionSize0 > Fixed.Zero)
                     ? stats.ObstructionSize0
                     : Fixed.FromFloat(1.0f),
-                Flags = ObstructionFlags.BlockMovement | ObstructionFlags.BlockFoundation
+                Flags = (ObstructionFlags.BlockMovement | ObstructionFlags.BlockFoundation)
+                    | (stats != null && stats.ObstructionDeleteUponConstruction
+                        ? ObstructionFlags.DeleteUponConstruction : 0)
             });
 
             var pos = cm.QueryInterface<PositionComponent>(entity);

@@ -319,7 +319,19 @@ public sealed partial class SimBridge : Node
 			if (slot.Kind == PlayerSlotKind.Closed) continue;
 			int pid = slot.PlayerId;
 			var playerEntity = _sim.CreateEntity();
-			_sim.AddComponent(playerEntity, new PlayerComponent { Civ = slot.Civ });
+			var pc = new PlayerComponent { Civ = slot.Civ };
+			// 易物乘数基值(原版 Player.js Init:special/players/{civ} 模板的 BarterMultiplier)。
+			try
+			{
+				var pstats = Templates?.ExtractStats($"special/players/{slot.Civ}");
+				if (pstats != null)
+				{
+					pc.BarterMultiplierBuy = pstats.BarterMultiplierBuy;
+					pc.BarterMultiplierSell = pstats.BarterMultiplierSell;
+				}
+			}
+			catch { }
+			_sim.AddComponent(playerEntity, pc);
 			_sim.AddComponent(playerEntity, new DiplomacyComponent());
 			// 受击警报 + 战区跟踪(原版挂 template_player 的 AttackDetection/BattleDetection)。
 			_sim.AddComponent(playerEntity, new AttackDetectionComponent());
@@ -504,7 +516,7 @@ public sealed partial class SimBridge : Node
 			else if (pd.PlayerId == 2)
 			{
 				var enemy = _sim.CreateEntity();
-				_sim.AddComponent(enemy, new PlayerComponent
+				var epc = new PlayerComponent
 				{
 					Wood = pd.Wood,
 					Food = pd.Food,
@@ -512,7 +524,19 @@ public sealed partial class SimBridge : Node
 					Metal = pd.Metal,
 					PopulationLimit = 20,
 					Civ = pd.Civ.Length > 0 ? pd.Civ : "athen",
-				});
+				};
+				try
+				{
+					var estats = Templates?.ExtractStats($"special/players/{epc.Civ}");
+					if (estats != null)
+					{
+						epc.BarterMultiplierBuy = estats.BarterMultiplierBuy;
+						epc.BarterMultiplierSell = estats.BarterMultiplierSell;
+					}
+				}
+				catch { }
+				_sim.AddComponent(enemy, epc);
+
 				_sim.AddComponent(enemy, new OwnershipComponent { PlayerId = pd.PlayerId });
 				_sim.AddComponent(enemy, new DiplomacyComponent());
 				// 受击警报 + 战区跟踪(与 P1 玩家实体同款)。
@@ -842,6 +866,11 @@ public sealed partial class SimBridge : Node
 			Size1 = Fixed.FromFloat(obSize1),
 			Flags = ObstructionFlags.DefaultBlock,
 		};
+		// 多形状子件(原版 Obstructions 元素——城墙门 Left/Right/Door 分形)。
+		if (stats != null && stats.ObstructionSubShapes.Count > 0)
+			foreach (var (name, sx, sz, sw, sd) in stats.ObstructionSubShapes)
+				obstruction.SubShapes.Add((Fixed.FromFloat(sx), Fixed.FromFloat(sz),
+					Fixed.FromFloat(sw), Fixed.FromFloat(sd)));
 		// 墙体(Wall 类):控制组 = 玩家墙组——同玩家墙件互不阻挡(拼链段搭进塔楼;
 		// 对齐原版 control group 语义),Placement 校验同组豁免(执行端同款)。
 		if (stats != null && stats.GetClassList().Contains("Wall") && def.Player > 0)
@@ -1925,6 +1954,9 @@ public sealed partial class SimBridge : Node
 				if (_playerEntity.HasValue)
 				{
 					ValueModificationApplier.RescaleHealth(_sim, _playerEntity.Value);
+					// 易物乘数随科技重算(原版 OnValueModification 的 BarterMultiplier 分支)。
+					_sim.QueryInterface<PlayerComponent>(_playerEntity.Value)
+						?.RecomputeBarterMultipliers(_sim);
 					// Capturable/CapturePoints 科技(如 ship_capture_resistance ×1.4)→ CP 数组按比例缩放
 					ValueModificationApplier.RescaleMaxCapturePoints(_sim, _playerEntity.Value);
 				}

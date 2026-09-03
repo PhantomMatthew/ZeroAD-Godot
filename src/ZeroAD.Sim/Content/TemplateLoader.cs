@@ -39,6 +39,26 @@ namespace ZeroAD.Sim.Content
 
         public ParamNode LoadTemplate(string templateName)
         {
+            // actor|name 合成模板(原版 CTemplateLoader::ConstructTemplateActor):
+            // special/actor 副本 + VisualActor 指向 actor 名 + ActorOnly + 任意
+            // Footprint + EditorOnly Selectable(Atlas 可选中)。不进继承链。
+            if (templateName.StartsWith("actor|", System.StringComparison.Ordinal))
+            {
+                if (_cache.TryGetValue(templateName, out var cachedActor))
+                    return cachedActor;
+                var actor = ParamNode.ResolveTemplate("special/actor", LoadXmlDocument);
+                actor.MergeWithXml("<Entity>"
+                    + "<VisualActor><Actor>" + templateName[6..]
+                    + "</Actor><ActorOnly/></VisualActor>"
+                    + "<Footprint><Circle radius='2.0'/><Height>1.0</Height></Footprint>"
+                    + "<Selectable><EditorOnly/>"
+                    + "<Overlay><Texture><MainTexture>128x128/ellipse.png</MainTexture>"
+                    + "<MainTextureMask>128x128/ellipse_mask.png</MainTextureMask>"
+                    + "</Texture></Overlay></Selectable>"
+                    + "</Entity>");
+                _cache[templateName] = actor;
+                return actor;
+            }
             if (_cache.TryGetValue(templateName, out var cached))
             {
                 // 缓存命中也过校验 memo:批量装载期跳过的模板在首次真正被请求时校验
@@ -185,6 +205,19 @@ namespace ZeroAD.Sim.Content
             var auras = node.GetChild("Auras");
             if (auras.IsOk)
                 stats.Auras = auras.ToString();
+
+            // Player/BarterMultiplier(special/players/* 模板;玩家易物价乘数基值)。
+            var barter = node.GetChild("BarterMultiplier");
+            if (barter.IsOk)
+            {
+                foreach (string side in new[] { "Buy", "Sell" })
+                {
+                    var dict = side == "Buy" ? stats.BarterMultiplierBuy : stats.BarterMultiplierSell;
+                    foreach (var (res, val) in barter.GetChild(side).Children)
+                        if (!res.StartsWith('@'))
+                            dict[res] = val.ToFloat();
+                }
+            }
 
             var identity = node.GetChild("Identity");
             if (identity.IsOk)
@@ -868,7 +901,26 @@ namespace ZeroAD.Sim.Content
                 {
                     stats.ObstructionShape = "static";
                     stats.ObstructionSize0 = Attr(staticEl, "width").IsOk ? Attr(staticEl, "width").ToFixed() : stats.ObstructionSize0;
+                    // 原版 DeleteUponConstruction 元素(开工即消失标记)。
+                    var obstrRoot = node.GetChild("Obstruction");
+                    if (obstrRoot.GetChild("DeleteUponConstruction").IsOk)
+                        stats.ObstructionDeleteUponConstruction = obstrRoot.GetChild("DeleteUponConstruction").ToBool();
                     stats.ObstructionSize1 = Attr(staticEl, "depth").IsOk ? Attr(staticEl, "depth").ToFixed() : stats.ObstructionSize1;
+                }
+                // 多形状(原版 <Obstructions><Name width depth x z/>...;城墙门的
+                // Left/Right/Door 分形)。子形状偏移为实体局部坐标(米)。
+                var multi = obstruction.GetChild("Obstructions");
+                if (multi.IsOk)
+                {
+                    stats.ObstructionShape = "static";
+                    foreach (var (subName, subEl) in multi.Children)
+                    {
+                        if (subName.StartsWith('@')) continue;
+                        stats.ObstructionSubShapes.Add((
+                            subName,
+                            Attr(subEl, "x").ToFloat(), Attr(subEl, "z").ToFloat(),
+                            Attr(subEl, "width").ToFloat(), Attr(subEl, "depth").ToFloat()));
+                    }
                 }
                 else if (obstruction.GetChild("Unit").IsOk)
                 {
@@ -1273,6 +1325,10 @@ namespace ZeroAD.Sim.Content
         public int StoneCost;
         public int MetalCost;
         public int PopulationCost;
+        /// <summary>Player/BarterMultiplier Buy/Sell 每资源乘数(special/players/{civ}
+        /// 模板;缺省 1)。键 = 资源码(food/wood/stone/metal)。</summary>
+        public Dictionary<string, float> BarterMultiplierBuy = new();
+        public Dictionary<string, float> BarterMultiplierSell = new();
         /// <summary>Pop capacity granted by buildings (House +10). Read from &lt;Cost&gt;&lt;PopulationBonus&gt;.</summary>
         public int PopulationBonus;
         public float BuildTime = 5f;
@@ -1514,6 +1570,11 @@ namespace ZeroAD.Sim.Content
         // Obstruction: what this entity blocks.
         // Shape: "" (default to unit circle), "static" (Size0=width, Size1=depth), "unit" (mobile circle).
         public string ObstructionShape = "";
+        /// <summary>Obstruction/DeleteUponConstruction(开工即消失;尸体/宝藏)。</summary>
+        public bool ObstructionDeleteUponConstruction;
+        /// <summary>多形状子件(原版 Obstructions 元素):(名, 局部 x, z, 宽, 深)。
+        /// 非空时优先于 ObstructionSize0/1 单形状。</summary>
+        public System.Collections.Generic.List<(string Name, float X, float Z, float W, float D)> ObstructionSubShapes = new();
         public Maths.Fixed ObstructionSize0 = Maths.Fixed.Zero;
         public Maths.Fixed ObstructionSize1 = Maths.Fixed.Zero;
         public bool ObstructionActive = true;
