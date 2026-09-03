@@ -15,6 +15,10 @@ internal sealed class CapturingSerializer : ISerializer
     public void NumberU16(string n, ushort v) => Fields.Add(v);
     public void NumberI16(string n, short v) => Fields.Add(v);
     public void NumberU32(string n, uint v) => Fields.Add(v);
+    public void NumberU64(string n, ulong v) => Fields.Add(v);
+    public void NumberI64(string n, long v) => Fields.Add(v);
+    public void NumberFloat(string n, float v) => Fields.Add(v);
+    public void NumberDouble(string n, double v) => Fields.Add(v);
     public void NumberI32(string n, int v) => Fields.Add(v);
     public void NumberFixed(string n, Fixed v) => Fields.Add(v.InternalValue);
     public void Bool(string n, bool v) => Fields.Add(v);
@@ -33,6 +37,10 @@ internal sealed class ReplayingDeserializer : IDeserializer
     public ushort NumberU16(string n) => Next<ushort>();
     public short NumberI16(string n) => Next<short>();
     public uint NumberU32(string n) => Next<uint>();
+    public ulong NumberU64(string n) => Next<ulong>();
+    public long NumberI64(string n) => Next<long>();
+    public float NumberFloat(string n) => Next<float>();
+    public double NumberDouble(string n) => Next<double>();
     public int NumberI32(string n) => Next<int>();
     public Fixed NumberFixed(string n) => Fixed.Zero.WithInternalValue(Next<int>());
     public bool Bool(string n) => Next<bool>();

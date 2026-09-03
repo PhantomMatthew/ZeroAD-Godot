@@ -61,27 +61,25 @@ public sealed partial class Minimap : Control
         BlendTerritory(worldSize);
 
         int lp = (int)_sim.LocalPlayerId;
-        foreach (var kvp in GetAllEntityNodes())
+        // 批量快照(回合缓存):每帧 × 每实体的 GetEntityState 逐调用分配消除。
+        foreach (var dot in _sim.Gui.GetMinimapEntities())
         {
+            var eid = new EntityId(dot.Id);
             // Fog-of-war: entities hidden from the local player don't appear at all;
             // fogged stand-ins (mirages/structures) draw dimmed.
-            var vis = _sim.Range.GetLosVisibility(kvp.Key, lp);
+            var vis = _sim.Range.GetLosVisibility(eid, lp);
             if (vis == LosVisibility.Hidden) continue;
 
-            var node = kvp.Value;
-            int px = Px(node.Position.X, worldSize);
-            int pz = Pz(node.Position.Z, worldSize);
+            int px = Px(dot.X, worldSize);
+            int pz = Pz(dot.Z, worldSize);
 
             if (px < 0 || px >= MapSize || pz < 0 || pz >= MapSize) continue;
 
-            // Read identity/health/owner via the GuiInterface facade instead of inline
-            // QueryInterface calls, so the query surface stays consolidated.
-            var st = _sim.Gui.GetEntityState(kvp.Key);
-            bool isBuilding = st?.IsBuilding ?? false;
-            bool isUnit = st?.IsUnit ?? false;
-            int ownerPlayerId = st?.OwnerPlayerId ?? -1;
-            float healthFraction = st?.HealthFraction ?? 1f;
-            string name = st?.Name ?? "";
+            bool isBuilding = dot.IsBuilding;
+            bool isUnit = dot.IsUnit;
+            int ownerPlayerId = dot.OwnerPlayerId;
+            float healthFraction = dot.HealthFraction;
+            string name = dot.Name;
 
             Color color;
             if (isBuilding || isUnit)
@@ -222,19 +220,12 @@ public sealed partial class Minimap : Control
 
     private void DrawPlayerMarker(float worldSize)
     {
-        foreach (var kvp in GetAllEntityNodes())
-        {
-            var identity = _sim.Sim.QueryInterface<IdentityComponent>(kvp.Key);
-            var owner = _sim.Sim.QueryInterface<OwnershipComponent>(kvp.Key);
-            if (identity == null || !identity.IsBuilding || owner == null || owner.PlayerId != 1)
-                continue;
-            if (!identity.TemplateName.Contains("civil_centre") && !identity.TemplateName.Contains("civic_centre"))
-                continue;
-            int px = Px(kvp.Value.Position.X, worldSize);
-            int pz = Pz(kvp.Value.Position.Z, worldSize);
-            DrawRect(new Rect2(px - 4, pz - 4, 8, 8), new Color(0.08f, 0.22f, 0.58f, 0.8f), false, 1.5f);
-            break;
-        }
+        // 桥:GetCivilCentrePosition(单趟桥侧扫描,替代每帧内联双查)。
+        var cc = _sim.Gui.GetCivilCentrePosition(1);
+        if (cc == null) return;
+        int px = Px(cc.Value.X, worldSize);
+        int pz = Pz(cc.Value.Z, worldSize);
+        DrawRect(new Rect2(px - 4, pz - 4, 8, 8), new Color(0.08f, 0.22f, 0.58f, 0.8f), false, 1.5f);
     }
 
     private void DrawDot(int px, int pz, Color color, int size)

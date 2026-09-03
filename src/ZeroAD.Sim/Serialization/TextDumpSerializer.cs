@@ -24,6 +24,12 @@ public sealed class TextDumpSerializer : ISerializer, ISectionSerializer
     public void NumberI16(string name, short value) => Line(name, value.ToString());
     public void NumberU32(string name, uint value) => Line(name, value.ToString());
     public void NumberI32(string name, int value) => Line(name, value.ToString());
+    public void NumberU64(string name, ulong value) => Line(name, value.ToString());
+    public void NumberI64(string name, long value) => Line(name, value.ToString());
+    public void NumberFloat(string name, float value) =>
+        Line(name, value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public void NumberDouble(string name, double value) =>
+        Line(name, value.ToString(System.Globalization.CultureInfo.InvariantCulture));
     public void NumberFixed(string name, Fixed value) =>
         Line(name, "0x" + value.InternalValue.ToString("X8"));
     public void Bool(string name, bool value) => Line(name, value ? "1" : "0");

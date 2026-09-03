@@ -112,6 +112,10 @@ public sealed class ManagerTests
         public void NumberI16(string n, short v) => Values.Add((n, v, false, false));
         public void NumberU32(string n, uint v) => Values.Add((n, (int)v, false, false));
         public void NumberI32(string n, int v) => Values.Add((n, v, false, false));
+        public void NumberU64(string n, ulong v) => Values.Add((n, (int)v, false, false));
+        public void NumberI64(string n, long v) => Values.Add((n, (int)v, false, false));
+        public void NumberFloat(string n, float v) => Values.Add((n, (int)v, false, false));
+        public void NumberDouble(string n, double v) => Values.Add((n, (int)v, false, false));
         public void NumberFixed(string n, Fixed v) => Values.Add((n, v.InternalValue, false, false));
         public void Bool(string n, bool v) => Values.Add((n, 0, true, v));
         public void StringASCII(string n, string v) => Values.Add((n, v.Length, false, false));
@@ -130,6 +134,10 @@ public sealed class ManagerTests
         public short NumberI16(string n) => (short)Next().Item2;
         public uint NumberU32(string n) => (uint)Next().Item2;
         public int NumberI32(string n) => Next().Item2;
+        public ulong NumberU64(string n) => (ulong)Next().Item2;
+        public long NumberI64(string n) => Next().Item2;
+        public float NumberFloat(string n) => Next().Item2;
+        public double NumberDouble(string n) => Next().Item2;
         public Fixed NumberFixed(string n) => Fixed.Zero.WithInternalValue(Next().Item2);
         public bool Bool(string n) => Next().Item4;
         public string StringASCII(string n) => "";

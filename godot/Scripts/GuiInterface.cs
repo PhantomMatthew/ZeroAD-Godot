@@ -306,5 +306,153 @@ public sealed class GuiInterface
         return new BarterQuote(canBarter, Gain(100), Gain(500));
     }
 
+    // ── 小地图/选择集批量快照(原版 GetEntitiesWithInterface 批查;桥扩面)──
+
+    /// <summary>小地图点(值类型;批量快照的数组元素,避免每帧每实体 record 分配)。</summary>
+    public readonly struct MinimapDot
+    {
+        public readonly uint Id;
+        public readonly float X, Z;
+        public readonly int OwnerPlayerId;
+        public readonly bool IsUnit, IsBuilding;
+        public readonly float HealthFraction;
+        public readonly string Name;
+        public MinimapDot(uint id, float x, float z, int owner, bool isUnit, bool isBuilding,
+            float healthFraction, string name)
+        {
+            Id = id; X = x; Z = z; OwnerPlayerId = owner; IsUnit = isUnit; IsBuilding = isBuilding;
+            HealthFraction = healthFraction; Name = name;
+        }
+    }
+
+    private readonly List<MinimapDot> _minimapCache = new();
+    private uint _minimapCacheTurn = uint.MaxValue;
+
+    /// <summary>全部在世实体的展示快照(按回合缓存:sim 状态只在回合推进变;
+    /// 同一回合内多次读取零重算。迷雾可见性由调用方按 RangeManager 另行过滤)。
+    /// 替代 Minimap 每帧 × 每实体的 GetEntityState 逐调用分配。</summary>
+    public IReadOnlyList<MinimapDot> GetMinimapEntities()
+    {
+        // 回合同代:有 NetTurnManager 按 CurrentTurn;无(纯测试/无锁步环境)每次都重建。
+        if (SimSystem.Net is not { } net)
+        {
+            _minimapCacheTurn = uint.MaxValue;
+        }
+        else if (net.CurrentTurn == _minimapCacheTurn)
+            return _minimapCache;
+        else
+            _minimapCacheTurn = net.CurrentTurn;
+        _minimapCache.Clear();
+        foreach (var e in _cm.AllEntities)
+        {
+            var pos = _cm.QueryInterface<PositionComponent>(e);
+            if (pos == null || !pos.InWorld) continue;
+            var own = _cm.QueryInterface<OwnershipComponent>(e);
+            var id = _cm.QueryInterface<IdentityComponent>(e);
+            var hp = _cm.QueryInterface<HealthComponent>(e);
+            _minimapCache.Add(new MinimapDot(
+                e.Value,
+                pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(),
+                own?.PlayerId ?? 0,
+                id?.IsUnit ?? false, id?.IsBuilding ?? false,
+                hp != null && hp.Max > 0 ? (float)hp.Current / hp.Max : 1f,
+                id?.Name ?? ""));
+        }
+        return _minimapCache;
+    }
+
+    /// <summary>玩家首个 CC 的世界坐标(小地图玩家标记用;无 → null)。
+    /// 替代 Minimap.DrawPlayerMarker 的每帧全表扫描。</summary>
+    public (float X, float Z)? GetCivilCentrePosition(int playerId)
+    {
+        foreach (var e in _cm.AllEntities)
+        {
+            var own = _cm.QueryInterface<OwnershipComponent>(e);
+            if (own == null || own.PlayerId != playerId) continue;
+            var id = _cm.QueryInterface<IdentityComponent>(e);
+            if (id == null || !id.IsBuilding) continue;
+            if (!id.TemplateName.Contains("civil_centre") && !id.TemplateName.Contains("civic_centre"))
+                continue;
+            var pos = _cm.QueryInterface<PositionComponent>(e);
+            if (pos == null || !pos.InWorld) continue;
+            return (pos.Position.X.ToFloat(), pos.Position.Z.ToFloat());
+        }
+        return null;
+    }
+
+    /// <summary>选择集能力摘要(HUD 命令面板重建的多趟扫描并为一趟;字段即各面板的
+    /// 显示条件;模板数据读取(ExtractStats)不在此——那是数据层非 sim 态)。</summary>
+    public record SelectionCapabilities(
+        bool HasOwnEntity, bool HasOwnUnit,
+        bool AnyBuilder, bool AnyProducer, bool HasArsenal,
+        bool AnyGarrisonable, bool AnyCanPack, bool AnyCanUnpack,
+        IReadOnlyList<string> ResearcherTemplates,
+        EntityId? UpgradableId, string UpgradableTemplate,
+        EntityId? GateId, bool GateLocked,
+        EntityId? ProducerId, EntityId? BuilderId);
+
+    public SelectionCapabilities GetSelectionCapabilities(
+        IReadOnlyCollection<EntityId> selected, int localPlayerId)
+    {
+        bool hasOwnEntity = false, hasOwnUnit = false, anyBuilder = false, anyProducer = false,
+            hasArsenal = false, anyGarrisonable = false, anyCanPack = false, anyCanUnpack = false;
+        var researcherTemplates = new List<string>();
+        EntityId? upgradable = null; string upgradableTemplate = "";
+        EntityId? gate = null; bool gateLocked = false;
+        EntityId? producer = null, builder = null;
+
+        foreach (var eid in selected)
+        {
+            bool own = _cm.QueryInterface<OwnershipComponent>(eid)?.PlayerId == localPlayerId;
+            if (own)
+            {
+                hasOwnEntity = true;
+                if (_cm.QueryInterface<UnitAIComponent>(eid) != null) hasOwnUnit = true;
+            }
+            if (_cm.QueryInterface<BuilderComponent>(eid) != null)
+            {
+                anyBuilder = true;
+                builder ??= eid;
+            }
+            if (_cm.QueryInterface<ProductionQueue>(eid) != null)
+            {
+                anyProducer = true;
+                producer ??= eid;
+            }
+            var identity = _cm.QueryInterface<IdentityComponent>(eid);
+            if (identity != null)
+            {
+                if (_cm.QueryInterface<ResearcherComponent>(eid) != null)
+                    researcherTemplates.Add(identity.TemplateName);
+                if (identity.TemplateName.Contains("arsenal")) hasArsenal = true;
+                if (own && upgradable == null)
+                {
+                    var st = _cm.Templates?.ExtractStats(identity.TemplateName);
+                    if (st != null && st.UpgradeToTemplate.Length > 0)
+                    {
+                        upgradable = eid;
+                        upgradableTemplate = identity.TemplateName;
+                    }
+                }
+            }
+            if (_cm.QueryInterface<GarrisonableComponent>(eid) != null) anyGarrisonable = true;
+            var pack = _cm.QueryInterface<PackComponent>(eid);
+            if (pack != null)
+            {
+                if (pack.CanPack()) anyCanPack = true;
+                if (pack.CanUnpack()) anyCanUnpack = true;
+            }
+            if (own && gate == null && _cm.QueryInterface<GateComponent>(eid) is { } g)
+            {
+                gate = eid;
+                gateLocked = g.Locked;
+            }
+        }
+        return new SelectionCapabilities(
+            hasOwnEntity, hasOwnUnit, anyBuilder, anyProducer, hasArsenal,
+            anyGarrisonable, anyCanPack, anyCanUnpack, researcherTemplates,
+            upgradable, upgradableTemplate, gate, gateLocked, producer, builder);
+    }
+
     private ComponentManager cm() => _cm;
 }

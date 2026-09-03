@@ -24,6 +24,10 @@ public sealed class BinaryDeserializer : IDeserializer
     public short NumberI16(string name) => _reader.ReadInt16();
     public uint NumberU32(string name) => _reader.ReadUInt32();
     public int NumberI32(string name) => _reader.ReadInt32();
+    public ulong NumberU64(string name) => _reader.ReadUInt64();
+    public long NumberI64(string name) => _reader.ReadInt64();
+    public float NumberFloat(string name) => _reader.ReadSingle();
+    public double NumberDouble(string name) => _reader.ReadDouble();
     public ZeroAD.Sim.Maths.Fixed NumberFixed(string name) =>
         ZeroAD.Sim.Maths.Fixed.Zero.WithInternalValue(_reader.ReadInt32());
     public bool Bool(string name) => _reader.ReadBoolean();

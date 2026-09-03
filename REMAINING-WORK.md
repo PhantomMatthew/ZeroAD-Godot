@@ -57,6 +57,8 @@
 + 门自动开关/编队组切换/炮塔站姿/重排闸门/LoadFormation/initGarrison/Pickup)。
 存量最大项(2026-09-03 更新,TerritoryManager/转向/天气/阴影/人口规划均已落):
 ~~BuildDefenses~~✅ ~~StartingStrategy saveResources 联动~~✅ ——Petra 经济面
-除 BuildMoreHouses 的 houseNeeded 细化外基本对齐。余:§4 序列化覆盖
-(U64/I64/Float)、GuiInterface 桥扩面、Territory 边界描线(轮廓追踪)、
-UnitMotion waypoints 序列化(刻意瞬态)。
+除 BuildMoreHouses 的 houseNeeded 细化外基本对齐。余:~~§4 序列化覆盖
+(U64/I64/Float/Double 全实现链+位级哈希,本波;backref 共享对象无消费方,
+按需再加)~~、~~GuiInterface 桥扩面(Minimap 回合缓存批量快照+CC 定位+选择集
+能力 DTO 一趟扫描,Minimap 直读清零、HUD 47→31 且余者为选择重建段)~~、
+Territory 边界描线(轮廓追踪)、UnitMotion waypoints 序列化(刻意瞬态)。

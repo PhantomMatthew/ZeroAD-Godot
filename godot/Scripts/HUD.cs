@@ -1047,12 +1047,10 @@ public sealed partial class HUD : CanvasLayer
         if (!hasOwnUnit) return;
         AddUnitActionButton(LoadIcon("stop"), "Stop", () => _main.StopSelectedUnits());
 
-        bool anyGarrisonable = false, anyBuilder = false;
-        foreach (var eid in _main.SelectedEntities)
-        {
-            if (_sim.Sim.QueryInterface<GarrisonableComponent>(eid) != null) anyGarrisonable = true;
-            if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) anyBuilder = true;
-        }
+        var actionCaps = _sim.Gui.GetSelectionCapabilities(
+            _main.SelectedEntities, (int)_sim.LocalPlayerId);
+        bool anyGarrisonable = actionCaps.AnyGarrisonable;
+        bool anyBuilder = actionCaps.AnyBuilder;
         if (anyGarrisonable)
             AddUnitActionButton(LoadIcon("garrison"), "Garrison", () => _main.EnterCommandTargetMode("garrison"));
         if (anyBuilder)
@@ -1086,24 +1084,11 @@ public sealed partial class HUD : CanvasLayer
     {        foreach (var child in _commandBox.GetChildren())
             child.QueueFree();
 
-        bool hasBuilder = false, hasProducer = false;
-        bool hasArsenal = false, hasOwnUnit = false, hasOwnEntity = false;
-        var researcherTemplates = new HashSet<string>();
-        foreach (var eid in _main.SelectedEntities)
-        {
-            if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) hasBuilder = true;
-            if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null) hasProducer = true;
-            if (_main.IsOwn(eid))
-            {
-                hasOwnEntity = true;
-                if (_sim.Sim.QueryInterface<UnitAIComponent>(eid) != null) hasOwnUnit = true;
-            }
-            var identity = _sim.Sim.QueryInterface<IdentityComponent>(eid);
-            if (identity is null) continue;
-            if (_sim.Sim.QueryInterface<ResearcherComponent>(eid) != null)
-                researcherTemplates.Add(identity.TemplateName);
-            if (identity.TemplateName.Contains("arsenal")) hasArsenal = true;
-        }
+        // 选择集能力摘要:一趟桥侧扫描(原版 GuiInterface 批查;替代多趟内联)。
+        var caps = _sim.Gui.GetSelectionCapabilities(_main.SelectedEntities, (int)_sim.LocalPlayerId);
+        bool hasBuilder = caps.AnyBuilder, hasProducer = caps.AnyProducer;
+        bool hasArsenal = caps.HasArsenal, hasOwnUnit = caps.HasOwnUnit, hasOwnEntity = caps.HasOwnEntity;
+        var researcherTemplates = new HashSet<string>(caps.ResearcherTemplates);
 
         // 单位命令行(stop/delete/garrison/repair/guard/patrol)在第三面板
         // (选择详情底条,原版 selection_panels_middle/unit_commands.xml)——见
@@ -1113,14 +1098,7 @@ public sealed partial class HUD : CanvasLayer
         // 打包栏(原版 pack_panel,右面板):选中含可打包/解包攻城器时显示对应按钮。
         if (hasOwnUnit)
         {
-            bool anyCanPack = false, anyCanUnpack = false;
-            foreach (var eid in _main.SelectedEntities)
-            {
-                var pack = _sim.Sim.QueryInterface<PackComponent>(eid);
-                if (pack == null) continue;
-                if (pack.CanPack()) anyCanPack = true;
-                if (pack.CanUnpack()) anyCanUnpack = true;
-            }
+            bool anyCanPack = caps.AnyCanPack, anyCanUnpack = caps.AnyCanUnpack;
             if (anyCanPack)
                 AddCmdButton(LoadIcon("pack"), "Pack", () => _main.PackSelectedUnits(false));
             if (anyCanUnpack)
@@ -1131,26 +1109,12 @@ public sealed partial class HUD : CanvasLayer
         // 且选中列表含建造者时显示;点击扣费升级(内核拆旧+原位地基续建)。
         if (hasOwnEntity)
         {
-            EntityId? upBuilding = null;
-            ZeroAD.Sim.Content.TemplateStats? upStats = null;
-            foreach (var eid in _main.SelectedEntities)
-            {
-                if (!_main.IsOwn(eid)) continue;
-                var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
-                if (id == null) continue;
-                var s = _sim.Sim.Templates?.ExtractStats(id.TemplateName);
-                if (s != null && s.UpgradeToTemplate.Length > 0)
-                {
-                    upBuilding = eid;
-                    upStats = s;
-                    break;
-                }
-            }
+            EntityId? upBuilding = caps.UpgradableId;
+            ZeroAD.Sim.Content.TemplateStats? upStats = upBuilding.HasValue
+                ? _sim.Sim.Templates?.ExtractStats(caps.UpgradableTemplate) : null;
             if (upBuilding.HasValue && upStats != null)
             {
-                EntityId? upBuilder = null;
-                foreach (var eid in _main.SelectedEntities)
-                    if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) { upBuilder = eid; break; }
+                EntityId? upBuilder = caps.BuilderId;
 
                 string targetName = upStats.UpgradeToTemplate;
                 var tstats = _sim.Sim.Templates?.ExtractStats(
@@ -1176,14 +1140,8 @@ public sealed partial class HUD : CanvasLayer
         // (locked=阻挡/unlocked=通行;GateComponent 联动阻挡+寻路网格)。
         if (hasOwnEntity)
         {
-            EntityId? gate = null;
-            bool gateLocked = false;
-            foreach (var eid in _main.SelectedEntities)
-            {
-                if (!_main.IsOwn(eid)) continue;
-                var g = _sim.Sim.QueryInterface<GateComponent>(eid);
-                if (g != null) { gate = eid; gateLocked = g.Locked; break; }
-            }
+            EntityId? gate = caps.GateId;
+            bool gateLocked = caps.GateLocked;
             if (gate.HasValue)
             {
                 var tex = LoadIcon("garrison-out");
@@ -1200,9 +1158,7 @@ public sealed partial class HUD : CanvasLayer
             // 数据驱动训练列表(原版 selection_panels 训练面板):取首个选中生产建筑的
             // ProductionQueue 解析列表(Trainer/Entities,{civ}=属主文明已实时解析,
             // 不存在的模板已过滤)——雅典 CC 出雅典兵,斯巴达 CC 出斯巴达兵。
-            EntityId? producer = null;
-            foreach (var eid in _main.SelectedEntities)
-                if (_sim.Sim.QueryInterface<ProductionQueue>(eid) != null) { producer = eid; break; }
+            EntityId? producer = caps.ProducerId;
             if (producer.HasValue)
             {
                 var queue = _sim.Sim.QueryInterface<ProductionQueue>(producer.Value)!;
@@ -1217,9 +1173,7 @@ public sealed partial class HUD : CanvasLayer
             // Builder/Entities,{native}=模板原生文明/{civ}=属主文明实时解析,
             // TemplateExists 过滤。硬编码 5 项 + 教程限定项的写法废弃——
             // CC/码头/畜栏/图书馆/奇迹/城墙系/哨塔等全部按模板数据出现。
-            EntityId? builder = null;
-            foreach (var eid in _main.SelectedEntities)
-                if (_sim.Sim.QueryInterface<BuilderComponent>(eid) != null) { builder = eid; break; }
+            EntityId? builder = caps.BuilderId;
             if (builder.HasValue)
             {
                 var bIdentity = _sim.Sim.QueryInterface<IdentityComponent>(builder.Value);

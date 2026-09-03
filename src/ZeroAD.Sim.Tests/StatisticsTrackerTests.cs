@@ -204,6 +204,10 @@ public sealed class StatisticsTrackerTests
         public void NumberI16(string n, short v) => Values.Add((n, v));
         public void NumberU32(string n, uint v) => Values.Add((n, v));
         public void NumberI32(string n, int v) => Values.Add((n, v));
+        public void NumberU64(string n, ulong v) => Values.Add((n, v));
+        public void NumberI64(string n, long v) => Values.Add((n, v));
+        public void NumberFloat(string n, float v) => Values.Add((n, v));
+        public void NumberDouble(string n, double v) => Values.Add((n, v));
         public void NumberFixed(string n, Fixed v) => Values.Add((n, v.InternalValue));
         public void Bool(string n, bool v) => Values.Add((n, v));
         public void StringASCII(string n, string v) => Values.Add((n, v));
@@ -221,6 +225,10 @@ public sealed class StatisticsTrackerTests
         public short NumberI16(string n) => (short)Next();
         public uint NumberU32(string n) => (uint)Next();
         public int NumberI32(string n) => (int)Next();
+        public ulong NumberU64(string n) => (ulong)Next();
+        public long NumberI64(string n) => (long)Next();
+        public float NumberFloat(string n) => (float)Next();
+        public double NumberDouble(string n) => (double)Next();
         public Fixed NumberFixed(string n) => Fixed.Zero.WithInternalValue((int)Next());
         public bool Bool(string n) => (bool)Next();
         public string StringASCII(string n) => (string)Next();
