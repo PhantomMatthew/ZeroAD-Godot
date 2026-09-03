@@ -84,7 +84,7 @@ namespace ZeroAD.Godot;
 	private float _flySpeed = 60f;   // 滚轮调(米/秒,Shift ×4)
 
 	private float _yaw = 0f;
-	private float _pitch = -0.7f;
+	private float _pitch = DefaultPitch;   // 原版 rotate.x.default=35°
 	private float _distance = 120f;
 	private Vector3 _focus = new(274f, 27f, 113f);
     // Last seen mouse position. When the mouse hasn't been moved yet, Godot reports
@@ -102,13 +102,33 @@ namespace ZeroAD.Godot;
 
 		private const float DefaultFov = 45f;
 
-		private const float PanSpeed = 120f;
-		private const float RotateSpeed = 2.0f;
-		private const float EdgeMargin = 15f;
-		private const float MinDistance = 5f;
-		private const float MaxDistance = 200f;
-		private const float MinPitch = -1.3f;
-		private const float MaxPitch = -0.15f;
+		// 原版 view.* config 读数(default.cfg 默认值;用户可在配置覆盖)。
+		private static float PanSpeed =>
+			Options.OptionsApplier.GetFloat("view.scroll.speed", 120f);
+		private static float RotateSpeed =>
+			Options.OptionsApplier.GetFloat("view.rotate.y.speed", 2.0f);
+		private static float RotateWheelStep =>
+			Options.OptionsApplier.GetFloat("view.rotate.y.speed.wheel", 0.45f);
+		private static float ZoomSpeedKey =>
+			Options.OptionsApplier.GetFloat("view.zoom.speed", 256f);
+		private static float ZoomWheelStep =>
+			Options.OptionsApplier.GetFloat("view.zoom.speed.wheel", 32f);
+		private static float EdgeMargin =>
+			Options.OptionsApplier.GetFloat("view.scroll.mouse.detectdistance", 3f);
+		private static float RotateXSpeed =>
+			Options.OptionsApplier.GetFloat("view.rotate.x.speed", 1.2f);
+		// 原版 zoom.min/max(连续缩放的视距夹;最小 50)。
+		private static float MinDistance =>
+			Options.OptionsApplier.GetFloat("view.zoom.min", 50f);
+		private static float MaxDistance =>
+			Options.OptionsApplier.GetFloat("view.zoom.max", 200f);
+		// 原版 rotate.x.min/max/default(度):28°..60°,默认 35°——俯角为负弧度。
+		private static float MinPitch =>
+			-Mathf.DegToRad(Options.OptionsApplier.GetFloat("view.rotate.x.max", 60f));
+		private static float MaxPitch =>
+			-Mathf.DegToRad(Options.OptionsApplier.GetFloat("view.rotate.x.min", 28f));
+		private static float DefaultPitch =>
+			-Mathf.DegToRad(Options.OptionsApplier.GetFloat("view.rotate.x.default", 35f));
 
 		public override void _Ready()
 		{
@@ -118,12 +138,15 @@ namespace ZeroAD.Godot;
 			// 阴影代理挂第 2 层(见 ShadowProxyManager):相机剔除使其不可见,
 			// 方向光投影掩码默认全含 → 不可见但照常写阴影贴图。
 			CullMask &= ~ShadowProxyManager.ProxyLayer;
-			// 平滑字段初始化(原版 CameraController 的 SmoothedValue 默认值)。
-			_smFocusX = new SmoothedValue(_focus.X);
-			_smFocusZ = new SmoothedValue(_focus.Z);
-			_smDistance = new SmoothedValue(_distance);
-			_smYaw = new SmoothedValue(_yaw);
-			_smPitch = new SmoothedValue(_pitch);
+			// 平滑字段初始化(原版 CameraController SETUP_SMOOTHNESS:按轴读 config,
+			// 默认值 = default.cfg:pos 0.1 / zoom 0.4 / rotate.x 0.5 / rotate.y 0.3)。
+			float Smoothness(string key, float dflt) =>
+				Options.OptionsApplier.GetFloat(key, dflt);
+			_smFocusX = new SmoothedValue(_focus.X, Smoothness("view.pos.smoothness", 0.1f));
+			_smFocusZ = new SmoothedValue(_focus.Z, Smoothness("view.pos.smoothness", 0.1f));
+			_smDistance = new SmoothedValue(_distance, Smoothness("view.zoom.smoothness", 0.4f));
+			_smYaw = new SmoothedValue(_yaw, Smoothness("view.rotate.y.smoothness", 0.3f));
+			_smPitch = new SmoothedValue(_pitch, Smoothness("view.rotate.x.smoothness", 0.5f));
 			UpdateTransform();
 		}
 
@@ -154,11 +177,14 @@ namespace ZeroAD.Godot;
 
 		if (Input.IsActionPressed("cam_rotate_cw"))  { _smYaw.AddSmoothly(RotateSpeed * dt); moved = true; }
 		if (Input.IsActionPressed("cam_rotate_ccw")) { _smYaw.AddSmoothly(-RotateSpeed * dt); moved = true; }
+		// 俯仰(原版 camera.rotate.up/down:Ctrl+Up/W 抬视角;rotate.x.speed=1.2 rad/s)。
+		if (Input.IsActionPressed("cam_pitch_up"))   { _smPitch.AddSmoothly(RotateXSpeed * dt); moved = true; }
+		if (Input.IsActionPressed("cam_pitch_down")) { _smPitch.AddSmoothly(-RotateXSpeed * dt); moved = true; }
 
 		if (Input.IsKeyPressed(Key.Equal) || Input.IsKeyPressed(Key.KpAdd))
-		{ _smDistance.AddSmoothly(-_smDistance.Target * 0.5f * dt); moved = true; userMoved = true; }
+		{ _smDistance.AddSmoothly(-ZoomSpeedKey * dt); moved = true; userMoved = true; }   // 原版 zoom.speed=256/s
 		if (Input.IsKeyPressed(Key.Minus) || Input.IsKeyPressed(Key.KpSubtract))
-		{ _smDistance.AddSmoothly(_smDistance.Target * 1.0f * dt); moved = true; userMoved = true; }
+		{ _smDistance.AddSmoothly(ZoomSpeedKey * dt); moved = true; userMoved = true; }
 
 		var vp = GetViewport();
 		if (vp != null)
@@ -278,20 +304,21 @@ namespace ZeroAD.Godot;
 				if (mb.ButtonIndex == MouseButton.WheelUp)
 				{
 					if (Input.IsKeyPressed(Key.Shift))
-						_smYaw.AddSmoothly(0.3f);
+						_smYaw.AddSmoothly(RotateWheelStep);   // 原版 rotate.y.speed.wheel=0.45
 					else
 					{
-						_smDistance.SetValueSmoothly(Mathf.Max(MinDistance, _smDistance.Target * 0.85f));
+						// 原版 zoom.speed.wheel=32:定步进(非比例)。
+						_smDistance.SetValueSmoothly(Mathf.Max(MinDistance, _smDistance.Target - ZoomWheelStep));
 					}
 					UpdateTransform();
 				}
 				else if (mb.ButtonIndex == MouseButton.WheelDown)
 				{
 					if (Input.IsKeyPressed(Key.Shift))
-						_smYaw.AddSmoothly(-0.3f);
+						_smYaw.AddSmoothly(-RotateWheelStep);
 					else
 					{
-						_smDistance.SetValueSmoothly(Mathf.Min(MaxDistance, _smDistance.Target * 1.15f));
+						_smDistance.SetValueSmoothly(Mathf.Min(MaxDistance, _smDistance.Target + ZoomWheelStep));
 					}
 					UpdateTransform();
 				}

@@ -88,7 +88,6 @@ public static class ShadowProxyManager
                 // 蒙皮骨架:整骨架克隆,rest 姿势逐骨共轭(S·rest·S)。蒙皮顶点世界位置
                 // 由骨架链决定,节点自身变换被绕过 → 代理骨架局部变换取恒等。
                 var psk = new Skeleton3D { Name = skel.Name + "_shadow" };
-                dst.AddChild(psk);
                 int bones = skel.GetBoneCount();
                 for (int i = 0; i < bones; i++)
                 {
