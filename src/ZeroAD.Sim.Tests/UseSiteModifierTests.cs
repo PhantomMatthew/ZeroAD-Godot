@@ -318,6 +318,11 @@ public sealed class UseSiteModifierTests
         cm.AddComponent(unit, motion);
         motion.Speed = Fixed.FromFloat(8f);
 
+        // 转向物理落地后:初始 yaw=0(+Z)而目标在 +X(方位 π/2 > InstantTurnAngle 1.5)
+        // → 首拍原地转向不走(上游 PerformMove 同款)。先对齐朝向再测速。
+        cm.QueryInterface<PositionComponent>(unit)!.Rotation =
+            new ZeroAD.Sim.Maths.FixedVector3D(
+                ZeroAD.Sim.Maths.Fixed.Zero, ZeroAD.Sim.Maths.Fixed.Pi / 2, ZeroAD.Sim.Maths.Fixed.Zero);
         motion.MoveToPoint(new FixedVector2D(Fixed.FromFloat(10f), Fixed.Zero));
         motion.Tick(0.1f);
         float before = cm.QueryInterface<PositionComponent>(unit)!.Position.X.ToFloat();

@@ -78,6 +78,11 @@ namespace ZeroAD.Sim
                 motion.PassClassName = stats.PassabilityClass;
                 // 推挤权重(原版 GetWeight;推挤力按双方 Weight 动量配比)。
                 motion.Weight = stats.MovementWeight;
+                // 转向物理:InstantTurnAngle(UnitMotion 模板位)。
+                motion.InstantTurnAngle = Fixed.FromFloat(stats.InstantTurnAngle);
+                var posC = cm.QueryInterface<PositionComponent>(entity);
+                if (posC != null)
+                    posC.TurnRate = Fixed.FromFloat(stats.TurnRate);
             }
 
             // Vision: seers get a Fixed-range VisionComponent (RangeManager counts their

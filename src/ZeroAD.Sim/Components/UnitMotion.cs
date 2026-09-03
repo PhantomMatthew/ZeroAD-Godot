@@ -36,6 +36,15 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     /// 大者更难被推也推得更狠(象兵 vs 步兵)。装配自模板,随存档序列化。</summary>
     public Fixed Weight = Fixed.FromInt(10);
 
+    /// <summary>瞬时转向角(原版 UnitMotion/InstantTurnAngle,弧度):偏差不超它 →
+    /// 边走边瞬对(速度×cos(偏差));超过 → 原地转向至剩 InstantTurnAngle 再走。
+    /// 装配自模板(template_unit=1.5/攻城器 0.75/船 10),随存档(v15)。</summary>
+    public Fixed InstantTurnAngle = Fixed.FromFraction(3, 2);
+
+    /// <summary>到站后面向目标点(原版 m_FacePointAfterMove 默认 true;
+    /// 炮塔持有者在占点/离点时关开——Turretable 接入记 backlog)。</summary>
+    public bool FacePointAfterMove = true;
+
     /// <summary>推挤压力(原版 pushingPressure,u8 语义 0..255):扎堆越深压力越大,
     /// >10 线性减速(地板 1.5m/s),回合末 ×0.6 衰减。UnitSeparation 写,EffectiveSpeed 读。
     /// 瞬态不序列化(冷加载后一回合内由推挤重建——同 waypoints 惯例)。</summary>
@@ -294,7 +303,54 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         uint isqrt = MathInt.Sqrt64(dx2 + dy2);
         Fixed dist = Fixed.Zero.WithInternalValue((int)isqrt);
 
-        Fixed stepDist = EffectiveSpeed().Multiply(Fixed.FromFloat(dt));
+        // ── 转向物理(原版 CCmpUnitMotion::PerformMove L1285-1323 逐字)──
+        // turnRate 取自 Position/TurnRate;angle 即 Position.Rotation.Y(sim 态)。
+        // 偏差 > InstantTurnAngle:原地转向(本拍不走),转完才走剩余时间;
+        // ≤:瞬对目标方位,速度 ×cos(偏差)(小弯减速)。
+        Fixed timeLeft = Fixed.FromFloat(dt);
+        Fixed speedScale = Fixed.FromInt(1);
+        Fixed turnRate = posComp.TurnRate;
+        if (turnRate > Fixed.Zero && dist > Fixed.Zero)
+        {
+            Fixed targetAngle = Trig.Atan2Approx(diff.X, diff.Y);
+            Fixed angle = posComp.Rotation.Y;
+            Fixed angleDiff = angle - targetAngle;
+            Fixed absoluteAngleDiff = angleDiff.Absolute;
+            var pi = Fixed.Pi;
+            if (absoluteAngleDiff > pi)
+                absoluteAngleDiff = pi * 2 - absoluteAngleDiff;
+
+            if (absoluteAngleDiff > InstantTurnAngle)
+            {
+                // 大角度:停走,原地转。
+                speedScale = Fixed.Zero;
+                Fixed maxRotation = turnRate.Multiply(timeLeft);
+                int direction = (Fixed.Zero < angleDiff && angleDiff <= pi) || angleDiff < -pi ? -1 : 1;
+                if (absoluteAngleDiff - InstantTurnAngle > maxRotation)
+                {
+                    // 本拍转不完:转 maxRotation,不走。
+                    angle += maxRotation * direction;
+                    if (angle * direction > pi)
+                        angle -= pi * 2 * direction;
+                    posComp.Rotation = new FixedVector3D(posComp.Rotation.X, angle, posComp.Rotation.Z);
+                    return;   // 转向不占空间索引(仅 yaw),无需通知
+                }
+                // 转完:对准后走剩余时间(原版 timeLeft 折算逐字)。
+                angle = targetAngle;
+                posComp.Rotation = new FixedVector3D(posComp.Rotation.X, angle, posComp.Rotation.Z);
+                Fixed spent = maxRotation - absoluteAngleDiff + InstantTurnAngle;
+                timeLeft = spent < maxRotation ? spent / turnRate : maxRotation / turnRate;
+            }
+            else
+            {
+                // 小角度:边走边对正,速度 ×cos(偏差)。
+                Trig.SinCosApprox(angleDiff, out _, out Fixed cos);
+                speedScale = cos < Fixed.Zero ? Fixed.Zero : cos;
+                posComp.Rotation = new FixedVector3D(posComp.Rotation.X, targetAngle, posComp.Rotation.Z);
+            }
+        }
+
+        Fixed stepDist = EffectiveSpeed().Multiply(speedScale).Multiply(timeLeft);
 
         if (dist < stepDist || dist < Fixed.FromFloat(1.0f))
         {
@@ -318,6 +374,18 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
                         Fixed.FromFloat(lastWp.z));
                 HasMoveTarget = false;
                 CurrentSpeed = Fixed.Zero;
+                // 到站面向目标点(原版 StopMoving → FaceTowardsPointFromPos;m_FacePointAfterMove)。
+                if (FacePointAfterMove && reachedGoal)
+                {
+                    var faceDiff = new FixedVector2D(
+                        TargetPos.X - posComp.Position.X, TargetPos.Y - posComp.Position.Z);
+                    if (!faceDiff.IsZero)
+                    {
+                        var faceAngle = Trig.Atan2Approx(faceDiff.X, faceDiff.Y);
+                        posComp.Rotation = new FixedVector3D(
+                            posComp.Rotation.X, faceAngle, posComp.Rotation.Z);
+                    }
+                }
             }
             return;
         }
@@ -442,6 +510,8 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         s.NumberFixed("tz", TargetPos.Y);
         s.StringASCII("passclass", PassClassName);
         s.NumberFixed("weight", Weight);   // 存档 v14
+        s.NumberFixed("ita", InstantTurnAngle);   // 存档 v15
+        s.Bool("fpam", FacePointAfterMove);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -451,6 +521,8 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         TargetPos = new FixedVector2D(d.NumberFixed("tx"), d.NumberFixed("tz"));
         PassClassName = d.StringASCII("passclass");
         Weight = d.NumberFixed("weight");
+        InstantTurnAngle = d.NumberFixed("ita");
+        FacePointAfterMove = d.Bool("fpam");
     }
 
     public void HandleMessage(IMessage message) { }

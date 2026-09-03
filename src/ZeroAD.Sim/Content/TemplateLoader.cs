@@ -620,6 +620,15 @@ namespace ZeroAD.Sim.Content
                 }
             }
 
+            // Position/TurnRate(转向速率;原版 CCmpPosition 模板位,单位/建筑都可能有)。
+            var positionNode = node.GetChild("Position");
+            if (positionNode.IsOk)
+            {
+                var turnRate = positionNode.GetChild("TurnRate");
+                if (turnRate.IsOk)
+                    stats.TurnRate = turnRate.ToFixed().ToFloat();
+            }
+
             var unitMotion = node.GetChild("UnitMotion");
             if (unitMotion.IsOk)
             {
@@ -629,6 +638,9 @@ namespace ZeroAD.Sim.Content
                 var walkSpeed = unitMotion.GetChild("WalkSpeed");
                 if (walkSpeed.IsOk)
                     stats.WalkSpeed = walkSpeed.ToFixed().ToFloat();
+                var instantTurn = unitMotion.GetChild("InstantTurnAngle");
+                if (instantTurn.IsOk)
+                    stats.InstantTurnAngle = instantTurn.ToFixed().ToFloat();
                 // RunMultiplier/Acceleration(getSpeedTooltip 的 Run/Acceleration 段)。
                 var runMult = unitMotion.GetChild("RunMultiplier");
                 if (runMult.IsOk) stats.RunMultiplier = runMult.ToFixed().ToFloat();
@@ -1347,6 +1359,12 @@ namespace ZeroAD.Sim.Content
         /// <summary>BuildingAI/GarrisonArrowClasses:计入加箭的类别(tokens,如 "Infantry"/"Soldier")。</summary>
         public string GarrisonArrowClasses = "";
         public float WalkSpeed = 8f;
+        /// <summary>Position/TurnRate 转向速率(rad/s;原版 template_unit=14)。
+        /// 转向物理(UnitMotion Tick)与表现层 yaw 平滑用。</summary>
+        public float TurnRate = 14f;
+        /// <summary>UnitMotion/InstantTurnAngle(弧度;>π 等于禁转向)。template_unit=1.5,
+        /// 攻城器 0.75,船 10(船实质禁用原地转向)。</summary>
+        public float InstantTurnAngle = 1.5f;
         /// <summary>UnitMotion/Weight 推挤权重(原版缺省 10;大者难推也推得狠)。</summary>
         public ZeroAD.Sim.Maths.Fixed MovementWeight = ZeroAD.Sim.Maths.Fixed.FromInt(10);
         /// <summary>模板声明 &lt;UnitMotion&gt;(单位/船;建筑无 → 不显示 Speed 行)。</summary>

@@ -3050,7 +3050,14 @@ public sealed partial class SimBridge : Node
 		Vector3 last = _lastPos.TryGetValue(entity, out var lp) ? lp : newPos;
 		Vector3 delta = newPos - last;
 		_lastPos[entity] = newPos;
-		if (delta.LengthSquared() > 0.0001f)
+		// 转向物理落地后:sim 的 Rotation.Y 即权威朝向(转向速率平滑过,
+		// 10Hz sim 步长已足够连续);无 UnitMotion 的实体回退位移朝向。
+		var simYaw = _sim.QueryInterface<ZeroAD.Sim.Components.UnitMotion>(entity) != null
+			? (float?)_sim.QueryInterface<ZeroAD.Sim.Components.PositionComponent>(entity)?.Rotation.Y.ToFloat()
+			: null;
+		if (simYaw.HasValue)
+			node.Rotation = new Vector3(0, simYaw.Value, 0);
+		else if (delta.LengthSquared() > 0.0001f)
 			node.Rotation = new Vector3(0, Mathf.Atan2(delta.X, delta.Z), 0);
 
 		// Animation state is FSM-driven (not position-delta). Position deltas flip-flop
