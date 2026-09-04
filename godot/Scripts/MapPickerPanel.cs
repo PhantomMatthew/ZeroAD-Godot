@@ -33,6 +33,9 @@ public sealed partial class MapPickerPanel : Panel
     private OptionButton _mapSelectOpt = null!;
     private OptionButton _mapSizeOpt = null!;
     private OptionButton _placementOpt = null!;
+    /// <summary>布置下拉 index → pattern id(0 = "random" 元选项;随图重建,见 RebuildPlacements)。</summary>
+    private readonly System.Collections.Generic.List<string> _placementIds = new();
+    private Label _statusLine = null!;
     private OptionButton _biomeOpt = null!;
     private Control _biomeRow = null!;
     private readonly List<string> _biomeIds = new();
@@ -209,6 +212,46 @@ public sealed partial class MapPickerPanel : Panel
             Select(_filtered[0]);
     }
 
+    /// <summary>按所选图重建布置下拉(上游 gamesetup PlayerPlacement.js:可选项 =
+    /// 图 JSON 的 PlayerPlacements + 首项 Random 元选项;图不声明 → 整排禁用)。
+    /// 此前 84 张图全量提供 5 种布置,coast_range 这类"仅限 2 队"的图可被选死。</summary>
+    private void RebuildPlacements(MapEntry? m)
+    {
+        _placementOpt.Clear();
+        _placementIds.Clear();
+        var declared = m?.MapType == "random" ? m.PlacementIds : null;
+        if (declared == null || declared.Count == 0)
+        {
+            _placementOpt.Disabled = true;
+            _placementOpt.TooltipText = "This map does not offer placement patterns.";
+            return;
+        }
+        _placementOpt.Disabled = false;
+        _placementOpt.TooltipText = "How players are placed on the map.";
+        // Random 元选项(上游每个支持布置的图都有):开局时从图声明集里等概率摇一个。
+        _placementOpt.AddItem(Localization.Tr("Random"));
+        _placementIds.Add("random");
+        foreach (var id in declared)
+        {
+            string display = Placements.FirstOrDefault(p => p.Id == id).Name ?? id;
+            _placementOpt.AddItem(Localization.Tr(display));
+            _placementIds.Add(id);
+        }
+        _placementOpt.Selected = 0;
+    }
+
+    /// <summary>下拉选择 → 具体 pattern id;"random" 元选项当场摇成具体值
+    /// (菜单侧随机,cfg 携带解析后的具体 id 下发,MP 广播/回放不含二次随机)。</summary>
+    private string ResolvePlacement()
+    {
+        if (_placementOpt.Selected < 0 || _placementOpt.Selected >= _placementIds.Count)
+            return "";
+        string id = _placementIds[_placementOpt.Selected];
+        if (id != "random") return id;
+        int idx = (int)GD.RandRange(1, _placementIds.Count - 1);
+        return _placementIds[idx];
+    }
+
     /// <summary>把 gamesetup 选项写进 GameLaunchConfig(MainMenu 的 OnStart 里调用)。</summary>
     public void WriteOptions(GameLaunchConfig cfg)
     {
@@ -217,7 +260,7 @@ public sealed partial class MapPickerPanel : Panel
         cfg.BiomeId = isRandom && _biomeRow.Visible && _biomeOpt.Selected > 0
             ? _biomeIds[_biomeOpt.Selected]
             : "";
-        cfg.PlayerPlacement = isRandom ? Placements[_placementOpt.Selected].Id : "";
+        cfg.PlayerPlacement = isRandom && !_placementOpt.Disabled ? ResolvePlacement() : "";
         cfg.StartingResources = StartResources[_startResOpt.Selected].Amount;
         cfg.PopulationCap = ReadPopCap();
         cfg.GameSpeed = GameSpeeds[_gameSpeedOpt.Selected];
@@ -277,9 +320,33 @@ public sealed partial class MapPickerPanel : Panel
             // 原版 gamesetup 无种子 UI——每局随机摇(菜单侧随机;sim 种子由此下发)。
             uint seed = (uint)GD.RandRange(0, 999999);
             var slots = BuildSlots();
-            if (slots != null) OnStart?.Invoke(_selected, seed, slots);
+            // 此前 slots==null 静默无反应("Start 按了没动静"投诉源);给状态行说明。
+            if (slots == null)
+            {
+                _statusLine.Text = Localization.Tr(
+                    "Need exactly one Human player slot to start.");
+                return;
+            }
+            _statusLine.Text = "";
+            OnStart?.Invoke(_selected, seed, slots);
         };
         bar.AddChild(_startBtn);
+
+        // 状态行(Start 拒绝原因等):底栏上方一行,右对齐,错误红。
+        _statusLine = new Label
+        {
+            Text = "",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            MouseFilter = MouseFilterEnum.Ignore,
+        };
+        _statusLine.SetAnchorsPreset(LayoutPreset.BottomRight);
+        _statusLine.OffsetLeft = -620;
+        _statusLine.OffsetTop = -64;
+        _statusLine.OffsetRight = -24;
+        _statusLine.OffsetBottom = -36;
+        _statusLine.AddThemeColorOverride("font_color", new Color(0.95f, 0.55f, 0.45f));
+        _statusLine.AddThemeFontSizeOverride("font_size", 13);
+        AddChild(_statusLine);
     }
 
     private static Button MakeStoneBarButton(string caption, float width)
@@ -491,8 +558,6 @@ public sealed partial class MapPickerPanel : Panel
         page.AddChild(MakeSettingRow("Map Size", _mapSizeOpt));
 
         _placementOpt = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        foreach (var (_, name) in Placements) _placementOpt.AddItem(Localization.Tr(name));
-        _placementOpt.Selected = 0;
         _placementOpt.TooltipText = "How players are placed on the map.";
         page.AddChild(MakeSettingRow("Player Placement", _placementOpt));
 
@@ -807,9 +872,10 @@ public sealed partial class MapPickerPanel : Panel
         // random 图才有尺寸/布置/biome/玩家数等生成选项(scenario/skirmish 全来自 pmp)。
         bool isRandom = m?.MapType == "random";
         _mapSizeOpt.Disabled = !isRandom;
-        _placementOpt.Disabled = !isRandom;
+        RebuildPlacements(m);
         _playerCountOpt.Disabled = !isRandom;
         _nomadBox.Disabled = !isRandom;
+        _statusLine.Text = "";
         RebuildBiomeOptions(m);
 
         // 预览图
@@ -910,6 +976,7 @@ public sealed partial class MapPickerPanel : Panel
     {
         foreach (var c in _slotRows.GetChildren()) c.QueueFree();
         _kindOpts.Clear(); _civOpts.Clear(); _teamOpts.Clear();
+        if (_statusLine != null) _statusLine.Text = "";   // 槽位变了,旧的拒绝原因作废
         if (_selected == null) return;
 
         bool isRandom = _selected.MapType == "random";

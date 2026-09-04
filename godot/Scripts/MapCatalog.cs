@@ -22,6 +22,9 @@ public sealed class MapEntry
     /// <summary>预览图绝对路径(random: maps/random/&lt;name&gt;.png;pmp: ScriptSettings
     /// 的 Preview 字段,相对地图目录)。不存在时为 null(面板给占位)。</summary>
     public string? PreviewPath;
+    /// <summary>random 图 JSON 的 settings.PlayerPlacements(上游 gamesetup 按此过滤布置下拉;
+    /// 空 = 图不声明 → 下拉禁用,走图脚本默认布置)。</summary>
+    public List<string> PlacementIds = new();
 }
 
 /// <summary>可选地图目录:扫 binaries 数据根的 maps/scenarios + maps/skirmishes(读文件头
@@ -102,6 +105,12 @@ public static class MapCatalog
                 string abs = Path.Combine(dataRoot, "art", "textures", "ui", "session", "icons", "mappreview", pv);
                 if (File.Exists(abs)) entry.PreviewPath = abs;
             }
+            // settings.PlayerPlacements:上游 gamesetup 布置下拉的可选项来源(逐图声明)。
+            if (settings.TryGetProperty("PlayerPlacements", out var pp)
+                && pp.ValueKind == JsonValueKind.Array)
+                foreach (var item in pp.EnumerateArray())
+                    if (item.ValueKind == JsonValueKind.String && item.GetString() is { Length: > 0 } pid)
+                        entry.PlacementIds.Add(pid);
         }
         catch { /* 坏 JSON 不阻塞目录 */ }
     }

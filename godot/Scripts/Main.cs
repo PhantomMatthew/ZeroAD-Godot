@@ -92,6 +92,11 @@ public sealed partial class Main : Node3D
 	private bool _isTutorial;
 	private TutorialPanel _tutorialPanel = null!;
 	private LoadingOverlay? _loadingOverlay;
+	// 加载失败/回退的用户可见报告:修"进不去图只能猜"——异常弹窗给地图名+错误,
+	// 静默回退(错图换图/沙盒基地)收进 _loadWarnings,加载完成后一次弹出。
+	private string _loadingMapDesc = "";
+	private readonly System.Collections.Generic.List<string> _loadWarnings = new();
+	private int _rmgenSpawnFailures;
 	private PauseMenu? _pauseMenu;
 	// FPS 叠层(overlay.fps 配置项驱动,原版 Display 类):右上角实时帧率。
 	private CanvasLayer? _fpsOverlay;
@@ -335,6 +340,8 @@ public sealed partial class Main : Node3D
 	{
 		try
 		{
+			_loadWarnings.Clear();
+			_loadingMapDesc = "";
 			_loadingOverlay!.SetProgress(0.05f);
 			// 两帧:确保等待页(含提示图)完整呈交后再开始阻塞式加载。
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
@@ -350,21 +357,60 @@ public sealed partial class Main : Node3D
 
 			BeginGameplayScenario(playerId, effectiveSlots, isMultiplayer);
 			_loadingOverlay.SetProgress(1f);
+			ShowLoadWarnings();
 		}
 		catch (System.Exception e)
 		{
 			// 加载失败不再 rethrow:async void 里抛异常只会留一个无地形的"天蓝空世界",
-			// 用户看到的像卡死而不是崩溃。改为报错 + 回主菜单(同 ColdLoad 失败路径)。
+			// 用户看到的像卡死而不是崩溃。报错落日志 + 弹窗给出地图名与错误摘要,
+			// 用户确认后才回主菜单(此前静默弹回,"进不去图"完全无法诊断)。
 			ZeroAD.Sim.Diag.Err("Gameplay", $"EXCEPTION in load: {e}");
 			ZeroAD.Sim.Diag.Err("Gameplay", $"Stack: {e.StackTrace}");
-			GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Reset();
-			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+			ShowLoadErrorAndReturnToMenu(
+				$"Failed to load map '{_loadingMapDesc}'.\n\n{e.GetType().Name}: {e.Message.Split('\n')[0]}");
 		}
 		finally
 		{
 			_loadingOverlay?.QueueFree();
 			_loadingOverlay = null;
 		}
+	}
+
+	/// <summary>加载致命错误:弹窗展示错误摘要,用户确认后重置配置并回主菜单。
+	/// 三个加载入口(SP/MP staged、ColdLoad、Replay)共用——此前全是静默弹回菜单。</summary>
+	private void ShowLoadErrorAndReturnToMenu(string message)
+	{
+		var dlg = new AcceptDialog
+		{
+			Title = "Map Load Error",
+			DialogText = message + "\n\n(Returning to main menu.)",
+			Exclusive = false,
+		};
+		AddChild(dlg);
+		dlg.Confirmed += ReturnToMenuAfterLoadError;
+		dlg.CloseRequested += ReturnToMenuAfterLoadError;
+		dlg.PopupCentered();
+	}
+
+	private void ReturnToMenuAfterLoadError()
+	{
+		GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Reset();
+		GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+	}
+
+	/// <summary>加载完成后的非致命警告(错图换图/沙盒基地/部分实体失败)一次弹完;
+	/// 无警告不弹。弹窗不阻塞——对局已开始,用户看完即关。</summary>
+	private void ShowLoadWarnings()
+	{
+		if (_loadWarnings.Count == 0) return;
+		var dlg = new AcceptDialog
+		{
+			Title = "Map Load Warnings",
+			DialogText = string.Join("\n", _loadWarnings),
+			Exclusive = false,
+		};
+		AddChild(dlg);
+		dlg.PopupCentered();
 	}
 
 	private void StartSinglePlayer(uint seed)
@@ -1128,8 +1174,7 @@ public sealed partial class Main : Node3D
 		if (reader == null)
 		{
 			ZeroAD.Sim.Diag.Err("Replay", $"cannot open slot '{cfg.ReplaySlot}'");
-			cfg.Reset();
-			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+			ShowLoadErrorAndReturnToMenu($"Cannot open replay slot '{cfg.ReplaySlot}'.");
 			return;
 		}
 		_loadingOverlay = new LoadingOverlay(reader.Meta.Description);
@@ -1151,8 +1196,8 @@ public sealed partial class Main : Node3D
 		catch (System.Exception e)
 		{
 			ZeroAD.Sim.Diag.Err("Replay", $"playback init failed: {e}");
-			cfg.Reset();
-			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+			ShowLoadErrorAndReturnToMenu(
+				$"Failed to start replay '{reader.Meta.Description}'.\n\n{e.GetType().Name}: {e.Message.Split('\n')[0]}");
 		}
 		finally
 		{
@@ -1214,17 +1259,19 @@ public sealed partial class Main : Node3D
 	{
 		try
 		{
+			_loadWarnings.Clear();
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 			_loadingOverlay!.SetProgress(0.3f);
 			ColdLoad(meta);
 			_loadingOverlay.SetProgress(1f);
+			ShowLoadWarnings();
 		}
 		catch (System.Exception e)
 		{
 			ZeroAD.Sim.Diag.Err("LoadGame", $"cold-load failed: {e}");
-			cfg.Reset();
-			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+			ShowLoadErrorAndReturnToMenu(
+				$"Failed to load save '{meta.Description}'.\n\n{e.GetType().Name}: {e.Message.Split('\n')[0]}");
 		}
 		finally
 		{
@@ -1336,10 +1383,12 @@ public sealed partial class Main : Node3D
 
 	private void SetupTerrain(string? pmpRelPath = null)
 	{
+		_loadingMapDesc = pmpRelPath ?? "(auto terrain)";
 		// 随机地图：路径以 "random/" 开头 → 走 rmgen 生成
 		if (pmpRelPath != null && pmpRelPath.StartsWith("random/"))
 		{
 			string mapName = pmpRelPath.Substring("random/".Length);
+			_loadingMapDesc = pmpRelPath;
 			SetupRmgenTerrain(mapName);
 			return;
 		}
@@ -1422,6 +1471,8 @@ public sealed partial class Main : Node3D
 			catch (System.Exception e)
 			{
 				ZeroAD.Sim.Diag.Err("Main", $"PMP load failed: {e.Message}, falling back to generated terrain");
+				_loadWarnings.Add($"Map file '{_loadingMapDesc}' failed to load " +
+					$"({e.Message.Split('\n')[0]}) — using generated terrain instead.");
 			}
 		}
 
@@ -1499,6 +1550,7 @@ public sealed partial class Main : Node3D
 		if (export == null)
 		{
 			ZeroAD.Sim.Diag.Err("Main", $"Unknown random map type: {mapName}, falling back to arcadia");
+			_loadWarnings.Add($"Unknown random map '{mapName}' — loaded a fallback map instead.");
 			SetupTerrain(null);
 			return;
 		}
@@ -1573,7 +1625,14 @@ public sealed partial class Main : Node3D
 				if (_sim.EntityNodes.TryGetValue(eid, out var node) && yaw != 0f)
 					node.Rotation = new Vector3(0, yaw, 0);
 			}
-			catch (System.Exception ex) { ZeroAD.Sim.Diag.Warn("Main", $"rmgen entity spawn failed: {ent.TemplateName}: {ex.Message}"); }
+			catch (System.Exception ex) { ZeroAD.Sim.Diag.Warn("Main", $"rmgen entity spawn failed: {ent.TemplateName}: {ex.Message}"); _rmgenSpawnFailures++; }
+		}
+
+		if (_rmgenSpawnFailures > 0)
+		{
+			_loadWarnings.Add($"{_rmgenSpawnFailures} entit(y/ies) failed to spawn on '{mapName}' " +
+				"(see log for details).");
+			_rmgenSpawnFailures = 0;
 		}
 
 		_sim.MapPath = $"random/{mapName}";
@@ -1914,6 +1973,10 @@ public sealed partial class Main : Node3D
 			// Every non-Closed slot gets a starting base + local tree cluster in its deterministic
 			// corner. This also fixes the old MP bug where slot 2 was an inert shell with no base or
 			// units: now every player — human or AI — starts with a TC, villagers, and soldiers.
+			// dev 自动地形入口(无图)不算回退,不警告。
+			if (_loadingMapDesc != "(auto terrain)")
+				_loadWarnings.Add($"Map '{_loadingMapDesc}' provided no playable entities — " +
+					"spawned sandbox corner bases instead.");
 			foreach (var slot in slots)
 			{
 				if (slot.Kind == ZeroAD.Sim.Net.PlayerSlotKind.Closed) continue;
