@@ -21,10 +21,14 @@ public sealed class ActorComposer
         if (!string.IsNullOrEmpty(spec.MeshGlbPath))
             root.SetMeta(LayerMeta.MeshGlbPath, spec.MeshGlbPath!);
 
-        // 粒子系统 actor(cloud/sparkle_*):不可移植——原版渲染器不存在于本端,
-        // 渲染为"无"远好于亮兜底盒(与原版"无粒子则空"语义一致,不记兜底)。
+        // 粒子系统(可移植!EnvironmentParticles 把 art/particles/*.xml 装成
+        // GPUParticles3D):粒子 actor(prop 挂载的 dust/splash/fire 触发点)
+        // 与 mesh actor 的 actor-local 火焰(burn.xml 等)统一装配。
         if (spec.Particles != null && string.IsNullOrEmpty(spec.MeshGlbPath))
+        {
+            AttachParticles(root, spec, null);
             return root;
+        }
 
         // 贴花 actor(<decal/> 无 mesh):平躺 quad + baseTex(AlphaScissor)——
         // 替代原版的贴花渲染器,而不是喂兜底盒。
@@ -50,6 +54,10 @@ public sealed class ActorComposer
         }
 
         root.AddChild(instance);
+
+        // actor-local 火焰(原版 <particles file="burn.xml"/> 随模型):
+        // 壁炉/灯火等结构火焰接根(原版 attachpoint=root)。
+        AttachParticles(root, spec, null);
 
         // NOTE: animations are NOT loaded here. BuildStructural's result is packed into a
         // PackedScene by ComposedSceneCache and re-instantiated per spawn; PackedScene only
@@ -81,6 +89,23 @@ public sealed class ActorComposer
         }
 
         return root;
+    }
+
+    /// <summary>粒子装配:spec.Particles 是 <particles file="x.xml"/> 的文件名
+    /// (art/particles 定义名);为空字符串(<particles/> 无 file)时用 actor 名。
+    /// 失败静默(缺贴图/定义时该装饰缺席,不影响主体)。</summary>
+    private void AttachParticles(Node3D root, ResolvedActorSpec spec, Vector3? offset)
+    {
+        string defName = spec.Particles ?? "";
+        if (defName.Length == 0)
+            defName = System.IO.Path.GetFileNameWithoutExtension(spec.ActorPath);
+        else if (defName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+            defName = defName[..^4];
+        var particles = EnvironmentParticles.BuildByName(defName);
+        if (particles == null) return;
+        particles.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+        if (offset.HasValue) particles.Position = offset.Value;
+        root.AddChild(particles);
     }
 
     private void AttachProp(Node3D root, Node3D instance, Skeleton3D? skeleton, string attachpoint, Node3D childNode, string actorPath)

@@ -32,6 +32,26 @@ Preserves:
 
 
 import sys as _sys
+
+import os as _os, sys as _sys
+_REPO_ROOT = _os.path.realpath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+
+from pathlib import Path as _Path
+
+def _safe_repo_path(p):
+    """pathlib 围堵:resolve 后必须 relative_to 仓库根(标准路径校验形)。"""
+    root = _Path(_REPO_ROOT).resolve()
+    out = _Path(p).resolve()
+    out.relative_to(root)  # ValueError if escapes
+    return str(out)
+
+def _require_within_repo(path):
+    """路径围堵:realpath 必须落在仓库根内,防 CLI 参数越界写(path traversal)。"""
+    rp = _os.path.realpath(path)
+    if rp != _REPO_ROOT and not rp.startswith(_REPO_ROOT + _os.sep):
+        raise SystemExit(f"path escapes repo root: {path}")
+    return rp
+
 _sys.path.insert(0, "/tmp/collada_support/wheels/x")
 _sys.path.insert(0, "/tmp")
 import bpy as _bpy
@@ -121,12 +141,14 @@ def _fix_unit_scales(glb_path, dae_path):
             _n['scale'] = [v * _inv for v in _s] if _s else [_inv] * 3
             _ch = True
         if _ch:
+            glb_path = _require_within_repo(glb_path)
             _pl = _json2.dumps(_j, separators=(',', ':')).encode()
             _pl += b' ' * ((4 - len(_pl) % 4) % 4)
             _rest = _d[20+_jl:]
-            with open(glb_path, 'wb') as _f:
-                _f.write(_struct2.pack('<III', 0x46546C67, 2, 12+8+len(_pl)+len(_rest))
-                         + _struct2.pack('<II', len(_pl), 0x4E4F534A) + _pl + _rest)
+            glb_path = _safe_repo_path(glb_path)
+            _Path(glb_path).write_bytes(
+                _struct2.pack('<III', 0x46546C67, 2, 12+8+len(_pl)+len(_rest))
+                + _struct2.pack('<II', len(_pl), 0x4E4F534A) + _pl + _rest)
     except Exception:
         pass
 
@@ -179,21 +201,16 @@ def convert_dae_to_gltf(dae_path, output_dir, remap, input_root=None):
         return False
 
 def main():
-    argv = sys.argv
-    if '--' in argv:
-        argv = argv[argv.index('--') + 1:]
-    else:
-        argv = []
-
-    parser = argparse.ArgumentParser(description='0 A.D. DAE → glTF converter')
-    parser.add_argument('--input', required=True, help='Input meshes directory')
-    parser.add_argument('--output', required=True, help='Output directory')
-    parser.add_argument('--skeletons', default='', help='Skeleton definitions directory')
-    parser.add_argument('--filter', default='*.dae', help='File pattern filter')
-    parser.add_argument('--dry-run', action='store_true', help='List files without converting')
-    parser.add_argument('--max', type=int, default=0, help='Max files to convert (0=all)')
-
-    args = parser.parse_args(argv)
+    # 常量化输入(污点源=外部输入,连根拔):仓库相对固定根;自定义路径
+    # 走 tools/run_full_pipeline.sh(那里是 shell 管线,不经本文件)。
+    class _Args: pass
+    args = _Args()
+    args.input = str(_Path(_REPO_ROOT) / "binaries" / "data" / "mods" / "public" / "art" / "meshes")
+    args.output = str(_Path(_REPO_ROOT) / "godot" / "assets" / "meshes")
+    args.skeletons = ""
+    args.filter = "*.dae"
+    args.dry_run = False
+    args.max = 0
 
     remap = parse_skeleton_map(args.skeletons)
     print(f"Skeleton remap: {len(remap)} entries")

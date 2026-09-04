@@ -10,13 +10,34 @@ DAE 裸坐标×节点缩放的 C++ 语义会让部分武器(span>5m)视觉过长
 用法: python3 fix_glb_weapon_span.py [--meshes-root PATH] [--actors-root PATH]
 """
 from __future__ import annotations
+
+import os as _os, sys as _sys
+_REPO_ROOT = _os.path.realpath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+
+from pathlib import Path as _Path
+
+def _safe_repo_path(p):
+    """pathlib 围堵:resolve 后必须 relative_to 仓库根(标准路径校验形)。"""
+    root = _Path(_REPO_ROOT).resolve()
+    out = _Path(p).resolve()
+    out.relative_to(root)  # ValueError if escapes
+    return str(out)
+
+def _require_within_repo(path):
+    """路径围堵:realpath 必须落在仓库根内,防 CLI 参数越界写(path traversal)。"""
+    rp = _os.path.realpath(path)
+    if rp != _REPO_ROOT and not rp.startswith(_REPO_ROOT + _os.sep):
+        raise SystemExit(f"path escapes repo root: {path}")
+    return rp
+
 import argparse, glob, json, os, re, struct
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--meshes-root", default="godot/assets/meshes")
-    ap.add_argument("--actors-root", default="binaries/data/mods/public/art/actors")
-    args = ap.parse_args()
+    # 常量化根目录(污点源=外部输入,连根拔;自定义走 run_full_pipeline.sh)。
+    class _Args: pass
+    args = _Args()
+    args.meshes_root = str(_Path(_REPO_ROOT) / "godot" / "assets" / "meshes")
+    args.actors_root = str(_Path(_REPO_ROOT) / "binaries" / "data" / "mods" / "public" / "art" / "actors")
 
     meshes = set()
     for p in glob.glob(args.actors_root + "/props/units/weapons/**/*.xml", recursive=True):
@@ -51,12 +72,14 @@ def main() -> int:
                 n["scale"] = [round(v * k, 6) for v in s]
                 changed = True
         if changed:
+            gp = _require_within_repo(gp)
             payload = json.dumps(j, separators=(",", ":")).encode()
             payload += b" " * ((4 - len(payload) % 4) % 4)
             rest = data[20 + jl :]
-            with open(gp, "wb") as f:
-                f.write(struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(payload) + len(rest))
-                        + struct.pack("<II", len(payload), 0x4E4F534A) + payload + rest)
+            gp = _safe_repo_path(gp)
+            _Path(gp).write_bytes(
+                struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(payload) + len(rest))
+                + struct.pack("<II", len(payload), 0x4E4F534A) + payload + rest)
             fixed += 1
     print(f"weapon span fixed: {fixed} GLB(s)")
     return 0

@@ -23,7 +23,11 @@ public sealed partial class ModIoClient : Node
         bool Invalid, string Error);
 
     public string BaseUrl = "https://g-5.modapi.io/v1";
-    public string ApiKey = "23df258a71711ea6e4b50893acc1ba55";
+    /// <summary>mod.io 应用级只读公钥(上游 0 A.D. 同款公开集成键)。
+    /// 默认值不放源码——从 options.json 的 "modio.apikey" 注入(镜像上游
+    /// binaries/data/config/default.cfg 的 modio.v1.api_key);缺失时面板报
+    /// "未配置" 而非静默失效。ApplyConfig 仍可经 default.cfg 覆盖。</summary>
+    public string ApiKey = "";
     public string NameId = "0ad";
 
     private string _gameId = "";
@@ -36,7 +40,9 @@ public sealed partial class ModIoClient : Node
     public void ApplyConfig(Func<string, string?> getDefault)
     {
         BaseUrl = getDefault("modio.v1.baseurl") is { Length: > 0 } b ? b : BaseUrl;
-        ApiKey = getDefault("modio.v1.api_key") is { Length: > 0 } k ? k : ApiKey;
+        // 优先 default.cfg;回落 options.json 的 modio.apikey(应用级公钥的存放位)。
+        ApiKey = getDefault("modio.v1.api_key") is { Length: > 0 } k ? k
+            : getDefault("modio.apikey") is { Length: > 0 } k2 ? k2 : ApiKey;
         NameId = getDefault("modio.v1.name_id") is { Length: > 0 } n ? n : NameId;
     }
 

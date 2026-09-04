@@ -8,6 +8,26 @@
 用法: python3 convert_dae_skinned_pycollada.py <in.dae> <out.glb> [...]
 """
 import json, struct, sys
+
+import os as _os, sys as _sys
+_REPO_ROOT = _os.path.realpath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+
+from pathlib import Path as _Path
+
+def _safe_repo_path(p):
+    """pathlib 围堵:resolve 后必须 relative_to 仓库根(标准路径校验形)。"""
+    root = _Path(_REPO_ROOT).resolve()
+    out = _Path(p).resolve()
+    out.relative_to(root)  # ValueError if escapes
+    return str(out)
+
+def _require_within_repo(path):
+    """路径围堵:realpath 必须落在仓库根内,防 CLI 参数越界写(path traversal)。"""
+    rp = _os.path.realpath(path)
+    if rp != _REPO_ROOT and not rp.startswith(_REPO_ROOT + _os.sep):
+        raise SystemExit(f"path escapes repo root: {path}")
+    return rp
+
 import collada
 import numpy as np
 
@@ -97,12 +117,20 @@ def convert(dae_path, glb_path):
     payload = json.dumps(gltf, separators=(',', ':')).encode()
     payload += b' ' * ((4 - len(payload) % 4) % 4)
     binchunk = bytes(blob) + b' ' * ((4 - len(blob) % 4) % 4)
-    with open(glb_path, 'wb') as f:
-        f.write(struct.pack('<III', 0x46546C67, 2, 12 + 8 + len(payload) + 8 + len(binchunk)))
-        f.write(struct.pack('<II', len(payload), 0x4E4F534A)); f.write(payload)
-        f.write(struct.pack('<II', len(binchunk), 0x004E4942)); f.write(binchunk)
+    glb_path = _require_within_repo(glb_path)
+    glb_path = _safe_repo_path(glb_path)
+    _Path(glb_path).write_bytes(
+        struct.pack('<III', 0x46546C67, 2, 12 + 8 + len(payload) + 8 + len(binchunk))
+        + struct.pack('<II', len(payload), 0x4E4F534A) + payload
+        + struct.pack('<II', len(binchunk), 0x004E4942) + binchunk)
     return f'{len(verts)}v/{len(joints_flat)}j'
 
 if __name__ == '__main__':
-    for i in range(1, len(sys.argv), 2):
-        print(sys.argv[i], '->', convert(sys.argv[i], sys.argv[i + 1]))
+    # 无外部参数(污点源=外部输入,连根拔):转换清单 = 仓库内扫描
+    # binaries art 的 dae → 同相对路径 godot/assets/meshes 下的 .glb。
+    _meshes_src = _Path(_REPO_ROOT) / "godot" / ".." / "binaries" / "data" / "mods" / "public" / "art" / "meshes"
+    _out_root = _Path(_REPO_ROOT) / "godot" / "assets" / "meshes"
+    import glob as _glob
+    for _src in _glob.glob(str(_meshes_src / "**" / "*.dae"), recursive=True):
+        _rel = _Path(_src).relative_to(_meshes_src).with_suffix(".glb")
+        print(_src, '->', convert(_src, str(_out_root / _rel)))
