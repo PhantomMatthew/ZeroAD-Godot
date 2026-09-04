@@ -18,16 +18,20 @@ namespace ZeroAD.Godot;
 public sealed partial class PauseMenu : CanvasLayer
 {
     private readonly SimBridge _sim;
+    private readonly MultiplayerController? _mp;
     private Label _statusLabel = null!;
+    private VBoxContainer _lagBox = null!;
+    private string _lagSignature = "";
     private ConfirmationDialog? _resignConfirm;
 
     public event Action? OnSave;
     public event Action? OnLoad;
     public event Action? OnLeave;
 
-    public PauseMenu(SimBridge sim)
+    public PauseMenu(SimBridge sim, MultiplayerController? mp = null)
     {
         _sim = sim;
+        _mp = mp;
         // Insurance: stay interactive even if the tree were ever paused (we don't rely on tree
         // pause — SimBridge.Paused gates _Process — but this keeps the buttons clickable regardless).
         ProcessMode = ProcessModeEnum.Always;
@@ -96,6 +100,17 @@ public sealed partial class PauseMenu : CanvasLayer
         AddButton(vbox, "Hotkeys", OpenHotkeys);
         AddButton(vbox, "Resign", ShowResignConfirm);
         AddButton(vbox, "Leave", () => OnLeave?.Invoke());
+
+        // MP 超时警示名单(原版 NETWORK_WARNING_TIMEOUT 的 GUI 呈现:ClientTimeout 警告 +
+        // host 手动踢出)。名单由 MultiplayerController 每 0.5s 刷新;host 见逐行 + Kick 钮,
+        // client 只见 host 失联提示(踢出是 host 特权)。踢人后走既有掉线→AI 接管路径。
+        _lagBox = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            Visible = false,
+        };
+        vbox.AddChild(_lagBox);
+        if (_mp != null) _mp.OnLaggingChanged += RebuildLagRows;
 
         // Resign 确认框(对齐原版 Menu → ResignConfirmation):Confirmed → 本地玩家认输(走既有
         // PlayerDefeated 路径 → GameOverOverlay 显失败屏),取消则关框不动。SP 够用;MP 广播延后。
@@ -174,6 +189,66 @@ public sealed partial class PauseMenu : CanvasLayer
     {
         Visible = false;
         _sim.Paused = false;
+    }
+
+    public override void _ExitTree()
+    {
+        if (_mp != null) _mp.OnLaggingChanged -= RebuildLagRows;
+    }
+
+    // 名单签名相同则跳过重建(事件每 0.5s 来一次,大多数 tick 内容不变)。
+    private void RebuildLagRows()
+    {
+        var mp = _mp;
+        if (mp == null) return;
+        long now = (long)Time.GetTicksMsec();
+        var sig = string.Join("|", mp.LaggingPeers.ConvertAll(e => $"{e.Peer}:{e.PlayerId}:{(now - e.LastMs) / 1000}"));
+        if (sig == _lagSignature) return;
+        _lagSignature = sig;
+
+        foreach (var child in _lagBox.GetChildren()) child.QueueFree();
+        if (mp.LaggingPeers.Count == 0)
+        {
+            _lagBox.Visible = false;
+            return;
+        }
+        _lagBox.Visible = true;
+        foreach (var (peer, playerId, lastMs) in mp.LaggingPeers)
+        {
+            long secs = (now - lastMs) / 1000;
+            if (mp.IsHost)
+            {
+                var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+                var label = new Label
+                {
+                    Text = Localization.Tr($"Player {playerId} lagging ({secs}s)"),
+                    SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                };
+                label.AddThemeFontSizeOverride("font_size", 12);
+                row.AddChild(label);
+                long p = peer;
+                var kick = new Button
+                {
+                    Text = Localization.Tr("Kick"),
+                    Theme = UITheme.GetTheme(),
+                    CustomMinimumSize = new Vector2(48, 24),
+                };
+                kick.Pressed += () => mp.KickPeer(p);
+                row.AddChild(kick);
+                _lagBox.AddChild(row);
+            }
+            else
+            {
+                var label = new Label
+                {
+                    Text = Localization.Tr($"Host not responding ({secs}s)"),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                };
+                label.AddThemeFontSizeOverride("font_size", 12);
+                _lagBox.AddChild(label);
+            }
+        }
     }
 
     /// <summary>Status line feedback ("Saved." / "Loaded turn 42." / "No save file.").</summary>

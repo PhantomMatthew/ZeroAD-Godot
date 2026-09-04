@@ -1,4 +1,4 @@
-# 未完成项清单(2026-09-03 快照)
+# 未完成项清单(2026-09-04 快照)
 
 > 来源:[PORTING-GAPS.md](PORTING-GAPS.md) 全表核对。每条注明状态与上游对照。
 > 完成项不在此列;架构性"判定不搬"见末节。
@@ -14,7 +14,7 @@
 | ~~Garrison/Turret/Gate~~ ✅ | initGarrison/initTurrets(场景 XML 解析+生成末统一应用)、门自动开关(盟友感应+门洞占用重试+阻挡旗态机)——本波全落 |
 | ~~TerritoryManager~~ ✅ | 本波校准:成本加权洪泛(8m 瓦+costGrid)+8 向连通+blink 纯驱动+百分比 |
 | ~~PathfinderComponent~~ ✅ | 增量阻挡更新:两格模型+脏区打点+脏 chunk 分层局部重连(本波) |
-| **Barter** | per-player BarterMultiplier 接科技修正值管线 |
+| ~~Barter~~ ✅ | per-player BarterMultiplier 已接修正值管线(PlayerComponent Buy/Sell 表+RecomputeBarterMultipliers,BarterSystem 报价带乘数,v17 序列化) |
 
 ## 2. 内核基础设施(§4)
 
@@ -23,9 +23,9 @@
 | 寻路异步任务化 | ✅ | ticket+索引槽位+次回合收割(确定性);后台单任务(多 worker 需 per-worker LongPathfinder 实例——30MB scratch 驻留,按需再扩) |
 | 寻路增量更新 | ✅ | 阻挡变化按脏矩形补丁+脏 chunk 局部重连(上游 UpdateGrid/HierUpdate 移植) |
 | push-out / 圆形障碍 | 🟡 | 对照 CCmpObstructionManager 的 shape 体系补齐 |
-| 序列化类型覆盖 | 🟡 | U64/I64/Float、backref 共享对象;如需与原版存档互通再对齐二进制格式(当前自研格式 v13) |
-| TurnManager 节奏/超时 | 🟡 | 回合超时节奏控制、客户端落后踢出策略 |
-| Templates | ⬜ | `actor\|...` 合成模板装载、template_not_found 占位语义 |
+| 序列化类型覆盖 | ✅ | U64/I64/Float/Double 全链(ISerializer+Binary+TextDump);backref 共享对象与原版二进制互通如需再对齐(当前自研格式 v17) |
+| TurnManager 节奏/超时 | ✅ | 超时警示(NETWORK_WARNING_TIMEOUT=2000ms 口径:lastReceived 追踪+0.5s 巡检+PauseMenu 名单)+ host 手动踢出(ENet DisconnectPeer→掉线 AI 接管);观战者不作回合闸门(=上游 observermaxlag −1 默认) |
+| Templates | ✅ | `actor\|...` 合成模板装载(ConstructTemplateActor 移植);template_not_found 上游已移除,不适用 |
 
 ## 3. Petra AI(§5)
 
@@ -40,9 +40,9 @@
 - **GUI**:间谍请求(需逐对 LOS 共享基建);mod.io minisigs Ed25519 验签(现只验存在性);campaigns 末关 endgame 页/useGameSetup 分支(初标"待触发器成熟",触发器总线 66e4f51 后已成熟,可重估)。
 - **GuiInterface 桥**:覆盖面约原版 1/5,HUD/Minimap 热路径仍有零散 QueryInterface 直读(每帧性能敏感段,按需补桥)。
 
-## 5. 模板 hotloading 尾巴(本波新增)
+## 5. 模板 hotloading(已闭环)
 
-- 存量实体 sim 字段重灌(上游同款 15 年 TODO;EntityAssembler 为 add-only 组装,需逐组件 InitFromStats 通道)。当前 hotload 语义:新 spawn 立即生效 + 视觉全量重组装,仅 debug+单机。
+- ~~存量实体 sim 字段重灌~~✅(TemplateStatsRefresher:Identity/Health/Attack/UnitMotion/Vision/Obstruction+子形状/Garrison/BuildingAI/ProductionQueue/Cost/Population/TerritoryInfluence 逐组件重灌,超上游 15 年 TODO)。hotload 全链:失效→重校验→视觉重组装+存量重灌,仍仅 debug+单机。
 
 ## 6. 架构性保留项(判定不搬 / beyond-upstream)
 

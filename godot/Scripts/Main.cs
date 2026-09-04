@@ -1001,7 +1001,7 @@ public sealed partial class Main : Node3D
 
 		// Pause menu (Menu 按钮 → 暂停叠层):冻结 sim + 存档/读档/离开。事件解耦同 LobbyUI:
 		// 存档/读档复用 QuickSave/QuickLoad(含视觉重建),离开回主菜单。
-		_pauseMenu = new PauseMenu(_sim);
+		_pauseMenu = new PauseMenu(_sim, _mp);
 		var pm = _pauseMenu;
 		pm.OnSave += () => pm.SetStatus(QuickSave() != null ? "Saved." : "Save failed.");
 		pm.OnLoad += () =>

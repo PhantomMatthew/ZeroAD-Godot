@@ -208,6 +208,63 @@ public sealed partial class MultiplayerController : Node
 
     public void StartClient(string address, int port) => StartClient(address, port, false);
 
+    // ── 回合超时警示(原版 NETWORK_WARNING_TIMEOUT=2000ms:NetServer/NetClient
+    // 各自记录 lastReceived,超阈广播 ClientTimeout 警告——警告非踢出;
+    // 慢端踢出 = host 手动,见 KickPeer)──
+    // 观战者不作回合闸门:observer 不占槽、不出令,expectedPlayers 只数 Human 槽,
+    // 与上游 network.observermaxlag 默认 -1(观战永不阻塞回合)一致,无需另设配置。
+    private const int LagWarningMs = 2000;
+    /// <summary>每 peer 最近收包时间(ms 墙钟;表现层,不进锁步)。</summary>
+    private readonly System.Collections.Generic.Dictionary<long, long> _lastReceivedMs = new();
+    /// <summary>超时警示名单变化(peer/playerId/最近收包 ms)——PauseMenu 显示。</summary>
+    public event System.Action? OnLaggingChanged;
+    /// <summary>当前超时警示名单(host:各 peer;client:host 自身,peerId=1)。</summary>
+    public readonly System.Collections.Generic.List<(long Peer, uint PlayerId, long LastMs)> LaggingPeers = new();
+    private float _lagCheckAccum;
+    private long _lastHostReceiveMs;
+
+    private void NoteReceived(long peer)
+    {
+        long now = (long)Time.GetTicksMsec();
+        _lastReceivedMs[peer] = now;
+        if (peer == 1) _lastHostReceiveMs = now;   // client 侧记 host
+    }
+
+    public override void _Process(double delta)
+    {
+        if (Multiplayer.HasMultiplayerPeer() == false) return;
+        _lagCheckAccum += (float)delta;
+        if (_lagCheckAccum < 0.5f) return;
+        _lagCheckAccum = 0f;
+        long now = (long)Time.GetTicksMsec();
+        LaggingPeers.Clear();
+        if (_isHost)
+        {
+            foreach (var kv in _lastReceivedMs)
+            {
+                long last = kv.Value;
+                if (now - last > LagWarningMs
+                    && _peerToPlayer.TryGetValue((int)kv.Key, out uint pid))
+                    LaggingPeers.Add((kv.Key, pid, last));
+            }
+        }
+        else if (now - _lastHostReceiveMs > LagWarningMs)
+        {
+            LaggingPeers.Add((1, 1, _lastHostReceiveMs));
+        }
+        OnLaggingChanged?.Invoke();
+    }
+
+    /// <summary>host 手动踢出(原版 lobby 踢人键的局中等价):断开后走既有
+    /// 掉线路径——槽位转 AI 接管,对局继续。</summary>
+    public void KickPeer(long peerId)
+    {
+        if (!_isHost) return;
+        ZeroAD.Sim.Diag.Log("MP", $"host kicks peer {peerId}");
+        // ENetMultiplayerPeer 按 peer 断开(Godot 4:断开 API 在 MultiplayerPeer 上)。
+        (Multiplayer.MultiplayerPeer as ENetMultiplayerPeer)?.DisconnectPeer((int)peerId);
+    }
+
     /// <summary>observer=true:以观战者加入(不占槽、不出令、全图视野)。</summary>
     public void StartClient(string address, int port, bool observer)
     {
@@ -500,6 +557,7 @@ public sealed partial class MultiplayerController : Node
     {
         if (!_isHost || _netTurn == null) return;
         long sender = Multiplayer.GetRemoteSenderId();
+        NoteReceived(sender);
         if (!_peerToPlayer.TryGetValue((int)sender, out uint player)) return;
         _netTurn.HostIngestBatch(player, (uint)turn, NetCommand.DeserializeBatch(batch));
     }
@@ -507,6 +565,7 @@ public sealed partial class MultiplayerController : Node
     [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void ReceiveBundle(int turn, byte[] bundle)
     {
+        NoteReceived(1);
         _netTurn?.ReceiveTurnBundle((uint)turn, NetCommand.DeserializeBatch(bundle));
     }
 
@@ -515,6 +574,7 @@ public sealed partial class MultiplayerController : Node
     {
         if (!_isHost || _netTurn == null) return;
         long sender = Multiplayer.GetRemoteSenderId();
+        NoteReceived(sender);
         if (!_peerToPlayer.TryGetValue((int)sender, out uint player)) return;
         _netTurn.HostReceiveRemoteHash((uint)turn, player, hash);
     }
