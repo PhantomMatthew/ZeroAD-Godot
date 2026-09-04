@@ -151,12 +151,36 @@ public sealed partial class GameOverOverlay : CanvasLayer
                 run.MarkLevelComplete(cfg.CampaignLevelId);
                 ZeroAD.Sim.Diag.Log("Campaign",
                     $"run '{cfg.CampaignRunFile}': level '{cfg.CampaignLevelId}' completed");
+
+                // endgame 页(原版 campaigns/default_menu/endgame/ 的等价):
+                // 全部关卡完成 → 通关页替代普通胜利遮罩。
+                var template = run.Template;
+                bool runComplete = template != null && template.Levels.Count > 0
+                    && System.Linq.Enumerable.All(template.Levels.Keys,
+                        id => run.CompletedLevels.Contains(id));
+                if (runComplete)
+                {
+                    ShowEndgamePanel(run);
+                    return;
+                }
             }
         }
         ShowOverlay(
             title: "Victory!",
             titleColor: new Color(0.20f, 0.78f, 0.30f),
             message: "You are victorious.");
+    }
+
+    /// <summary>通关页(原版 endgame 瞬态页;回战役菜单 = 离开本局后由主菜单的
+    /// Continue Campaign 路径打开 run 菜单)。</summary>
+    private void ShowEndgamePanel(Campaigns.CampaignRun run)
+    {
+        var panel = new CampaignEndgamePanel(run, () =>
+        {
+            // 与 Leave 按钮同路:离开本局回主菜单(战役菜单由主菜单继续入口打开)。
+            OnLeavePressed();
+        });
+        AddChild(panel);
     }
 
     private void ShowOverlay(string title, Color titleColor, string message)

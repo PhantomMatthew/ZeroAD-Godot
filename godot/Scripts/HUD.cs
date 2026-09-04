@@ -1664,7 +1664,26 @@ public sealed partial class HUD : CanvasLayer
         }
         else
         {
-            _queueStrip.Visible = false;
+            // 升级进度条(原版 Upgrade.js GetProgress 的 GUI 条):无生产队列时,
+            // 复用该横条单槽显示"目标模板 + 进度遮罩"。
+            var up = _sim.Sim.QueryInterface<UpgradeComponent>(first);
+            if (up != null && up.IsUpgrading)
+            {
+                _queueTime.Text = $"{(int)System.Math.Max(up.RequiredTime - up.ElapsedTime, 0f)}s";
+                var slot = _queueSlots[0];
+                slot.Portrait = LoadPortraitForTemplate(up.TargetTemplate);
+                slot.Progress = Mathf.Clamp(up.GetProgress(), 0f, 1f);
+                slot.BatchCount = 0;
+                slot.Visible = true;
+                slot.RefreshCount();
+                slot.QueueRedraw();
+                for (int i = 1; i < _queueSlots.Length; i++) _queueSlots[i].Visible = false;
+                _queueStrip.Visible = true;
+            }
+            else
+            {
+                _queueStrip.Visible = false;
+            }
         }
 
         // 驻军数 + 驻军头像行(原版 garrison 选择面板:头像点击=卸载该单位,

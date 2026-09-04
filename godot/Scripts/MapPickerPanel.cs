@@ -154,6 +154,12 @@ public sealed partial class MapPickerPanel : Panel
         Darkened(200, 80, 120),   // P8 pink
     };
 
+    /// <summary>强制图模式(战役 useGameSetup 分支):只列一张图且不可换,
+    /// 其余 gamesetup 选项照常;null = 自由选图。</summary>
+    public string? ForcedMapId { get; set; }
+    /// <summary>页头附加标题(战役名——原版 gamesetup 的战役上下文)。</summary>
+    public string TitleSuffix { get; set; } = "";
+
     public MapPickerPanel(List<MapEntry> maps, string? dataRoot)
     {
         _maps = maps;
@@ -163,6 +169,12 @@ public sealed partial class MapPickerPanel : Panel
     public override void _Ready()
     {
         Theme = UITheme.GetTheme();
+        if (ForcedMapId != null)
+        {
+            // 战役强制图:隐藏地图列表/类型切换(gamesetup 的图锁语义——原版
+            // lockSettings.map;选项页照常可调)。
+            CallDeferred(nameof(DisableMapBrowsing));
+        }
         // 近全屏(原版 gamesetup 就是全屏页):2%-3% 边距,随窗口缩放。
         AnchorLeft = 0.02f; AnchorRight = 0.98f; AnchorTop = 0.03f; AnchorBottom = 0.97f;
         OffsetLeft = 0; OffsetRight = 0; OffsetTop = 0; OffsetBottom = 0;
@@ -429,6 +441,11 @@ public sealed partial class MapPickerPanel : Panel
 
     /// <summary>dev 截图钩子:切到指定页签(ZEROAD_MATCH_TAB=0/1/2)。</summary>
     public void DevSelectTab(int idx) => _tabStrip.Select(idx);
+
+    private void DisableMapBrowsing()
+    {
+        if (_browser != null) _browser.Visible = false;
+    }
 
     // ══════════ Map 页签(原版 GameSettingsLayout 第一段)══════════
     private Control BuildMapTab()
@@ -718,7 +735,10 @@ public sealed partial class MapPickerPanel : Panel
             2 => "scenario",
             _ => "random",   // 默认视图 = random(原版 gamesetup 同款)
         };
-        _filtered = _maps.Where(m => m.MapType == type).ToList();
+        // 战役强制图(不可换):RelPath 含该图基名(level.Map 的文件主干)。
+        _filtered = ForcedMapId != null
+            ? _maps.Where(m => m.RelPath.Contains(ForcedMapId)).ToList()
+            : _maps.Where(m => m.MapType == type).ToList();
 
         _list.Clear();
         _mapSelectOpt?.Clear();

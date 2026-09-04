@@ -1562,6 +1562,9 @@ public sealed partial class SimBridge : Node
 		{
 			var health = _sim.QueryInterface<HealthComponent>(entity);
 			if (health == null || !health.IsDead) continue;
+			// 升级中被毁:全额退还(原版 CancelUpgrade on destroy)。
+			_sim.QueryInterface<UpgradeComponent>(entity)?.CancelUpgrade(_sim);
+
 			// 尸体已转换的不再处理(每 tick 全表扫描,IsDead 恒真)。
 			if (_sim.QueryInterface<CorpseComponent>(entity) != null) continue;
 			// gaia 动物(killBeforeGather 无主资源):死亡不销毁,转尸体供采集(原版行为)。

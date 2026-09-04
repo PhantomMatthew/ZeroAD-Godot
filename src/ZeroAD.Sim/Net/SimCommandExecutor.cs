@@ -634,27 +634,49 @@ namespace ZeroAD.Sim.Net
 
             var player = _cm.GetPlayerEntity(owner.PlayerId);
             if (player == null) return;
-            if (!player.CanAfford(stats.UpgradeCostWood, stats.UpgradeCostFood,
-                stats.UpgradeCostStone, stats.UpgradeCostMetal)) return;
-            player.Spend(stats.UpgradeCostWood, stats.UpgradeCostFood,
-                stats.UpgradeCostStone, stats.UpgradeCostMetal);
 
-            float x = pos.Position.X.ToFloat();
-            float z = pos.Position.Z.ToFloat();
-            // 升级继承原建筑朝向(原版 Transform.js 的等价:换模板时拷贝 rot.y)。
-            var yaw = pos.Rotation.Y;
-            _cm.DestroyEntity(building);
-            var foundation = SpawnFoundation(target,
-                Maths.Fixed.FromFloat(x), Maths.Fixed.FromFloat(z), yaw,
-                stats.UpgradeTime > 0 ? stats.UpgradeTime : 10f, owner.PlayerId);
+            // 原版 Upgrade.js 模型:原地升级(建筑保留,进度走时间,完成换模板)。
+            // 前置:生产队列非空 → 拒(原版 "Entity is producing" 通知);
+            // 科技门(Upgrade/Requirements/Techs,含 ! 否定 token);扣费改由组件管账
+            // (取消/被毁退还——此前立即拆毁+地基模式无退还路径)。
+            var queue = _cm.QueryInterface<ProductionQueue>(building);
+            if (queue != null && queue.QueueCount > 0) return;   // 生产中不可升级
+            if (stats.UpgradeRequiredTechs.Length > 0)
+            {
+                var tm = _cm.QueryInterface<TechnologyManager>(_cm.GetPlayerEntityId(owner.PlayerId) ?? default);
+                if (tm != null)
+                    foreach (var tok in stats.UpgradeRequiredTechs.Split(
+                        (char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        bool neg = tok.StartsWith('!');
+                        string tech = neg ? tok[1..] : tok;
+                        if (tm.IsResearched(tech) == neg) return;   // 门未过
+                    }
+            }
 
-            // 指派的建造者续建(与玩家放置地基后的 Repair 同路)。
+            var up = _cm.QueryInterface<UpgradeComponent>(building)
+                ?? AddUpgradeComponent(building);
+            up.StartUpgrade(_cm, target,
+                stats.UpgradeTime > 0 ? stats.UpgradeTime : 10f,
+                stats.UpgradeCostWood, stats.UpgradeCostFood,
+                stats.UpgradeCostStone, stats.UpgradeCostMetal,
+                stats.UpgradeVariant, player);
+
+            // 指派的建造者(与 Repair 同路——原版升级不强制工人,建造者在场时
+            // 作为 Repair 接近,无工人升级照常计时;组件自己走时间)。
             if (cmd.IntParam1 > 0)
             {
                 var builder = new EntityId((uint)cmd.IntParam1);
                 var ai = _cm.QueryInterface<UnitAIComponent>(builder);
-                if (ai != null) ai.Repair(foundation);
+                if (ai != null) ai.Repair(building);
             }
+        }
+
+        private UpgradeComponent AddUpgradeComponent(EntityId building)
+        {
+            var up = new UpgradeComponent();
+            _cm.AddComponent(building, up);
+            return up;
         }
 
         private void ApplyWalkToRange(EntityId entity, NetCommand cmd)

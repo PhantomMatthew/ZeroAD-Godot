@@ -432,6 +432,11 @@ namespace ZeroAD.Sim.Content
                         stats.UpgradeCostMetal = upCost.GetChild("metal").IsOk ? upCost.GetChild("metal").ToInt() : 0;
                     }
                     stats.UpgradeTime = target.GetChild("Time").IsOk ? target.GetChild("Time").ToFloat() : 0f;
+                    // Upgrade/Requirements/Techs(升阶科技门;原版 RequirementsHelper 的 techs token)。
+                    var upReq = target.GetChild("Requirements").GetChild("Techs");
+                    if (upReq.IsOk) stats.UpgradeRequiredTechs = upReq.ToString().Trim();
+                    var upVar = target.GetChild("Variant");
+                    if (upVar.IsOk) stats.UpgradeVariant = upVar.ToString().Trim();
                 }
             }
 
@@ -1550,6 +1555,10 @@ namespace ZeroAD.Sim.Content
 
         /// <summary>升级目标模板(Upgrade 首个子节点的 Entity;含 {civ} 占位)。空 = 不可升级。</summary>
         public string UpgradeToTemplate = "";
+        /// <summary>Upgrade/Requirements/Techs 原文(空格分隔 token,含 ! 否定)。</summary>
+        public string UpgradeRequiredTechs = "";
+        /// <summary>Upgrade/Variant(升级中动画变体名)。</summary>
+        public string UpgradeVariant = "";
         public int UpgradeCostWood;
         public int UpgradeCostFood;
         public int UpgradeCostStone;

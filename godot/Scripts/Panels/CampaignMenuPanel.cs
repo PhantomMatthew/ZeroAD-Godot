@@ -232,6 +232,15 @@ public sealed partial class CampaignMenuPanel : ModalPanelBase
     private void StartScenario()
     {
         if (_selected == null || !_run.MeetsRequirements(_selected)) return;
+
+        // useGameSetup 分支(原版 CampaignMenu.js:104-133):走完整 gamesetup
+        // (地图锁定 + 默认 AI,back-page = 战役菜单),玩家确认后再开局。
+        if (_selected.UseGameSetup)
+        {
+            OpenGameSetupForLevel(_selected);
+            return;
+        }
+
         var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
         cfg.Reset();
         cfg.MapPath = "maps/" + Path.ChangeExtension(_selected.Map, ".pmp").Replace('\\', '/');
@@ -245,6 +254,38 @@ public sealed partial class CampaignMenuPanel : ModalPanelBase
             ? GameLaunchConfig.LaunchMode.Tutorial
             : GameLaunchConfig.LaunchMode.SinglePlayer;
         GetTree().ChangeSceneToFile("res://Scenes/Main.tscn");
+    }
+
+    /// <summary>useGameSetup:打开预配置的 gamesetup(地图锁定)。原版 gamesetup
+    /// 默认值:非人类槽位给默认 AI(gui.gamesetup.aidifficulty/aibehavior);
+    /// back-page = 战役菜单(OnCancelled 仅关面板,不回主菜单)。</summary>
+    private void OpenGameSetupForLevel(CampaignLevel level)
+    {
+        var picker = new MapPickerPanel(MapCatalog.Scan(_dataRoot), _dataRoot)
+        {
+            ForcedMapId = Path.GetFileNameWithoutExtension(level.Map),
+            TitleSuffix = _run.Template?.Name ?? "",
+        };
+        GetParent().AddChild(picker);
+        picker.OnStart += (entry, seed, slots) =>
+        {
+            var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+            cfg.Reset();
+            cfg.MapPath = "maps/" + Path.ChangeExtension(level.Map, ".pmp").Replace('\\', '/');
+            cfg.Seed = seed;
+            cfg.Cheats = true;
+            cfg.CampaignRunFile = _run.Filename;
+            cfg.CampaignLevelId = level.Id;
+            cfg.Mode = cfg.MapPath.EndsWith("tutorials/introductory_tutorial.pmp",
+                System.StringComparison.Ordinal)
+                ? GameLaunchConfig.LaunchMode.Tutorial
+                : GameLaunchConfig.LaunchMode.SinglePlayer;
+            if (slots != null)
+                cfg.Slots = CivRandom.Resolve(slots);   // "random" 文明 GUI 侧解析(同 SP)
+            picker.WriteOptions(cfg);   // gamesetup 选项全量写回(同 SP 路径)
+            GetTree().ChangeSceneToFile("res://Scenes/Main.tscn");
+        };
+        picker.OnCancelled += () => picker.QueueFree();
     }
 
     /// <summary>savedGamesButton → 读档页(原版限本 run 的存档;我们复用通用读档页)。</summary>
