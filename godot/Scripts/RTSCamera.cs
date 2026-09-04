@@ -201,7 +201,11 @@ namespace ZeroAD.Godot;
 					_edgePanEnabled = true;
 				_lastMousePos = mp;
 			}
-			if (_edgePanEnabled)
+			// 悬停任何 GUI 控件时不触发边缘滚动:小地图面板贴屏幕左下角,用户"看一眼
+			// 小地图"指针就进了 3px 边缘带,视角一路滑到地图左下角(用户报告"右键后
+			// 视角跳到左下"——实为右键下单后鼠标移向小地图触发的连续边缘滚动)。
+			// bandbox 是 MouseFilterEnum.Ignore,框选拖到屏边滚动不受影响。
+			if (_edgePanEnabled && vp.GuiGetHoveredControl() == null)
 			{
 				if (mp.X < EdgeMargin)       { _smFocusX.AddSmoothly(-right.X * PanSpeed * dt); _smFocusZ.AddSmoothly(-right.Z * PanSpeed * dt); moved = true; userMoved = true; }
 				else if (mp.X > sz.X - EdgeMargin) { _smFocusX.AddSmoothly(right.X * PanSpeed * dt); _smFocusZ.AddSmoothly(right.Z * PanSpeed * dt); moved = true; userMoved = true; }

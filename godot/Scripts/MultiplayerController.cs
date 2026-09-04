@@ -232,16 +232,30 @@ public sealed partial class MultiplayerController : Node
 
     public override void _Process(double delta)
     {
-        if (Multiplayer.HasMultiplayerPeer() == false) return;
+        // 只在锁步会话中巡检(SP 的 OfflineMultiplayerPeer 会让 HasMultiplayerPeer
+        // 恒真,不 gate 会把"从未收过 host 包"误报成 host 失联);会话外清掉陈名单。
+        if (Multiplayer.HasMultiplayerPeer() == false || _netTurn == null)
+        {
+            if (LaggingPeers.Count > 0)
+            {
+                LaggingPeers.Clear();
+                OnLaggingChanged?.Invoke();
+            }
+            return;
+        }
         _lagCheckAccum += (float)delta;
         if (_lagCheckAccum < 0.5f) return;
         _lagCheckAccum = 0f;
         long now = (long)Time.GetTicksMsec();
+        long selfId = Multiplayer.GetUniqueId();
         LaggingPeers.Clear();
         if (_isHost)
         {
             foreach (var kv in _lastReceivedMs)
             {
+                // 跳过自己:ReceiveBundle 是 CallLocal,host 的回环包也记进
+                // lastReceived[1];暂停(menu)时包流停,host 会把自己标成慢端。
+                if (kv.Key == selfId) continue;
                 long last = kv.Value;
                 if (now - last > LagWarningMs
                     && _peerToPlayer.TryGetValue((int)kv.Key, out uint pid))
