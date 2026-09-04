@@ -160,7 +160,13 @@ public sealed partial class TemplateHotReloader : Node
                 {
                     ZeroAD.Sim.Diag.Warn("Hotload", $"{name}: reload parse failed ({e.Message})");
                 }
-                ZeroAD.Sim.Diag.Log("Hotload", $"template reloaded: {name}");
+                // 存量实体重灌(超越上游的 15 年 TODO):该模板在役实体按新模板
+                // 重写组件字段(战斗/血量/驻军/生产/阻挡/视野/成本);视觉仍走
+                // RebuildAllVisuals。
+                int refreshed = ZeroAD.Sim.Content.TemplateStatsRefresher
+                    .RefreshAllEntitiesWithTemplate(_sim.Sim, templates, name);
+                ZeroAD.Sim.Diag.Log("Hotload",
+                    $"template reloaded: {name} ({refreshed} component(s) re-applied)");
             }
         }
 
