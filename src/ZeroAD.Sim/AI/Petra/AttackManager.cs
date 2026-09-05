@@ -8,8 +8,10 @@ namespace ZeroAD.Sim.AI.Petra;
 
 /// <summary>进攻管理器（原版 petra/attackManager.js，867 行）。
 /// 本端口:按类型分桶(Rush/Raid/Attack/HugeAttack)的进攻生命周期 + 发起轮换 +
-/// getEnemyPlayer 目标玩家选择 + defeated 追踪 + outOfPlan 回收池 + 轰炸补丁事件。
-/// 原版 bombingAttacks/海图换面(attackPlansEncounteredWater)未移植。</summary>
+/// getEnemyPlayer 目标玩家选择 + defeated 追踪 + outOfPlan 回收池 + 轰炸补丁事件
+/// + 海图换面(attackPlansEncounteredWater 双端:建计划失败/隔水失败置旗 →
+/// NavalManager 消费提最低运输船数;上游只写不读为死旗,消费端为我们所接,
+/// 记录在案)。</summary>
 public sealed class AttackManager
 {
     private readonly PetraConfig _config;
@@ -85,6 +87,16 @@ public sealed class AttackManager
 
     public bool IsDefeated(int playerId) => _defeated.Contains(playerId);
 
+    /// <summary>按计划名查计划(原版 getPlan;两桶全扫)。</summary>
+    public AttackPlan? GetPlan(int name)
+    {
+        foreach (var list in new[] { UpcomingAttacks, StartedAttacks })
+            foreach (var plans in list.Values)
+                foreach (var p in plans)
+                    if (p.Name == name) return p;
+        return null;
+    }
+
     /// <summary>筹备中的指定类型进攻(原版 getAttackInPreparation)。</summary>
     public AttackPlan? GetAttackInPreparation(string type) =>
         UpcomingAttacks[type].FirstOrDefault(p => p.State == AttackPlan.AttackState.Unstarted);
@@ -130,6 +142,11 @@ public sealed class AttackManager
                                 AttackPlansEncounteredWater = true;
                         }
                     }
+                    // 建计划即败(选不到/够不到目标;原版 attackPlan.failed → 置旗
+                    // 的 hack 语义,attackManager.js:406)——消费端 NavalManager 会复核
+                    // 确有海外敌才提船数。
+                    else if (attack.Overseas == 0 && attack.FailedNoTarget)
+                        AttackPlansEncounteredWater = true;
                     attack.Abort(gameState, this, queues);
                     UpcomingAttacks[type].RemoveAt(i--);
                 }

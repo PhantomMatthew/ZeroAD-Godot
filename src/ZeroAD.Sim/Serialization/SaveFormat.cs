@@ -7,10 +7,12 @@ namespace ZeroAD.Sim.Serialization;
 /// 默认 <see cref="CurrentVersion"/>:新写档/录像初始载荷/测试直读路径都是当前格式。</summary>
 public static class SaveFormat
 {
-    /// <summary>当前格式版本。v20: TriggerSystem 增触发点注册表尾段
-    /// (ref → 实体 id 列表;v19 及更早档无此段,注册表读为空)。v19: RallyPointData
-    /// 增 TargetClasses 尾段 + UnitOrder 增 AutoContinue/贸易航线 Route 尾段。</summary>
-    public const uint CurrentVersion = 20;
+    /// <summary>当前格式版本。v21: VictoryManager 关键实体增 GarrisonEmergency
+    /// 尾段(危急驻防旗;v20 及更早档读为 false,由遇袭事件重立)。v20: TriggerSystem
+    /// 增触发点注册表尾段(ref → 实体 id 列表;v19 及更早档无此段,注册表读为空)。
+    /// v19: RallyPointData 增 TargetClasses 尾段 + UnitOrder 增 AutoContinue/贸易航线
+    /// Route 尾段。</summary>
+    public const uint CurrentVersion = 21;
 
     /// <summary>可读入的最低版本(v17 档缺 v18 尾段,按空表/零计时读)。</summary>
     public const uint MinReadableVersion = 17;

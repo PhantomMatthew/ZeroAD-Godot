@@ -417,6 +417,7 @@ public sealed class GarrisonableComponent : ComponentBase, IComponentMessageHand
             pos.InWorld = false;
             SimSystem.Range?.SetInWorld(Entity, false);
         }
+        cm.Events.RaiseGarrisoned(new Events.GarrisonedEvent { Entity = Entity, Holder = target });
         return true;
     }
 
@@ -470,6 +471,7 @@ public sealed class GarrisonableComponent : ComponentBase, IComponentMessageHand
         var ai = SimSystem.GetComponent<UnitAIComponent>(Entity);
         ai?.UnsetGarrisoned();
         Holder = null;
+        cm.Events.RaiseUnGarrisoned(new Events.UnGarrisonedEvent { Entity = Entity, Holder = holderId });
 
         // 集结点(原版 RallyPoint.OrderToRallyPoint,ignore=["garrison"]:
         // 指向持有者自身的驻军点跳过,其余走全队列多点链)。

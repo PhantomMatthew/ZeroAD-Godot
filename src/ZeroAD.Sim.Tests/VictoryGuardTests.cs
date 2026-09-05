@@ -51,6 +51,8 @@ public sealed class VictoryGuardTests
         {
             ("champion", "Champion Soldier Unit"), ("soldier", "Soldier Unit"),
             ("healer", "Healer Support Unit"), ("relic", "Relic"),
+            ("hero", "Hero Soldier Unit"), ("ship", "Ship Unit"),
+            ("temple", "Temple Structure"),
         })
             System.IO.File.WriteAllText(
                 System.IO.Path.Combine(dir, "units", "test", name + ".xml"),
@@ -164,5 +166,137 @@ public sealed class VictoryGuardTests
         Assert.True(vm2.IsCritical(relic.Value));
         Assert.Contains(guard.Value, vm2.CriticalEnts[relic.Value].GuardsAssigned);
         Assert.Equal("guard", vm2.CriticalEnts[relic.Value].Guards[guard.Value]);
+    }
+
+    [Fact]
+    public void DestroyGuard_ClearsAllRegistries()
+    {
+        var (cm, vm) = World();
+        var relic = AddUnit(cm, 1, 50, 50, "units/test/relic", "Relic");
+        var guard = AddUnit(cm, 1, 52, 50, "units/test/champion", "Champion", "Soldier");
+        var gs = MakeGameState(cm);
+        gs.Events.Attach(cm);
+        vm.RegisterCriticalEnt(gs, relic.Value);
+        vm.AssignGuardToCriticalEnt(gs, AiOf(gs, guard), relic.Value);
+
+        // 原版 Destroy 段:护卫死亡 → guards/guardsAssigned/healersAssigned 全清。
+        cm.NotifyEntityDestroyed(guard);
+        vm.Update(gs, gs.Events, new QueueManager(new PetraConfig(DifficultyLevel.Medium)));
+
+        Assert.Empty(vm.CriticalEnts[relic.Value].Guards);
+        Assert.DoesNotContain(guard.Value, vm.CriticalEnts[relic.Value].GuardsAssigned);
+    }
+
+    [Fact]
+    public void EntityRenamed_MigratesGuardRegistries()
+    {
+        var (cm, vm) = World();
+        var relic = AddUnit(cm, 1, 50, 50, "units/test/relic", "Relic");
+        var guard = AddUnit(cm, 1, 52, 50, "units/test/champion", "Champion", "Soldier");
+        var promoted = AddUnit(cm, 1, 52, 50, "units/test/champion", "Champion", "Soldier");
+        var gs = MakeGameState(cm);
+        gs.Events.Attach(cm);
+        vm.RegisterCriticalEnt(gs, relic.Value);
+        vm.AssignGuardToCriticalEnt(gs, AiOf(gs, guard), relic.Value);
+
+        // 原版 EntityRenamed 段:晋升换名 → 护卫登记迁到新 id。
+        cm.Events.RaiseEntityRenamed(new ZeroAD.Sim.Events.EntityRenamedEvent
+        { OldEntity = guard, NewEntity = promoted });
+        vm.Update(gs, gs.Events, new QueueManager(new PetraConfig(DifficultyLevel.Medium)));
+
+        Assert.DoesNotContain(guard.Value, vm.CriticalEnts[relic.Value].GuardsAssigned);
+        Assert.Contains(promoted.Value, vm.CriticalEnts[relic.Value].GuardsAssigned);
+        Assert.Equal("guard", vm.CriticalEnts[relic.Value].Guards[promoted.Value]);
+    }
+
+    [Fact]
+    public void GarrisonOnShip_ReleasesGuards()
+    {
+        var (cm, vm) = World();
+        var relic = AddUnit(cm, 1, 50, 50, "units/test/relic", "Relic");
+        var guard = AddUnit(cm, 1, 52, 50, "units/test/champion", "Champion", "Soldier");
+        var ship = AddUnit(cm, 1, 60, 60, "units/test/ship", "Ship");
+        var gs = MakeGameState(cm);
+        gs.Events.Attach(cm);
+        vm.RegisterCriticalEnt(gs, relic.Value);
+        vm.AssignGuardToCriticalEnt(gs, AiOf(gs, guard), relic.Value);
+
+        // 原版 Garrison 段:关键实体上船 → 护卫全体下岗回池。
+        cm.Events.RaiseGarrisoned(new ZeroAD.Sim.Events.GarrisonedEvent
+        { Entity = relic, Holder = ship });
+        vm.Update(gs, gs.Events, new QueueManager(new PetraConfig(DifficultyLevel.Medium)));
+
+        Assert.Empty(vm.CriticalEnts[relic.Value].Guards);
+    }
+
+    [Fact]
+    public void RegicideAttacked_CriticalHero_GarrisonsEmergency()
+    {
+        var (cm, vm) = World();
+        cm.EndGame.SetVictoryConditions(new[] { "regicide" });
+        // 治疗建筑(BuffHeal>0 的可驻结构;危急时不验 BuffHeal,但类/容量要过)。
+        var temple = cm.CreateEntity();
+        cm.AddComponent(temple, new PositionComponent());
+        cm.QueryInterface<PositionComponent>(temple)!.Position =
+            new FixedVector3D(Fixed.FromFloat(55), Fixed.Zero, Fixed.FromFloat(50));
+        cm.AddComponent(temple, new OwnershipComponent { PlayerId = 1 });
+        var templeId = new IdentityComponent { TemplateName = "units/test/temple" };
+        templeId.Classes.Add("Temple");
+        templeId.Classes.Add("Structure");
+        cm.AddComponent(temple, templeId);
+        cm.AddComponent(temple, new GarrisonHolderComponent
+        { BuffHeal = 1f, Max = 10, AllowedClasses = { "Hero" } });
+        cm.NotifyEntityCreated(temple);
+
+        var hero = AddUnit(cm, 1, 50, 50, "units/test/hero", "Hero", "Soldier");
+        cm.AddComponent(hero, new HealthComponent { Max = 100, Current = 30 });   // 30% < low(0.4)
+        cm.AddComponent(hero, new GarrisonableComponent());
+        var attacker = AddUnit(cm, 2, 51, 50, "units/test/soldier", "Soldier");
+        var gs = MakeGameState(cm);
+        gs.Events.Attach(cm);
+        vm.RegisterCriticalEnt(gs, hero.Value);
+
+        // 原版 Attacked 段(regicide):血量 <low → 危急驻防(plan=-3 + 驻防令)。
+        cm.Events.RaiseAttackLanded(new ZeroAD.Sim.Events.AttackLandedEvent
+        { Target = hero, Attacker = attacker });
+        vm.Update(gs, gs.Events, new QueueManager(new PetraConfig(DifficultyLevel.Medium)));
+
+        Assert.True(vm.CriticalEnts[hero.Value].GarrisonEmergency);
+        Assert.Equal(-3, gs.Metadata.GetObject(hero.Value, "plan"));
+    }
+
+    [Fact]
+    public void ManageCriticalEntHealers_QueuesHealerWhenTemplePresent()
+    {
+        var (cm, vm) = World();
+        cm.EndGame.SetVictoryConditions(new[] { "capture_the_relic" });
+        var config = new PetraConfig(DifficultyLevel.Medium);
+        var hq = new Headquarters(config);
+        vm = hq.VictoryManager;
+        // 建成神庙(无 FoundationComponent = 已建成)。
+        var temple = cm.CreateEntity();
+        cm.AddComponent(temple, new PositionComponent());
+        cm.QueryInterface<PositionComponent>(temple)!.Position =
+            new FixedVector3D(Fixed.FromFloat(55), Fixed.Zero, Fixed.FromFloat(50));
+        cm.AddComponent(temple, new OwnershipComponent { PlayerId = 1 });
+        var templeId = new IdentityComponent { TemplateName = "units/test/temple" };
+        templeId.Classes.Add("Temple");
+        templeId.Classes.Add("Structure");
+        cm.AddComponent(temple, templeId);
+        cm.NotifyEntityCreated(temple);
+
+        var relic = AddUnit(cm, 1, 50, 50, "units/test/relic", "Relic");
+        var gs = MakeGameState(cm);
+        gs.Events.Attach(cm);
+        vm.RegisterCriticalEnt(gs, relic.Value);
+
+        // 治疗者缺额 + 有神庙 + 无节流 → 原版 manageCriticalEntHealers 下一单。
+        vm.Update(gs, gs.Events, hq.Queues);
+
+        var q = hq.Queues.GetQueue("healer");
+        Assert.NotNull(q);
+        Assert.True(q!.HasQueuedUnits);
+        Assert.Contains("support_healer_b", q.Plans[0].Type);
+        Assert.Equal(WorkerRoles.RoleCriticalEntHealer, q.Plans[0].Metadata["role"]);
     }
 }

@@ -30,8 +30,8 @@
 ## 3. Petra AI(§5)
 
 - ~~人口规划~~✅(trainMoreWorkers 全量:在训/在队计数、popPhase2 一阶门、saveResources、饱和闸、support/soldier 指数饱和、自适应批量);~~BuildDefenses 塔楼全量门控~~✅(要塞/哨塔/石塔相位+数量+间隔+地基闸+QueueToReset 优先级回收);~~StartingStrategy 低木 saveResources 联动~~✅(开局食物/木材评估全量:needFarm/needFish/needCorral/maxFields/popPhase2×0.75/setRushes 收窄+停战门;handleNewBase 复位)。
-- 圣物治疗者编排细节、海图换面 attackPlansEncounteredWater。
-- (bombingAttacks/外交请求-应答/圣物夺取编排已于 142df83 落地。)
+- ~~圣物治疗者编排细节~~✅(manageCriticalEntHealers 训练 support_healer_b——saveResources/在队/神庙/护卫池四门;Create 事件接应新训治疗者=原版 TrainingFinished 等价,上游 queues.healer 唯一生产者即 victoryManager;regicide 遇袭撤退链:Attacked 事件 → ≤70% 驻防 BuffHeal 建筑/<40% 危急强驻满员腾位,驻不进 → passive 逃最近同陆基地;Garrison 上船放护卫/驻军点护卫跟随;UnGarrison 运输到位重派;EntityRenamed/Destroy 全表清账;assignGuardToCriticalEnt 异陆 requireTransport + guardedEnt 簿记;manageCriticalEntGuards 补 outOfPlan 趟;init 开局登记奇迹/英雄/圣物;存档 v21 危急旗)、~~海图换面 attackPlansEncounteredWater~~✅(建计划失败置旗对齐上游 attackPlan.failed hack 语义——AttackPlan.FailedNoTarget 派生旗,选不到/够不到目标即置;消费端 NavalManager 此前已接)。
+- (bombingAttacks/外交请求-应答/圣物夺取编排已于 142df83 落地;事件面新增 sim 总线 Garrisoned/UnGarrisoned + AIEventBuffer Attacked/Garrison/UnGarrison/EntityRenamed 四类。)
 
 ## 4. 渲染 / 音频 / GUI(§7–8)
 

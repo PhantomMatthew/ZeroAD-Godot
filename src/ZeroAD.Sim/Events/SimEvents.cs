@@ -276,6 +276,22 @@ namespace ZeroAD.Sim.Events
         public int OtherPlayer;
     }
 
+    /// <summary>单位入舱(原版 MT_Garrisoned:Garrisonable.Garrison 成功后广播)。
+    /// AI 胜利管理器的英雄驻防追踪(护卫跟入驻军点/船上释放护卫)用之。</summary>
+    public sealed class GarrisonedEvent
+    {
+        public EntityId Entity;
+        public EntityId Holder;
+    }
+
+    /// <summary>单位出舱(原版 MT_UnGarrisoned:Garrisonable.UnGarrison 成功后广播;
+    /// 运输船卸货同路)。AI 护卫跨海到位后的重试指派用之。</summary>
+    public sealed class UnGarrisonedEvent
+    {
+        public EntityId Entity;
+        public EntityId Holder;
+    }
+
     public sealed class SimEventBus
     {
         public event Action<PlayerCommandEvent>? PlayerCommand;
@@ -310,6 +326,8 @@ namespace ZeroAD.Sim.Events
         public event Action<TradeIncomeEvent>? TradeIncome;
         public event Action<TributeEvent>? Tribute;
         public event Action<PlayerAttackedAlertEvent>? PlayerAttackedAlert;
+        public event Action<GarrisonedEvent>? Garrisoned;
+        public event Action<UnGarrisonedEvent>? UnGarrisoned;
 
         public void RaisePlayerCommand(PlayerCommandEvent e) => PlayerCommand?.Invoke(e);
         public void RaiseTrainingQueued(TrainingQueuedEvent e) => TrainingQueued?.Invoke(e);
@@ -343,5 +361,7 @@ namespace ZeroAD.Sim.Events
         public void RaiseEntityKilled(EntityKilledEvent e) => EntityKilled?.Invoke(e);
         public void RaiseTradeIncome(TradeIncomeEvent e) => TradeIncome?.Invoke(e);
         public void RaiseTribute(TributeEvent e) => Tribute?.Invoke(e);
+        public void RaiseGarrisoned(GarrisonedEvent e) => Garrisoned?.Invoke(e);
+        public void RaiseUnGarrisoned(UnGarrisonedEvent e) => UnGarrisoned?.Invoke(e);
     }
 }

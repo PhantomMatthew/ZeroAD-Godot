@@ -13,6 +13,10 @@ public enum AIEventType
     ConstructionFinished, // 建造完成（StructureBuilt）
     OwnershipChanged,    // 换主（含占领）
     PlayerDefeated,      // 玩家被击败
+    Attacked,            // 被击中（AttackLanded;Entity=目标,IntParam=攻击者 id）
+    Garrison,            // 入舱（Garrisoned;Entity=单位,IntParam=持有者 id）
+    UnGarrison,          // 出舱（UnGarrisoned,含运输卸货;Entity=单位,IntParam=持有者 id）
+    EntityRenamed,       // 换名（晋升/变身;Entity=旧 id,IntParam=新 id）
 }
 
 /// <summary>单条 AI 事件（最小化载荷，按类型解释字段）。</summary>
@@ -51,6 +55,10 @@ public sealed class AIEventBuffer
         ev.StructureBuilt += OnBuilt;
         ev.OwnershipChanged += OnOwnership;
         ev.PlayerDefeated += OnDefeated;
+        ev.AttackLanded += OnAttackLanded;
+        ev.Garrisoned += OnGarrisoned;
+        ev.UnGarrisoned += OnUnGarrisoned;
+        ev.EntityRenamed += OnRenamed;
         cm.EntityDestroyed += OnDestroyed;
     }
 
@@ -65,6 +73,10 @@ public sealed class AIEventBuffer
         ev.StructureBuilt -= OnBuilt;
         ev.OwnershipChanged -= OnOwnership;
         ev.PlayerDefeated -= OnDefeated;
+        ev.AttackLanded -= OnAttackLanded;
+        ev.Garrisoned -= OnGarrisoned;
+        ev.UnGarrisoned -= OnUnGarrisoned;
+        ev.EntityRenamed -= OnRenamed;
         cm.EntityDestroyed -= OnDestroyed;
     }
 
@@ -99,4 +111,16 @@ public sealed class AIEventBuffer
 
     private void OnDefeated(PlayerDefeatedEvent e)
         => _events.Add(new AIEvent(AIEventType.PlayerDefeated, 0, e.PlayerId));
+
+    private void OnAttackLanded(AttackLandedEvent e)
+        => _events.Add(new AIEvent(AIEventType.Attacked, e.Target.Value, (int)e.Attacker.Value));
+
+    private void OnGarrisoned(GarrisonedEvent e)
+        => _events.Add(new AIEvent(AIEventType.Garrison, e.Entity.Value, (int)e.Holder.Value));
+
+    private void OnUnGarrisoned(UnGarrisonedEvent e)
+        => _events.Add(new AIEvent(AIEventType.UnGarrison, e.Entity.Value, (int)e.Holder.Value));
+
+    private void OnRenamed(EntityRenamedEvent e)
+        => _events.Add(new AIEvent(AIEventType.EntityRenamed, e.OldEntity.Value, (int)e.NewEntity.Value));
 }

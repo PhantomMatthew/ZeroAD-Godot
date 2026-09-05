@@ -21,7 +21,7 @@
 | M5 GUI | ★★★★☆ | 页面基本齐(prelobby/campaigns/viewer/credits/mod 对话框/autostart 全落);剩引擎级 mod 挂载、GuiInterface 桥收敛 |
 | M6 网络 | ★★★★★ | 锁步+OOS+大厅+观战+STUN+掉线 AI 接管(4b19ce4);真重连 beyond-upstream |
 | M7 存档录像 | ★★★★★ | 双闭环,亮点项 |
-| M8 Petra AI | ★★★★☆ | 攻防军+运输+编组+存档骑缝全落地;剩 bombingAttacks/外交应答/圣物编排支线 |
+| M8 Petra AI | ★★★★★ | 攻防军+运输+编组+存档骑缝全落地;bombingAttacks/外交应答/圣物编排(含治疗者训练+危急驻防撤退链+海图换面旗)清零 |
 | M9 rmgen | ★★☆☆☆ | 库核心齐;地图仅移植 ~12/~173(≈7%) |
 | 触发器/教程 | ★★~★★★ | 触发器=骨架(5 条件/6 动作);教程硬编非 JSON |
 
@@ -136,8 +136,9 @@
 - [x] navalManager 跨海运输(e48f00b:TransportPlan 状态机+分船+运船训练;overseas 进攻接入)
 - [x] AI 存档序列化(0104867:计划/队列/攻防军/基地骑缝,存档 v12+录像 v2)
 - [x] bombingAttacks 攻城游击、diplomacyManager 请求-应答、victoryManager 圣物编排(142df83:
-  AssignBombers 闲置攻城器射程边骚扰/求援-应答 sim 事件直通/强制 Raid 夺圣物+护卫跟随;
-  余:圣物治疗者编排细节、海图换面 attackPlansEncounteredWater)
+  AssignBombers 闲置攻城器射程边骚扰/求援-应答 sim 事件直通/强制 Raid 夺圣物+护卫跟随);
+  圣物治疗者编排细节+海图换面本波清零(治疗者训练四门+事件链接应/危急驻防撤退链/
+  护卫跨海运输;attackPlansEncounteredWater 建计划失败置旗对齐上游 attackPlan.failed)
 - [x] researchManager 优先级(a3643df:人口/贸易/wanted/兜底四级,原版 update 核心语义)
 
 ---

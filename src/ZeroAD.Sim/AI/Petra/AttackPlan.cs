@@ -17,7 +17,8 @@ namespace ZeroAD.Sim.AI.Petra;
 ///   围攻路线:getPathToTarget(真实寻路)+ setRallyPoint(领土边界集结)+
 ///     checkTargetObstruction(城墙/门阻断检测 → 改打阻断物)
 ///   状态机:Unstarted(筹备) → Completing(集结)→ Started(推进)→ Completed/Aborted。
-/// 海军运输(overseas)未移植——无运输船时跨海目标由 chooseTarget 的可达性过滤拒绝。</summary>
+/// 海军运输(overseas)已接:无同陆集结点 → getSeaBetweenIndices 订海域 +
+/// setMinimalTransportShips 提船数,集结/启动等海域有运输船(见 6xx 行段)。</summary>
 public sealed class AttackPlan
 {
     // 原版常量
@@ -50,6 +51,9 @@ public sealed class AttackPlan
     /// 非空时目标选择只打它,被毁即完成。</summary>
     public uint? UniqueTargetId;
     public ushort Overseas;
+    /// <summary>目标选择/路径失败旗(原版 attackPlan.failed 的筹备期等价;
+    /// attackManager 据以置海图换面旗)。派生态,不骑缝。</summary>
+    public bool FailedNoTarget;
     /// <summary>跨海目标的海域 id(原版 overseas;0 = 同陆)。非 0 时集结/启动走
     /// navalManager 运输,并等海域有运输船。</summary>
 
@@ -264,9 +268,15 @@ public sealed class AttackPlan
         _maxCompletingTime = Type == TypeRaid ? 20 : Type == TypeRush ? 40 : 60;
 
         if (Target == null && !ChooseTarget(gameState, attackManager))
+        {
+            FailedNoTarget = true;   // 建计划即败(原版 attackPlan.failed 等价)
             return PreparationResult.Failed;
+        }
         if (!ComputePathToTarget(gameState, attackManager))
+        {
+            FailedNoTarget = true;   // 目标不可达(隔水等)同论
             return PreparationResult.Failed;
+        }
 
         // 集结下令:各单位 moveToRange(rally, 0..15);载货的先回投放站(原版 returnResources)。
         if (RallyPoint.HasValue)
@@ -1109,6 +1119,20 @@ public sealed class AttackPlan
     {
         foreach (var qn in new[] { QueueName, QueueChampName, QueueSiegeName })
             queues.RemoveQueue(qn);
+    }
+
+    /// <summary>从计划移除单位(原版 removeUnit):idle → plan=-1 回空闲,
+    /// 否则清 plan 元数据;不含回收池登记(那是 Abort 的路径)。</summary>
+    public void RemoveUnit(GameState gameState, AIEntity ent, bool idle)
+    {
+        if (!UnitCollection.Remove(ent.Id)) return;
+        if (idle)
+        {
+            gameState.Metadata.Set(ent.Id, "plan", -1);
+            gameState.Metadata.Set(ent.Id, "subrole", WorkerRoles.SubroleIdle);
+        }
+        else
+            gameState.Metadata.Remove(ent.Id, "plan");
     }
 
     /// <summary>中止(原版 Abort):单位全部进回收池。</summary>
