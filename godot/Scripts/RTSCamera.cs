@@ -359,6 +359,13 @@ namespace ZeroAD.Godot;
     {
         _focus = focus;
         _focus.Y = TerrainHeightService.Sample(_focus.X, _focus.Z);
+        // 外部强制取景(开局 FocusCameraOnLocalPlayer/小地图点击/过场)必须同步平滑锚点:
+        // _Process 每帧无条件 _focus = _smFocus.Current,不同步则下一帧静默回滚内部焦点
+        // (不重绘,画面暂时还在原地),之后任意滚轮缩放/拖拽触发 UpdateTransform 时
+        // 视角跳回旧锚点——MP rmgen 大图(1024m)下旧锚点是字段初值 (274,113),
+        // 即小地图左下角。
+        _smFocusX.SetValue(_focus.X);
+        _smFocusZ.SetValue(_focus.Z);
         UpdateTransform();
     }
 
@@ -417,6 +424,11 @@ namespace ZeroAD.Godot;
         _pitch = Mathf.Clamp(-declination, MinPitch, MaxPitch);
         // 视距不做 MaxDistance 上限钳(作者机位优先;首次缩放输入才拉回范围内)。
         _distance = Mathf.Max(MinDistance, t);
+        // 与 SetFocus 同款同步:航向/俯角/视距直改后必须刷平滑锚点,否则下一帧
+        // _Process 用旧 smoothed Current 回滚(场景图开局视角被静默打回默认值)。
+        _smYaw.SetValue(_yaw);
+        _smPitch.SetValue(_pitch);
+        _smDistance.SetValue(_distance);
         SetFocus(new Vector3(fx, groundY, fz));  // SetFocus 内部重采地形 Y 并 UpdateTransform
     }
 

@@ -131,6 +131,9 @@ public sealed partial class Main : Node3D
 
 	public override void _Ready()
 	{
+		// 直进 Main.tscn 的 dev 路径(CLI 场景参数/autotest)也要接住日志——
+		// Install 幂等,MainMenu 已装则此处空转。
+		ZeroAD.Godot.Diagnostics.DiagGodot.Install();
 		_camera = new RTSCamera();
 		AddChild(_camera);
 		// 过场动画管理器(原版 CinemaManager:相机路径队列播放,
@@ -255,6 +258,13 @@ public sealed partial class Main : Node3D
 		HotkeyApplier.ApplyAll(GetNode<UserConfig>("/root/UserConfig"));
 
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+		// dev 诊断入口(ZEROAD_AUTOTEST=mprmgen):自动 host random/botswanan_haven 并
+		// 在加载后 dump 相机 focus——"MP rmgen 视角跳左下角"定位用,不进正常流程。
+		if (System.Environment.GetEnvironmentVariable("ZEROAD_AUTOTEST") == "mprmgen")
+		{
+			CallDeferred(nameof(AutoTestMpRmgen));
+			return;
+		}
 		switch (cfg.Mode)
 		{
 			// Lobby = 未配置裸跑 session(编辑器直开 Main.tscn 等):弹回真主菜单
@@ -282,6 +292,52 @@ public sealed partial class Main : Node3D
 
 	private void AutoStart() => StartSinglePlayer(GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Seed);
 	private void AutoTutorial() => StartTutorial();
+
+	/// <summary>ZEROAD_AUTOTEST=mprmgen 诊断:自动 host random/botswanan_haven,加载后
+	/// dump 相机 focus/本地玩家实体数/地形尺寸,再注入滚轮事件复现"缩放跳角"。
+	/// 结论写 Diag(Err 级,文件日志 user://logs/zeroad.log 与 stderr 双出)。</summary>
+	private async void AutoTestMpRmgen()
+	{
+		StartMpHost(61234, 42);
+		_mp.HostSetMap("random/botswanan_haven");
+		_mp.HostStartGame();
+		for (int i = 0; i < 600 && !_gameStarted; i++)
+			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+		// 加载是分段 async:gameStarted 在最早的 Init 段即置位,多等一会儿让 Scenario 段跑完。
+		await ToSignal(GetTree().CreateTimer(5.0), SceneTreeTimer.SignalName.Timeout);
+		DumpAutotestFocus("after-load");
+		await ToSignal(GetTree().CreateTimer(2.0), SceneTreeTimer.SignalName.Timeout);
+		DumpAutotestFocus("after-2s-idle");
+		var wheelDown = new InputEventMouseButton
+		{
+			ButtonIndex = MouseButton.WheelDown,
+			Pressed = true,
+			Position = GetViewport().GetMousePosition(),
+		};
+		Input.ParseInputEvent(wheelDown);
+		await ToSignal(GetTree().CreateTimer(1.0), SceneTreeTimer.SignalName.Timeout);
+		DumpAutotestFocus("after-wheeldown");
+		// 右键点击屏幕中央(模拟点雾外/任意地面)。
+		var mp = GetViewport().GetVisibleRect().Size / 2;
+		Input.ParseInputEvent(new InputEventMouseButton
+			{ ButtonIndex = MouseButton.Right, Pressed = true, Position = mp });
+		Input.ParseInputEvent(new InputEventMouseButton
+			{ ButtonIndex = MouseButton.Right, Pressed = false, Position = mp });
+		await ToSignal(GetTree().CreateTimer(1.0), SceneTreeTimer.SignalName.Timeout);
+		DumpAutotestFocus("after-rightclick");
+		ZeroAD.Sim.Diag.Err("AUTOTEST", "done — quitting");
+		GetTree().Quit();
+	}
+
+	private void DumpAutotestFocus(string tag)
+	{
+		var f = GetCameraFocus();
+		int owned = _sim.Range.GetEntitiesByPlayer((int)_sim.LocalPlayerId).Count;
+		ZeroAD.Sim.Diag.Err("AUTOTEST", $"{tag}: focus=({f?.X:F1},{f?.Y:F1},{f?.Z:F1}) " +
+			$"localPlayer={_sim.LocalPlayerId} owned={owned} " +
+			$"terrain={_sim.Terrain.MapSize}t×{_sim.Terrain.TileSize}m " +
+			$"worldRootZ={_worldRoot.Position.Z:F1} worldSize={TerrainHeightService.WorldSize:F1}");
+	}
 
 	private void BounceToMainMenu() => GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
 
