@@ -165,9 +165,27 @@ public sealed class LongPathfinderTests
         Block(grid, 5, 5);
         var (pf, hier, cls) = Build(grid);
 
-        // Straight clear line.
-        Assert.True(pf.CheckLineMovement(0, 0, 8, 0, cls.Mask));
+        // Straight clear line(世界坐标;navcell (8,0) 中心)。
+        Assert.True(pf.CheckLineMovement(F(0), F(0), F(8), F(0), cls.Mask));
         // Line passing through the blocked cell at (5,5).
-        Assert.False(pf.CheckLineMovement(0, 0, 10, 10, cls.Mask));
+        Assert.False(pf.CheckLineMovement(F(0), F(0), F(10), F(10), cls.Mask));
     }
+
+    [Fact]
+    public void CheckLineMovement_StuckOnImpassable_CanEscapeButNotReenter()
+    {
+        var grid = OpenGrid();
+        // 围一个 3x3 不可行块(5..7, 5..7),单位"困"在中心 (6,6)。
+        for (int j = 5; j <= 7; j++)
+            for (int i = 5; i <= 7; i++)
+                Block(grid, i, j);
+        var (pf, hier, cls) = Build(grid);
+
+        // 逃逸链:起点不可行 → 允许穿过不可行格走出(上游 push-out 语义)。
+        Assert.True(pf.CheckLineMovement(F(6), F(6), F(0), F(0), cls.Mask));
+        // 一旦到了可行格,不得再入不可行(起点可行 → 穿块 = 拒)。
+        Assert.False(pf.CheckLineMovement(F(0), F(6), F(10), F(6), cls.Mask));
+    }
+
+    private static ZeroAD.Sim.Maths.Fixed F(int n) => ZeroAD.Sim.Maths.Fixed.FromInt(n);
 }

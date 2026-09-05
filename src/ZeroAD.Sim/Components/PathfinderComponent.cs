@@ -213,6 +213,7 @@ namespace ZeroAD.Sim.Components
             }
 
             var obstructions = Obstructions.GetAllStaticObstructions();
+            _gridBuilder.PassabilityCircular = Obstructions.GetPassabilityCircular();
             _gridBuilder.Build(BuildTerrainTiles(tiles), tiles, obstructions);
             Obstructions.SetPathfinderMargin(_gridBuilder.MaxClearanceNavcells);
             Obstructions.ClearPathfinderDirtiness();   // 全量重建吞掉累计脏区
@@ -571,11 +572,9 @@ namespace ZeroAD.Sim.Components
         public bool CheckMovement(FixedVector2D from, FixedVector2D to, PassClass passClass)
         {
             if (_gridBuilder.Grid == null) return true;
-            int i0 = PathfindingCore.WorldToNavcell(from.X);
-            int j0 = PathfindingCore.WorldToNavcell(from.Y);
-            int i1 = PathfindingCore.WorldToNavcell(to.X);
-            int j1 = PathfindingCore.WorldToNavcell(to.Y);
-            return _long.CheckLineMovement(i0, j0, i1, j1, passClass);
+            // 世界坐标直传(上游 CheckLineMovement 签名):边缘光栅化要用原始线段
+            // 方向算 perp dot,先转 navcell 会丢掉亚格精度。
+            return _long.CheckLineMovement(from.X, from.Y, to.X, to.Y, passClass);
         }
     }
 }

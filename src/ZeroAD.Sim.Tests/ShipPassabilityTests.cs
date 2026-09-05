@@ -74,17 +74,18 @@ public sealed class ShipPassabilityTests
     public void Ship_CrossesWaterFreely_AlongBand()
     {
         var (cm, _) = SetupWaterBandWorld();
-        var ship = MakeWalker(cm, 64, 16, passClass: "ship");   // 可航带内
+        var ship = MakeWalker(cm, 64, 32, passClass: "ship");   // 可航带内
         var motion = cm.QueryInterface<UnitMotion>(ship)!;
         // 同在水带内的目标:船应可达(陆类则因起点不可通行而寸步难行)。
-        motion.MoveToPoint(new FixedVector2D(Fixed.FromInt(64), Fixed.FromInt(112)));
+        // (图外缘印戳后船类净空 10m 会把边带外扩——可航 z ≈ [22,106],终点放带内。)
+        motion.MoveToPoint(new FixedVector2D(Fixed.FromInt(64), Fixed.FromInt(96)));
 
         for (int i = 0; i < 1500 && motion.HasMoveTarget; i++)
             motion.Tick(0.1f);
 
         var final = cm.QueryInterface<PositionComponent>(ship)!.Position;
         Assert.False(motion.HasMoveTarget);
-        Assert.True(System.MathF.Abs(final.Z.ToFloat() - 112f) <= 1.5f,
+        Assert.True(System.MathF.Abs(final.Z.ToFloat() - 96f) <= 1.5f,
             $"ship should reach the far end of the band: z={final.Z.ToFloat():F1}");
         Assert.True(System.MathF.Abs(final.X.ToFloat() - 64f) <= 1.5f,
             $"ship drifted off course: x={final.X.ToFloat():F1}");

@@ -182,9 +182,14 @@ public sealed partial class SummaryPanel : CanvasLayer
             _tabButtons[i].ButtonPressed = i == idx;
     }
 
-    /// <summary>Continue(原版 continueButton):离开本局 → 回主菜单。</summary>
-    private void OnContinue() =>
+    /// <summary>Continue(原版 continueButton):离开本局 → 回主菜单;战役局
+    /// 回战役菜单(原版 summaryData.nextPage=run.getMenuPath())。</summary>
+    private void OnContinue()
+    {
+        var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+        cfg.ReturnToCampaignMenu = cfg.CampaignRunFile.Length > 0;
         GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+    }
 
     // ── 标签页定义(标题 + 构建器)──
 

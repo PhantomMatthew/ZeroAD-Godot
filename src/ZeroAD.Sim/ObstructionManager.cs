@@ -223,6 +223,18 @@ namespace ZeroAD.Sim
             foreach (var kvp in _staticShapes) AddStaticToSubdivision(kvp.Key, kvp.Value);
         }
 
+        // --- 图形状(原版 SetPassabilityCircular/GetPassabilityCircular) ---
+        // 由地图设置(CircularMap)在每局建图时经 SimBridge/Main 设置;寻路网格
+        // 重建(RebuildGrid)时同步给 PassabilityGridBuilder 决定方/圆外缘印戳。
+        // 不进存档:读档冷加载走同一建图路径重设,各端同源确定。
+        private bool _passabilityCircular;
+
+        /// <summary>原版 ICmpObstructionManager::SetPassabilityCircular。</summary>
+        public void SetPassabilityCircular(bool enabled) => _passabilityCircular = enabled;
+
+        /// <summary>原版 ICmpObstructionManager::GetPassabilityCircular。</summary>
+        public bool GetPassabilityCircular() => _passabilityCircular;
+
         // --- 增量寻路脏区(上游 CCmpObstructionManager 的 m_UpdateInformations 移植) ---
         // navcell 矩形列表;MakeDirty* 在形状 add/move/remove 时打点(旗标门:
         // 只有 BlockPathfinding/BlockFoundation 形状才弄脏——移动中的单位形状不带

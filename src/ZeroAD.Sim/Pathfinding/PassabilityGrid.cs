@@ -54,6 +54,15 @@ public sealed class PassabilityGridBuilder
     /// <summary>All defined classes (for hierarchical/long pathfinder recompute).</summary>
     public IEnumerable<PassabilityClassDef> AllClasses => _config.Classes;
 
+    /// <summary>图外缘不可通行带的宽度(地块;原版 MapEdgeTiles.h MAP_EDGE_TILES=3)。
+    /// 与渲染侧 CLOSTexture 阴影模糊半径挂钩,勿随意改。</summary>
+    public const int MapEdgeTiles = 3;
+
+    /// <summary>圆形图外缘(原版 ICmpObstructionManager.SetPassabilityCircular):
+    /// true = 图外缘按圆印(直径 = 图宽 − 2×边带),false = 四边方带。
+    /// 由地图设置(CircularMap)经 PathfinderComponent.RebuildGrid 传入。</summary>
+    public bool PassabilityCircular { get; set; }
+
     /// <summary>单位寻路类(default/large/ship/ship-small)——寻路连通性只对它们建。</summary>
     public IEnumerable<PassabilityClassDef> UnitClasses => _config.UnitPathClasses();
 
@@ -97,6 +106,12 @@ public sealed class PassabilityGridBuilder
                         grid.Set(ni, nj, cell);
                     }
             }
+
+        // --- 1.5 图外缘印戳(上游 CCmpPathfinder::UpdateGrid 的 off-world passability):
+        // 全类不可通行(所有 mask 位),方形图印四条边带,圆形图按半径印圆。
+        // 在 clearance 膨胀之前印——膨胀会把边带外扩,与上游一致(上游同序:
+        // 先 off-world 再 ExpandImpassableCells)。 ---
+        StampOffWorldEdge(grid);
 
         // --- 2. 地形侧 clearance 膨胀(先于障碍印戳——两格模型,见 TerrainOnly 注释)。 ---
         foreach (var cls in _config.Classes)
@@ -145,6 +160,51 @@ public sealed class PassabilityGridBuilder
             if (x1 < i0 || x0 > i1 || z1 < j0 || z0 > j1) continue;
             foreach (var cls in _config.Classes)
                 StampObstruction(grid, ob, cls);
+        }
+    }
+
+    /// <summary>图外缘印戳(上游 UpdateGrid 的 off-world passability 段,CCmpPathfinder.cpp:700-744)。
+    /// 边带 = MapEdgeTiles 地块 × 4 navcell;edgeMask = 全部类位的 OR(任何类都不可出图)。
+    /// 方形图:四条边带(上游右侧/下侧从 w-edgeSize+1 起印,逐字保留——覆盖略不对称是原版行为)。
+    /// 圆形图:以格心到图心距离判定,dist2 ≥ (w−2·edge)·(h−2·edge) 印不可行
+    /// (上游注释:比 LOS 圆略紧,防单位走进边缘阴影区)。</summary>
+    private void StampOffWorldEdge(Grid<NavcellData> grid)
+    {
+        int edgeSize = MapEdgeTiles * PathfindingCore.NavcellsPerTerrainTile;
+        if (grid.W <= 2 * edgeSize || grid.H <= 2 * edgeSize) return;   // 小测试图无内侧,不印
+
+        NavcellData edgeMask = new((ushort)0);
+        foreach (var cls in _config.Classes)
+            edgeMask = new NavcellData((ushort)(edgeMask.Value | cls.Mask.Mask));
+        if (edgeMask.Value == 0) return;
+
+        int w = grid.W, h = grid.H;
+        if (PassabilityCircular)
+        {
+            long threshold = (long)(w - 2 * edgeSize) * (h - 2 * edgeSize);
+            for (int j = 0; j < h; j++)
+                for (int i = 0; i < w; i++)
+                {
+                    // 双倍坐标表达半格精度(上游同式)。
+                    long di = 2L * i + 1 - w, dj = 2L * j + 1 - h;
+                    if (di * di + dj * dj >= threshold)
+                        grid.Set(i, j, new NavcellData((ushort)(grid.Get(i, j).Value | edgeMask.Value)));
+                }
+        }
+        else
+        {
+            for (int j = 0; j < h; j++)
+                for (int i = 0; i < edgeSize; i++)
+                    grid.Set(i, j, new NavcellData((ushort)(grid.Get(i, j).Value | edgeMask.Value)));
+            for (int j = 0; j < h; j++)
+                for (int i = w - edgeSize + 1; i < w; i++)
+                    grid.Set(i, j, new NavcellData((ushort)(grid.Get(i, j).Value | edgeMask.Value)));
+            for (int j = 0; j < edgeSize; j++)
+                for (int i = edgeSize; i < w - edgeSize + 1; i++)
+                    grid.Set(i, j, new NavcellData((ushort)(grid.Get(i, j).Value | edgeMask.Value)));
+            for (int j = h - edgeSize + 1; j < h; j++)
+                for (int i = edgeSize; i < w - edgeSize + 1; i++)
+                    grid.Set(i, j, new NavcellData((ushort)(grid.Get(i, j).Value | edgeMask.Value)));
         }
     }
 

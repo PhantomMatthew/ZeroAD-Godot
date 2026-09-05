@@ -128,4 +128,93 @@ public sealed class PassabilityGridTests
         Assert.Equal(8, builder.Grid!.W);
         Assert.Equal(8, builder.Grid!.H);
     }
+
+    private static TerrainTileInfo[,] AllLand(int tiles)
+    {
+        var terrain = new TerrainTileInfo[tiles, tiles];
+        for (int j = 0; j < tiles; j++)
+            for (int i = 0; i < tiles; i++)
+                terrain[i, j] = Land();
+        return terrain;
+    }
+
+    [Fact]
+    public void OffWorldEdge_SquareMap_BorderBandImpassableForAllClasses()
+    {
+        // 8 tiles = 32 navcells;边带 = 3 tiles × 4 = 12 navcells(上游 MAP_EDGE_TILES=3)。
+        var builder = new PassabilityGridBuilder();   // PassabilityCircular 缺省 false = 方带
+        builder.Build(AllLand(8), terrainTilesPerSide: 8, System.Array.Empty<ObstructionSquare>());
+        var grid = builder.Grid!;
+        int edge = PassabilityGridBuilder.MapEdgeTiles * PathfindingCore.NavcellsPerTerrainTile;
+
+        // 左边带全格不可行(default 与 ship 同印——edgeMask 是全类 OR)。
+        for (int j = 0; j < 32; j++)
+            for (int i = 0; i < edge; i++)
+            {
+                Assert.False(PathfindingCore.IsPassable(grid.Get(i, j), builder.Default.Mask),
+                    $"left band ({i},{j}) should be impassable for default");
+                Assert.False(PathfindingCore.IsPassable(grid.Get(i, j), builder.Ship.Mask),
+                    $"left band ({i},{j}) should be impassable for ship");
+            }
+        // 上边带 + 下边带(下带从 h-edge+1 起,逐字上游)。
+        for (int i = edge; i < 32 - edge + 1; i++)
+        {
+            Assert.False(PathfindingCore.IsPassable(grid.Get(i, 0), builder.Default.Mask));
+            Assert.False(PathfindingCore.IsPassable(grid.Get(i, 31), builder.Default.Mask));
+        }
+        // 内侧中心可行。
+        Assert.True(PathfindingCore.IsPassable(grid.Get(16, 16), builder.Default.Mask));
+        // 纯地形基线也含边带(增量补丁恢复时外缘不丢)。
+        Assert.False(PathfindingCore.IsPassable(builder.TerrainOnly!.Get(0, 0), builder.Default.Mask));
+    }
+
+    [Fact]
+    public void OffWorldEdge_CircularMap_CornersCutDeeperThanEdges()
+    {
+        var builder = new PassabilityGridBuilder { PassabilityCircular = true };
+        builder.Build(AllLand(8), terrainTilesPerSide: 8, System.Array.Empty<ObstructionSquare>());
+        var grid = builder.Grid!;
+        int w = 32, edge = PassabilityGridBuilder.MapEdgeTiles * PathfindingCore.NavcellsPerTerrainTile;
+
+        // 上游判式:dist2 ≥ (w−2e)·(h−2e) 即不可行(格心双倍坐标)。
+        static bool ExpectedImpassable(int i, int j, int w, int h, int e)
+        {
+            long di = 2L * i + 1 - w, dj = 2L * j + 1 - h;
+            return di * di + dj * dj >= (long)(w - 2 * e) * (h - 2 * e);
+        }
+        // 印戳在 clearance 膨胀之前(上游同序)——期望集 = 印戳的 Chebyshev 膨胀
+        // (default clearance 0.8 → 1 navcell,8 连通环形,与 ExpandImpassable 同式)。
+        int clear = builder.Default.Clearance.ToIntRoundToInfinity();
+        bool[,] stamped = new bool[w, w];
+        for (int j = 0; j < w; j++)
+            for (int i = 0; i < w; i++)
+                stamped[i, j] = ExpectedImpassable(i, j, w, w, edge);
+        for (int j = 0; j < w; j++)
+            for (int i = 0; i < w; i++)
+            {
+                bool expected = false;
+                for (int dj = -clear; dj <= clear && !expected; dj++)
+                    for (int di = -clear; di <= clear && !expected; di++)
+                    {
+                        int ni = i + di, nj = j + dj;
+                        if ((uint)ni < (uint)w && (uint)nj < (uint)w && stamped[ni, nj])
+                            expected = true;
+                    }
+                Assert.Equal(!expected,
+                    PathfindingCore.IsPassable(grid.Get(i, j), builder.Default.Mask));
+            }
+
+        // 角部比边中带切得更深:近角 (13,13) 不可行,而边中 (16,13) 可行。
+        Assert.False(PathfindingCore.IsPassable(grid.Get(13, 13), builder.Default.Mask));
+        Assert.True(PathfindingCore.IsPassable(grid.Get(16, 13), builder.Default.Mask));
+    }
+
+    [Fact]
+    public void OffWorldEdge_TinyGrid_Skipped()
+    {
+        // 小图(≤2×边带)无内侧区域,印戳会全图封死——guard 跳过(测试图常用尺寸)。
+        var builder = new PassabilityGridBuilder();
+        builder.Build(AllLand(3), terrainTilesPerSide: 3, System.Array.Empty<ObstructionSquare>());
+        Assert.True(PathfindingCore.IsPassable(builder.Grid!.Get(0, 0), builder.Default.Mask));
+    }
 }

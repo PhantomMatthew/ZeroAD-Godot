@@ -10,7 +10,7 @@ namespace ZeroAD.Sim.Tests;
 // B. 卡死看门狗侧绕。需要一个带墙的真实寻路网格。
 public sealed class ObstructionMitigationTests
 {
-    private const int Tiles = 16;                 // 16 地块 × 4m = 64m 见方
+    private const int Tiles = 32;                 // 32 地块 × 4m = 128m 见方
     private const float TileSize = 4f;
 
     private sealed class World
@@ -19,7 +19,8 @@ public sealed class ObstructionMitigationTests
         public required PathfinderComponent Pf;
     }
 
-    /// <summary>64×64m 全陆地网格;x=32m 处一堵纵向静障碍墙(z 0..48,南侧留 16m 口)。</summary>
+    /// <summary>128×128m 全陆地网格;x=32m 处一堵纵向静障碍墙(z 0..48,南侧留口)。
+    /// (世界 128m:图外缘 12 navcell 边带不盖住 z=56 的目标点——16 地块时代无此问题。)</summary>
     private static World SetupWalledWorld()
     {
         var cm = new ComponentManager(42);
@@ -77,11 +78,11 @@ public sealed class ObstructionMitigationTests
         // 直线穿墙应为 false(墙在 x=32,z 0..48;从 (8,24) 到 (56,24) 必穿)。
         var pc = w.Pf.DefaultClass.Mask;
         Assert.False(w.Pf.CheckMovement(
-            new FixedVector2D(Fixed.FromInt(8), Fixed.FromInt(24)),
+            new FixedVector2D(Fixed.FromInt(16), Fixed.FromInt(24)),
             new FixedVector2D(Fixed.FromInt(56), Fixed.FromInt(24)), pc));
         // 绕南侧缺口(56,56)应可达。
         Assert.True(w.Pf.CheckMovement(
-            new FixedVector2D(Fixed.FromInt(8), Fixed.FromInt(56)),
+            new FixedVector2D(Fixed.FromInt(16), Fixed.FromInt(56)),
             new FixedVector2D(Fixed.FromInt(56), Fixed.FromInt(56)), pc));
     }
 
@@ -89,7 +90,7 @@ public sealed class ObstructionMitigationTests
     public void UnreachableGoal_ClampsToFarthestReachable_DoesNotGhostThroughWall()
     {
         var w = SetupWalledWorld();
-        var walker = MakeWalker(w.Cm, 8, 24);
+        var walker = MakeWalker(w.Cm, 16, 24);
         var motion = w.Cm.QueryInterface<UnitMotion>(walker)!;
         var goal = new FixedVector2D(Fixed.FromInt(56), Fixed.FromInt(24));   // 墙后
 
@@ -116,7 +117,7 @@ public sealed class ObstructionMitigationTests
     public void StuckWatchdog_SidestepsThenResumes()
     {
         var w = SetupWalledWorld();
-        var walker = MakeWalker(w.Cm, 8, 56);   // 开阔地(南半无墙)
+        var walker = MakeWalker(w.Cm, 16, 56);   // 开阔地(南半无墙)
         var motion = w.Cm.QueryInterface<UnitMotion>(walker)!;
         var goal = new FixedVector2D(Fixed.FromInt(56), Fixed.FromInt(56));
         motion.MoveToPoint(goal);
@@ -147,7 +148,7 @@ public sealed class ObstructionMitigationTests
     {
         // 回归护栏:无障碍直线目标照常直达(缓释不改变正常路径)。
         var w = SetupWalledWorld();
-        var walker = MakeWalker(w.Cm, 8, 56);
+        var walker = MakeWalker(w.Cm, 16, 56);
         var motion = w.Cm.QueryInterface<UnitMotion>(walker)!;
         motion.MoveToPoint(new FixedVector2D(Fixed.FromInt(56), Fixed.FromInt(56)));
 

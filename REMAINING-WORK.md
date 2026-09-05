@@ -22,7 +22,7 @@
 |---|---|---|
 | 寻路异步任务化 | ✅ | ticket+索引槽位+次回合收割(确定性);后台单任务(多 worker 需 per-worker LongPathfinder 实例——30MB scratch 驻留,按需再扩) |
 | 寻路增量更新 | ✅ | 阻挡变化按脏矩形补丁+脏 chunk 局部重连(上游 UpdateGrid/HierUpdate 移植) |
-| push-out / 圆形障碍 | 🟡 | 对照 CCmpObstructionManager 的 shape 体系补齐 |
+| push-out / 圆形障碍 | ✅ | 本波全落:CheckLineMovement 逐字移植(逃逸链 push-out——被困单位可走出不可行格;边缘光栅化禁对角跳格)+ 图外缘印戳(此前缺失——单位可走出地图;方带 12 navcell/圆形 dist2 判式,全类 edgeMask 先于 clearance 膨胀)+ PassabilityCircular 旗(rmgen/scenario 双路径接线) |
 | 序列化类型覆盖 | ✅ | U64/I64/Float/Double 全链(ISerializer+Binary+TextDump);backref 共享对象与原版二进制互通如需再对齐(当前自研格式 v17) |
 | TurnManager 节奏/超时 | ✅ | 超时警示(NETWORK_WARNING_TIMEOUT=2000ms 口径:lastReceived 追踪+0.5s 巡检+PauseMenu 名单)+ host 手动踢出(ENet DisconnectPeer→掉线 AI 接管);观战者不作回合闸门(=上游 observermaxlag −1 默认) |
 | Templates | ✅ | `actor\|...` 合成模板装载(ConstructTemplateActor 移植);template_not_found 上游已移除,不适用 |
@@ -37,7 +37,7 @@
 
 - **渲染**:~~天气(上游本无天气系统=静态环境+地图粒子 actor;粒子 actor 装配本波落地)~~;~~蒙皮阴影动画姿势(共轭骨架代理,本波落地)~~;粒子触发点(水面溅花/烟尘按需求接)。
 - **音频**:环境音多轨叠加(现单层)。
-- **GUI**:间谍请求(需逐对 LOS 共享基建);mod.io minisigs Ed25519 验签(现只验存在性);campaigns 末关 endgame 页/useGameSetup 分支(初标"待触发器成熟",触发器总线 66e4f51 后已成熟,可重估)。
+- **GUI**:间谍请求(需逐对 LOS 共享基建);mod.io minisigs Ed25519 验签(现只验存在性);~~campaigns 末关 endgame 页/useGameSetup 分支~~✅(本波收尾:胜负均走 endgame 流程——胜 markLevelComplete、胜负均收地图脚本自定义结算数据入 run.data;ICampaignGameEndData 钩子=原版 Trigger.prototype.OnCampaignGameEnd;离开回跳战役菜单=原版 nextPage,getMenuPath)。
 - **GuiInterface 桥**:覆盖面约原版 1/5,HUD/Minimap 热路径仍有零散 QueryInterface 直读(每帧性能敏感段,按需补桥)。
 
 ## 5. 模板 hotloading(已闭环)

@@ -82,7 +82,7 @@
 | 寻路 pass class 数据驱动 | ✅ | pathfinder.xml 9 类注册表+XML 加载(d5f0b94);水陆分类生效 |
 | 寻路异步任务化 | 🟡 | LongPathfinder 线程池模式:请求在回合边界收割,结果确定 |
 | 寻路增量更新 | 🟡 | 阻挡变化局部刷新导航块(现全量重建) |
-| push-out / 圆形障碍 | 🟡 | 对照 CCmpObstructionManager 的 shape 体系补齐 |
+| push-out / 圆形障碍 | ✅ | 本波全落:CheckLineMovement 逐字移植(逃逸链——困在不可行格的单位可走出不可折返;边缘光栅化替代 Bresenham,禁对角跳格)+ 图外缘印戳(此前完全没有——单位可走出地图;方形 12-navcell 边带/圆形按 dist2 判式,全类 edgeMask,先于 clearance 膨胀)+ PassabilityCircular 旗(Setup.js 同款:rmgen settings.CircularMap/scenario ScriptSettings 接线) |
 | 序列化类型覆盖 | 🟡 | U64/I64/Float、backref 共享对象;如需与原版存档互通再对齐二进制格式(当前自研格式 v11,可不对齐) |
 | TurnManager 节奏/超时 | 🟡 | 回合超时节奏控制、客户端落后踢出策略 |
 - [x] 观战者/spectator(4b19ce4:observer 不占槽+全图视野+命令拦截;ClientHello 握手)
@@ -190,7 +190,7 @@
 - [x] prelobby 三页(entrance/login/register;5d4c2d3)
 - [x] viewer(actor 查看器;fc7637a)
 - [x] mapbrowser(68027b1:网格浏览)
-- [x] campaigns 战役页(28c9f9d:CampaignTemplate/Run 数据层 + setup/menu/new/load 四页,胜利回写 MarkLevelComplete;末关 endgame 页与 useGameSetup 分支待触发器成熟)
+- [x] campaigns 战役页(28c9f9d:CampaignTemplate/Run 数据层 + setup/menu/new/load 四页,胜利回写 MarkLevelComplete;1c4000a 末关 endgame 页+useGameSetup 分支;本波收尾:胜负均走 endgame 流程+ICampaignGameEndData 钩子=原版 Trigger.prototype.OnCampaignGameEnd 自定义结算数据入 run.data+离开回跳战役菜单 nextPage)
 - [x] splashscreen/tips(199c7b5/d9216b8)
 - [x] credits(580bc7d)
 - [x] userreport(b5d5a9c)

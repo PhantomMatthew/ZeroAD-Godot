@@ -298,26 +298,75 @@ public sealed class LongPathfinder
         return ortho * OrthoStep + diag * DiagStep;
     }
 
-    /// <summary>Line-of-sight / movement check: rasterize a line between two navcells and test
-    /// each for passability. Allows leaving an impassable cell but not entering one. Ported from
-    /// Pathfinding::CheckLineMovement. Used by PathfinderComponent.CheckMovement.</summary>
-    public bool CheckLineMovement(int i0, int j0, int i1, int j1, PassClass passClass)
+    /// <summary>Line-of-sight / movement check between two world points. Verbatim port of
+    /// Pathfinding::CheckLineMovement (helpers/Pathfinding.cpp): navcells are stepped by
+    /// testing which edge of the current cell the line crosses (never diagonally-adjacent
+    /// jumps), and a unit standing on impassable cells may keep moving while impassable
+    /// until it reaches a passable cell — but may never re-enter impassability afterwards
+    /// (push-out escape chain: units trapped in an obstruction can always walk out).
+    /// Used by PathfinderComponent.CheckMovement.</summary>
+    public bool CheckLineMovement(Fixed x0, Fixed z0, Fixed x1, Fixed z1, PassClass passClass)
     {
         if (_grid == null) return false;
-        // Bresenham; skip the start cell (may legitimately be impassable if unit is stuck).
-        int dx = System.Math.Abs(i1 - i0), dz = System.Math.Abs(j1 - j0);
-        int sx = i0 < i1 ? 1 : -1, sz = j0 < j1 ? 1 : -1;
-        int err = dx - dz;
+        int w = _grid.W, h = _grid.H;
+        // NearestNavcell: floor + clamp into the grid (upstream Clamp(...,0,w-1)).
+        int i0 = Clamp(WorldToNavcellFloor(x0), 0, w - 1);
+        int j0 = Clamp(WorldToNavcellFloor(z0), 0, h - 1);
+        int i1 = Clamp(WorldToNavcellFloor(x1), 0, w - 1);
+        int j1 = Clamp(WorldToNavcellFloor(z1), 0, h - 1);
+
+        int di = i0 < i1 ? 1 : i1 < i0 ? -1 : 0;
+        int dj = j0 < j1 ? 1 : j1 < j0 ? -1 : 0;
+
         int i = i0, j = j0;
+        bool currentlyOnImpassable = !Passable(i0, j0, passClass);
+
         while (true)
         {
-            if (i == i1 && j == j1) return true;
-            // Don't test the start cell (origin may be impassable).
-            if (!(i == i0 && j == j0))
-                if (!Passable(i, j, passClass)) return false;
-            int e2 = 2 * err;
-            if (e2 > -dz) { err -= dz; i += sx; }
-            if (e2 < dx) { err += dx; j += sz; }
+            // Fail if we're moving onto an impassable navcell (escape chain: once a
+            // passable cell is reached the escape is over and impassable blocks again).
+            bool passable = Passable(i, j, passClass);
+            if (passable)
+                currentlyOnImpassable = false;
+            else if (!currentlyOnImpassable)
+                return false;
+
+            if (i == i1 && j == j1)
+                return true;
+
+            // Only one axis left to move (or axis-aligned line): step that axis.
+            if (di == 0 || i == i1)
+            {
+                j += dj;
+                continue;
+            }
+            else if (dj == 0 || j == j1)
+            {
+                i += di;
+                continue;
+            }
+
+            // Test whether the line intersects the horizontal (top/bottom) edge of the
+            // current navcell: edge (i, j + (dj>0?1:0)) .. (i+1, j + (dj>0?1:0)). If both
+            // endpoints are on the same side of the line, the line exits through the
+            // vertical edge instead. dota/dotb == 0 (line through a grid vertex) moves dj,
+            // matching upstream's arbitrary-but-deterministic choice.
+            Fixed xia = Fixed.FromInt(i).Multiply(PathfindingCore.NavcellSize);
+            Fixed xib = Fixed.FromInt(i + 1).Multiply(PathfindingCore.NavcellSize);
+            Fixed zj = Fixed.FromInt(j + (dj + 1) / 2).Multiply(PathfindingCore.NavcellSize);
+
+            var perp = new FixedVector2D(x1 - x0, z1 - z0).Perpendicular();
+            Fixed dota = (new FixedVector2D(xia, zj) - new FixedVector2D(x0, z0)).Dot(perp);
+            Fixed dotb = (new FixedVector2D(xib, zj) - new FixedVector2D(x0, z0)).Dot(perp);
+
+            if ((dota < Fixed.Zero && dotb < Fixed.Zero) ||
+                (dota > Fixed.Zero && dotb > Fixed.Zero))
+                i += di;
+            else
+                j += dj;
         }
     }
+
+    private static int WorldToNavcellFloor(Fixed world) => world.InternalValue >> 16;
+    private static int Clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
 }

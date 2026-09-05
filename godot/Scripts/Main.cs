@@ -1111,7 +1111,13 @@ public sealed partial class Main : Node3D
 			var t = QuickLoad();
 			pm.SetStatus(t == null ? "No save / load failed." : $"Loaded turn {t}.");
 		};
-		pm.OnLeave += () => GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+		pm.OnLeave += () =>
+		{
+			// 战役局中途离开同样回战役菜单(原版 endGame nextPage=run.getMenuPath())。
+			var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+			cfg.ReturnToCampaignMenu = cfg.CampaignRunFile.Length > 0;
+			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
+		};
 		AddChild(pm);
 
 		// 第二梯队菜单面板(Diplomacy/Trade/Match Settings):模态叠层,挡鼠标不暂停。
@@ -1658,6 +1664,9 @@ public sealed partial class Main : Node3D
 		// 可通行性(rmgen 陆水:超过水面高度=Land,否则 Water)+ 顶点高度网格。
 		// 水位取地图环境的 setWaterHeight(未设定则 SEA_LEVEL=20m ——
 		// rmgen 内部水面高度 0 + SEA_LEVEL 偏移)。
+		// 图形状先行(原版 Setup.js → SetPassabilityCircular):RebuildGrid 在
+		// FillPassabilityAllLand 内发生,外缘方/圆印戳依此旗。
+		_sim.Obstructions.SetPassabilityCircular(settings.CircularMap);
 		FillPassabilityAllLand(pmp, rmgenWater.Height);
 
 		// 放置实体（从 MapExport.Entities）。rmgen 实体坐标单位是 TILES——上游

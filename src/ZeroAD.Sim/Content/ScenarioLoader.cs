@@ -67,6 +67,10 @@ namespace ZeroAD.Sim.Content
         public bool LastManStanding;
         /// <summary>弑君英雄可驻军(ScriptSettings.RegicideGarrison,默认 false)。</summary>
         public bool RegicideGarrison;
+        /// <summary>圆形图(ScriptSettings.CircularMap;缺省 true——上游 _default.xml
+        /// 与 77 张 skirmish 全为 true;ObstructionManager.PassabilityCircular 的数据源,
+        /// 决定寻路图外缘按圆还是方带印戳)。</summary>
+        public bool CircularMap = true;
     }
 
     public static class ScenarioLoader
@@ -141,6 +145,9 @@ namespace ZeroAD.Sim.Content
                 data.LastManStanding = true;
             if (root.TryGetProperty("RegicideGarrison", out var rg) && rg.ValueKind == JsonValueKind.True)
                 data.RegicideGarrison = true;
+            // 图形状(原版 Setup.js → SetPassabilityCircular;false 才覆盖缺省 true)。
+            if (root.TryGetProperty("CircularMap", out var circ) && circ.ValueKind == JsonValueKind.False)
+                data.CircularMap = false;
 
             if (!root.TryGetProperty("PlayerData", out var players))
                 return;

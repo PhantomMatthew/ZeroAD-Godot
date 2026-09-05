@@ -71,6 +71,13 @@ public sealed partial class MainMenu : Control
 			splash.Open();
 		}
 		BuildUi();
+		// 战役局离开回跳(原版 endGame nextPage=战役菜单):直开当前 run 的
+		// 战役菜单。消费一次性标志,避免主菜单其他入口重触发。
+		if (_cfg.ReturnToCampaignMenu)
+		{
+			_cfg.ReturnToCampaignMenu = false;
+			CallDeferred(nameof(OnContinueCampaign));
+		}
 		MaybeRunScreenshotHook();
 	}
 

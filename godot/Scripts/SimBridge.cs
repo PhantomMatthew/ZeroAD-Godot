@@ -410,6 +410,13 @@ public sealed partial class SimBridge : Node
 		_sim.Triggers.NotifyInitGame(_sim);
 	}
 
+	/// <summary>战役局结束的地图脚本自定义结算数据(原版 GuiInterface.
+	/// GetCampaignGameEndData;胜/负均调,未挂钩子 → 空表)。</summary>
+	public System.Collections.Generic.IReadOnlyDictionary<string, string> GetCampaignGameEndData() =>
+		_sim?.Triggers.GetCampaignGameEndData(_sim)
+		?? (System.Collections.Generic.IReadOnlyDictionary<string, string>)
+			new System.Collections.Generic.Dictionary<string, string>();
+
 	/// <summary>地图加载/障碍定型后重建 AI 水陆可达性区域图(原版 Accessibility
 	/// 每图构建一次)。Main 在末次 Pathfinder.RebuildGrid 之后调用。</summary>
 	public void RefreshAiAccessibility()
@@ -484,6 +491,8 @@ public sealed partial class SimBridge : Node
 		}
 
 		var scenario = ScenarioLoader.Load(xmlPath);
+		// 图形状(同 LoadMapScenario;教程图走独立加载路径,也要下一局 RebuildGrid 前设旗)。
+		_obstructions.SetPassabilityCircular(scenario.CircularMap);
 		ApplyScenarioPlayers(scenario);
 		SpawnScenarioEntities(scenario);
 		// Re-seed diplomacy from the scenario's Team assignments (covers the enemy player
@@ -564,6 +573,9 @@ public sealed partial class SimBridge : Node
 		if (xmlPath == null) return null;
 		var scenario = ScenarioLoader.Load(xmlPath);
 		if (!scenario.Entities.Any(e => e.IsSimulationEntity)) return null;
+		// 图形状(原版 Setup.js:SetPassabilityCircular(!!settings.CircularMap))——
+		// 寻路图外缘方/圆印戳在下次 RebuildGrid 生效(spawn 后 Main 必重建一次)。
+		_obstructions.SetPassabilityCircular(scenario.CircularMap);
 		ApplyScenarioCivs(scenario);
 		ApplyVictoryConditions(scenario);
 		SpawnScenarioEntities(scenario);

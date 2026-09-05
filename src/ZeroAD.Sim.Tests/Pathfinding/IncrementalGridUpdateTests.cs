@@ -36,18 +36,19 @@ public sealed class IncrementalGridUpdateTests
         // 参考语义:先地形膨胀,再形状(AABB+clearance)印戳——本测试与 PatchRect 共用
         // 同一 StampObstruction,等价性由增量对拍测试兜底;此处仅钉死 Build 基本盘:
         // 形状印戳覆盖 AABB+clearance,远处不受影响。
+        // (16 地块建图:边带 12 navcell 不干扰中心断言;8 地块时中心盒会贴上外缘带。)
         var builder = new PassabilityGridBuilder();
-        var terrain = FlatTerrain(8);   // 32x32 navcells
-        builder.Build(terrain, 8, new[] { Box(16f, 16f, 2f, 2f) });
+        var terrain = FlatTerrain(16);   // 64x64 navcells
+        builder.Build(terrain, 16, new[] { Box(32f, 32f, 2f, 2f) });
         var grid = builder.Grid!;
         var def = builder.Default;
         int clear = def.Clearance.ToIntRoundToInfinity();
-        // 中心(16,16)→ navcell 16;印戳覆盖 [16-2-clear .. 16+2+clear]。
-        Assert.False(PathfindingCore.IsPassable(grid.Get(16, 16), def.Mask));
-        Assert.False(PathfindingCore.IsPassable(grid.Get(16 - 2 - clear, 16), def.Mask));
-        Assert.True(PathfindingCore.IsPassable(grid.Get(16 - 2 - clear - 2, 16), def.Mask));
+        // 中心(32,32)→ navcell 32;印戳覆盖 [32-2-clear .. 32+2+clear]。
+        Assert.False(PathfindingCore.IsPassable(grid.Get(32, 32), def.Mask));
+        Assert.False(PathfindingCore.IsPassable(grid.Get(32 - 2 - clear, 32), def.Mask));
+        Assert.True(PathfindingCore.IsPassable(grid.Get(32 - 2 - clear - 2, 32), def.Mask));
         // 地形基线无形状。
-        Assert.True(PathfindingCore.IsPassable(builder.TerrainOnly!.Get(16, 16), def.Mask));
+        Assert.True(PathfindingCore.IsPassable(builder.TerrainOnly!.Get(32, 32), def.Mask));
     }
 
     [Fact]

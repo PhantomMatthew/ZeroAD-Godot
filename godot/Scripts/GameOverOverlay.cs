@@ -128,6 +128,9 @@ public sealed partial class GameOverOverlay : CanvasLayer
     {
         // Only react to the local player's defeat for the overlay.
         if (e.PlayerId != _localPlayerId) return;
+        // 战役败局也走 endgame 流程(原版 CampaignSession.onFinish 胜/负均跑
+        // endgame 页:won=false 只收集自定义结算数据,不 markLevelComplete)。
+        RunCampaignEndgame(won: false);
         ShowOverlay(
             title: "Defeat",
             titleColor: new Color(0.85f, 0.22f, 0.18f),
@@ -138,37 +141,48 @@ public sealed partial class GameOverOverlay : CanvasLayer
     {
         // Only react to the local player's victory.
         if (e.PlayerId != _localPlayerId) return;
-        // 战役胜利回写(原版 campaigns/default_menu/endgame/endgame.js:markLevelComplete)。
-        var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
-        if (cfg.CampaignRunFile.Length > 0 && cfg.CampaignLevelId.Length > 0)
-        {
-            string? binDir = StoneButtonStyle.FindBinariesDir();
-            string? dataRoot = binDir == null ? null
-                : System.IO.Path.Combine(binDir, "data", "mods", "public");
-            var run = Campaigns.CampaignRun.Load(dataRoot, cfg.CampaignRunFile);
-            if (run is { Broken: false })
-            {
-                run.MarkLevelComplete(cfg.CampaignLevelId);
-                ZeroAD.Sim.Diag.Log("Campaign",
-                    $"run '{cfg.CampaignRunFile}': level '{cfg.CampaignLevelId}' completed");
-
-                // endgame 页(原版 campaigns/default_menu/endgame/ 的等价):
-                // 全部关卡完成 → 通关页替代普通胜利遮罩。
-                var template = run.Template;
-                bool runComplete = template != null && template.Levels.Count > 0
-                    && System.Linq.Enumerable.All(template.Levels.Keys,
-                        id => run.CompletedLevels.Contains(id));
-                if (runComplete)
-                {
-                    ShowEndgamePanel(run);
-                    return;
-                }
-            }
-        }
+        if (RunCampaignEndgame(won: true)) return;   // 全战役通关 → 通关页替代胜利遮罩
         ShowOverlay(
             title: "Victory!",
             titleColor: new Color(0.20f, 0.78f, 0.30f),
             message: "You are victorious.");
+    }
+
+    /// <summary>战役 endgame 流程(原版 campaigns/default_menu/endgame/endgame.js
+    /// 瞬态页):胜 → markLevelComplete;胜/负均收集地图脚本自定义结算数据
+    /// (原版 Trigger.prototype.OnCampaignGameEnd 经 GuiInterfaceCall)并入
+    /// run.data 落盘。返回 true = 战役全关卡完成且已改示通关页(调用方不再示
+    /// 普通胜负遮罩)。</summary>
+    private bool RunCampaignEndgame(bool won)
+    {
+        var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+        if (cfg.CampaignRunFile.Length == 0 || cfg.CampaignLevelId.Length == 0) return false;
+        string? binDir = StoneButtonStyle.FindBinariesDir();
+        string? dataRoot = binDir == null ? null
+            : System.IO.Path.Combine(binDir, "data", "mods", "public");
+        var run = Campaigns.CampaignRun.Load(dataRoot, cfg.CampaignRunFile);
+        if (run is not { Broken: false }) return false;
+
+        if (won)
+        {
+            run.MarkLevelComplete(cfg.CampaignLevelId);
+            ZeroAD.Sim.Diag.Log("Campaign",
+                $"run '{cfg.CampaignRunFile}': level '{cfg.CampaignLevelId}' completed");
+        }
+        // 自定义结算数据(原版 endGameData.custom):地图脚本键值对并入 run.data。
+        foreach (var kv in _sim.GetCampaignGameEndData())
+            run.ExtraData[kv.Key] = System.Text.Json.Nodes.JsonValue.Create(kv.Value);
+        run.Save();
+
+        // endgame 页(原版 campaigns/default_menu/endgame/ 的等价):
+        // 全部关卡完成 → 通关页替代普通胜利遮罩。
+        var template = run.Template;
+        bool runComplete = won && template != null && template.Levels.Count > 0
+            && System.Linq.Enumerable.All(template.Levels.Keys,
+                id => run.CompletedLevels.Contains(id));
+        if (runComplete)
+            ShowEndgamePanel(run);
+        return runComplete;
     }
 
     /// <summary>通关页(原版 endgame 瞬态页;回战役菜单 = 离开本局后由主菜单的
@@ -198,6 +212,10 @@ public sealed partial class GameOverOverlay : CanvasLayer
 
     private void OnLeavePressed()
     {
+        // 战役局离开 → 回战役菜单(原版 endGame 的 nextPage=run.getMenuPath();
+        // summary skipSummary 分支同理)。非战役局回主菜单主页。
+        var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+        cfg.ReturnToCampaignMenu = cfg.CampaignRunFile.Length > 0;
         // Return to the main menu by reloading the startup scene. GetTree().ChangeScene
         // is the standard Godot way; the project entry scene is the main menu.
         GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");

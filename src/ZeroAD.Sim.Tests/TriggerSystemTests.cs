@@ -283,4 +283,39 @@ public sealed class TriggerSystemTests
         Assert.Single(sink.Messages);
         Assert.Contains("select", sink.Messages[0]);
     }
+
+    private sealed class NoEndgameScript : IMapScriptBehavior
+    {
+        public void OnInit(ComponentManager cm) { }
+        public void Tick(ComponentManager cm, ZeroAD.Sim.Maths.Fixed dt) { }
+    }
+
+    private sealed class EndgameScript : IMapScriptBehavior, ICampaignGameEndData
+    {
+        public void OnInit(ComponentManager cm) { }
+        public void Tick(ComponentManager cm, ZeroAD.Sim.Maths.Fixed dt) { }
+        public IReadOnlyDictionary<string, string> OnCampaignGameEnd(ComponentManager cm) =>
+            new Dictionary<string, string> { ["relics"] = "3", ["bonus"] = "fast" };
+    }
+
+    [Fact]
+    public void GetCampaignGameEndData_NoScriptOrNoHook_ReturnsEmpty()
+    {
+        var cm = SetupWorld();
+        var ts = new TriggerSystem();
+        Assert.Empty(ts.GetCampaignGameEndData(cm));   // 无地图脚本
+        ts.MapScript = new NoEndgameScript();           // 脚本未挂钩子 → 原版 {}
+        Assert.Empty(ts.GetCampaignGameEndData(cm));
+    }
+
+    [Fact]
+    public void GetCampaignGameEndData_HookedScript_ReturnsCustomData()
+    {
+        var cm = SetupWorld();
+        var ts = new TriggerSystem { MapScript = new EndgameScript() };
+        var data = ts.GetCampaignGameEndData(cm);
+        Assert.Equal(2, data.Count);
+        Assert.Equal("3", data["relics"]);
+        Assert.Equal("fast", data["bonus"]);
+    }
 }

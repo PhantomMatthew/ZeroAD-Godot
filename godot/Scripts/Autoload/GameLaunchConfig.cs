@@ -59,6 +59,9 @@ public partial class GameLaunchConfig : Node
     public string CampaignRunFile = "";
     /// <summary>战役关卡 id(模板 Levels 键;胜利时回写 MarkLevelComplete)。</summary>
     public string CampaignLevelId = "";
+    /// <summary>战役局离开后置位(原版 endGame 的 nextPage=战役菜单):主菜单
+    /// _Ready 消费一次——直开当前 run 的战役菜单而非停在主页。</summary>
+    public bool ReturnToCampaignMenu;
 
     // ── autostart(CLI -autostart-*;原版 binaries/data/mods/public/autostart/)──
     /// <summary>每玩家 AI 难度(playerId → 0..5;autostart-aidiff;无项 = Medium 默认)。</summary>
@@ -97,6 +100,7 @@ public partial class GameLaunchConfig : Node
         VictoryConditions = new();
         CampaignRunFile = "";
         CampaignLevelId = "";
+        ReturnToCampaignMenu = false;
         AiDifficulties = new();
         MpAutoTarget = "";
         MpAutoPort = 0;

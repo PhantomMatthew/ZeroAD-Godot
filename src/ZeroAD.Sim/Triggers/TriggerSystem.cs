@@ -80,6 +80,15 @@ namespace ZeroAD.Sim.Triggers
         void Tick(ComponentManager cm, Maths.Fixed dt);
     }
 
+    /// <summary>战役结算数据钩子(原版 Trigger.prototype.OnCampaignGameEnd:
+    /// 地图脚本可选挂载,战役局结束(胜/负均调)时由 GuiInterface.GetCampaignGameEndData
+    /// 收集,交给 endgame 页做自定义结算。返回键值对并入 run.data 骑缝)。
+    /// 本地图脚本不提供时视为空表(原版 Hook 未挂载 → {})。</summary>
+    public interface ICampaignGameEndData
+    {
+        IReadOnlyDictionary<string, string> OnCampaignGameEnd(ComponentManager cm);
+    }
+
     /// <summary>触发器系统(原版 Trigger.js 的 C# 数据驱动移植框架)。
     /// 原版由地图 JS 脚本向 Trigger 组件注册 事件→动作;C# 内核无法执行地图 JS,
     /// 改为数据驱动:条件/动作内置实现,地图(或教程/战役)以 TriggerDefinition 表达。
@@ -333,6 +342,14 @@ namespace ZeroAD.Sim.Triggers
         /// 在 Deserialize 后调用。</summary>
         public void NotifyDeserialized(ComponentManager cm) =>
             CallEvent(cm, "OnDeserialized", null);
+
+        /// <summary>战役局结束收集地图脚本自定义结算数据(原版 GuiInterface.
+        /// GetCampaignGameEndData → Trigger.prototype.OnCampaignGameEnd)。
+        /// 胜/负均调;脚本未挂钩子 → 空表(原版 {})。</summary>
+        public IReadOnlyDictionary<string, string> GetCampaignGameEndData(ComponentManager cm) =>
+            MapScript is ICampaignGameEndData hook
+                ? hook.OnCampaignGameEnd(cm)
+                : (IReadOnlyDictionary<string, string>)new Dictionary<string, string>();
 
         /// <summary>OnRange 增量载荷(原版 TriggerPoint.OnRangeUpdate 的 r 对象:
         /// {added, removed, currentCollection})。</summary>
