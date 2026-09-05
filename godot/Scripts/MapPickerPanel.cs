@@ -975,7 +975,11 @@ public sealed partial class MapPickerPanel : Panel
     private void RebuildSlotRows()
     {
         foreach (var c in _slotRows.GetChildren()) c.QueueFree();
+        // _diffOpts/_behaviorOpts 也必须清:它们与 kind/civ/team 一样逐行 add(1071),
+        // 漏清会累积已 QueueFree 的旧 OptionButton,BuildSlots 按索引读到 disposed
+        // 控件 → ObjectDisposedException,Start 处理器静默死掉("点了 Start 没反应")。
         _kindOpts.Clear(); _civOpts.Clear(); _teamOpts.Clear();
+        _diffOpts.Clear(); _behaviorOpts.Clear();
         if (_statusLine != null) _statusLine.Text = "";   // 槽位变了,旧的拒绝原因作废
         if (_selected == null) return;
 
