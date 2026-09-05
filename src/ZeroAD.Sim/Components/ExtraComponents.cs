@@ -22,6 +22,9 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
         public uint Source;          // trade 起点市场
         public string ResourceType = "";   // gather-near-position 的 resourceType(specific)
         public bool AllowCapture;
+        /// <summary>attack-walk/patrol 的目标类别过滤(原版 data.targetClasses;
+        /// 空 = 不过滤)。存档 v19 起序列化。</summary>
+        public string? TargetClasses;
         public RallyPointData Clone() => (RallyPointData)MemberwiseClone();
     }
 
@@ -35,19 +38,76 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
     /// <summary>每玩家集结队列(原版 perPlayer)。</summary>
     public readonly Dictionary<int, RallyPointEntry> PerPlayer = new();
 
-    protected override void OnInit() { }
+    protected override void OnInit()
+    {
+        // 事件订阅(Guard 同款 SimSystem.Sim 懒接):易主清空 + 换名改指。
+        var cm = SimSystem.Sim;
+        if (cm == null || _subscribedCm != null) return;
+        _subscribedCm = cm;
+        cm.OwnerChanged += OnAnyOwnershipChanged;
+        cm.Events.EntityRenamed += OnEntityRenamed;
+    }
+
+    protected override void OnDeinit()
+    {
+        if (_subscribedCm == null) return;
+        _subscribedCm.OwnerChanged -= OnAnyOwnershipChanged;
+        // EntityRenamed 不退订:原版 MT_EntityRenamed 在 DestroyEntity 之前广播
+        // (Transform.js:180/208),本移植的 Promotion.Promote 先毁后广播——退订会让
+        // "建筑自身换名迁移队列"永远收不到。留存代价是已毁建筑的空队列闭包(有界)。
+        _subscribedCm = null;
+    }
+
+    private ComponentManager? _subscribedCm;
+
+    /// <summary>原版 OnOwnershipChanged:易主清空集结队列;构造/析构(from/to ==
+    /// INVALID_PLAYER = -1)豁免(RallyPoint.js:149-156)。</summary>
+    private void OnAnyOwnershipChanged(EntityId entity, int from, int to)
+    {
+        if (entity != Entity) return;
+        if (from == -1 || to == -1) return;
+        OnOwnershipChanged();
+    }
+
+    /// <summary>原版 OnGlobalEntityRenamed(RallyPoint.js:122-147):全队列 Data 的
+    /// Target/Source 命中旧号 → 改指新号;改名的是建筑自身且新实体带 RallyPoint →
+    /// 整条队列逐点迁移到新实体。</summary>
+    private void OnEntityRenamed(Events.EntityRenamedEvent e)
+    {
+        var cm = _subscribedCm ?? SimSystem.Sim;
+        foreach (var entry in PerPlayer.Values)
+            foreach (var d in entry.Data)
+            {
+                if (d.Target == e.OldEntity.Value) d.Target = e.NewEntity.Value;
+                if (d.Source == e.OldEntity.Value) d.Source = e.NewEntity.Value;
+            }
+
+        if (e.OldEntity != Entity || cm == null) return;
+        var newRally = cm.QueryInterface<RallyPointComponent>(e.NewEntity);
+        if (newRally == null) return;
+        foreach (var kv in PerPlayer)
+            for (int i = 0; i < kv.Value.Pos.Count; i++)
+            {
+                newRally.AddPosition(kv.Value.Pos[i], kv.Key);
+                if (i < kv.Value.Data.Count)
+                    newRally.AddData(kv.Value.Data[i].Clone(), kv.Key);
+            }
+    }
 
     private int OwnerId(ComponentManager cm) =>
         cm.QueryInterface<OwnershipComponent>(Entity)?.PlayerId ?? -1;
 
-    /// <summary>兼容面:首个集结点(旧单点读取处;空队列 = Zero)。</summary>
+    /// <summary>兼容面:首个集结点(旧单点读取处;空队列 = Zero)。
+    /// 定序取键最小者(Dictionary 枚举序不定,多玩家键并存时旧实现读序不稳)。</summary>
     public Maths.FixedVector2D Position
     {
         get
         {
-            foreach (var kv in PerPlayer)
-                if (kv.Value.Pos.Count > 0) return kv.Value.Pos[0];
-            return new Maths.FixedVector2D(Maths.Fixed.Zero, Maths.Fixed.Zero);
+            var first = PerPlayer.OrderBy(kv => kv.Key)
+                .FirstOrDefault(kv => kv.Value.Pos.Count > 0);
+            return first.Value != null
+                ? first.Value.Pos[0]
+                : new Maths.FixedVector2D(Maths.Fixed.Zero, Maths.Fixed.Zero);
         }
     }
 
@@ -120,9 +180,13 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
     public void OnOwnershipChanged() => PerPlayer.Clear();
 
     /// <summary>原版 OrderToRallyPoint:给出厂单位按集结队列下发排队订单
-    /// (queued=true 链)。首命令命中本建筑且类型在 ignore 中 → 全链跳过
-    /// (原版:卸载时不向自身再集结)。命令翻译对齐 RallyPointCommands.js:
-    /// 目标死了的 gather → gather-near-position;attack → attack-walk;其余 → walk。</summary>
+    /// (queued=true 链)。ignore 语义:命中本建筑且类型在忽略列的点逐点跳过
+    /// (原版整链 return;WS1 裁定保留逐点跳过,不回退)。命令翻译对齐
+    /// RallyPointCommands.js:目标死了的 gather → gather-near-position;
+    /// attack → attack-walk;其余 → walk。末命令为 trade 且前导全 walk →
+    /// 前导点折叠为航线 waypoints(原版 RallyPointCommands.js:145-167;
+    /// 集结点显示仍按全点,折叠只作用于下发命令)。repair/build 末点
+    /// autocontinue=true(原版 RallyPointCommands.js:57)。</summary>
     public void OrderToRallyPoint(ComponentManager cm, EntityId spawned, params string[] ignore)
     {
         var own = cm.QueryInterface<OwnershipComponent>(spawned);
@@ -142,6 +206,9 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
 
         var e = PerPlayer[player];
         var positions = GetPositions(cm, player);
+
+        // 第一遍:逐点翻译成待发动作(原版 GetRallyPointCommands 的产物)。
+        var actions = new List<(string Command, Maths.FixedVector2D Pos, RallyPointData Data)>(positions.Count);
         for (int i = 0; i < positions.Count; i++)
         {
             var pos = positions[i];
@@ -159,10 +226,35 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
                         _ => "walk",
                     };
             }
-            // 首命令指向本建筑且在忽略列 → 跳过该点(原版 ignore 语义,逐点判)。
+            // 指向本建筑且在忽略列 → 跳过该点(原版 ignore 语义,逐点判)。
             if (data.Target == Entity.Value && ignore.Contains(command))
                 continue;
+            actions.Add((command, pos, data));
+        }
+        if (actions.Count == 0) return;
 
+        // trade 航线折叠(原版 RallyPointCommands.js:145-167):末动作 trade 且前导
+        // 全是 walk → 前导点变 waypoints 随 trade 单走(每程往返都经过),不再单独下发。
+        List<Maths.FixedVector2D>? route = null;
+        if (actions.Count > 1 && actions[^1].Command == "trade")
+        {
+            var waypoints = new List<Maths.FixedVector2D>(actions.Count - 1);
+            bool allWalk = true;
+            for (int i = 0; i < actions.Count - 1; i++)
+            {
+                if (actions[i].Command != "walk") { allWalk = false; break; }
+                waypoints.Add(actions[i].Pos);
+            }
+            if (allWalk && waypoints.Count > 0)
+            {
+                route = waypoints;
+                actions.RemoveRange(0, actions.Count - 1);
+            }
+        }
+
+        for (int i = 0; i < actions.Count; i++)
+        {
+            var (command, pos, data) = actions[i];
             switch (command)
             {
                 case "gather":
@@ -173,7 +265,10 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
                     break;
                 case "repair":
                 case "build":
-                    ai.Repair(new EntityId(data.Target), queued: true);
+                    // 末点 autocontinue(原版 autocontinue: i == rallyPos.length - 1):
+                    // 修完/建完就近续建下一地基。
+                    ai.Repair(new EntityId(data.Target), queued: true,
+                        autocontinue: i == actions.Count - 1);
                     break;
                 case "garrison":
                     ai.Garrison(new EntityId(data.Target), queued: true);
@@ -194,7 +289,13 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
                     ai.CollectTreasure(new EntityId(data.Target), queued: true);
                     break;
                 case "trade":
-                    ai.Trade(new EntityId(data.Target > 0 ? data.Target : data.Source), queued: true);
+                    // 原版 setup-trade-route(target=第二市场, source=第一市场, route)。
+                    if (data.Target > 0)
+                        ai.SetupTradeRoute(cm, new EntityId(data.Target),
+                            data.Source > 0 ? new EntityId(data.Source) : null,
+                            i == actions.Count - 1 ? route : null, queued: true);
+                    else
+                        ai.Walk(pos, queued: true);
                     break;
                 default:
                     ai.Walk(pos, queued: true);
@@ -221,6 +322,8 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
                 s.NumberU32("source", d.Source);
                 s.StringASCII("res", d.ResourceType);
                 s.Bool("ac", d.AllowCapture);
+                // 存档 v19 尾段:attack-walk/patrol 目标类别(空串 = 不过滤)。
+                s.StringASCII("tcl", d.TargetClasses ?? "");
             }
         }
     }
@@ -237,14 +340,21 @@ public sealed class RallyPointComponent : ComponentBase, IComponentMessageHandle
             for (int i = 0; i < count; i++)
             {
                 e.Pos.Add(new Maths.FixedVector2D(d.NumberFixed("x"), d.NumberFixed("z")));
-                e.Data.Add(new RallyPointData
+                var data = new RallyPointData
                 {
                     Command = d.StringASCII("cmd"),
                     Target = d.NumberU32("target"),
                     Source = d.NumberU32("source"),
                     ResourceType = d.StringASCII("res"),
                     AllowCapture = d.Bool("ac"),
-                });
+                };
+                // 存档 v19 尾段(更早的档没有,按 null/不过滤读;见 SaveFormat.LoadedVersion)。
+                if (SaveFormat.LoadedVersion >= 19)
+                {
+                    string tcl = d.StringASCII("tcl");
+                    data.TargetClasses = tcl.Length > 0 ? tcl : null;
+                }
+                e.Data.Add(data);
             }
         }
     }

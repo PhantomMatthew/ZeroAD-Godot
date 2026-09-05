@@ -303,7 +303,8 @@ public sealed class TurretableComponent : ComponentBase, IComponentMessageHandle
     }
 
     /// <summary>Port of LeaveTurret:找出生点 → 让出点位 → 落位 → UnitAI 复位 → 障碍恢复
-    /// → 集结点 Walk。出生点语义同 Garrisonable.UnGarrison(固定偏移兜底,记录差异);
+    /// → 集结点全队列(OrderToRallyPoint,ignore="occupy-turret")。出生点语义同
+    /// Garrisonable.UnGarrison(固定偏移兜底,记录差异);
     /// 原版 Ungarrison 标记指令不移植(同 Garrison 的决定)。</summary>
     public bool LeaveTurret(ComponentManager cm, bool forced = false)
     {
@@ -338,10 +339,11 @@ public sealed class TurretableComponent : ComponentBase, IComponentMessageHandle
         TurretPointName = "";
         Ejectable = true;   // 原版 delete this.ejectable(回默认);本移植显式复位
 
+        // 集结点(原版 RallyPoint.OrderToRallyPoint,ignore=["occupy-turret"]:
+        // 指向持有者自身的上塔点跳过,其余走全队列多点链)。
         var rally = cm.QueryInterface<RallyPointComponent>(holderId);
-        if (ai != null && rally != null
-            && (rally.Position.X != Fixed.Zero || rally.Position.Y != Fixed.Zero))
-            ai.Walk(rally.Position, queued: false);
+        if (ai != null && rally != null && rally.HasAnyPositions)
+            rally.OrderToRallyPoint(cm, Entity, "occupy-turret");
         return true;
     }
 

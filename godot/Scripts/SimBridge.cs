@@ -2594,13 +2594,17 @@ public sealed partial class SimBridge : Node
 		SubmitCommand(NetCommand.SetRallyPoint(LocalPlayerId, building.Value, target?.Value ?? 0));
 
 	/// <summary>集结点全量版(原版 input.js 的 rally 指令类型化 + Shift 追加):
-	/// commandType ∈ walk/gather/repair/garrison/attack/patrol/trade/collect-treasure;
-	/// target 实体优先(其位置随指令入队),否则用地面坐标;append=true 追加到队列尾。</summary>
+	/// commandType ∈ walk/gather/gather-near-position/repair/garrison/occupy-turret/
+	/// attack/attack-walk/patrol/trade/collect-treasure;
+	/// target 实体优先(其位置随指令入队),否则用地面坐标;append=true 追加到队列尾。
+	/// source = trade 起点市场(原版 data.source);targetClasses = attack-walk 类别过滤。</summary>
 	public void CommandSetRallyPointFull(EntityId building, EntityId? target, float x, float z,
-		string commandType, string resourceType = "", bool append = false) =>
+		string commandType, string resourceType = "", bool append = false,
+		EntityId? source = null, string targetClasses = "") =>
 		SubmitCommand(NetCommand.SetRallyPointFull(LocalPlayerId, building.Value,
 			target?.Value ?? 0, ZeroAD.Sim.Maths.Fixed.FromFloat(x),
-			ZeroAD.Sim.Maths.Fixed.FromFloat(z), commandType, resourceType, append));
+			ZeroAD.Sim.Maths.Fixed.FromFloat(z), commandType, resourceType, append,
+			source?.Value ?? 0, targetClasses));
 
 	/// <summary>Set a ground rally point (right-click empty ground on a production
 	/// building). x/z are world coords; mirrors <see cref="CommandBuild"/>'s float→Fixed

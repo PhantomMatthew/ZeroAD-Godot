@@ -154,7 +154,7 @@ public static class WorkerRoles
         }
         // 继续建造(原版 builder 分支的 repair 命令;Repair 驱动建造进度)。
         gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Repair(
-            (uint)gameState.PlayerId, (uint)ent.Id, (uint)foundationId));
+            (uint)gameState.PlayerId, (uint)ent.Id, (uint)foundationId, autocontinue: false));
     }
 
     /// <summary>完成中行为（原版 SUBROLE_COMPLETING 分支）。</summary>
@@ -389,7 +389,7 @@ public sealed class BaseManager
                     && CountTargetFoundation(gameState, AnchorId.Value) < 2)
                 {
                     gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Repair(
-                        (uint)gameState.PlayerId, (uint)worker.Id, AnchorId.Value));
+                        (uint)gameState.PlayerId, (uint)worker.Id, AnchorId.Value, autocontinue: false));
                     continue;
                 }
                 if (!worker.IsGatherer) continue;
@@ -507,7 +507,7 @@ public sealed class BaseManager
                 gameState.Metadata.Set(worker.Id, "target-foundation", f.Id);
                 gameState.Metadata.Set(worker.Id, "subrole", WorkerRoles.SubroleBuilder);
                 gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Repair(
-                    (uint)gameState.PlayerId, (uint)worker.Id, f.Id));
+                    (uint)gameState.PlayerId, (uint)worker.Id, f.Id, autocontinue: false));
                 return true;
             }
 

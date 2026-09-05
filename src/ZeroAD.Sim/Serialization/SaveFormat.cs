@@ -7,9 +7,10 @@ namespace ZeroAD.Sim.Serialization;
 /// 默认 <see cref="CurrentVersion"/>:新写档/录像初始载荷/测试直读路径都是当前格式。</summary>
 public static class SaveFormat
 {
-    /// <summary>当前格式版本。v18: GarrisonHolder 增 AllowGarrisoning 外部锁尾段
-    /// (callerID→bool 与门)+ 类别复查计时器。</summary>
-    public const uint CurrentVersion = 18;
+    /// <summary>当前格式版本。v19: RallyPointData 增 TargetClasses 尾段 +
+    /// UnitOrder 增 AutoContinue/贸易航线 Route 尾段。v18: GarrisonHolder 增
+    /// AllowGarrisoning 外部锁尾段(callerID→bool 与门)+ 类别复查计时器。</summary>
+    public const uint CurrentVersion = 19;
 
     /// <summary>可读入的最低版本(v17 档缺 v18 尾段,按空表/零计时读)。</summary>
     public const uint MinReadableVersion = 17;

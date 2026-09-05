@@ -2102,7 +2102,7 @@ public sealed partial class Main : Node3D
 	// pathfind are too costly to rebuild every frame, so we only rebuild when the selected
 	// building, rally position, or civ changes. Separate from the per-frame _selectionMarkers.
 	private Node3D? _rallyMarker;
-	private (uint buildingId, int rallyXi, int rallyZi, string civ)? _rallyMarkerKey;
+	private (uint buildingId, int queueHash, string civ)? _rallyMarkerKey;
 
 	public override void _Process(double delta)
 	{
@@ -2745,22 +2745,26 @@ public sealed partial class Main : Node3D
 	}
 
 	/// <summary>Reconcile the cached rally marker (_rallyMarker) with the current selection:
-	/// find the first selected production building carrying a non-zero rally, and rebuild the
-	/// flag + path line only when the building/rally/civ changes (对齐原版 0 A.D.). Tearing
-	/// down when nothing qualifies keeps pathfinding off the hot path — ComputePath runs once
-	/// per rally change, not per frame.</summary>
+	/// find the first selected production building carrying a non-empty rally queue, and rebuild
+	/// the flags + path line only when the building/queue/civ changes. 多点版(原版
+	/// CCmpRallyPointRenderer):遍历 GetPositions 全队列,每点一面旗,折线串联
+	/// (建筑→首点走寻路,点间直线);缓存键 = 整队列哈希,设点/目标跟拍移位即重绘
+	/// (原版 DisplayRallyPoint 语义)。Tearing down when nothing qualifies keeps pathfinding
+	/// off the hot path — ComputePath runs once per rally change, not per frame.</summary>
 	private void ReconcileRallyMarker()
 	{
-		// v1: the first selected building with a set rally point drives the marker.
+		// v2: the first selected building with a non-empty rally queue drives the marker.
 		EntityId? rallyBuilding = null;
-		FixedVector2D rallyPos = default;
+		List<FixedVector2D>? points = null;
 		string civ = "athen";
 		foreach (var eid in _selectedEntities)
 		{
 			var rally = _sim.Sim.QueryInterface<RallyPointComponent>(eid);
-			if (rally == null || rally.Position.IsZero) continue;
+			if (rally == null) continue;
+			var pts = rally.GetPositions(_sim.Sim, (int)_sim.LocalPlayerId);
+			if (pts.Count == 0) continue;
 			rallyBuilding = eid;
-			rallyPos = rally.Position;
+			points = pts;
 			// Civ from the building template path: structures/{civ}/...
 			var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
 			if (id != null)
@@ -2771,20 +2775,24 @@ public sealed partial class Main : Node3D
 			break;
 		}
 
-		if (rallyBuilding == null)
+		if (rallyBuilding == null || points == null)
 		{
 			ClearRallyMarker();
 			return;
 		}
 
-		// Fixed.InternalValue is stable across frames → exact key without float drift.
-		var key = (rallyBuilding.Value.Value, rallyPos.X.InternalValue, rallyPos.Y.InternalValue, civ);
+		// 队列哈希:Fixed.InternalValue 跨帧稳定 → 精确键无 float 漂移;任一点
+		// 变化(追加/清空/目标跟拍移位)都会换键触发重绘。
+		int queueHash;
+		unchecked
+		{
+			queueHash = points.Count;
+			foreach (var p in points)
+				queueHash = queueHash * 31 + p.X.InternalValue * 397 + p.Y.InternalValue;
+		}
+		var key = (rallyBuilding.Value.Value, queueHash, civ);
 		if (_rallyMarkerKey == key) return;
 		ClearRallyMarker();
-
-		float rallyX = rallyPos.X.ToFloat();
-		float rallyZ = rallyPos.Y.ToFloat();
-		float rallyGroundY = TerrainHeightService.Sample(rallyX, rallyZ);
 
 		// Owner colour mirrors the selection-ring friendly/enemy split.
 		var own = _sim.Sim.QueryInterface<OwnershipComponent>(rallyBuilding.Value);
@@ -2797,52 +2805,55 @@ public sealed partial class Main : Node3D
 		_rallyMarker = container;
 		_rallyMarkerKey = key;
 
-		// Flag: the real per-civ waypoint_flag actor; procedural fallback if it won't load.
+		// 每点一面旗(the real per-civ waypoint_flag actor; procedural fallback if it won't load)。
 		int seed = (int)(rallyBuilding.Value.Value * 2654435761u);   // stable per-building hash
-		var flagActor = ActorLoader.Instance.Instantiate(
-			$"props/special/common/{civ}_waypoint_flag.xml", seed, ownerColor);
-		Node3D flag;
-		if (flagActor != null)
+		foreach (var p in points)
 		{
-			flag = flagActor;
-			flag.Position = new Vector3(rallyX, rallyGroundY, rallyZ);
+			float px = p.X.ToFloat(), pz = p.Y.ToFloat();
+			float groundY = TerrainHeightService.Sample(px, pz);
+			var flagActor = ActorLoader.Instance.Instantiate(
+				$"props/special/common/{civ}_waypoint_flag.xml", seed, ownerColor);
+			Node3D flag;
+			if (flagActor != null)
+			{
+				flag = flagActor;
+				flag.Position = new Vector3(px, groundY, pz);
+			}
+			else
+			{
+				flag = SelectionRing.CreateRallyFlag(ownerColor);
+				flag.Position = new Vector3(px, groundY + 0.1f, pz);
+			}
+			container.AddChild(flag);
 		}
-		else
-		{
-			flag = SelectionRing.CreateRallyFlag(ownerColor);
-			flag.Position = new Vector3(rallyX, rallyGroundY + 0.1f, rallyZ);
-		}
-		container.AddChild(flag);
 
-		// Path line: pathfind building → rally (read-only; mirrors CCmpRallyPointRenderer),
-		// then lay a textured ground ribbon along the waypoints.
+		// 折线:建筑→首点走寻路(read-only; mirrors CCmpRallyPointRenderer),点间直线串联,
+		// 沿路铺 textured ground ribbon。
 		var bpos = _sim.Sim.QueryInterface<PositionComponent>(rallyBuilding.Value);
 		if (bpos != null)
 		{
+			var pts3 = new List<Vector3>();
 			var start = new FixedVector2D(bpos.Position.X, bpos.Position.Z);
-			var path = _sim.Pathfinder.ComputePath(start, PathGoal.Point(rallyPos.X, rallyPos.Y));
+			pts3.Add(new Vector3(start.X.ToFloat(),
+				TerrainHeightService.Sample(start.X.ToFloat(), start.Y.ToFloat()) + 0.15f,
+				start.Y.ToFloat()));
+			// Waypoints are stored start→goal (index 0 = start; UnitMotion consumes front→back
+			// likewise); iterate front→back for travel order. Reversing this draws the path
+			// backward so the cap segments cross over → a straight diagonal + the curve.
+			var path = _sim.Pathfinder.ComputePath(start, PathGoal.Point(points[0].X, points[0].Y));
 			if (!path.IsEmpty)
-			{
-				// Waypoints are stored start→goal (index 0 = start; UnitMotion consumes front→back likewise);
-				// iterate front→back for travel order, capped with the exact building/rally endpoints.
-				// Reversing this draws the path backward so the cap segments cross over → a straight
-				// diagonal + the curve (two visible lines instead of one)
-				var pts = new List<Vector3>
-				{
-					new(start.X.ToFloat(),
-						TerrainHeightService.Sample(start.X.ToFloat(), start.Y.ToFloat()) + 0.15f,
-						start.Y.ToFloat())
-				};
 				for (int i = 0; i < path.Waypoints.Count; i++)
 				{
 					var w = path.Waypoints[i];
-					pts.Add(new Vector3(w.X.ToFloat(),
+					pts3.Add(new Vector3(w.X.ToFloat(),
 						TerrainHeightService.Sample(w.X.ToFloat(), w.Z.ToFloat()) + 0.15f,
 						w.Z.ToFloat()));
 				}
-				pts.Add(new Vector3(rallyX, rallyGroundY + 0.15f, rallyZ));
-				container.AddChild(SelectionRing.CreateRallyLine(pts));
-			}
+			foreach (var p in points)
+				pts3.Add(new Vector3(p.X.ToFloat(),
+					TerrainHeightService.Sample(p.X.ToFloat(), p.Y.ToFloat()) + 0.15f,
+					p.Y.ToFloat()));
+			container.AddChild(SelectionRing.CreateRallyLine(pts3));
 		}
 	}
 
@@ -3348,9 +3359,11 @@ public sealed partial class Main : Node3D
 			var rally = _sim.Sim.QueryInterface<RallyPointComponent>(only);
 			if (rally != null)
 			{
-				// 集结点指令类型化(原版 input.js getActionInfo 同款分派):
-				//   资源实体 → gather(带 resourceType);己方建筑地基/受损 → repair;
-				//   可驻军己/盟建筑 → garrison;敌实体 → attack;空地面 → walk。
+				// 集结点指令类型化(原版 unit_actions.js set-rallypoint getActionInfo 分派):
+				//   己/盟建筑地基/受损 → repair;可驻军己/盟建筑 → garrison;
+				//   可入炮塔己/盟 → occupy-turret;资源实体 → gather(会动的猎物等
+				//   → gather-near-position);宝藏 → collect-treasure;市场间 → trade;
+				//   敌实体 → attack;Ctrl+空地面 → attack-walk;其余空地面 → walk。
 				// Shift = 追加到队列尾(原版 Shift+点击多点排队);无 Shift 重设单点。
 				bool append = Input.IsPhysicalKeyPressed(Key.Shift);
 				float wx = worldPos.Value.X, wz = worldPos.Value.Z;
@@ -3362,12 +3375,6 @@ public sealed partial class Main : Node3D
 					var tHealth = _sim.Sim.QueryInterface<HealthComponent>(tEnt);
 					var tFoundation = _sim.Sim.QueryInterface<FoundationComponent>(tEnt);
 					var tGarrison = _sim.Sim.QueryInterface<GarrisonHolderComponent>(tEnt);
-					if (supply != null)
-					{
-						string resType = supply.SpecificType ?? "";
-						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "gather", resType, append);
-						return;
-					}
 					bool hostile = tOwner != null && _sim.Sim.Players.IsEnemy((int)_sim.LocalPlayerId, tOwner.PlayerId);
 					if (!hostile && (tFoundation != null || tHealth is { Current: > 0 } && tHealth.Current < tHealth.Max))
 					{
@@ -3377,6 +3384,38 @@ public sealed partial class Main : Node3D
 					if (!hostile && tGarrison != null)
 					{
 						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "garrison", "", append);
+						return;
+					}
+					// 可入炮塔的己/盟建筑(原版 turretHolder 分支;驻军分支优先,同原版)。
+					if (!hostile && _sim.Sim.QueryInterface<TurretHolderComponent>(tEnt) != null)
+					{
+						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "occupy-turret", "", append);
+						return;
+					}
+					if (supply != null)
+					{
+						// 会动的资源(猎物/鱼群等有 UnitMotion)→ 近位采集锚
+						// (原版: targetState.speed → gather-near-position)。
+						string resType = supply.SpecificType ?? "";
+						if (_sim.Sim.QueryInterface<UnitMotion>(tEnt) != null)
+							_sim.CommandSetRallyPointFull(only, null, wx, wz, "gather-near-position", resType, append);
+						else
+							_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "gather", resType, append);
+						return;
+					}
+					// 宝藏(原版 treasure 分支)。
+					if (_sim.Sim.QueryInterface<TreasureComponent>(tEnt) != null)
+					{
+						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "collect-treasure", "", append);
+						return;
+					}
+					// 市场间贸易(原版 market→market 分支:双方市场 + 非敌 + 非自身;
+					// 海/陆市场兼容检查与收益预览提示不移植)。
+					if (!hostile && tEnt != only
+						&& _sim.Sim.QueryInterface<MarketComponent>(only) != null
+						&& _sim.Sim.QueryInterface<MarketComponent>(tEnt) != null)
+					{
+						_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "trade", "", append, source: only);
 						return;
 					}
 					if (hostile)
@@ -3398,7 +3437,13 @@ public sealed partial class Main : Node3D
 						return;
 					}
 				}
-				_sim.CommandSetRallyPointFull(only, null, wx, wz, "walk", "", append);
+				// 空地面:Ctrl = attack-walk(原版 attackmove 热键,类别 Unit+Structure),
+				// 否则普通 walk。
+				if (Input.IsKeyPressed(Key.Ctrl))
+					_sim.CommandSetRallyPointFull(only, null, wx, wz, "attack-walk", "", append,
+						targetClasses: "Unit Structure");
+				else
+					_sim.CommandSetRallyPointFull(only, null, wx, wz, "walk", "", append);
 				return;
 			}
 		}

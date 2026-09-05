@@ -384,15 +384,20 @@ namespace ZeroAD.Sim.Net
             var z = Fixed.Zero.WithInternalValue(cmd.FixedParam2);
             bool append = (cmd.IntParam2 & 1) != 0;
 
-            // 扩展字段(TemplateName = "cmd;res"):原版 getActionInfo 的指令类型 +
-            // 资源子类。空/未知 → 旧行为(单点 walk/采集锚)。
+            // 扩展字段(TemplateName = "cmd;res[;source[;tcl]]"):原版 getActionInfo 的
+            // 指令类型 + 资源子类 + trade 起点市场 + attack-walk 类别过滤。
+            // 空/未知 → 旧行为(单点 walk/采集锚)。
             string commandType = "walk";
             string resourceType = "";
+            uint source = 0;
+            string? targetClasses = null;
             if (!string.IsNullOrEmpty(cmd.TemplateName))
             {
                 var parts = cmd.TemplateName.Split(';');
                 commandType = parts[0];
                 if (parts.Length > 1) resourceType = parts[1];
+                if (parts.Length > 2 && uint.TryParse(parts[2], out var src)) source = src;
+                if (parts.Length > 3 && parts[3].Length > 0) targetClasses = parts[3];
             }
 
             int player = _cm.QueryInterface<OwnershipComponent>(building)?.PlayerId ?? -1;
@@ -429,7 +434,9 @@ namespace ZeroAD.Sim.Net
             {
                 Command = commandType,
                 Target = target?.Value ?? 0,
+                Source = source,
                 ResourceType = resourceType,
+                TargetClasses = targetClasses,
             }, player);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent
             {
@@ -567,7 +574,8 @@ namespace ZeroAD.Sim.Net
         {
             var target = new EntityId((uint)cmd.IntParam1);
             var ai = _cm.QueryInterface<UnitAIComponent>(builder);
-            if (ai != null) ai.Repair(target);
+            // IntParam2 bit0 = 禁 autocontinue(原版 AI 单显式 false,GUI 默认 true)。
+            if (ai != null) ai.Repair(target, autocontinue: (cmd.IntParam2 & 1) == 0);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "repair", Target = target });
         }
 

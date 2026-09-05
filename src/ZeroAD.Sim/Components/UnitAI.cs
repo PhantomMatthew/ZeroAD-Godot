@@ -40,6 +40,16 @@ public sealed record UnitOrder
     /// <summary>编队控制器订单负载(原版 order.data.returningState):MEMBER 等待完毕
     /// 后回到的状态名(WALKINGANDFIGHTING 等);null = 直接 FinishOrder。</summary>
     public string? ReturningState;
+    /// <summary>Repair 单负载(原版 order.data.autocontinue):修完/建完且队列空时
+    /// 就近(64m)找同属主未建成地基续建。GUI/集结点单 true,AI 单 false(原版 AI
+    /// 显式禁)。</summary>
+    public bool AutoContinue;
+    /// <summary>Trade 单负载(原版 order.data.route):集结点贸易的前导 walk 点折叠成的
+    /// 航线 waypoints,每程往返都依序经过;null = 直航。走向第二市场时反转(原版
+    /// waypoints.reverse())。</summary>
+    public List<FixedVector2D>? Route;
+    /// <summary>Route 消费游标(原版 this.waypoints 的弹出进度)。</summary>
+    public int RouteIndex;
 }
 
 [Component("UnitAI", "UnitAI")]
@@ -360,10 +370,11 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         PushOrder(new UnitOrder { Type = "Attack", Target = target, Queued = queued, AllowCapture = allowCapture, Force = true });
     }
 
-    /// <summary>Repair / build a foundation. Mirrors UnitAI.Repair(target,queued).</summary>
-    public void Repair(EntityId target, bool queued = false)
+    /// <summary>Repair / build a foundation. Mirrors UnitAI.Repair(target,queued);
+    /// autocontinue 对齐原版(GUI/集结点末点 true → 完工就近续建;AI 显式 false)。</summary>
+    public void Repair(EntityId target, bool queued = false, bool autocontinue = true)
     {
-        PushOrder(new UnitOrder { Type = "Repair", Target = target, Queued = queued, Force = true });
+        PushOrder(new UnitOrder { Type = "Repair", Target = target, Queued = queued, Force = true, AutoContinue = autocontinue });
     }
 
     /// <summary>Cancel all orders and stop. Mirrors UnitAI.Stop(queued).</summary>
@@ -416,6 +427,26 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
     public void Trade(EntityId? market, bool queued = false) =>
         PushOrder(new UnitOrder { Type = "Trade", Target = market, Queued = queued });
+
+    /// <summary>原版 UnitAI.SetupTradeRoute(集结点贸易链):建双市场路由
+    /// (Trader.SetTargetMarket(target, source))+ Trade 订单带航线 waypoints。
+    /// 不可贸易 → 退化走向目标(原版 WalkToTarget);路由未变更 → 不下单。</summary>
+    public void SetupTradeRoute(ComponentManager cm, EntityId target, EntityId? source,
+        List<FixedVector2D>? route, bool queued)
+    {
+        var trader = cm.QueryInterface<TraderComponent>(Entity);
+        if (trader == null || !trader.CanTrade(cm, target))
+        {
+            var pos = cm.QueryInterface<PositionComponent>(target);
+            if (pos != null)
+                Walk(new FixedVector2D(pos.Position.X, pos.Position.Z), queued);
+            return;
+        }
+        if (!trader.SetTargetMarket(cm, target, source)) return;
+        if (trader.HasBothMarkets())
+            PushOrder(new UnitOrder
+            { Type = "Trade", Target = trader.FirstMarket, Queued = queued, Route = route });
+    }
     public void Pack() => PushOrder(new UnitOrder { Type = "Pack" });
     public void Unpack() => PushOrder(new UnitOrder { Type = "Unpack" });
     public void CancelPack() => PushOrder(new UnitOrder { Type = "CancelPack" });
@@ -748,6 +779,9 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
     /// <summary>Current order (front of queue), or null if idle.</summary>
     public UnitOrder? CurrentOrder => _orderQueue.First?.Value;
+
+    /// <summary>订单队列快照(测试观测口;非热路径,勿在 tick 内用)。</summary>
+    public IReadOnlyList<UnitOrder> OrderQueueSnapshot => new List<UnitOrder>(_orderQueue);
 
     // =========================================================================
     // Tick — driven once per sim turn by the presentation layer.
@@ -1193,7 +1227,13 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             if (trader == null || !trader.HasBothMarkets()) { u.FinishOrder(); return; }
             m.Order!.Target ??= trader.GetCurrentMarket();
             if (m.Order.Target == null) { u.FinishOrder(); return; }
-            MoveToTargetEdge(u, m.Order.Target.Value, m.Cm, Fixed.FromFloat(trader.GetTradeRange(m.Cm)));
+            // 航线 waypoints(集结点折叠):先依序走路点,再贴近市场(原版
+            // MoveToMarket 消费 this.waypoints)。
+            m.Order.RouteIndex = 0;
+            if (m.Order.Route is { Count: > 0 } route)
+                StartMovingTo(u, route[0], m.Cm);
+            else
+                MoveToTargetEdge(u, m.Order.Target.Value, m.Cm, Fixed.FromFloat(trader.GetTradeRange(m.Cm)));
             u.FsmNextState = "TRADE.APPROACHINGMARKET";
         });
         ind.On("Order.Pack", (u, m) =>
@@ -1455,6 +1495,30 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 var trader = m.Cm!.QueryInterface<TraderComponent>(u.Entity);
                 if (trader == null || u.CurrentOrder?.Target is not { } t) { u.FinishOrder(); return; }
                 if (!trader.CanTrade(m.Cm, t)) { u.FinishOrder(); return; }
+                // 航线 waypoints 消费(原版 APPROACHINGMARKET 的 waypoints 分支):
+                // 逐点走近(2m 判到),走完后才贴近市场。
+                var order = u.CurrentOrder;
+                if (order.Route is { Count: > 0 } route && order.RouteIndex < route.Count)
+                {
+                    var self = m.Cm.QueryInterface<PositionComponent>(u.Entity);
+                    var motion2 = m.Cm.QueryInterface<UnitMotion>(u.Entity);
+                    if (self == null || motion2 == null) { u.FinishOrder(); return; }
+                    var wp = route[order.RouteIndex];
+                    long wdx = self.Position.X.InternalValue - wp.X.InternalValue;
+                    long wdz = self.Position.Z.InternalValue - wp.Y.InternalValue;
+                    long arrive = Fixed.FromInt(2).InternalValue;
+                    if (wdx * wdx + wdz * wdz <= arrive * arrive)
+                    {
+                        order.RouteIndex++;
+                        if (order.RouteIndex < route.Count)
+                            motion2.MoveToPoint(route[order.RouteIndex]);
+                        else
+                            MoveToTargetEdge(u, t, m.Cm, Fixed.FromFloat(trader.GetTradeRange(m.Cm)));
+                    }
+                    else if (!motion2.HasMoveTarget)
+                        motion2.MoveToPoint(wp);
+                    return;
+                }
                 if (trader.IsInTradeRange(m.Cm, t))
                 {
                     StopMoving(u);
@@ -1480,7 +1544,16 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 var next = trader.PerformTrade(m.Cm, cur);
                 if (next == null || !trader.HasGain || trader.TraderGain <= 0) { u.FinishOrder(); return; }
                 u.CurrentOrder!.Target = next.Value;   // 原版 order.data.target = nextMarket
-                MoveToTargetEdge(u, next.Value, m.Cm, Fixed.FromFloat(trader.GetTradeRange(m.Cm)));
+                // 换程重走航线(原版:waypoints = route.slice(),向第二市场时反转)。
+                if (u.CurrentOrder.Route is { Count: > 0 } route)
+                {
+                    u.CurrentOrder.RouteIndex = 0;
+                    if (next.Value == trader.SecondMarket)
+                        route.Reverse();
+                    StartMovingTo(u, route[0], m.Cm);
+                }
+                else
+                    MoveToTargetEdge(u, next.Value, m.Cm, Fixed.FromFloat(trader.GetTradeRange(m.Cm)));
                 u.FsmNextState = "TRADE.APPROACHINGMARKET";
             });
         // PACKING/UNPACKING(原版 UnitAI.js 同名状态):Tick 进度,完成(Tick→true,即
@@ -1964,7 +2037,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 var builder = m.Cm!.QueryInterface<BuilderComponent>(u.Entity);
                 if (builder == null) { u.FinishOrder(); return; }
                 builder.Tick(m.Cm!);
-                if (builder.Target == null) { u.FinishOrder(); return; }
+                if (builder.Target == null) { AutocontinueRepair(u, m.Cm); return; }
                 if (builder.AtWorksite) u.FsmNextState = "REPAIR.REPAIRING";
             });
 
@@ -1974,10 +2047,63 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 var builder = m.Cm!.QueryInterface<BuilderComponent>(u.Entity);
                 if (builder == null) { u.FinishOrder(); return; }
                 builder.Tick(m.Cm!);
-                if (builder.Target == null) { u.FinishOrder(); return; }
+                if (builder.Target == null) { AutocontinueRepair(u, m.Cm); return; }
                 // 目标移位/被挤离工位 → 回 APPROACHING 重新接近(原版同双向转移)。
                 if (!builder.AtWorksite) u.FsmNextState = "REPAIR.APPROACHING";
             });
+    }
+
+    /// <summary>原版 REPAIR 完工(ConstructionFinished)的 autocontinue:当前单
+    /// AutoContinue 且队列已空 → 就近(64m、同属主、LOS 可见)找未建成地基续建
+    /// (UnitAI.js:3362-3399;原版的 autoharvest 转采集分支不在本范围)。否则正常出队。</summary>
+    private static void AutocontinueRepair(UnitAIComponent u, ComponentManager cm)
+    {
+        if (u.CurrentOrder is { AutoContinue: true } && u._orderQueue.Count <= 1
+            && FindNearbyFoundation(u, cm) is { } nextFoundation)
+        {
+            u.FinishOrder();
+            u.Repair(nextFoundation, queued: true, autocontinue: true);
+            return;
+        }
+        u.FinishOrder();
+    }
+
+    /// <summary>原版 FindNearbyFoundation:64m 内同属主未建成地基取最近(LOS 可见过滤
+    /// 对齐 FindSupplyNear)。搜索中心取单位当前位置(完工时单位必在工地旁;原版搜
+    /// 建成建筑位置,等价)。无 RangeManager 的测试环境降级为全实体线性扫描。</summary>
+    private static EntityId? FindNearbyFoundation(UnitAIComponent u, ComponentManager cm)
+    {
+        var own = cm.QueryInterface<OwnershipComponent>(u.Entity);
+        if (own == null || own.PlayerId < 0) return null;
+        var self = cm.QueryInterface<PositionComponent>(u.Entity);
+        if (self == null) return null;
+        var range = SimSystem.Range;
+
+        bool Eligible(EntityId e)
+        {
+            var f = cm.QueryInterface<FoundationComponent>(e);
+            if (f == null || f.IsBuilt) return false;
+            if (cm.QueryInterface<OwnershipComponent>(e)?.PlayerId != own.PlayerId) return false;
+            if (range != null
+                && range.GetLosVisibility(e, own.PlayerId) != LosVisibility.Visible)
+                return false;
+            return cm.QueryInterface<PositionComponent>(e) != null;
+        }
+
+        var candidates = range != null
+            ? range.ExecuteQuery(u.Entity, Fixed.Zero, Fixed.FromInt(64), Eligible)
+            : System.Linq.Enumerable.Where(cm.AllEntities, Eligible);
+        EntityId? best = null;
+        float bestDist2 = float.MaxValue;
+        foreach (var e in candidates)
+        {
+            var p = cm.QueryInterface<PositionComponent>(e)!;
+            float dx = p.Position.X.ToFloat() - self.Position.X.ToFloat();
+            float dz = p.Position.Z.ToFloat() - self.Position.Z.ToFloat();
+            float d2 = dx * dx + dz * dz;
+            if (d2 < bestDist2) { best = e; bestDist2 = d2; }
+        }
+        return best;
     }
 
     private static void BuildFormationControllerTree(FsmSpec<UnitAIComponent, FsmMessage> spec)
@@ -3215,6 +3341,20 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             // 编队控制器 returningState(本存档周期追加)。
             s.Bool("hasret", o.ReturningState != null);
             if (o.ReturningState != null) s.StringASCII("retstate", o.ReturningState);
+            // 存档 v19 尾段:Repair autocontinue + Trade 航线 route(原版
+            // order.data.autocontinue / order.data.route)。
+            s.Bool("autocont", o.AutoContinue);
+            s.Bool("hasroute", o.Route != null);
+            if (o.Route != null)
+            {
+                s.NumberI32("routen", o.Route.Count);
+                s.NumberI32("routei", o.RouteIndex);
+                foreach (var wp in o.Route)
+                {
+                    s.NumberFixed("rwx", wp.X);
+                    s.NumberFixed("rwz", wp.Y);
+                }
+            }
         }
         s.Bool("garrisoned", IsGarrisoned);
         s.Bool("turret", IsTurret);
@@ -3268,6 +3408,20 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             o.OffsetZ = d.NumberFixed("oz").ToFloat();
             o.AllowCapture = d.Bool("allowcap");
             o.ReturningState = d.Bool("hasret") ? d.StringASCII("retstate") : null;
+            // 存档 v19 尾段(更早的档没有,按默认读;见 SaveFormat.LoadedVersion)。
+            if (SaveFormat.LoadedVersion >= 19)
+            {
+                o.AutoContinue = d.Bool("autocont");
+                if (d.Bool("hasroute"))
+                {
+                    int routen = d.NumberI32("routen");
+                    o.RouteIndex = d.NumberI32("routei");
+                    var route = new List<FixedVector2D>(routen);
+                    for (int r = 0; r < routen; r++)
+                        route.Add(new FixedVector2D(d.NumberFixed("rwx"), d.NumberFixed("rwz")));
+                    o.Route = route;
+                }
+            }
             _orderQueue.AddLast(o);
         }
         IsGarrisoned = d.Bool("garrisoned");

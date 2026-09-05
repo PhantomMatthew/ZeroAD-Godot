@@ -192,12 +192,23 @@ namespace ZeroAD.Sim.Net
         /// <summary>SetRallyPoint 全量版(原版 RallyPoint.AddPosition/AddData):
         /// commandType 集结点指令(walk/gather/repair/garrison/attack/patrol/trade…),
         /// resourceType 随 gather-near;append=true 追加到队列尾(原版 Shift+点击);
-        /// false = 重置为单点。打包:TemplateName = "cmd;res",IntParam2 bit0 = append。</summary>
+        /// false = 重置为单点。source = trade 起点市场(原版 data.source),
+        /// targetClasses = attack-walk/patrol 类别过滤(原版 data.targetClasses)。
+        /// 打包:TemplateName = "cmd;res[;source[;tcl]]",IntParam2 bit0 = append。</summary>
         public static NetCommand SetRallyPointFull(uint player, uint buildingId, uint targetEntityId,
-            Fixed x, Fixed z, string commandType, string resourceType = "", bool append = false) =>
-            new(player, NetCommandType.SetRallyPoint, buildingId, (int)targetEntityId,
-                append ? 1 : 0, x.InternalValue, z.InternalValue,
-                string.IsNullOrEmpty(resourceType) ? commandType : commandType + ";" + resourceType);
+            Fixed x, Fixed z, string commandType, string resourceType = "", bool append = false,
+            uint sourceEntityId = 0, string targetClasses = "")
+        {
+            var packed = commandType;
+            if (!string.IsNullOrEmpty(resourceType) || sourceEntityId != 0 || targetClasses.Length > 0)
+                packed += ";" + resourceType;
+            if (sourceEntityId != 0 || targetClasses.Length > 0)
+                packed += ";" + (sourceEntityId != 0 ? sourceEntityId.ToString() : "");
+            if (targetClasses.Length > 0)
+                packed += ";" + targetClasses;
+            return new(player, NetCommandType.SetRallyPoint, buildingId, (int)targetEntityId,
+                append ? 1 : 0, x.InternalValue, z.InternalValue, packed);
+        }
 
         /// <summary>SetRallyPoint on empty ground: IntParam1 = 0 (signals ground rally),
         /// FixedParam1/2 = world x/z as <see cref="Fixed.InternalValue"/>. Same type/enum as
@@ -262,10 +273,11 @@ namespace ZeroAD.Sim.Net
 
         // ── Phase 4 缺口：Petra entity.js 用的命令工厂 ──
 
-        /// <summary>Repair: builder 修复/建造地基。EntityId=builder, IntParam1=target foundation。
-        /// 原版 cmd {type:"repair", target}。</summary>
-        public static NetCommand Repair(uint player, uint builderId, uint targetId) =>
-            new(player, NetCommandType.Repair, builderId, (int)targetId);
+        /// <summary>Repair: builder 修复/建造地基。EntityId=builder, IntParam1=target foundation,
+        /// IntParam2 bit0 = 禁止 autocontinue(AI 单;原版 entity.js 显式 autocontinue:false,
+        /// GUI 默认 true)。原版 cmd {type:"repair", target, autocontinue}。</summary>
+        public static NetCommand Repair(uint player, uint builderId, uint targetId, bool autocontinue = true) =>
+            new(player, NetCommandType.Repair, builderId, (int)targetId, autocontinue ? 0 : 1);
 
         /// <summary>ReturnResource: gatherer 返回资源到投放站。
         /// EntityId=gatherer, IntParam1=dropsite。原版 cmd {type:"returnresource", target}。</summary>

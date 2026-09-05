@@ -437,11 +437,11 @@ public sealed class GarrisonableComponent : ComponentBase, IComponentMessageHand
             holderPos.Position.X + Fixed.FromFloat(off), Fixed.Zero, holderPos.Position.Z);
     }
 
-    /// <summary>Port of UnGarrison:找出生点 → 出舱 → 回世界 → UnitAI 解冻 → 集结点 Walk。
+    /// <summary>Port of UnGarrison:找出生点 → 出舱 → 回世界 → UnitAI 解冻 → 集结点全队列。
     /// 出生点优先持有者 Footprint.PickSpawnPoint(对齐原版 GetSpawnPosition);未找到时
     /// 本移植用固定偏移兜底(原版拒出;内核无寻路环境下必须可出,记录差异)。
     /// 原版 UnitAI 的 "Ungarrison" 标记指令不移植(本 FSM 的标记+余单路径会卡 IDLE 派发),
-    /// 集结点 Walk 直接入队。</summary>
+    /// 集结点 OrderToRallyPoint(ignore="garrison")直接入队。</summary>
     public bool UnGarrison(ComponentManager cm, bool forced = false)
     {
         if (Holder is not { } holderId)
@@ -471,11 +471,11 @@ public sealed class GarrisonableComponent : ComponentBase, IComponentMessageHand
         ai?.UnsetGarrisoned();
         Holder = null;
 
-        // 集结点(原版 RallyPoint.OrderToRallyPoint,略 "garrison" 忽略集 → 直接 Walk)。
+        // 集结点(原版 RallyPoint.OrderToRallyPoint,ignore=["garrison"]:
+        // 指向持有者自身的驻军点跳过,其余走全队列多点链)。
         var rally = cm.QueryInterface<RallyPointComponent>(holderId);
-        if (ai != null && rally != null
-            && (rally.Position.X != Fixed.Zero || rally.Position.Y != Fixed.Zero))
-            ai.Walk(rally.Position, queued: false);
+        if (ai != null && rally != null && rally.HasAnyPositions)
+            rally.OrderToRallyPoint(cm, Entity, "garrison");
         return true;
     }
 
