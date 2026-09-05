@@ -423,9 +423,15 @@ public static class SplatBaker
     private static void EnsureShapesLoaded()
     {
         if (_shapes != null) return;
-        string dir = Path.GetFullPath(Path.Combine(
-            ProjectSettings.GlobalizePath("res://"),
-            "..", "binaries", "data", "mods", "public", "art", "textures", "terrain", "alphamaps", "standard"));
+        string? dir = RuntimePaths.FindPublicPath(
+            "art", "textures", "terrain", "alphamaps", "standard");
+        if (dir == null)
+        {
+            if (_warned.Add("shapes"))
+                ZeroAD.Sim.Diag.Warn("Terrain", "SplatBaker: alpha shape maps dir not found; overlays disabled");
+            _shapes = Array.Empty<byte[]>();
+            return;
+        }
         var shapes = new List<byte[]>();
         foreach (var name in ShapeFiles)
         {
@@ -752,7 +758,8 @@ public static class SplatBaker
         if (_infoCache.TryGetValue(name, out var cached)) return cached;
 
         var info = new TerrainInfo();
-        string texRoot = ProjectSettings.GlobalizePath("res://assets/textures/");
+        // res:// 虚拟路径前缀(经 AssetIO 读,PCK 兼容);pngPath 全程保持 res:// 形式。
+        const string texRoot = "res://assets/textures/";
         string? pngPath = null;
 
         string? xmlPath = FindTerrainXml(name);
@@ -765,16 +772,17 @@ public static class SplatBaker
             // 1) 结构化副本(types/<biome>/<file>.png)
             if (baseTexRel != null)
             {
-                string structured = Path.Combine(texRoot, "terrain",
-                    baseTexRel.Replace('/', Path.DirectorySeparatorChar));
-                if (File.Exists(structured)) pngPath = structured;
+                string structured = texRoot + "terrain/" + baseTexRel;
+                if (AssetIO.ExistsRes(structured)) pngPath = structured;
             }
             // 2) 旧平铺位置(DDS 转换物尚未结构化前)
             if (pngPath == null && baseTexPng != null)
             {
-                foreach (var candidate in Directory.EnumerateFiles(texRoot, baseTexPng, SearchOption.AllDirectories))
+                foreach (var candidate in AssetIO.ListFilesRecursiveRes(texRoot))
                 {
-                    pngPath = candidate;
+                    if (!string.Equals(Path.GetFileName(candidate), baseTexPng,
+                            StringComparison.OrdinalIgnoreCase)) continue;
+                    pngPath = texRoot + candidate;
                     break;
                 }
             }
@@ -782,8 +790,8 @@ public static class SplatBaker
         // 3) 无 XML(或 XML 解析失败)→ 按 PMP 名直取
         if (pngPath == null)
         {
-            string direct = Path.Combine(texRoot, "terrain", name + ".png");
-            if (File.Exists(direct)) pngPath = direct;
+            string direct = texRoot + "terrain/" + name + ".png";
+            if (AssetIO.ExistsRes(direct)) pngPath = direct;
         }
 
         if (pngPath != null)
@@ -808,8 +816,13 @@ public static class SplatBaker
 
     private static string? FindTerrainXml(string name)
     {
-        string terrainsRoot = ProjectSettings.GlobalizePath("res://..")
-            + "/binaries/data/mods/public/art/terrains";
+        string? terrainsRoot = RuntimePaths.FindPublicPath("art", "terrains");
+        if (terrainsRoot == null)
+        {
+            if (_warned.Add("xml:" + name))
+                ZeroAD.Sim.Diag.Warn("Terrain", $"SplatBaker: terrain XML scan failed for '{name}': terrains root not found");
+            return null;
+        }
         try
         {
             foreach (var xml in Directory.EnumerateFiles(terrainsRoot, name + ".xml", SearchOption.AllDirectories))
@@ -871,7 +884,9 @@ public static class SplatBaker
     /// 非方形/非 2 的幂杂项文件。</summary>
     private static Image Normalize(string pngPath)
     {
-        var img = Image.LoadFromFile(pngPath);
+        // pngPath 是 res:// 路径;解码失败(存在但坏文件)与原 NullRef 同为致命,直接抛出。
+        var img = AssetIO.LoadImageRes(pngPath)
+            ?? throw new InvalidOperationException($"SplatBaker: texture decode failed: {pngPath}");
         int w = img.GetWidth(), h = img.GetHeight();
         if (w != h || !IsPow2(w))
         {

@@ -81,25 +81,19 @@ public sealed partial class TipsPanel : ModalPanelBase
     /// 每文件首行 = 标题,余下 = 正文,图 = texts/<name>.png)。</summary>
     private void LoadTips()
     {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
-        {
-            string dir = Path.GetFullPath(Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "gui", "reference", "tips", "texts"));
-            if (!Directory.Exists(dir)) continue;
+        string? dir = RuntimePaths.FindPublicPath("gui", "reference", "tips", "texts");
+        if (dir == null) return;
 
-            foreach (var file in Directory.GetFiles(dir, "*.txt"))
-            {
-                var lines = File.ReadAllLines(file);
-                if (lines.Length == 0) continue;
-                string title = lines[0].Trim();
-                string body = string.Join("\n", lines[1..]).Trim();
-                // 同名图(texts/<name>.png;原版 tipImage)。
-                string imagePath = Path.ChangeExtension(file, ".png");
-                string image = File.Exists(imagePath) ? imagePath : "";
-                _tips.Add((title, body, image));
-            }
-            return;
+        foreach (var file in Directory.GetFiles(dir, "*.txt"))
+        {
+            var lines = File.ReadAllLines(file);
+            if (lines.Length == 0) continue;
+            string title = lines[0].Trim();
+            string body = string.Join("\n", lines[1..]).Trim();
+            // 同名图(texts/<name>.png;原版 tipImage)。
+            string imagePath = Path.ChangeExtension(file, ".png");
+            string image = File.Exists(imagePath) ? imagePath : "";
+            _tips.Add((title, body, image));
         }
     }
 

@@ -21,9 +21,6 @@ GameLaunchConfig="*res://Scripts/Autoload/GameLaunchConfig.cs"
 CursorService="*res://Scripts/Autoload/CursorService.cs"
 MatchSummaryStore="*res://Scripts/Autoload/MatchSummaryStore.cs"
 UserConfig="*res://Scripts/Autoload/UserConfig.cs"
-MCPScreenshot="*res://addons/godot_mcp/Runtime/McpScreenshotService.cs"
-MCPInputService="*res://addons/godot_mcp/Runtime/McpInputService.cs"
-MCPGameInspector="*res://addons/godot_mcp/Runtime/McpGameInspectorService.cs"
 
 [dotnet]
 
@@ -31,7 +28,7 @@ project/assembly_name="GodotProject"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg", "res://addons/zeroad_editor/plugin.cfg")
+enabled=PackedStringArray("res://addons/zeroad_editor/plugin.cfg")
 
 [input]
 
@@ -81,3 +78,7 @@ cam_pitch_down={
 , Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":true,"meta_pressed":false,"pressed":false,"keycode":83,"physical_keycode":0,"key_label":0,"unicode":115,"location":0,"echo":false,"script":null)
 ]
 }
+
+[rendering]
+
+textures/vram_compression/import_etc2_astc=true

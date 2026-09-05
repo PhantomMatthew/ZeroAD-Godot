@@ -86,23 +86,17 @@ public sealed partial class LocaleAdvancedPanel : ModalPanelBase
     /// 缺失回退提示)。</summary>
     private static string LoadDictionaryList(string locale)
     {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
+        string? dir = RuntimePaths.FindPublicPath("l10n");
+        if (dir == null) return "No dictionaries found.";
+        var files = new List<string>();
+        foreach (var file in System.IO.Directory.GetFiles(dir, "*.po"))
         {
-            string dir = System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "l10n"));
-            if (!System.IO.Directory.Exists(dir)) continue;
-            var files = new List<string>();
-            foreach (var file in System.IO.Directory.GetFiles(dir, "*.po"))
-            {
-                string name = System.IO.Path.GetFileName(file);
-                if (name.StartsWith(locale, System.StringComparison.OrdinalIgnoreCase))
-                    files.Add(name);
-            }
-            if (files.Count > 0) return string.Join("\n", files);
-            return "No dictionaries for this locale.";
+            string name = System.IO.Path.GetFileName(file);
+            if (name.StartsWith(locale, System.StringComparison.OrdinalIgnoreCase))
+                files.Add(name);
         }
-        return "No dictionaries found.";
+        if (files.Count > 0) return string.Join("\n", files);
+        return "No dictionaries for this locale.";
     }
 
     private void Apply()

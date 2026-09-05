@@ -25,8 +25,11 @@ public sealed class ActorLoader
 
     private static string ComputeAndPropagateArtRoot()
     {
-        string parent = ProjectSettings.GlobalizePath("res://..");
-        string root = Path.GetFullPath(Path.Combine(parent, "binaries/data/mods/public/art/"));
+        // 经 RuntimePaths 统一解析;目录缺失时回退原拼接路径以保持非 null 契约
+        // (下游各自 File.Exists 判空,行为与原来一致)。
+        string root = RuntimePaths.FindPublicPath("art")
+            ?? Path.GetFullPath(Path.Combine(ProjectSettings.GlobalizePath("res://.."),
+                "binaries/data/mods/public/art/"));
         ActorParser.ArtRoot = root; // propagate so variant-file resolution uses the same root
         return root;
     }
@@ -145,12 +148,9 @@ public sealed class ActorLoader
 
     private static string? ComputeActorFromTemplate(string template)
     {
-        string templatesRoot = Path.GetFullPath(Path.Combine(
-            ProjectSettings.GlobalizePath("res://.."),
-            "binaries/data/mods/public/simulation/templates"));
         string rel = template.Replace('\\', '/');
-        string abs = Path.GetFullPath(Path.Combine(templatesRoot, rel + ".xml"));
-        if (!File.Exists(abs))
+        string? abs = RuntimePaths.FindPublicPath("simulation", "templates", rel + ".xml");
+        if (abs == null)
             return null;
 
         try

@@ -37,18 +37,8 @@ public sealed partial class EnvironmentParticles : Node
     public static string? FindParticlesDir()
     {
         if (_particlesDir != null) return _particlesDir;
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
-        {
-            string p = System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "art", "particles"));
-            if (System.IO.Directory.Exists(p))
-            {
-                _particlesDir = p;
-                return p;
-            }
-        }
-        return null;
+        _particlesDir = RuntimePaths.FindPublicPath("art", "particles");
+        return _particlesDir;
     }
 
     /// <summary>按名加载粒子定义(art/particles/{name}.xml,缓存)。</summary>

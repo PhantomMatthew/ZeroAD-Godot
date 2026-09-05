@@ -73,15 +73,6 @@ public static class SkyBox
         catch { return null; }
     }
 
-    private static string? FindSkyDir(string skySet)
-    {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
-        {
-            string dir = System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "art", "textures", "skies", skySet));
-            if (System.IO.Directory.Exists(dir)) return dir;
-        }
-        return null;
-    }
+    private static string? FindSkyDir(string skySet) =>
+        RuntimePaths.FindPublicPath("art", "textures", "skies", skySet);
 }

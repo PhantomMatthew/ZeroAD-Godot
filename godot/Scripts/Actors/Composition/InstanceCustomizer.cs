@@ -90,14 +90,9 @@ public static class InstanceCustomizer
                 return cached;
         }
 
-        string abs = ProjectSettings.GlobalizePath("res://assets/textures/") + relPath.Replace('\\', '/');
-        ImageTexture? result = null;
-        if (File.Exists(abs))
-        {
-            var img = Image.LoadFromFile(abs);
-            if (img != null)
-                result = ImageTexture.CreateFromImage(img);
-        }
+        string resPath = "res://assets/textures/" + relPath.Replace('\\', '/');
+        var img = AssetIO.LoadImageRes(resPath);
+        ImageTexture? result = img != null ? ImageTexture.CreateFromImage(img) : null;
 
         lock (_texLock)
         {

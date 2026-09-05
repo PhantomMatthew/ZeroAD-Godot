@@ -63,29 +63,23 @@ public sealed partial class CreditsPanel : ModalPanelBase
     /// <summary>加载全部类别(原版 init:ReadJSONFile + parseHelper 递归解析)。</summary>
     private void LoadPanels()
     {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
-        {
-            string dir = Path.GetFullPath(Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "gui", "credits", "texts"));
-            if (!Directory.Exists(dir)) continue;
+        string? dir = RuntimePaths.FindPublicPath("gui", "credits", "texts");
+        if (dir == null) return;
 
-            foreach (var category in OrderTabNames)
+        foreach (var category in OrderTabNames)
+        {
+            string path = Path.Combine(dir, category + ".json");
+            if (!File.Exists(path)) continue;
+            try
             {
-                string path = Path.Combine(dir, category + ".json");
-                if (!File.Exists(path)) continue;
-                try
-                {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(path));
-                    if (!doc.RootElement.TryGetProperty("Content", out var content)) continue;
-                    string title = doc.RootElement.TryGetProperty("Title", out var t)
-                        ? t.GetString() ?? category : category;
-                    string parsed = ParseContent(content);
-                    _panels.Add((title, parsed));
-                }
-                catch { /* 单文件解析失败跳过 */ }
+                using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                if (!doc.RootElement.TryGetProperty("Content", out var content)) continue;
+                string title = doc.RootElement.TryGetProperty("Title", out var t)
+                    ? t.GetString() ?? category : category;
+                string parsed = ParseContent(content);
+                _panels.Add((title, parsed));
             }
-            return;
+            catch { /* 单文件解析失败跳过 */ }
         }
     }
 

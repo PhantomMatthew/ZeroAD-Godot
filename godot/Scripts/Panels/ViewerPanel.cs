@@ -24,14 +24,7 @@ public sealed partial class ViewerPanel : ModalPanelBase
         // 模板目录懒装载(与 StructreePanel 同数据源;null 时静默跳过)。
         if (_templates == null)
         {
-            string projRoot = ProjectSettings.GlobalizePath("res://");
-            string? dataRoot = null;
-            foreach (var up in new[] { "..", "../.." })
-            {
-                var candidate = System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, up,
-                    "binaries", "data", "mods", "public"));
-                if (System.IO.Directory.Exists(candidate)) { dataRoot = candidate; break; }
-            }
+            string? dataRoot = RuntimePaths.FindPublicModRoot();
             if (dataRoot != null)
             {
                 _templates = new TemplateLoader(System.IO.Path.Combine(dataRoot, "simulation", "templates"));

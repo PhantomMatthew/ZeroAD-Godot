@@ -174,7 +174,7 @@ public sealed partial class MainMenu : Control
 	{
 		// 原版 page_pregame 背景:启动随机一套多层视差图(gui/pregame/backgrounds 端口,
 		// 见 PregameBackground);binaries 缺失时回退渐变底。
-		string? binDir = FindBinariesDir();
+		string? binDir = RuntimePaths.FindBinariesRoot();
 		_binDir = binDir;
 		// 音频:初始化 + 主菜单音乐列表(原版 music.js MENU:Honor_Bound 等 shuffle)。
 		AudioManager.Init(this, binDir == null ? null : Path.Combine(binDir, "data", "mods", "public"));
@@ -476,21 +476,6 @@ public sealed partial class MainMenu : Control
 		_borderTop.AnchorBottom = 1f;
 		_borderTop.OffsetBottom = 0;
 		_borderBottom.Visible = false;
-	}
-
-	/// <summary>binaries/ 目录定位(与 LoadingOverlay.FindBinariesDir 同款 ../、../../ 回退)。</summary>
-	private static string? FindBinariesDir()
-	{
-		string projRoot = ProjectSettings.GlobalizePath("res://");
-		foreach (var candidate in new[]
-		{
-			Path.GetFullPath(Path.Combine(projRoot, "..", "binaries")),
-			Path.GetFullPath(Path.Combine(projRoot, "..", "..", "binaries")),
-		})
-		{
-			if (Directory.Exists(candidate)) return candidate;
-		}
-		return null;
 	}
 
 	private void OnSinglePlayer()

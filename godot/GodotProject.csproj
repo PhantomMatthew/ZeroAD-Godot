@@ -4,9 +4,21 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <RootNamespace>ZeroAD.Godot</RootNamespace>
     <Nullable>enable</Nullable>
+    <!-- 显式开启:Debug 靠 SDK 默认,但 ExportRelease 发布时隐式 usings 未生成,
+         导致全项目 System.Linq 缺失(publish 编译失败) -->
+    <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../src/ZeroAD.Sim/ZeroAD.Sim.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 发行包暂存/输出目录:上游 0 A.D. 的 GLSL 计算着色器扩展名是 .cs, 不排除会被当 C# 源码编译 -->
+    <Compile Remove="export/**" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+    <!-- 编辑器插件(EditorPlugin/EditorInterface 等)只在 Debug(TOOLS)配置可用;
+         Export 配置必须排除 addons,否则 dotnet publish 编译失败、PCK 无程序集 -->
+    <Compile Remove="addons/**" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="XmppDotNet" Version="3.3.0" />

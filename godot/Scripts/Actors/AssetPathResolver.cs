@@ -46,38 +46,30 @@ public sealed class AssetPathResolver
 
 	private static AssetPathResolver CreateInstance()
 	{
-		string assetsAbs = ProjectSettings.GlobalizePath("res://assets");
+		// res:// 虚拟路径,经 AssetIO 递归列举(导出 PCK 可列;DirAccess 失败回退散件)。
+		const string assetsRoot = "res://assets";
 		var meshes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-		string meshesRoot = Path.Combine(assetsAbs, "meshes");
-		if (Directory.Exists(meshesRoot))
-		{
-			foreach (var f in Directory.GetFiles(meshesRoot, "*.glb", SearchOption.AllDirectories))
-				if (!f.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
-					meshes.Add(Path.GetRelativePath(meshesRoot, f).Replace('\\', '/'));
-		}
+		foreach (var f in AssetIO.ListFilesRecursiveRes(assetsRoot + "/meshes"))
+			if (f.EndsWith(".glb", StringComparison.OrdinalIgnoreCase) &&
+				!f.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+				meshes.Add(f);
 
-		string texRoot = Path.Combine(assetsAbs, "textures");
-		if (Directory.Exists(texRoot))
-		{
-			foreach (var f in Directory.GetFiles(texRoot, "*.png", SearchOption.AllDirectories))
-				if (!f.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
-					textures.Add(Path.GetRelativePath(texRoot, f).Replace('\\', '/'));
-		}
+		foreach (var f in AssetIO.ListFilesRecursiveRes(assetsRoot + "/textures"))
+			if (f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
+				!f.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+				textures.Add(f);
 
 		var animations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		string animRoot = Path.Combine(assetsAbs, "animations");
-		if (Directory.Exists(animRoot))
-		{
-			// .glb (legacy Blender conversions) and .dae (Godot-native import —
-			// Blender 5 dropped Collada, so new clips ship as raw DAE and load
-			// through ResourceLoader instead of GltfDocument).
-			foreach (var pattern in new[] { "*.glb", "*.dae" })
-				foreach (var f in Directory.GetFiles(animRoot, pattern, SearchOption.AllDirectories))
-					if (!f.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
-						animations.Add(Path.GetRelativePath(animRoot, f).Replace('\\', '/'));
-		}
+		// .glb (legacy Blender conversions) and .dae (Godot-native import —
+		// Blender 5 dropped Collada, so new clips ship as raw DAE and load
+		// through ResourceLoader instead of GltfDocument).
+		foreach (var f in AssetIO.ListFilesRecursiveRes(assetsRoot + "/animations"))
+			if ((f.EndsWith(".glb", StringComparison.OrdinalIgnoreCase) ||
+				 f.EndsWith(".dae", StringComparison.OrdinalIgnoreCase)) &&
+				!f.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+				animations.Add(f);
 
 		return new AssetPathResolver(
 			meshes, textures, animations,

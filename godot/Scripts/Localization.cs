@@ -38,8 +38,7 @@ public static class Localization
         var list = new List<(string, string)> { ("", "English") };
         foreach (var dir in PackDirs())
         {
-            if (!Directory.Exists(dir)) continue;
-            foreach (var file in Directory.GetFiles(dir, "*.po"))
+            foreach (var file in ListPoFiles(dir))
             {
                 string code = Path.GetFileNameWithoutExtension(file);
                 if (code.Equals("en", StringComparison.OrdinalIgnoreCase)) continue;
@@ -59,8 +58,8 @@ public static class Localization
 
         foreach (var dir in PackDirs())
         {
-            string file = Path.Combine(dir, code + ".po");
-            if (File.Exists(file))
+            string file = dir + "/" + code + ".po";
+            if (FileExistsPo(file))
             {
                 _table = ParsePo(file);
                 ZeroAD.Sim.Diag.Log("Localization", $"locale={code}, {_table.Count} entries from {file}");
@@ -88,11 +87,44 @@ public static class Localization
 
     private static IEnumerable<string> PackDirs()
     {
-        // 自带包在 godot/data/(版本跟踪,同 options.json;assets/ 是管线产物不入库)
-        yield return ProjectSettings.GlobalizePath("res://data/l10n");
-        // 原版位置(经 junction;用户放 Transifex 包于此,与 C++ 版共享发现)
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        yield return Path.GetFullPath(Path.Combine(projRoot, "..", "binaries", "data", "l10n"));
+        // 自带包在 godot/data/(版本跟踪,同 options.json;assets/ 是管线产物不入库)。
+        // 保持 res:// 形式,由下方 helper 走 AssetIO(PCK 兼容;导出后 System.IO 读不到)。
+        yield return "res://data/l10n";
+        // 原版位置(经 junction;用户放 Transifex 包于此,与 C++ 版共享发现)。
+        // 消费方逐目录判空,缺失时跳过即可。
+        string? upstream = RuntimePaths.FindDataSubPath("l10n");
+        if (upstream != null) yield return upstream;
+    }
+
+    /// <summary>列目录内 .po(带完整路径)。res:// 走 AssetIO,绝对路径走 System.IO。</summary>
+    private static IEnumerable<string> ListPoFiles(string dir)
+    {
+        if (dir.StartsWith("res://", StringComparison.Ordinal))
+        {
+            foreach (string name in AssetIO.ListFilesRes(dir))
+                if (name.EndsWith(".po", StringComparison.OrdinalIgnoreCase))
+                    yield return dir + "/" + name;
+            yield break;
+        }
+        if (!Directory.Exists(dir)) yield break;
+        foreach (string f in Directory.GetFiles(dir, "*.po")) yield return f;
+    }
+
+    private static bool FileExistsPo(string path) =>
+        path.StartsWith("res://", StringComparison.Ordinal) ? AssetIO.ExistsRes(path) : File.Exists(path);
+
+    /// <summary>按行读文本(UTF-8)。res:// 经 AssetIO.ReadBytes,绝对路径走 System.IO。</summary>
+    private static IEnumerable<string> ReadPoLines(string path)
+    {
+        if (path.StartsWith("res://", StringComparison.Ordinal))
+        {
+            byte[]? bytes = AssetIO.ReadBytes(path);
+            if (bytes == null) yield break;
+            foreach (string line in Encoding.UTF8.GetString(bytes).Split('\n'))
+                yield return line.TrimEnd('\r');
+            yield break;
+        }
+        foreach (string line in File.ReadLines(path, Encoding.UTF8)) yield return line;
     }
 
     /// <summary>po 头里的 Language: 字段(显示名用)。只扫文件头 40 行内的续行串
@@ -102,7 +134,7 @@ public static class Localization
         try
         {
             int n = 0;
-            foreach (var line in File.ReadLines(path))
+            foreach (var line in ReadPoLines(path))
             {
                 if (++n > 40) break;
                 var t = line.Trim();
@@ -137,7 +169,7 @@ public static class Localization
             fuzzy = false;
         }
 
-        foreach (var raw in File.ReadLines(path, Encoding.UTF8))
+        foreach (var raw in ReadPoLines(path))
         {
             var line = raw.Trim();
             if (line.StartsWith('#'))

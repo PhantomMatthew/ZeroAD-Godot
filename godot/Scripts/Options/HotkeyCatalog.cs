@@ -33,7 +33,7 @@ public static class HotkeyCatalog
     private static List<HotkeyAction> LoadAll()
     {
         var result = new List<HotkeyAction>();
-        string? path = FindDefaultCfg();
+        string? path = RuntimePaths.FindConfigFile("default.cfg");
         if (path == null)
         {
             ZeroAD.Sim.Diag.Err("Hotkeys", "default.cfg not found");
@@ -131,19 +131,5 @@ public static class HotkeyCatalog
         if (s.Length == 0) return s;
         if (s.Length <= 2) return s.ToUpper();  // cw/ccw/1/2 等短段大写
         return char.ToUpper(s[0]) + s.Substring(1);
-    }
-
-    private static string? FindDefaultCfg()
-    {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var candidate in new[]
-        {
-            Path.GetFullPath(Path.Combine(projRoot, "..", "binaries", "data", "config", "default.cfg")),
-            Path.GetFullPath(Path.Combine(projRoot, "..", "..", "binaries", "data", "config", "default.cfg")),
-        })
-        {
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
     }
 }

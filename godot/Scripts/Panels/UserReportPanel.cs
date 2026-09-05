@@ -80,15 +80,10 @@ public sealed partial class UserReportPanel : ModalPanelBase
     /// <summary>条款文本(gui/userreport/Terms_and_Conditions.txt;缺失回退占位)。</summary>
     private static string LoadTerms()
     {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
-        {
-            string path = Path.GetFullPath(Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "gui", "userreport",
-                "Terms_and_Conditions.txt"));
-            if (File.Exists(path))
-                return File.ReadAllText(path);
-        }
+        string? path = RuntimePaths.FindPublicPath("gui", "userreport",
+            "Terms_and_Conditions.txt");
+        if (path != null)
+            return File.ReadAllText(path);
         return "By enabling user reporting, you allow 0 A.D. to send crash reports "
             + "and system information to help improve the game. "
             + "No personal data is collected.";

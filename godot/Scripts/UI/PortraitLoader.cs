@@ -11,16 +11,10 @@ public static class PortraitLoader
     public static Texture2D? Load(string icon)
     {
         if (icon.Length == 0) return null;
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
-        {
-            string p = System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "art", "textures", "ui", "session", "portraits",
-                icon.Replace('/', System.IO.Path.DirectorySeparatorChar)));
-            if (!System.IO.File.Exists(p)) continue;
-            var img = Image.LoadFromFile(p);
-            if (img != null) return ImageTexture.CreateFromImage(img);
-        }
-        return null;
+        string? p = RuntimePaths.FindPublicPath("art", "textures", "ui", "session", "portraits",
+            icon.Replace('/', System.IO.Path.DirectorySeparatorChar));
+        if (p == null) return null;
+        var img = Image.LoadFromFile(p);
+        return img != null ? ImageTexture.CreateFromImage(img) : null;
     }
 }

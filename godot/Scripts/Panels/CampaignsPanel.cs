@@ -84,7 +84,7 @@ public sealed partial class CampaignsPanel : ModalPanelBase
 
     protected override void OnOpen()
     {
-        _dataRoot = FindDataRoot();
+        _dataRoot = RuntimePaths.FindPublicModRoot();
         _templates = CampaignTemplate.GetAvailableTemplates(_dataRoot);
         _selected = null;
         _list.Clear();
@@ -149,12 +149,5 @@ public sealed partial class CampaignsPanel : ModalPanelBase
         modal.TreeExited += () => _loadButton.Disabled = CampaignRun.ListRuns(_dataRoot).Count == 0;
         AddChild(modal);
         modal.Open();
-    }
-
-    /// <summary>binaries 数据根(data/mods/public)定位。</summary>
-    private static string? FindDataRoot()
-    {
-        string? binDir = StoneButtonStyle.FindBinariesDir();
-        return binDir == null ? null : Path.Combine(binDir, "data", "mods", "public");
     }
 }

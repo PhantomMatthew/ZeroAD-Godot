@@ -277,7 +277,7 @@ public sealed partial class StructreePanel : ModalPanelBase
     /// <summary>从 binaries 的 mods/mod modern 贴图目录读一张图;junction 缺失时返回 null。</summary>
     private static Texture2D? LoadModernTexture(string file)
     {
-        string? binDir = StoneButtonStyle.FindBinariesDir();
+        string? binDir = RuntimePaths.FindBinariesRoot();
         if (binDir == null) return null;
         string path = Path.Combine(binDir,
             "data", "mods", "mod", "art", "textures", "ui", "global", "modern", file);
@@ -826,13 +826,7 @@ public sealed partial class StructreePanel : ModalPanelBase
 
     private void LoadData()
     {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        string? dataRoot = null;
-        foreach (var up in new[] { "..", "../.." })
-        {
-            var candidate = Path.GetFullPath(Path.Combine(projRoot, up, "binaries", "data", "mods", "public"));
-            if (Directory.Exists(candidate)) { dataRoot = candidate; break; }
-        }
+        string? dataRoot = RuntimePaths.FindPublicModRoot();
         if (dataRoot == null) { ZeroAD.Sim.Diag.Err("Structree", "data root not found"); return; }
 
         var templatesPath = Path.Combine(dataRoot, "simulation", "templates");

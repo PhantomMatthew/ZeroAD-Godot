@@ -51,27 +51,21 @@ public sealed partial class BattleDecals : Node
     {
         if (_texturesLoaded) return;
         _texturesLoaded = true;
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
+        string? dir = RuntimePaths.FindPublicPath("art", "textures", "skins", "props");
+        if (dir == null) return;
+        foreach (var name in BloodTextures)
         {
-            string dir = System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "art", "textures", "skins", "props"));
-            if (!System.IO.Directory.Exists(dir)) continue;
-            foreach (var name in BloodTextures)
-            {
-                string path = System.IO.Path.Combine(dir, name);
-                if (!System.IO.File.Exists(path)) continue;
-                var img = Image.LoadFromFile(path);
-                if (img != null) _textures.Add(ImageTexture.CreateFromImage(img));
-            }
-            foreach (var name in ImpactTextures)
-            {
-                string path = System.IO.Path.Combine(dir, name);
-                if (!System.IO.File.Exists(path)) continue;
-                var img = Image.LoadFromFile(path);
-                if (img != null) _impactTextures.Add(ImageTexture.CreateFromImage(img));
-            }
-            return;
+            string path = System.IO.Path.Combine(dir, name);
+            if (!System.IO.File.Exists(path)) continue;
+            var img = Image.LoadFromFile(path);
+            if (img != null) _textures.Add(ImageTexture.CreateFromImage(img));
+        }
+        foreach (var name in ImpactTextures)
+        {
+            string path = System.IO.Path.Combine(dir, name);
+            if (!System.IO.File.Exists(path)) continue;
+            var img = Image.LoadFromFile(path);
+            if (img != null) _impactTextures.Add(ImageTexture.CreateFromImage(img));
         }
     }
 

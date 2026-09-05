@@ -192,16 +192,16 @@ public static class TerrainRenderer
 
     private static Texture2D? LoadTexture(string filename)
     {
-        string path = ProjectSettings.GlobalizePath($"res://assets/textures/{filename}");
-        if (!System.IO.File.Exists(path))
+        string path = $"res://assets/textures/{filename}";
+        if (!AssetIO.ExistsRes(path))
         {
             ZeroAD.Sim.Diag.Err("Terrain", $"Texture not found: {path}");
             return null;
         }
-        var img = Image.LoadFromFile(path);
+        var img = AssetIO.LoadImageRes(path);
         if (img == null)
         {
-            ZeroAD.Sim.Diag.Err("Terrain", $"Image.LoadFromFile failed: {path}");
+            ZeroAD.Sim.Diag.Err("Terrain", $"AssetIO.LoadImageRes failed: {path}");
             return null;
         }
         ZeroAD.Sim.Diag.Log("Terrain", $"Texture loaded: {filename} ({img.GetWidth()}x{img.GetHeight()})");

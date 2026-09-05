@@ -22,19 +22,8 @@ public static class MapSceneBuilder
         public bool HasWater;
     }
 
-    /// <summary>binaries/data/mods/public 数据根(junction;与 Main.FindDataRoot 同候选)。</summary>
-    public static string? FindDataRoot()
-    {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        var candidates = new[]
-        {
-            System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "binaries", "data", "mods", "public")),
-            System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "..", "binaries", "data", "mods", "public")),
-        };
-        foreach (var p in candidates)
-            if (System.IO.Directory.Exists(p)) return p;
-        return null;
-    }
+    /// <summary>binaries/data/mods/public 数据根(junction;经 RuntimePaths 统一解析)。</summary>
+    public static string? FindDataRoot() => RuntimePaths.FindPublicModRoot();
 
     /// <summary>PMP+XML 路径:mapRel 如 "maps/tutorials/introductory_tutorial"(不含扩展名)。
     /// setOwners=false 用于编辑器内活预览(生成物不进 Pack/存档)。</summary>

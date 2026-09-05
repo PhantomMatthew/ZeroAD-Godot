@@ -201,16 +201,10 @@ public static class WaterRenderer
 
     private static Texture2D? LoadWaterNormal(string type, int index)
     {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
-        {
-            string p = Path.GetFullPath(Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "art", "textures", "animated", "water",
-                type, $"normal{index:D4}.png"));
-            if (!File.Exists(p)) continue;
-            var img = Image.LoadFromFile(p);
-            if (img != null) return ImageTexture.CreateFromImage(img);
-        }
-        return null;
+        string? p = RuntimePaths.FindPublicPath("art", "textures", "animated", "water",
+            type, $"normal{index:D4}.png");
+        if (p == null) return null;
+        var img = Image.LoadFromFile(p);
+        return img != null ? ImageTexture.CreateFromImage(img) : null;
     }
 }

@@ -296,9 +296,7 @@ public sealed partial class Minimap : Control
 
     private static Texture2D? LoadTex(string file)
     {
-        string path = ProjectSettings.GlobalizePath($"res://assets/ui/{file}");
-        if (!System.IO.File.Exists(path)) return null;
-        var img = Image.LoadFromFile(path);
+        var img = AssetIO.LoadImageRes($"res://assets/ui/{file}");
         return img != null ? ImageTexture.CreateFromImage(img) : null;
     }
 }

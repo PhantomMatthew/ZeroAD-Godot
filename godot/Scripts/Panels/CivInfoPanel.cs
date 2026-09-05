@@ -119,15 +119,11 @@ public sealed partial class CivInfoPanel : ModalPanelBase
 
     private void LoadCivs()
     {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
+        string? civsPath = RuntimePaths.FindPublicPath("simulation", "data", "civs");
+        if (civsPath != null)
         {
-            var civsPath = Path.GetFullPath(Path.Combine(projRoot, up, "binaries", "data", "mods", "public", "simulation", "data", "civs"));
-            if (Directory.Exists(civsPath))
-            {
-                _civs = CivDataLoader.LoadAll(civsPath);
-                return;
-            }
+            _civs = CivDataLoader.LoadAll(civsPath);
+            return;
         }
         ZeroAD.Sim.Diag.Err("CivInfo", "civs data not found");
     }

@@ -429,18 +429,6 @@ public sealed partial class LoadingOverlay : CanvasLayer
         return ImageTexture.CreateFromImage(img);
     }
 
-    /// <summary>binaries/ 目录定位(与 FindTemplatesPath 同款 ../、../../ 回退)。</summary>
-    private static string? FindBinariesDir()
-    {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var candidate in new[]
-        {
-            Path.GetFullPath(Path.Combine(projRoot, "..", "binaries")),
-            Path.GetFullPath(Path.Combine(projRoot, "..", "..", "binaries")),
-        })
-        {
-            if (Directory.Exists(candidate)) return candidate;
-        }
-        return null;
-    }
+    /// <summary>binaries/ 目录定位(经 RuntimePaths 统一解析)。</summary>
+    private static string? FindBinariesDir() => RuntimePaths.FindBinariesRoot();
 }

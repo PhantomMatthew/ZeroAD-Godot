@@ -19,10 +19,12 @@ public static class ActorParser
 
 	/// <summary>
 	/// Root of the original 0 A.D. art directory. Set by <see cref="ActorLoader"/> on init.
-	/// Defaults to &quot;../binaries/data/mods/public/art/&quot; resolved relative to the Godot project.
+	/// Defaults to the RuntimePaths-resolved art root (with the historical
+	/// &quot;../binaries/data/mods/public/art/&quot; layout as a last-resort fallback).
 	/// </summary>
 	public static string ArtRoot { get; set; } =
-		Path.GetFullPath(ProjectSettings.GlobalizePath("res://..")
+		RuntimePaths.FindPublicPath("art")
+		?? Path.GetFullPath(ProjectSettings.GlobalizePath("res://..")
 			+ "/binaries/data/mods/public/art/");
 
 	public static ActorDoc? Parse(string absActorPath)

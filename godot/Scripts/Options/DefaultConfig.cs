@@ -9,7 +9,7 @@ namespace ZeroAD.Godot.Options;
 // - `;` 在行内任意处起注释(引号内除外);[section] 头作键前缀(header + "." + name)。
 // - 值支持双引号(剥离,`\` 转义)与逗号分隔多值;引号外空白全部忽略(原版 case ' ': continue)。
 // - 96 个 options 键全为单值,多值取首个。
-// 不复制 default.cfg——经 ProjectSettings.GlobalizePath 直读 binaries/(与 FindTemplatesPath 同款回退)。
+// 不复制 default.cfg——经 RuntimePaths.FindConfigFile 直读 binaries/data/config/。
 public static class DefaultConfig
 {
     private static Dictionary<string, string>? _cache;
@@ -94,26 +94,12 @@ public static class DefaultConfig
 
     private static Dictionary<string, string> Load()
     {
-        string? path = FindDefaultCfg();
+        string? path = RuntimePaths.FindConfigFile("default.cfg");
         if (path == null)
         {
             ZeroAD.Sim.Diag.Err("Options", "DefaultConfig: default.cfg not found under binaries/data/config");
             return new Dictionary<string, string>();
         }
         return Parse(File.ReadAllText(path));
-    }
-
-    private static string? FindDefaultCfg()
-    {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var candidate in new[]
-        {
-            Path.GetFullPath(Path.Combine(projRoot, "..", "binaries", "data", "config", "default.cfg")),
-            Path.GetFullPath(Path.Combine(projRoot, "..", "..", "binaries", "data", "config", "default.cfg")),
-        })
-        {
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
     }
 }

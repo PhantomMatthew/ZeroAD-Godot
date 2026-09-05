@@ -1451,19 +1451,11 @@ public sealed partial class Main : Node3D
 
 	private string? FindTemplatesPath()
 	{
-		string projRoot = ProjectSettings.GlobalizePath("res://");
-		var candidates = new[]
+		string? dir = RuntimePaths.FindPublicPath("simulation", "templates");
+		if (dir != null)
 		{
-			System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "binaries", "data", "mods", "public", "simulation", "templates")),
-			System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "..", "binaries", "data", "mods", "public", "simulation", "templates")),
-		};
-		foreach (string dir in candidates)
-		{
-			if (System.IO.Directory.Exists(dir))
-			{
-				ZeroAD.Sim.Diag.Log("Main", $"Found templates at: {dir}");
-				return dir;
-			}
+			ZeroAD.Sim.Diag.Log("Main", $"Found templates at: {dir}");
+			return dir;
 		}
 		ZeroAD.Sim.Diag.Err("Main", "FindTemplatesPath: templates dir not found under binaries/data/mods/public/simulation/templates");
 		return null;
@@ -1859,31 +1851,11 @@ public sealed partial class Main : Node3D
 
 	private string? FindDataPath(string relPath)
 	{
-		string projRoot = ProjectSettings.GlobalizePath("res://");
-		var candidates = new[]
-		{
-			System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "binaries", "data", "mods", "public", relPath)),
-			System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "..", "binaries", "data", "mods", "public", relPath)),
-		};
-		foreach (var p in candidates)
-			if (System.IO.File.Exists(p))
-				return p;
-		return null;
+		// relPath 是正斜杠相对路径(mods/public 之下);拆段走统一数据根解析。
+		return RuntimePaths.FindPublicPath(relPath.Split('/'));
 	}
 
-	private string? FindDataRoot()
-	{
-		string projRoot = ProjectSettings.GlobalizePath("res://");
-		var candidates = new[]
-		{
-			System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "binaries", "data", "mods", "public")),
-			System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "..", "binaries", "data", "mods", "public")),
-		};
-		foreach (var p in candidates)
-			if (System.IO.Directory.Exists(p))
-				return p;
-		return null;
-	}
+	private string? FindDataRoot() => RuntimePaths.FindPublicModRoot();
 
 	private void SetupTutorialWorld()
 	{

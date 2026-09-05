@@ -11,8 +11,8 @@ public static class ModelLibrary
     private static readonly Dictionary<string, PackedScene?> _glbCache = new();
     private static readonly Dictionary<string, PackedScene?> _animGlbCache = new();
 
-    private static readonly string _meshesRoot = ProjectSettings.GlobalizePath("res://assets/meshes");
-    private static readonly string _animationsRoot = ProjectSettings.GlobalizePath("res://assets/animations");
+    private static readonly string _meshesRoot = "res://assets/meshes";
+    private static readonly string _animationsRoot = "res://assets/animations";
 
     public static Node3D? InstantiateForTemplate(string template, float x, float z, Color? teamColor,
         Actors.Variation.VariationResolver.Selections? selections = null)
@@ -87,26 +87,8 @@ public static class ModelLibrary
         if (_animGlbCache.TryGetValue(relPath, out var cachedGlb))
             return cachedGlb;
 
-        string absPath = System.IO.Path.Combine(
-            _animationsRoot, relPath.Replace('/', System.IO.Path.DirectorySeparatorChar));
-        PackedScene? result = null;
-        if (System.IO.File.Exists(absPath))
-        {
-            var doc = new GltfDocument();
-            var state = new GltfState();
-            if (doc.AppendFromFile(absPath, state) == Error.Ok)
-            {
-                var root = doc.GenerateScene(state);
-                if (root != null)
-                {
-                    SetOwnerRecursive(root, root);
-                    var packed = new PackedScene();
-                    if (packed.Pack(root) == Error.Ok)
-                        result = packed;
-                    root.QueueFree();
-                }
-            }
-        }
+        // res:// 虚拟路径,经 AssetIO 读字节再 AppendFromBuffer(导出 PCK 兼容)。
+        PackedScene? result = AssetIO.LoadGlbRes(_animationsRoot + "/" + relPath);
         _animGlbCache[relPath] = result;
         return result;
     }
@@ -118,38 +100,9 @@ public static class ModelLibrary
         if (_glbCache.TryGetValue(relPath, out var cached))
             return cached;
 
-        string absPath = System.IO.Path.Combine(_meshesRoot, relPath.Replace('/', System.IO.Path.DirectorySeparatorChar));
-        PackedScene? result = null;
-
-        if (System.IO.File.Exists(absPath))
-        {
-            var doc = new GltfDocument();
-            var state = new GltfState();
-            if (doc.AppendFromFile(absPath, state) == Error.Ok)
-            {
-                var root = doc.GenerateScene(state);
-                if (root != null)
-                {
-                    SetOwnerRecursive(root, root);
-                    var packed = new PackedScene();
-                    if (packed.Pack(root) == Error.Ok)
-                        result = packed;
-                    root.QueueFree();
-                }
-            }
-        }
-
+        PackedScene? result = AssetIO.LoadGlbRes(_meshesRoot + "/" + relPath);
         _glbCache[relPath] = result;
         return result;
-    }
-
-    private static void SetOwnerRecursive(Node node, Node root)
-    {
-        foreach (var child in node.GetChildren())
-        {
-            child.Owner = root;
-            SetOwnerRecursive(child, root);
-        }
     }
 
     public static AnimationPlayer? FindAnimationPlayer(Node node)

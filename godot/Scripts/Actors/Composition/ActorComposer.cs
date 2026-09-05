@@ -400,8 +400,8 @@ public sealed class ActorComposer
         {
             if (!_decalTexCache.TryGetValue(rel, out tex))
             {
-                string abs = ProjectSettings.GlobalizePath("res://assets/textures/") + rel.Replace('\\', '/');
-                var img = File.Exists(abs) ? Image.LoadFromFile(abs) : null;
+                string resPath = "res://assets/textures/" + rel.Replace('\\', '/');
+                var img = AssetIO.LoadImageRes(resPath);
                 tex = img != null ? ImageTexture.CreateFromImage(img) : null;
                 _decalTexCache[rel] = tex;
             }

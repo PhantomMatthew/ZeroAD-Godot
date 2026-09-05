@@ -69,7 +69,7 @@ src/ZeroAD.Sim/       Deterministic simulation kernel (pure C#, zero Godot deps)
 
 ## Build / test / run commands
 
-There is **no `.sln` file**. Build each C# project by its `.csproj` path.
+There is **no `.sln` for the kernel/tests** — build each C# project by its `.csproj` path. The one exception is `godot/GodotProject.sln`: Godot's C# export plugin (`ProjectContainsDotNet()`) requires a `.sln` next to `GodotProject.csproj`, otherwise `--export-release` silently ships a PCK with **no .NET assemblies** and the app segfaults at launch. Keep it; it's generated minimal (`dotnet new sln` + the one csproj).
 
 ```bash
 # Deterministic kernel (headless, no Godot needed)
@@ -97,6 +97,9 @@ ruff format
 The `eslint.config.mjs` and `ruff.toml` at root govern the **original** tree's JS/Python (mod scripts, tooling like `source/tools/entity/checkrefs.py`). They do **not** apply to `src/` or `godot/` C# code.
 
 ### Asset conversion pipeline (original → Godot)
+
+**Asset placement policy: ALL assets must live under the `godot/` tree** (`godot/assets/`, `godot/data/`, or the staged release dir `godot/export/data/`). Do not add new runtime references to the upstream C++ folders (`binaries/` junction etc.) — the remaining direct reads of upstream data are legacy, funneled through `RuntimePaths` (dev = junction; release = data dir beside the executable staged by `tools/stage_release_data.sh`), and are being phased out as categories get converted/staged. New or converted assets go to `godot/`, never read from the upstream tree at runtime.
+
 Run from inside `godot/`:
 ```bash
 sh tools/run_full_pipeline.sh

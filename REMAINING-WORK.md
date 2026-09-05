@@ -51,6 +51,21 @@
 - 真断线重连(状态转移+回合追赶)——0 A.D. 0.29 亦无此能力。
 - MotionBall/Settlement(演示/空壳件)、PopulationCapManager(职能已折叠进 PlayerComponent)、Upgrade 组件(命令层等价已存在,如需原版进度条 UI 再补)。
 
+## 7. 独立发行包(2026-09-05 开工)
+
+目标:Godot export 自包含包,不依赖仓库外 junction;产物入 gitignore(`godot/export/`),经 CI artifact / 发布渠道分发。
+
+- ✅ **数据根收编**:新增 `godot/Scripts/RuntimePaths.cs` 统一解析器(候选序:`ZEROAD_DATA_DIR` env → exe 旁 data/ → .app Resources → 开发期 ../binaries junction),26 文件 30+ 处 `../binaries` 探测全收编;内核本就收 dataRoot 参数,未动。
+- ✅ **res:// 读取 PCK 化**:新增 `godot/Scripts/AssetIO.cs`(FileAccess/DirAccess 优先 + GlobalizePath 回退),ModelLibrary 网格/动画(GltfDocument 改 AppendFromBuffer)、TerrainRenderer/ActorComposer/InstanceCustomizer/SplatBaker/HUD/Minimap/UITheme 贴图、AssetPathResolver 目录扫描、Localization .po 全收编。
+- ✅ **godot_mcp 剔除**:project.godot autoload ×3 + editor_plugins 移除(该 addon gitignored,导出环境缺类必炸);代码无引用,编辑器里重新启用插件会自动还原。
+- ✅ **随包数据管线**:`godot/tools/stage_release_data.sh`(rsync 上游 data 子集 → `export/data/`,含 simulation/maps/audio/art 直读子集/gui/l10n/campaigns + mods/mod 回落层 + config),实测产出 1.4G。
+- ✅ **export_presets.cfg**:三平台 exclude_filter 排除 tools/*.py/缓存杂物;`export/` 已 gitignore。
+- ✅ **导出冒烟(2026-09-05 全链打通)**:macOS `--export-release` 产出 4.6G zip;解包 + ad-hoc 签名 + sandbox-exec 断 junction 实测:模板/PMP/splat/actor 全从包内 `Contents/Resources/data/` 读取(0 处 junction 引用),单位行走/采集/驻军 + Petra AI 全活。排障清单(全部已在配置/代码里固化):mono 模板装 `4.7.2.stable.mono/`、project.godot 开 `textures/vram_compression/import_etc2_astc`、bundle id 键名 `application/bundle_identifier` 且段首禁数字、export/ 加 `.gdignore` 防编辑器扫描、csproj `Compile Remove="export/**"`(上游 GLSL 计算着色器扩展名是 .cs,撞 C# 编译)、必须存在 `GodotProject.sln`(否则 C# 导出插件跳过 publish,包无程序集即 segfault)、Export 配置排除 `addons/**`(编辑器 API 仅 TOOLS 可用)、显式 `ImplicitUsings=enable`(ExportRelease 不生成 GlobalUsings)。
+- ⏳ **非干净退出**:SIGTERM 杀进程时 teardown 段 `recursive_mutex lock failed` abort(游玩期无影响,排入低优先)。
+- ⏳ **Linux/Windows 导出未实测**(preset 骨架在,模板已装,同管线理论可复用)。
+- ⏳ **体积决策**:包 4.6G(assets PCK 压缩后)+ data 1.4G 旁置;是否开 VRAM 纹理压缩再压、剔除冗余待定。
+- ⏳ **许可证随包**:0 A.D. 资产 CC-BY-SA / 代码 GPL,发布包需附 LICENSE 文本。
+
 ## 建议下一波
 
 ~~P1 性能三件套 + §3B 组件尾巴批量~~(2026-09-03 全落:增量寻路/异步路径/推挤压力

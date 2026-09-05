@@ -301,9 +301,7 @@ public static class UITheme
 
     public static Texture2D? TryLoad(string resPath)
     {
-        string abs = ProjectSettings.GlobalizePath(resPath);
-        if (!System.IO.File.Exists(abs)) return null;
-        var img = Image.LoadFromFile(abs);
+        var img = AssetIO.LoadImageRes(resPath);
         return img != null ? ImageTexture.CreateFromImage(img) : null;
     }
 }

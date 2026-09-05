@@ -334,20 +334,8 @@ public sealed partial class HUD : CanvasLayer
         _speedSyncing = false;
     }
 
-    /// <summary>binaries/ 目录定位(与 MainMenu.FindBinariesDir 同款 ../、../../ 回退)。</summary>
-    private static string? FindBinariesDir()
-    {
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var candidate in new[]
-        {
-            System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "binaries")),
-            System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, "..", "..", "binaries")),
-        })
-        {
-            if (System.IO.Directory.Exists(candidate)) return candidate;
-        }
-        return null;
-    }
+    /// <summary>binaries/ 目录定位(经 RuntimePaths 统一解析)。</summary>
+    private static string? FindBinariesDir() => RuntimePaths.FindBinariesRoot();
 
     private void AddMenuButton(HBoxContainer parent, string icon, string tooltip, System.Action onPressed)
     {
@@ -1472,17 +1460,11 @@ public sealed partial class HUD : CanvasLayer
     private static Texture2D? LoadPortraitFromIcon(string icon)
     {
         if (icon.Length == 0) return null;
-        string projRoot = ProjectSettings.GlobalizePath("res://");
-        foreach (var up in new[] { "..", "../.." })
-        {
-            string p = System.IO.Path.GetFullPath(System.IO.Path.Combine(projRoot, up,
-                "binaries", "data", "mods", "public", "art", "textures", "ui", "session", "portraits",
-                icon.Replace('/', System.IO.Path.DirectorySeparatorChar)));
-            if (!System.IO.File.Exists(p)) continue;
-            var img = Image.LoadFromFile(p);
-            if (img != null) return ImageTexture.CreateFromImage(img);
-        }
-        return null;
+        string? p = RuntimePaths.FindPublicPath("art", "textures", "ui", "session", "portraits",
+            icon.Replace('/', System.IO.Path.DirectorySeparatorChar));
+        if (p == null) return null;
+        var img = Image.LoadFromFile(p);
+        return img != null ? ImageTexture.CreateFromImage(img) : null;
     }
 
     private static readonly Dictionary<string, string> PortraitMap = new()
@@ -2345,9 +2327,7 @@ public sealed partial class HUD : CanvasLayer
 
     private static Texture2D? LoadTex(string file)
     {
-        string path = ProjectSettings.GlobalizePath($"res://assets/ui/{file}");
-        if (!System.IO.File.Exists(path)) return null;
-        var img = Image.LoadFromFile(path);
+        var img = AssetIO.LoadImageRes($"res://assets/ui/{file}");
         return img != null ? ImageTexture.CreateFromImage(img) : null;
     }
 
