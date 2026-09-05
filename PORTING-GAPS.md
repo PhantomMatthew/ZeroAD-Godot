@@ -206,7 +206,10 @@
 
 ### 音频(AudioManager.cs)
 - [x] 3D 空间化(b260e15:AudioStreamPlayer3D 池,攻击/死亡/训练位置衰减;
-  人声留 2D——原版选令语音本就非空间化);环境音单层限制(原版多轨叠加)未移植
+  人声留 2D——原版选令语音本就非空间化)
+- [x] 环境音多轨叠加(本波:AmbientMixer 分层——基础 dayscape + 水域/建筑邻近层
+  (0.5s 节拍驱动,平滑淡入淡出)+ 图名启发天气层;上游 Ambient.js 实为单轨+TODO,
+  多轨为我们基于 water/building/weather 数据目录的增补)
 
 ### 相机(RTSCamera.cs vs GameView.cpp)
 - [x] 跟随选中单位(6dc3c4a:F 键,输入打断)

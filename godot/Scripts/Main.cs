@@ -685,7 +685,19 @@ public sealed partial class Main : Node3D
 		_sim.StartRecording();  // 自动录像：开局后立即开始录制（回放模式不录，见 AutoReplay）
 		_sim.SimulationRunning = true;
 		AudioManager.StartPlaylist("peace");   // 局内音乐(原版 PEACE 列表 shuffle)
-		AudioManager.StartAmbient("ambient/dayscape/day_temperate.xml", this);   // 环境音景循环
+		// 环境音多轨叠加(beyond-upstream,上游 Ambient.js 单轨):基础 dayscape +
+		// 水域/建筑邻近层(0 增益起播,UpdateAmbientLayers 每 0.5s 驱动渐强渐弱)。
+		AudioManager.StartAmbient("ambient/dayscape/day_temperate.xml", this);
+		AudioManager.StartAmbientLayer("water", "ambient/water/coastline_beach.xml", this);
+		AudioManager.StartAmbientLayer("port", "ambient/building/amb_port.xml", this);
+		AudioManager.StartAmbientLayer("farm", "ambient/building/amb_farm.xml", this);
+		AudioManager.StartAmbientLayer("trade", "ambient/building/amb_trade.xml", this);
+		// 天气层(图名启发:雪地/沙漠图常驻风/雪氛围;无匹配不叠)。
+		if (_currentMapName.Contains("arctic") || _currentMapName.Contains("snow")
+			|| _currentMapName.Contains("winter"))
+			AudioManager.StartAmbientLayer("weather", "ambient/weather/snow.xml", this, 0.5f);
+		else if (_currentMapName.Contains("sahara") || _currentMapName.Contains("desert"))
+			AudioManager.StartAmbientLayer("weather", "ambient/weather/wind_reg.xml", this, 0.4f);
 
 		// dev 自检钩子:ZEROAD_AUTOBUILD=1 时开局 ~8s 后自动下令建一栋住宅
 		// (建造动画/地基渐显的无人值守验证;正常游戏不触发)。
@@ -1506,6 +1518,7 @@ public sealed partial class Main : Node3D
 				float h = pmp.GetHeightWorld(130, 122);
 				_camera.SetFocus(new Vector3(130, h, 122));
 				ZeroAD.Sim.Diag.Log("Main", $"Loaded PMP terrain: {pmpPath} ({pmp.PatchesPerSide} patches, {pmp.MapSizeMeters}m, height at spawn: {h:F1}m)");
+				_currentMapName = System.IO.Path.GetFileNameWithoutExtension(pmpPath).ToLowerInvariant();
 
 				string? xmlPath = pmpPath.Replace(".pmp", ".xml");
 				// 地图 Environment 光照(太阳方向/色 + 环境光 + 雾色,公式对齐 CLightEnv);
@@ -1578,6 +1591,7 @@ public sealed partial class Main : Node3D
 	/// 接入 SetupTerrain 的 "random/" 路径前缀分支。</summary>
 	private void SetupRmgenTerrain(string mapName)
 	{
+		_currentMapName = mapName.ToLowerInvariant();
 		ZeroAD.Sim.Diag.Log("Main", $"Generating random map: {mapName}");
 		var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
 		uint seed = cfg.Seed;
@@ -2109,6 +2123,8 @@ public sealed partial class Main : Node3D
 	}
 
 	private readonly List<Node3D> _selectionMarkers = new();
+	/// <summary>当前图名(小写;环境音天气层启发用——rmgen/scenario 两路径都设)。</summary>
+	private string _currentMapName = "";
 
 	// Rally-point marker (flag + path line). Cached across frames: the actor instantiate +
 	// pathfind are too costly to rebuild every frame, so we only rebuild when the selected
@@ -2139,6 +2155,34 @@ public sealed partial class Main : Node3D
 		TryDebugCapture();
 		UpdateBattleMusic(delta);
 		UpdatePlaceGhost();
+
+		// 环境音多轨:0.5s 节拍评估相机焦点的水域/建筑邻近度,驱动叠层增益。
+		_ambientTick += delta;
+		if (_ambientTick >= 0.5)
+		{
+			_ambientTick = 0;
+			UpdateAmbientLayers();
+		}
+	}
+
+	private double _ambientTick;
+
+	/// <summary>环境音叠层驱动(多轨叠加,beyond-upstream:上游 Ambient.js 单轨+TODO):
+	/// 水域层 = 焦点地形 vs 水位(水下满、高出 12m 归零);建筑层 = 桥查询
+	/// port/farm/trade 邻近强度。各层增益由 AudioManager 混合器平滑逼近。</summary>
+	private void UpdateAmbientLayers()
+	{
+		if (_sim?.Gui == null || !_gameStarted) return;
+		var focus = _camera.Focus ?? _camera.GlobalPosition;
+		float waterY = _sim.Sim.Water.GetWaterLevel(
+			ZeroAD.Sim.Maths.Fixed.Zero, ZeroAD.Sim.Maths.Fixed.Zero).ToFloat();
+		float groundY = TerrainHeightService.Sample(focus.X, focus.Z);
+		AudioManager.SetAmbientLayerLevel("water",
+			Mathf.Clamp((waterY + 4f - groundY) / 12f, 0f, 1f));
+		var (port, farm, trade) = _sim.Gui.GetAmbientBuildingLevels(focus.X, focus.Z);
+		AudioManager.SetAmbientLayerLevel("port", port);
+		AudioManager.SetAmbientLayerLevel("farm", farm);
+		AudioManager.SetAmbientLayerLevel("trade", trade);
 	}
 
 	/// <summary>放置预览 ghost 跟随鼠标 + 套当前 _placeAngle(原版 placement preview 每帧更新)。</summary>

@@ -14,7 +14,7 @@ namespace ZeroAD.Godot;
 ///  - 声音组 XML:Path 前缀 + Sound 变体列表 + Gain/RandPitch(随机变体+随机音高);
 ///  - 音乐播放列表(MENU/PEACE,对齐 gui/common/music.js 曲目表,shuffle + 循环)。
 /// 音量走 UserConfig:sound.mastergain/musicgain/uigain/actiongain(与原版 options 同键)。</summary>
-public static class AudioManager
+public static partial class AudioManager
 {
     private const int PoolSize = 12;
     private const int Pool3DSize = 16;
@@ -25,7 +25,6 @@ public static class AudioManager
     private static Node3D? _worldHost;   // 3D 播放器的挂载点(Main 场景根;菜单 = null)
     private static int _poolNext;
     private static AudioStreamPlayer? _music;
-    private static AudioStreamPlayer? _ambient;
 
     private static string? _dataRoot;
     private static readonly Dictionary<string, SoundGroupDef?> _groupCache = new(StringComparer.Ordinal);
@@ -71,9 +70,6 @@ public static class AudioManager
         }
         if (_music.GetParent() == null) host.AddChild(_music);
 
-        if (_ambient != null && !GodotObject.IsInstanceValid(_ambient))
-            _ambient = null;
-
         ReadVolumes(host);
     }
 
@@ -99,39 +95,118 @@ public static class AudioManager
     }
 
     /// <summary>音量配置改动后重读(UserConfig.ConfigChanged 订阅方调用)。
-    /// 正在播放的音乐/环境音立即应用新增益;SFX 池下次播放生效。</summary>
+    /// 正在播放的音乐立即应用新增益;环境音各层由混合器逐帧现算;SFX 池下次播放生效。</summary>
     public static void RefreshVolumes(Node host)
     {
         ReadVolumes(host);
         if (_music != null && _music.Playing)
             _music.VolumeDb = Mathf.LinearToDb(Mathf.Max(_masterGain * _musicGain, 0.0001f));
-        if (_ambient != null && _ambient.Playing)
-            _ambient.VolumeDb = Mathf.LinearToDb(Mathf.Max(_masterGain * _ambientGain, 0.0001f));
     }
 
-    // ── 环境音(ambient;loop 长音景)──
+    // ── 环境音(ambient;loop 长音景,多轨叠加)──
 
-    /// <summary>开始环境音循环(如 "ambient/dayscape/day_temperate.xml";ambientgain 链)。
-    /// 单实例:重复调用先停旧的。</summary>
+    /// <summary>多轨环境音混合器(挂场景根,_Process 逐帧把各层增益平滑推向目标值)。
+    /// 层 = 独立循环播放器(基础 dayscape / 水域邻近 / 建筑邻近 port-farm-trade /
+    /// 天气)。音量每帧按 master×ambient×组Gain×层增益 现算,RefreshVolumes 无需特判。
+    /// 上游 session Ambient.js 只有单轨(TODO: Let the map decide the tracks);
+    /// 多轨叠加是我们基于 audio/ambient/{water,building,weather} 数据目录的增补,
+    /// 记录在案。</summary>
+    private sealed partial class AmbientMixer : Node
+    {
+        private sealed class Layer
+        {
+            public AudioStreamPlayer Player = null!;
+            public float GroupGain = 1f;
+            public float Target;    // 目标层增益 0..1
+            public float Current;   // 当前(平滑逼近 Target)
+        }
+
+        private readonly Dictionary<string, Layer> _layers = new(StringComparer.Ordinal);
+        private const float FadeSpeed = 1.2f;   // 全量程 ~0.8s
+
+        public void SetLayer(string name, AudioStream stream, float groupGain, float level)
+        {
+            if (!_layers.TryGetValue(name, out var layer))
+            {
+                var player = new AudioStreamPlayer { Bus = "Master" };
+                AddChild(player);
+                layer = new Layer { Player = player };
+                _layers[name] = layer;
+            }
+            layer.GroupGain = groupGain;
+            layer.Target = Mathf.Clamp(level, 0f, 1f);
+            if (layer.Player.Stream != stream)
+            {
+                layer.Current = 0f;   // 换轨重新淡入
+                layer.Player.Stream = stream;
+                layer.Player.Play();
+            }
+            else if (!layer.Player.Playing)
+            {
+                layer.Player.Play();
+            }
+        }
+
+        public void SetLevel(string name, float level)
+        {
+            if (_layers.TryGetValue(name, out var layer))
+                layer.Target = Mathf.Clamp(level, 0f, 1f);
+        }
+
+        public void StopAll()
+        {
+            foreach (var layer in _layers.Values) layer.Player.Stop();
+        }
+
+        public override void _Process(double delta)
+        {
+            float dt = (float)delta;
+            foreach (var layer in _layers.Values)
+            {
+                float diff = layer.Target - layer.Current;
+                if (Mathf.Abs(diff) > 0.001f)
+                    layer.Current = Mathf.MoveToward(layer.Current, layer.Target, FadeSpeed * dt);
+                layer.Player.VolumeDb = Mathf.LinearToDb(Mathf.Max(
+                    _masterGain * _ambientGain * layer.GroupGain * layer.Current, 0.0001f));
+            }
+        }
+    }
+
+    private static AmbientMixer? _mixer;
+
+    private static AmbientMixer? EnsureMixer(Node host)
+    {
+        if (_mixer != null && !GodotObject.IsInstanceValid(_mixer))
+            _mixer = null;
+        if (_mixer == null)
+            _mixer = new AmbientMixer { Name = "AmbientMixer" };
+        if (_mixer.GetParent() == null) host.AddChild(_mixer);
+        return _mixer;
+    }
+
+    /// <summary>开始基础环境音层(如 "ambient/dayscape/day_temperate.xml";ambientgain 链)。
+    /// 单实例:重复调用换轨重淡入。</summary>
     public static void StartAmbient(string groupPath, Node host)
+        => StartAmbientLayer("base", groupPath, host, 1f);
+
+    /// <summary>开/叠一条环境音层(组内多变体随机取一并循环;level=初始增益,
+    /// 邻近层以 0 起播再渐强)。组定义缺失(junction 未接)时静默跳过。</summary>
+    public static void StartAmbientLayer(string layer, string groupPath, Node host, float level = 0f)
     {
         if (_dataRoot == null) return;
         var def = LoadGroup(groupPath);
         if (def == null || def.Files.Length == 0) return;
-        // 组内多变体随机取一(环境音景每次进入不同氛围,同 RandOrder 语义)
         var stream = LoadStream(ResolveAudio(def.Files[_rng.Next(def.Files.Length)]));
         if (stream == null) return;
         if (stream is AudioStreamOggVorbis ogg) ogg.Loop = true;
-
-        if (_ambient == null)
-            _ambient = new AudioStreamPlayer { Bus = "Master" };
-        if (_ambient.GetParent() == null) host.AddChild(_ambient);
-        _ambient.Stream = stream;
-        _ambient.VolumeDb = Mathf.LinearToDb(Mathf.Max(_masterGain * _ambientGain * def.Gain, 0.0001f));
-        _ambient.Play();
+        EnsureMixer(host)?.SetLayer(layer, stream, def.Gain, level);
     }
 
-    public static void StopAmbient() => _ambient?.Stop();
+    /// <summary>设层目标增益(0..1;混合器平滑逼近——水域/建筑邻近层每 0.5s 驱动)。</summary>
+    public static void SetAmbientLayerLevel(string layer, float level)
+        => _mixer?.SetLevel(layer, level);
+
+    public static void StopAmbient() => _mixer?.StopAll();
 
     private static float ParseGain(string s, float dflt)
         => float.TryParse(s, System.Globalization.NumberStyles.Float,

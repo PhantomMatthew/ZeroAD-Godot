@@ -670,5 +670,34 @@ public sealed class GuiInterface
         return (pos.Position.X.ToFloat(), pos.Position.Y.ToFloat(), pos.Position.Z.ToFloat());
     }
 
+    // ── 环境音邻近查询(表现层音景;上游 audio/ambient/building 数据存在但
+    // 未接线——Ambient.js 只播单轨 dayscape。此查询是我们多轨叠加的增补,记录在案)──
+
+    /// <summary>焦点周边建筑音景强度(port/farm/trade,0..1;取最近匹配建筑的
+    /// 距离线性衰减,45m 外为 0)。任意属主(可听即可);无匹配 → 全 0。</summary>
+    public (float Port, float Farm, float Trade) GetAmbientBuildingLevels(float x, float z)
+    {
+        float port = 0f, farm = 0f, trade = 0f;
+        const float radius2 = 45f * 45f;
+        foreach (var e in _cm.AllEntities)
+        {
+            var id = _cm.QueryInterface<IdentityComponent>(e);
+            if (id == null || !id.IsBuilding) continue;
+            int kind = id.HasClass("Dock") ? 1
+                : id.HasClass("Farmstead") || id.HasClass("Field") ? 2
+                : id.HasClass("Market") ? 3 : 0;
+            if (kind == 0) continue;
+            var pos = _cm.QueryInterface<PositionComponent>(e);
+            if (pos == null || !pos.InWorld) continue;
+            float dx = pos.Position.X.ToFloat() - x, dz = pos.Position.Z.ToFloat() - z;
+            float level = 1f - (dx * dx + dz * dz) / radius2;
+            if (level <= 0f) continue;
+            if (kind == 1) port = System.Math.Max(port, level);
+            else if (kind == 2) farm = System.Math.Max(farm, level);
+            else trade = System.Math.Max(trade, level);
+        }
+        return (port, farm, trade);
+    }
+
     private ComponentManager cm() => _cm;
 }
