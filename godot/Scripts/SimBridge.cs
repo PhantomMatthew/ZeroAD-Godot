@@ -2569,6 +2569,11 @@ public sealed partial class SimBridge : Node
 	public void CommandToggleGate(EntityId gate, bool locked) =>
 		SubmitCommand(NetCommand.Gate(LocalPlayerId, gate.Value, locked));
 
+	/// <summary>建筑集火排队(原版 focus-fire:F+右键敌目标;queued=Shift 追加队尾,
+	/// 无 Shift 覆盖为单目标)。与右键立即集火(CommandAttack→SetUnitAITarget)并存。</summary>
+	public void CommandFocusFire(EntityId building, EntityId target, bool queued = false, bool pushFront = false) =>
+		SubmitCommand(NetCommand.FocusFire(LocalPlayerId, building.Value, target.Value, queued, pushFront));
+
 	/// <summary>编队命令(原版 formation 面板):shape=null 解散,否则按阵型创建控制器。
 	/// 实体列表经 TemplateName 载荷进锁步(原版 cmd entities 数组的 C# 形)。</summary>
 	public void CommandFormation(IReadOnlyList<EntityId> entities, string shape)

@@ -10,11 +10,14 @@ namespace ZeroAD.Sim.Components;
 // 炮塔点(城墙/哨塔/船):远程兵占命名点位,位置随持有者可动(对齐原版
 // Position.SetTurretParent 的父子联动,本移植由 UpdatePosition 每回合跟拍),
 // 留在世界内可作战;Obstruction 停用避免干扰寻路;持有者被毁按 EjectOrKill 逐出/同灭。
-//
-// 不移植(记录):Pickup 接送、CreateSubunit(模板预置子单位——现网模板无一使用
-// <Template> 子节点)、initTurrets(地图初始)、Angle 转向(原版即死代码:
-// OccupyTurretPoint 里 `if (!turretPoint && ...)` 永假)、SetReservedTurretPoint、
-// OnEntityRenamed 换壳、外交翻面即时下塔(=已知缺口,同 Garrison)。
+// 已移植:Pickup 接送(UnitAI GARRISON.APPROACHING 的 pickup 登记)、initTurrets
+// (地图初始,ScenarioLoader/SimBridge)、外交翻面/易主即时下塔(OnInit 订阅
+// OwnerChanged + DiplomacyChanged)。
+// 有意偏离:外交翻面时本移植直接逐出非互盟占位者,上游新版只禁止再进(不逐出)——
+// 取更严语义,与驻军逐出规则保持一致(WS3 裁定,保留)。
+// 不移植(记录):CreateSubunit(模板预置子单位——现网模板无一使用 <Template> 子节点)、
+// Angle 转向(原版即死代码:OccupyTurretPoint 里 `if (!turretPoint && ...)` 永假)、
+// SetReservedTurretPoint、OnEntityRenamed 换壳。
 
 [Component("TurretHolder", "TurretHolder")]
 public sealed class TurretHolderComponent : ComponentBase, IComponentMessageHandler
@@ -120,7 +123,8 @@ public sealed class TurretHolderComponent : ComponentBase, IComponentMessageHand
         return result;
     }
 
-    // ── 即时逐出(原版 Turrets.js/驻军同规则:外交翻面/易主即逐非互盟占位者)──
+    // ── 即时逐出(有意偏离:上游 TurretHolder 外交翻面只禁止再进、不逐出;
+    // 本移植取驻军同规则——翻面/易主即逐非互盟占位者,WS3 裁定保留)──
     private ComponentManager? _subscribedCm;
 
     protected override void OnInit()

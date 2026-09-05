@@ -29,7 +29,7 @@ public sealed record SaveMeta(
 ///
 /// Save format (little-endian binary):
 ///   magic   "0ADSAVE" (7 bytes)
-///   version uint32    (format version, currently 6)
+///   version uint32    (format version, currently 17+)
 ///   turn    uint32    (sim turn at save time)
 ///   match-skeleton block (v6): mapPath/mapType/tutorial/localPlayerId/role/slots/timeUnix/description
 ///   payload            (ComponentManager.SerializeSaveGame output)
@@ -59,7 +59,10 @@ public static class SaveGameManager
     // 位置流错位,按版本号拒收。
     // v9(2026-08-03):DamageBlock 增 Fire 通道(状态效果燃烧)——capture 后多 1 个 I32。
     // v10(2026-08-07):Foundation/Builder 工人表序列化(多工人递减 n^0.7/n)。
-    private const uint Version = 17; // v17: QueuePlan.GoRequirement(houseNeeded 启动门) // v16: waypoints // v15: 转向物理 // v14: UnitMotion 增推挤 Weight // v13: 槽位增 AI 难度/性格 // v12: AIComponent 增 HQ 尾段(AI 计划/队列/攻防军/运输骑缝)
+    // v18:GarrisonHolder 增 AllowGarrisoning 外部锁尾段(callerID→bool 与门)+ 类别复查
+    // 计时器。首个向后兼容 bump:v17 档照常读入(新尾段缺失按空表/零计时),更早版本仍拒收
+    // (此前各版均为位置流错位,无字段级兼容层)。
+    private const uint Version = SaveFormat.CurrentVersion; // v17: QueuePlan.GoRequirement(houseNeeded 启动门) // v16: waypoints // v15: 转向物理 // v14: UnitMotion 增推挤 Weight // v13: 槽位增 AI 难度/性格 // v12: AIComponent 增 HQ 尾段(AI 计划/队列/攻防军/运输骑缝)
 
     private static string SavesDir => ProjectSettings.GlobalizePath("user://saves/");
 
@@ -129,15 +132,23 @@ public static class SaveGameManager
         {
             using var fs = new FileStream(path, FileMode.Open);
             using var br = new BinaryReader(fs);
-            var meta = ReadHeaderFromStream(br, slot);
+            var meta = ReadHeaderFromStream(br, slot, out uint version);
             if (meta == null)
             {
                 ZeroAD.Sim.Diag.Err("SaveGame", $"bad magic or version mismatch: {path}");
                 return null;
             }
-            // Payload
-            var deser = new BinaryDeserializer(br);
-            sim.Sim.DeserializeSaveGame(deser, prepareComponent);
+            // Payload(版本上下文:旧档缺 v18 尾段的组件按空表/默认值读)。
+            SaveFormat.LoadedVersion = version;
+            try
+            {
+                var deser = new BinaryDeserializer(br);
+                sim.Sim.DeserializeSaveGame(deser, prepareComponent);
+            }
+            finally
+            {
+                SaveFormat.LoadedVersion = SaveFormat.CurrentVersion;
+            }
             ZeroAD.Sim.Diag.Log("SaveGame", $"loaded from {path} (turn {meta.Turn})");
             return meta.Turn;
         }
@@ -150,7 +161,7 @@ public static class SaveGameManager
 
     /// <summary>Read only the header of a save (magic + version + turn + match-skeleton
     /// block), stopping before the payload. Used by the cold-load entry point and the
-    /// LoadGame browser. Returns null for a missing/bad/incompatible (≠v6) file.</summary>
+    /// LoadGame browser. Returns null for a missing/bad/incompatible-version file.</summary>
     public static SaveMeta? ReadHeader(string slot)
     {
         string path = SavePath(slot);
@@ -160,7 +171,7 @@ public static class SaveGameManager
         {
             using var fs = new FileStream(path, FileMode.Open);
             using var br = new BinaryReader(fs);
-            return ReadHeaderFromStream(br, slot);
+            return ReadHeaderFromStream(br, slot, out _);
         }
         catch (System.Exception)
         {
@@ -210,14 +221,17 @@ public static class SaveGameManager
 
     /// <summary>Read magic + v6 header from an open stream positioned at the start.
     /// Returns the meta and leaves the reader positioned at the payload, or returns null
-    /// when the magic/version is wrong.</summary>
-    private static SaveMeta? ReadHeaderFromStream(BinaryReader br, string slot)
+    /// when the magic/version is wrong. <paramref name="version"/> 回传文件格式版本
+    /// (读档方据以设置 SaveFormat.LoadedVersion,让组件跳过旧档没有的新增尾段)。</summary>
+    private static SaveMeta? ReadHeaderFromStream(BinaryReader br, string slot, out uint version)
     {
+        version = 0;
         for (int i = 0; i < Magic.Length; i++)
             if (br.ReadByte() != (byte)Magic[i])
                 return null;
-        uint version = br.ReadUInt32();
-        if (version != Version)
+        version = br.ReadUInt32();
+        // v18 起向后兼容到 MinReadableVersion;更早版本位置流错位,拒收。
+        if (version > Version || version < SaveFormat.MinReadableVersion)
             return null;
         uint turn = br.ReadUInt32();
         // v6 match-skeleton block

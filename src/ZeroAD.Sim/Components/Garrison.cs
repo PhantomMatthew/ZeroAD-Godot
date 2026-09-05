@@ -11,11 +11,12 @@ namespace ZeroAD.Sim.Components;
 // Position.MoveOutOfWorld),UnitAI 冻结订单处理;持有者按 Garrisonable.TotalSize 计容量,
 // 可 BuffHeal 每秒回血(原版 HEAL_TIMEOUT=1000ms 定时器),EjectHealth 低血逐出,
 // 被毁时按 EjectClassesOnDestroy 逐出可逐类别、其余随主同灭(EjectOrKill)。
-//
-// 不移植(记录):Pickup 接送(字段保留,行为在 UnitAI GARRISON.APPROACHING 的 pickup 消息)、
-// AllowGarrisoning 外部锁定、OnGlobalOwnershipChanged/OnDiplomacyChanged 的即时逐出
-// (本移植由 Tick 的 HasEnoughHealth 检查与销毁兜底覆盖主路径;外交翻面逐出=已知缺口)、
-// initGarrison(地图初始驻军)、UnloadTemplate/UnloadAllByOwner(GUI 批量卸载)、
+// 已移植:Pickup 接送(行为在 UnitAI GARRISON.APPROACHING 的 pickup 登记)、
+// initGarrison(地图初始驻军,ScenarioLoader/SimBridge)、外交翻面/易主即时逐出
+// (懒订阅 OwnerChanged + DiplomacyChanged,见 WireEvictionEvents)、
+// AllowGarrisoning 外部锁(callerID→bool 与门,锁定拒进拒出,EjectOrKill forced 例外)、
+// 类别表变更逐出(原版 OnValueModification;ModifiersManager 无变更钩子,Tick 1s 低频复查兜底)。
+// 不移植(记录):UnloadTemplate/UnloadAllByOwner(GUI 批量卸载)、
 // GetGarrisonedEntitiesCount 递归计数(统计面板用)。
 
 [Component("GarrisonHolder", "GarrisonHolder")]
@@ -29,8 +30,15 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
     public float BuffHeal;                            // template GarrisonHolder/BuffHeal(HP/s)
     public float LoadingRange = 2f;                   // template GarrisonHolder/LoadingRange
     public float EjectHealth = -1f;                   // template 可选;-1 = 无阈值(原版 undefined)
-    public bool Pickup;                               // template 可选;行为不移植,仅存字段
+    public bool Pickup;                               // template 可选;接送行为在 UnitAI GARRISON.APPROACHING
     public float HealElapsed;                         // runtime:距上次回血的累计秒数
+
+    // ── AllowGarrisoning 外部锁(原版 GarrisonHolder.js:117-131:callerID→bool Map 与门)──
+    // 任一 caller 置 false 即拒进拒出(行驶中的载具不可上下等场景)。
+    // 确定性:SortedList 按键定序枚举,不依赖 Dictionary 枚举序(与门本可乱序,
+    // 但序列化写序必须定序,统一用排序容器)。
+    private readonly SortedList<string, bool> _garrisoningLocks = new(StringComparer.Ordinal);
+    private float _recheckElapsed;                    // runtime:距上次驻军类别复查的累计秒数
 
     // 默认值全在字段初始化器,OnInit 保持空 —— 调用方用对象初始化器赋值不被 clobber。
 
@@ -118,10 +126,26 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
         return count;
     }
 
-    /// <summary>Port of IsAllowedToGarrison:容量 + IsAllowedToBeGarrisoned。
-    /// (原版的 IsGarrisoningAllowed 外部锁定不移植。)</summary>
+    /// <summary>Port of AllowGarrisoning(GarrisonHolder.js:117-131):登记 caller 的放行票。
+    /// 每个调用方用自己的 callerID;与门——一票否决。</summary>
+    public void SetGarrisoningAllowed(string callerId, bool allowed) =>
+        _garrisoningLocks[callerId] = allowed;
+
+    /// <summary>Port of IsGarrisoningAllowed(GarrisonHolder.js:159):无登记或全放行 → true。
+    /// 锁定时舱内单位也不可出驻(原版注释:行驶中的载具不可上下),forced 逐出例外。</summary>
+    public bool IsGarrisoningAllowed()
+    {
+        foreach (var kv in _garrisoningLocks)
+            if (!kv.Value) return false;
+        return true;
+    }
+
+    /// <summary>Port of IsAllowedToGarrison:IsGarrisoningAllowed 门控 + 容量 +
+    /// IsAllowedToBeGarrisoned。</summary>
     public bool IsAllowedToGarrison(ComponentManager cm, EntityId entity)
     {
+        if (!IsGarrisoningAllowed())
+            return false;
         var g = cm.QueryInterface<GarrisonableComponent>(entity);
         if (g == null || OccupiedSlots(cm) + g.TotalSize(cm) > GetCapacity(cm))
             return false;
@@ -154,8 +178,14 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
         return true;
     }
 
-    /// <summary>Port of Eject:移出舱单;不在舱内视为成功(原版注释:通常已被逐出)。</summary>
-    public bool Eject(EntityId entity) => Entities.Remove(entity) || true;
+    /// <summary>Port of Eject(GarrisonHolder.js:211):锁定且非 forced 拒绝;不在舱内视为
+    /// 成功(原版注释:通常已被逐出)。forced = 建筑被毁/外交逐出等内部路径。</summary>
+    public bool Eject(EntityId entity, bool forced = false)
+    {
+        if (!IsGarrisoningAllowed() && !forced)
+            return false;
+        return Entities.Remove(entity) || true;
+    }
 
     /// <summary>Port of Unload:命令该单位自行出驻。</summary>
     public bool Unload(ComponentManager cm, EntityId entity) =>
@@ -181,12 +211,32 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
     }
 
     /// <summary>每回合驱动(SimBridge):低血逐出(替代原版 OnHealthChanged 消息)+
+    /// 类别复查逐出(1s 节流,替代原版 OnValueModification)+
     /// BuffHeal 每秒一次回血(替代原版 1s HealTimeout 定时器;无舱员/无速率即停表)。</summary>
     public void Tick(float dt, ComponentManager cm)
     {
         WireEvictionEvents(cm);
         if (Entities.Count > 0 && !HasEnoughHealth(cm))
             EjectOrKill(cm, new List<EntityId>(Entities));
+
+        // 类别表变更逐出(原版 OnValueModification:GarrisonHolder/List 经修正值变更后,
+        // EjectOrKill 不再匹配 IsAllowedToBeGarrisoned 者)。本移植 ModifiersManager 无变更
+        // 通知钩子 → Tick 内 1s 低频复查兜底(互盟段与事件逐出重叠,复查无害)。
+        if (Entities.Count > 0)
+        {
+            _recheckElapsed += dt;
+            if (_recheckElapsed >= 1f)
+            {
+                _recheckElapsed = 0f;
+                var mismatched = Entities
+                    .Where(e => !IsAllowedToBeGarrisoned(cm, e))
+                    .ToList();
+                if (mismatched.Count > 0)
+                    EjectOrKill(cm, mismatched);
+            }
+        }
+        else
+            _recheckElapsed = 0f;
 
         float rate = GetHealRate(cm);
         if (Entities.Count == 0 || rate <= 0f)
@@ -217,7 +267,8 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
         {
             foreach (var e in new List<EntityId>(entities))
                 if (IsEjectable(cm, e))
-                    Unload(cm, e);
+                    // forced=true:锁定时建筑被毁/外交逐出也必须能逐出(原版 Eject 的 forced 例外)。
+                    cm.QueryInterface<GarrisonableComponent>(e)?.UnGarrison(cm, forced: true);
         }
         foreach (var e in entities)
         {
@@ -258,6 +309,14 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
         s.NumberFixed("ejectHealth", Fixed.FromFloat(EjectHealth));
         s.Bool("pickup", Pickup);
         s.NumberFixed("healElapsed", Fixed.FromFloat(HealElapsed));
+        // 存档 v18 尾段:AllowGarrisoning 锁表(键序定序)+ 类别复查计时器。
+        s.NumberI32("glock_n", _garrisoningLocks.Count);
+        foreach (var kv in _garrisoningLocks)
+        {
+            s.StringASCII("glock", kv.Key);
+            s.Bool("glockv", kv.Value);
+        }
+        s.NumberFixed("recheck", Fixed.FromFloat(_recheckElapsed));
     }
 
     public override void Deserialize(IDeserializer d)
@@ -275,6 +334,16 @@ public sealed class GarrisonHolderComponent : ComponentBase, IComponentMessageHa
         EjectHealth = d.NumberFixed("ejectHealth").ToFloat();
         Pickup = d.Bool("pickup");
         HealElapsed = d.NumberFixed("healElapsed").ToFloat();
+        // 存档 v18 尾段:v17 及更早档无此段,按空表/零计时读(见 SaveFormat.LoadedVersion)。
+        _garrisoningLocks.Clear();
+        _recheckElapsed = 0f;
+        if (SaveFormat.LoadedVersion >= 18)
+        {
+            int gn = d.NumberI32("glock_n");
+            for (int i = 0; i < gn; i++)
+                _garrisoningLocks[d.StringASCII("glock")] = d.Bool("glockv");
+            _recheckElapsed = d.NumberFixed("recheck").ToFloat();
+        }
     }
 
     public void HandleMessage(IMessage message) { }
@@ -385,7 +454,7 @@ public sealed class GarrisonableComponent : ComponentBase, IComponentMessageHand
         var spawn = FindSpawnOutside(cm, holderId, radius);
 
         var holder = cm.QueryInterface<GarrisonHolderComponent>(holderId);
-        if (holder == null || !holder.Eject(Entity))
+        if (holder == null || !holder.Eject(Entity, forced))
             return false;
 
         var pos = cm.QueryInterface<PositionComponent>(Entity);

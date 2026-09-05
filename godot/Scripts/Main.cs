@@ -3385,7 +3385,14 @@ public sealed partial class Main : Node3D
 						// 建筑选中点敌 = focus fire,不走集结);其余建筑 → 集结点
 						// attack 指令(出厂单位打它)。
 						if (_sim.Sim.QueryInterface<BuildingAIComponent>(only) != null)
-							_sim.CommandAttack(only, tEnt);
+						{
+							// F+右键 = focus-fire 排队命令(原版 unit_actions focus-fire
+							// 热键修饰;Shift 追加队尾),无修饰 = 立即集火(两者并存,WS3 裁定)。
+							if (Input.IsPhysicalKeyPressed(Key.F))
+								_sim.CommandFocusFire(only, tEnt, queued: append);
+							else
+								_sim.CommandAttack(only, tEnt);
+						}
 						else
 							_sim.CommandSetRallyPointFull(only, tEnt, wx, wz, "attack", "", append);
 						return;

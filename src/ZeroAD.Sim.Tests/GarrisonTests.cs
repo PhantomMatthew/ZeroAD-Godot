@@ -397,4 +397,129 @@ public sealed class GarrisonTests
         Assert.Equal(new EntityId(42), gBack.Holder);
         Assert.Equal(2, gBack.Size);
     }
+
+    [Fact]
+    public void AllowGarrisoning_Lock_BlocksEntryAndExit_UntilReleased()
+    {
+        var cm = new ComponentManager(rngSeed: 1);
+        AddPlayer(cm, 1);
+        var holder = MakeHolder(cm);
+        var gh = cm.QueryInterface<GarrisonHolderComponent>(holder)!;
+        var unit = MakeUnit(cm);
+        var g = cm.QueryInterface<GarrisonableComponent>(unit)!;
+
+        // 与门:一票否决;其他 caller 放行不顶用,本 caller 放行才开。
+        gh.SetGarrisoningAllowed("vehicle-driving", false);
+        gh.SetGarrisoningAllowed("other-system", true);
+        Assert.False(gh.IsGarrisoningAllowed());
+        Assert.False(gh.IsAllowedToGarrison(cm, unit));                    // 锁定拒进
+        Assert.False(g.Garrison(cm, holder));
+        gh.SetGarrisoningAllowed("vehicle-driving", true);
+        Assert.True(gh.IsGarrisoningAllowed());
+        Assert.True(g.Garrison(cm, holder));
+
+        // 锁定拒出(原版:舱内单位须等放行才可出驻);放行后可出。
+        gh.SetGarrisoningAllowed("vehicle-driving", false);
+        Assert.False(gh.Unload(cm, unit));
+        Assert.NotNull(g.Holder);
+        gh.SetGarrisoningAllowed("vehicle-driving", true);
+        Assert.True(gh.Unload(cm, unit));
+        Assert.Null(g.Holder);
+    }
+
+    [Fact]
+    public void AllowGarrisoning_Locked_EjectOrKill_ForcedStillEjects()
+    {
+        // 锁定时建筑被毁/外交逐出走 forced=true:可逐类别仍弹回世界(原版 Eject 的
+        // forced 例外——否则锁定的建筑被毁,舱内可逐单位逐不出)。
+        var cm = new ComponentManager(rngSeed: 1);
+        AddPlayer(cm, 1);
+        var holder = MakeHolder(cm, ejectClasses: "Infantry");
+        var gh = cm.QueryInterface<GarrisonHolderComponent>(holder)!;
+        var unit = MakeUnit(cm, classes: "Infantry");
+        cm.QueryInterface<GarrisonableComponent>(unit)!.Garrison(cm, holder);
+
+        gh.SetGarrisoningAllowed("vehicle-driving", false);
+        gh.EjectOrKillAll(cm);
+
+        Assert.Empty(gh.Entities);
+        Assert.True(cm.QueryInterface<PositionComponent>(unit)!.InWorld);
+        Assert.True(cm.QueryInterface<HealthComponent>(unit)!.Current > 0);
+    }
+
+    [Fact]
+    public void ClassRecheck_Tick_EjectsNoLongerMatching()
+    {
+        // 类别表变更逐出(原版 OnValueModification 改 GarrisonHolder/List 后 EjectOrKill
+        // 失配者;本移植无修正值变更钩子 → Tick 1s 低频复查)。直接改 AllowedClasses
+        // 模拟修正值效果。
+        var cm = new ComponentManager(rngSeed: 1);
+        AddPlayer(cm, 1);
+        var holder = MakeHolder(cm, list: "Infantry", ejectClasses: "Infantry");
+        var gh = cm.QueryInterface<GarrisonHolderComponent>(holder)!;
+        var unit = MakeUnit(cm, classes: "Infantry");
+        var g = cm.QueryInterface<GarrisonableComponent>(unit)!;
+        g.Garrison(cm, holder);
+
+        gh.AllowedClasses.Clear();
+        gh.AllowedClasses.Add("Cavalry");
+
+        gh.Tick(0.5f, cm);                                                 // 不足 1s → 不逐
+        Assert.Contains(unit, gh.Entities);
+        gh.Tick(0.6f, cm);                                                 // 复查 → 逐出
+        Assert.Empty(gh.Entities);
+        Assert.True(cm.QueryInterface<PositionComponent>(unit)!.InWorld);
+        Assert.Null(g.Holder);
+    }
+
+    [Fact]
+    public void RoundTrip_PreservesGarrisoningLocks()
+    {
+        var gh = new GarrisonHolderComponent { Max = 4 };
+        gh.SetGarrisoningAllowed("vehicle-driving", false);
+        gh.SetGarrisoningAllowed("aura-bonus", true);
+
+        var ms = new System.IO.MemoryStream();
+        gh.Serialize(new Serialization.BinarySerializer(new System.IO.BinaryWriter(ms)));
+        ms.Position = 0;
+        var back = new GarrisonHolderComponent();
+        back.Deserialize(new Serialization.BinaryDeserializer(new System.IO.BinaryReader(ms)));
+
+        Assert.False(back.IsGarrisoningAllowed());                         // 与门:一票否决
+        back.SetGarrisoningAllowed("vehicle-driving", true);
+        Assert.True(back.IsGarrisoningAllowed());
+    }
+
+    [Fact]
+    public void Deserialize_V17Save_MissingLockTail_ReadsEmpty()
+    {
+        // v17 写序(无 v18 锁表/复查计时器尾段)手工拼流;版本上下文=17 → 按空表读。
+        var ms = new System.IO.MemoryStream();
+        var s = new Serialization.BinarySerializer(new System.IO.BinaryWriter(ms));
+        s.NumberI32("ent_n", 0);
+        s.NumberI32("max", 7);
+        s.NumberI32("allowed_n", 1);
+        s.StringASCII("allowed", "Infantry");
+        s.StringASCII("ejectClasses", "Infantry");
+        s.NumberFixed("buffHeal", Fixed.FromFloat(0f));
+        s.NumberFixed("loadingRange", Fixed.FromFloat(2f));
+        s.NumberFixed("ejectHealth", Fixed.FromFloat(-1f));
+        s.Bool("pickup", false);
+        s.NumberFixed("healElapsed", Fixed.FromFloat(0f));
+        ms.Position = 0;
+
+        Serialization.SaveFormat.LoadedVersion = 17;
+        try
+        {
+            var gh = new GarrisonHolderComponent();
+            gh.Deserialize(new Serialization.BinaryDeserializer(new System.IO.BinaryReader(ms)));
+            Assert.Equal(7, gh.Max);
+            Assert.Equal(new[] { "Infantry" }, gh.AllowedClasses);
+            Assert.True(gh.IsGarrisoningAllowed());                        // 空表 → 放行
+        }
+        finally
+        {
+            Serialization.SaveFormat.LoadedVersion = Serialization.SaveFormat.CurrentVersion;
+        }
+    }
 }

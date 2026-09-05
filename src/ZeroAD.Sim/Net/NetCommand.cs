@@ -56,6 +56,10 @@ namespace ZeroAD.Sim.Net
         /// <summary>请求盟友进攻某敌(原版 chat attack-request;锁步命令,
         /// 执行器广播 AttackRequestedEvent → AI attackManager 评估)。</summary>
         AttackRequest = 30,
+        /// <summary>FocusFire: 建筑集火排队命令(原版 Commands.js "focus-fire" +
+        /// unit_actions.js F 热键修饰右键)。EntityId=建筑, IntParam1=目标,
+        /// IntParam2 bit0=queued(追加尾), bit1=pushFront(头插)。</summary>
+        FocusFire = 31,
     }
 
     /// <summary>
@@ -318,5 +322,14 @@ namespace ZeroAD.Sim.Net
         /// <summary>Gate: 城门锁切换。EntityId=城门;locked=true 上锁(阻挡),false 解锁(通行)。</summary>
         public static NetCommand Gate(uint player, uint gateId, bool locked) =>
             new(player, NetCommandType.Gate, gateId, locked ? 1 : 0);
+
+        /// <summary>FocusFire: 建筑集火排队(原版 focus-fire 命令:F+右键敌目标)。
+        /// EntityId=建筑, IntParam1=目标, IntParam2 bit0=queued / bit1=pushFront。
+        /// 编解码复用固定字段布局,无新槽位——旧端收到未知类型字节只会拒绝该命令,
+        /// 不会错位(同既有命令的扩展方式)。</summary>
+        public static NetCommand FocusFire(uint player, uint buildingId, uint targetId,
+            bool queued = false, bool pushFront = false) =>
+            new(player, NetCommandType.FocusFire, buildingId, (int)targetId,
+                (queued ? 1 : 0) | (pushFront ? 2 : 0));
     }
 }

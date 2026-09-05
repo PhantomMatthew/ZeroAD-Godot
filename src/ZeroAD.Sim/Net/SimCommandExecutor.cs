@@ -105,6 +105,7 @@ namespace ZeroAD.Sim.Net
                     break;
                 case NetCommandType.Upgrade: ApplyUpgrade(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.Gate: ApplyGate(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.FocusFire: ApplyFocusFire(new EntityId(cmd.EntityId), cmd); break;
             }
         }
 
@@ -616,6 +617,17 @@ namespace ZeroAD.Sim.Net
             var owner = _cm.QueryInterface<OwnershipComponent>(gate);
             if (owner == null || owner.PlayerId != (int)cmd.Player) return;
             _cm.QueryInterface<GateComponent>(gate)?.SetLocked(_cm, cmd.IntParam1 == 1);
+        }
+
+        /// <summary>FocusFire 命令(原版 Commands.js "focus-fire"):建筑集火排队。
+        /// 仅属主可操作;目标是否在射程内由 BuildingAI.AddFocusTarget 判定(不在则忽略,
+        /// 对齐原版 targetUnits 前提)。queued=追加尾 / pushFront=头插 / 否则覆盖单目标。</summary>
+        private void ApplyFocusFire(EntityId building, NetCommand cmd)
+        {
+            var owner = _cm.QueryInterface<OwnershipComponent>(building);
+            if (owner == null || owner.PlayerId != (int)cmd.Player) return;
+            _cm.QueryInterface<BuildingAIComponent>(building)?.AddFocusTarget(
+                new EntityId((uint)cmd.IntParam1), (cmd.IntParam2 & 1) != 0, (cmd.IntParam2 & 2) != 0);
         }
 
         private void ApplyUpgrade(EntityId building, NetCommand cmd)
