@@ -20,6 +20,8 @@ public sealed partial class SimBridge : Node
 	private ReplayDriver? _replayDriver;     // 回放播放：非 null 时每帧注入预录制命令
 	private ProjectilePool? _projectiles;    // 飞行投射物池（ranged 攻击的箭矢）
 	private ImpactEffectPool? _impacts;      // 命中特效池（血雾/扬尘）
+	private OneShotParticlePool? _oneShots;  // 一次性粒子池（摧毁烟尘/落水溅花）
+	private readonly Dictionary<EntityId, GpuParticles3D> _foundationDust = new();  // 建造扬尘(地基常驻,NumBuilders>0 才喷)
 	private BattleDecals? _decals;           // 战场贴花（击杀血斑,原版 blood_*.xml 的 decal 语义）
 	private double _simAccumulator;
 	private const double SimTickRate = 0.1;
@@ -1182,10 +1184,19 @@ public sealed partial class SimBridge : Node
 		bool isKill = false;
 		var health = _sim?.QueryInterface<ZeroAD.Sim.Components.HealthComponent>(e.Target);
 		if (health != null) isKill = health.IsDead;
-		_impacts.Spawn(target.Position + Vector3.Up * 0.8f, isKill);
+		// 落水命中 → 水面溅花替代扬尘(上游 water_splash 只挂瀑布 actor;
+		// 命中溅水是我们增补的表现层触发点,记录在案)。目标脚底低于水位即算落水。
+		float waterY = _sim?.Water.GetWaterLevel(
+			ZeroAD.Sim.Maths.Fixed.Zero, ZeroAD.Sim.Maths.Fixed.Zero).ToFloat() ?? float.MinValue;
+		bool inWater = target.Position.Y < waterY - 0.05f;
+		if (inWater)
+			_oneShots?.Spawn("water_splash",
+				new Vector3(target.Position.X, waterY, target.Position.Z), 24);
+		else
+			_impacts.Spawn(target.Position + Vector3.Up * 0.8f, isKill);
 		// 击杀贴地血斑(原版 blood_*.xml 的 decal 语义:命中迸溅在池里,
-		// 残留血斑在本系统——45s 消融后回收)。
-		if (isKill) _decals?.Spawn(target.Position);
+		// 残留血斑在本系统——45s 消融后回收)。落水不留斑。
+		if (isKill && !inWater) _decals?.Spawn(target.Position);
 		// 攻城/建筑命中贴花(原版 eyecandy/impact_decal 的 decal 语义:
 		// 建筑被命中/被毁时落弹坑贴花,90s 消融;比血斑大、消融更久)。
 		var targetIdentity = _sim?.QueryInterface<ZeroAD.Sim.Components.IdentityComponent>(e.Target);
@@ -1205,8 +1216,10 @@ public sealed partial class SimBridge : Node
 		// 战斗观感池：飞行投射物 + 命中特效（纯视觉，不进 sim 序列化/OOS 哈希）。
 		_projectiles = new ProjectilePool();
 		_impacts = new ImpactEffectPool();
+		_oneShots = new OneShotParticlePool();
 		AddChild(_projectiles);
 		AddChild(_impacts);
+		AddChild(_oneShots);
 	}
 
 	private void OnUnitVisualEntered(Node node)
@@ -1569,9 +1582,24 @@ public sealed partial class SimBridge : Node
 		}
 		if (_entityNodes.TryGetValue(entity, out var node))
 		{
+			// 建筑被摧毁 → 摧毁烟尘(原版 structures/destruction_{small,med,large}
+			// 变体的粒子 props:smoke + dust + dust_gray 三件套,按障碍半径分档)。
+			// 只在被杀(health.IsDead)时触发——地基完工的销毁重建不炸烟尘。
+			var health = _sim?.QueryInterface<ZeroAD.Sim.Components.HealthComponent>(entity);
+			if (identity != null && identity.IsBuilding && health?.IsDead == true)
+			{
+				float size = _sim!.QueryInterface<ZeroAD.Sim.Components.ObstructionComponent>(entity)
+					?.GetSize().ToFloat() ?? 3f;
+				string tier = size < 4f ? "small" : size < 8f ? "med" : "large";
+				var dpos = node.Position;
+				_oneShots?.Spawn($"destruction_smoke_{tier}", dpos, 64);
+				_oneShots?.Spawn($"destruction_dust_{tier}", dpos, 64);
+				_oneShots?.Spawn($"destruction_dust_{tier}_gray", dpos, 64);
+			}
 			node.QueueFree();
 			_entityNodes.Remove(entity);
 		}
+		_foundationDust.Remove(entity);   // 地基销毁(完工/被毁):扬尘条目摘除(节点随父释放)
 		_floraBatch?.Remove(entity);   // 合批实体:回收 MultiMesh 槽位(无锚点时 no-op)
 		_animators.Remove(entity);
 		_animState.Remove(entity);
@@ -1775,6 +1803,10 @@ public sealed partial class SimBridge : Node
 									$"scaffold shown: entity={entity.Value} frac={foundation.BuildFraction:F2}");
 							}
 						}
+						// 建造扬尘:有工人才喷(construction_dust,原版地基 actor 常驻 prop)。
+						if (_foundationDust.TryGetValue(entity, out var dust)
+							&& GodotObject.IsInstanceValid(dust))
+							dust.Emitting = foundation.NumBuilders > 0;
 					}
 					else if (node is MeshInstance3D mi && mi.Mesh is BoxMesh bm)
 					{
@@ -1807,6 +1839,7 @@ public sealed partial class SimBridge : Node
 			}
 
 			_foundationBars.Remove(entity);   // 完工:条目清除(条随节点释放)
+			_foundationDust.Remove(entity);   // 完工:扬尘条目摘除(节点随销毁释放)
 			completed.Add(entity);
 		}
 
@@ -2114,6 +2147,18 @@ public sealed partial class SimBridge : Node
 				else
 					preview.QueueFree();
 			}
+		}
+
+		// 建造扬尘(原版 fndn_* actor 根的 construction_dust prop):常驻挂载,
+		// 工人进场(NumBuilders>0)才喷,完工随节点释放。
+		var dust = EnvironmentParticles.BuildByName("construction_dust", 24);
+		if (dust != null)
+		{
+			dust.Emitting = false;
+			dust.Position = Vector3.Up * 0.5f;
+			dust.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+			visual.AddChild(dust);
+			_foundationDust[entity] = dust;
 		}
 
 		// 头顶血条(原版地基建造中显示血量;TickFoundations 每 tick 刷新)。固定悬于
