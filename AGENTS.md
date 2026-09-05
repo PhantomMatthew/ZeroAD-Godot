@@ -149,7 +149,10 @@ Entity templates (data, consumed as-is by the rewrite): `binaries/data/mods/publ
 
 ## Asset surgery gate (mandatory before ANY batch edit under `godot/assets/`)
 
-`godot/assets/` is a gitignored build product — git history gives NO rollback for it. A batch
+`godot/assets/` is largely a gitignored build product — **except** `meshes/**/*.glb` and
+`animations/**/*.glb` (+ their `.import` sidecars), which ARE tracked in git (608MB, committed
+2026-09-06 so a fresh clone gets models without running the pipeline). Textures/UI stay
+untracked. For tracked GLBs git history gives rollback; for everything else it gives NO rollback. A batch
 edit here is an irreversible operation on 5000+ files. The 2026-08-21 regression chain
 (occluders → missing heads → dead animations → giant weapons, each from a批量 scale script
 applied on an unverified rule) came from skipping this gate. Before touching assets:
