@@ -457,5 +457,218 @@ public sealed class GuiInterface
             upgradable, upgradableTemplate, gate, gateLocked, producer, builder);
     }
 
+    // ── 热路径聚合快照(桥扩面第二波:HUD 单选详情/选择圈/光标/研究条/站姿/编队组/集结点)──
+
+    /// <summary>单选详情面板快照(原版 GetEntityState 的详情段:HUD.FillSingleDetails
+    /// 此前每帧 9 趟 QueryInterface,现一趟聚合)。名字/头像仍走 HUD 的模板缓存
+    /// (数据层);本 DTO 只载 sim 态。CapturePoints 为按玩家序的 float 快照(≤9)。</summary>
+    public record SelectionDetails(
+        uint Id, string TemplateName, bool IsBuilding, string IdentityName,
+        string Rank,                              // Elite/Advanced/Basic/""(无军衔)
+        int Xp, int XpNext,                       // XpNext<=0 → 隐藏经验条
+        bool HasHealth, int HealthCurrent, int HealthMax,
+        bool HasCapturable, float MaxCapturePoints, float[] CapturePoints,
+        bool HasSupply, string SupplyType, int SupplyAmount, int SupplyMaxAmount,
+        int CarryAmount, string CarryType,        // 已 ToLowerInvariant
+        bool HasAttack, int AttackPhysical,
+        bool HasResistance, int ResistHack, int ResistPierce, int ResistCrush,
+        int OwnerPlayerId, string OwnerCiv);
+
+    public SelectionDetails? GetSelectionDetails(EntityId entity)
+    {
+        var id = _cm.QueryInterface<IdentityComponent>(entity);
+        var pos = _cm.QueryInterface<PositionComponent>(entity);
+        if (id == null && pos == null) return null;
+
+        var hp = _cm.QueryInterface<HealthComponent>(entity);
+        var promotion = _cm.QueryInterface<PromotionComponent>(entity);
+        var capturable = _cm.QueryInterface<CapturableComponent>(entity);
+        var supply = _cm.QueryInterface<ResourceSupply>(entity);
+        var gatherer = _cm.QueryInterface<ResourceGatherer>(entity);
+        var attack = _cm.QueryInterface<AttackComponent>(entity);
+        var resistance = _cm.QueryInterface<ResistanceComponent>(entity);
+        var owner = _cm.QueryInterface<OwnershipComponent>(entity);
+
+        string rank = id != null
+            ? id.HasClass("Elite") ? "Elite"
+            : id.HasClass("Advanced") ? "Advanced"
+            : id.HasClass("Basic") ? "Basic" : "" : "";
+
+        float maxCp = capturable?.MaxCapturePoints.ToFloat() ?? 0f;
+        float[] cps = [];
+        if (capturable != null && maxCp > 0f)
+        {
+            int n = System.Math.Min(capturable.CapturePoints.Length, 17);
+            cps = new float[n];
+            for (int p = 0; p < n; p++) cps[p] = capturable.CapturePoints[p].ToFloat();
+        }
+
+        int pid = owner?.PlayerId ?? 0;
+        return new SelectionDetails(
+            entity.Value, id?.TemplateName ?? "", id?.IsBuilding ?? false, id?.Name ?? "",
+            rank,
+            promotion?.XP ?? 0, promotion?.XpNext ?? 0,
+            hp != null && hp.Max > 0 && hp.Current > 0, hp?.Current ?? 0, hp?.Max ?? 0,
+            capturable != null && maxCp > 0f, maxCp, cps,
+            supply != null && supply.MaxAmount > 0,
+            supply?.Type.ToString() ?? "", supply?.Amount ?? 0, supply?.MaxAmount ?? 0,
+            gatherer?.CarryAmount ?? 0,
+            gatherer != null ? gatherer.CarryType.ToString().ToLowerInvariant() : "",
+            attack != null, attack?.Damage.TotalPhysical ?? 0,
+            resistance != null,
+            resistance?.Resistances.GetValueOrDefault(DamageType.Hack) ?? 0,
+            resistance?.Resistances.GetValueOrDefault(DamageType.Pierce) ?? 0,
+            resistance?.Resistances.GetValueOrDefault(DamageType.Crush) ?? 0,
+            pid, _cm.GetPlayerEntity(pid)?.Civ ?? "");
+    }
+
+    /// <summary>选择圈/状态条快照(原版 GetEntitiesWithStatusBars 段:Main 选择圈重建
+    /// 与 hover 条此前 EntityState 之外另查 4 组件,现一趟)。FootprintHalfX/Z 为
+    /// 建筑选择圈半宽深(圆形时 HalfX=半径);无 Footprint 件回退 10(调用方语义)。</summary>
+    public record MarkerState(
+        bool IsBuilding, int OwnerPlayerId, int HealthMax, float HealthFraction,
+        int ResourceAmount, int ResourceMaxAmount,
+        bool FootprintCircle, float FootprintHalfX, float FootprintHalfZ,
+        bool HasRangeOverlay, float Range,
+        float MaxCapturePoints, float[] CapturePoints);
+
+    public MarkerState? GetMarkerState(EntityId entity)
+    {
+        var id = _cm.QueryInterface<IdentityComponent>(entity);
+        var pos = _cm.QueryInterface<PositionComponent>(entity);
+        if (id == null && pos == null) return null;
+        var own = _cm.QueryInterface<OwnershipComponent>(entity);
+        var hp = _cm.QueryInterface<HealthComponent>(entity);
+        var supply = _cm.QueryInterface<ResourceSupply>(entity);
+        var fp = _cm.QueryInterface<FootprintComponent>(entity);
+        var attack = _cm.QueryInterface<AttackComponent>(entity);
+        var capturable = _cm.QueryInterface<CapturableComponent>(entity);
+
+        float maxCp = capturable?.MaxCapturePoints.ToFloat() ?? 0f;
+        float[] cps = [];
+        if (capturable != null && maxCp > 0f)
+        {
+            int n = System.Math.Min(capturable.CapturePoints.Length, 17);
+            cps = new float[n];
+            for (int p = 0; p < n; p++) cps[p] = capturable.CapturePoints[p].ToFloat();
+        }
+
+        return new MarkerState(
+            id?.IsBuilding ?? false, own?.PlayerId ?? -1,
+            hp?.Max ?? 0, hp != null && hp.Max > 0 ? (float)hp.Current / hp.Max : 0f,
+            supply?.Amount ?? 0, supply?.MaxAmount ?? 0,
+            fp?.Shape == FootprintShape.Circle,
+            fp != null ? fp.Size0.ToFloat() * 0.5f : 10f,
+            fp != null ? fp.Size1.ToFloat() * 0.5f : 10f,
+            attack is { HasRangeOverlay: true }, attack?.Range ?? 0f,
+            maxCp, cps);
+    }
+
+    /// <summary>选中集动作能力(原版 actionCheck 的选中侧:攻击/采集/驻防三光标资格,
+    /// 一趟扫描替代 DetermineHoverCursor 的每帧 5×N 查询)。Garrison 资格 =
+    /// Garrisonable + UnitAI(与调用方原判定一致)。</summary>
+    public readonly record struct ActionCaps(bool CanAttack, bool CanGather, bool CanGarrison);
+
+    public ActionCaps GetSelectedActionCaps(IReadOnlyCollection<EntityId> selected, int localPlayerId)
+    {
+        bool canAttack = false, canGather = false, canGarrison = false;
+        foreach (var eid in selected)
+        {
+            if (_cm.QueryInterface<OwnershipComponent>(eid)?.PlayerId != localPlayerId) continue;
+            if (_cm.QueryInterface<AttackComponent>(eid) != null) canAttack = true;
+            if (_cm.QueryInterface<ResourceGatherer>(eid) != null) canGather = true;
+            if (!canGarrison
+                && _cm.QueryInterface<GarrisonableComponent>(eid) != null
+                && _cm.QueryInterface<UnitAIComponent>(eid) != null)
+                canGarrison = true;
+            if (canAttack && canGather && canGarrison) break;
+        }
+        return new ActionCaps(canAttack, canGather, canGarrison);
+    }
+
+    /// <summary>在研科技快照(原版 GetStartedResearch:首个己方在研建筑)。
+    /// 无在研 → null;TotalTime 取科技定义 ResearchTime(≤0 回退 1 防除零)。</summary>
+    public record StartedResearch(
+        string Tech, float Progress, float TotalTime, string GenericName, string Icon);
+
+    public StartedResearch? GetStartedResearch(int playerId)
+    {
+        var playerEnt = _cm.GetPlayerEntityId(playerId);
+        var tm = playerEnt.HasValue
+            ? _cm.QueryInterface<TechnologyManager>(playerEnt.Value) : null;
+        foreach (var eid in _cm.AllEntities)
+        {
+            var own = _cm.QueryInterface<OwnershipComponent>(eid);
+            if (own == null || own.PlayerId != playerId) continue;
+            var r = _cm.QueryInterface<ResearcherComponent>(eid);
+            if (r == null || !r.IsResearching || r.CurrentTech == null) continue;
+            var def = tm?.GetDefinition(r.CurrentTech);
+            return new StartedResearch(
+                r.CurrentTech, r.Progress,
+                def != null && def.ResearchTime > 0 ? def.ResearchTime : 1f,
+                def?.GenericName ?? r.CurrentTech, def?.Icon ?? "");
+        }
+        return null;
+    }
+
+    /// <summary>首个选中有站姿的己方单位的当前站姿(原版 IsStanceSelected 的单值版;
+    /// 按钮高亮用)。无 → null。</summary>
+    public string? GetFirstStance(IEnumerable<EntityId> selected, int localPlayerId)
+    {
+        foreach (var eid in selected)
+        {
+            if (_cm.QueryInterface<OwnershipComponent>(eid)?.PlayerId != localPlayerId) continue;
+            if (_cm.QueryInterface<UnitAIComponent>(eid) is { } ai) return ai.Stance;
+        }
+        return null;
+    }
+
+    /// <summary>存活计数(编队组图标条:Identity+Position 俱在 = 活;替代 Main
+    /// 每帧每成员 2 趟查询)。</summary>
+    public int CountAlive(IEnumerable<EntityId> entities)
+    {
+        int n = 0;
+        foreach (var e in entities)
+            if (_cm.QueryInterface<IdentityComponent>(e) != null
+                && _cm.QueryInterface<PositionComponent>(e) != null)
+                n++;
+        return n;
+    }
+
+    /// <summary>首个带非空集结点队列的选中建筑(原版 DisplayRallyPoint 的查询侧;
+    /// 渲染/缓存键仍在 Main)。Civ 取自模板路径 structures/{civ}/...;无 → null。</summary>
+    public record RallyQueue(EntityId Building, IReadOnlyList<ZeroAD.Sim.Maths.FixedVector2D> Points,
+        string Civ, int OwnerPlayerId);
+
+    public RallyQueue? GetFirstRallyQueue(IReadOnlyCollection<EntityId> selected, int localPlayerId)
+    {
+        foreach (var eid in selected)
+        {
+            var rally = _cm.QueryInterface<RallyPointComponent>(eid);
+            if (rally == null) continue;
+            var pts = rally.GetPositions(_cm, localPlayerId);
+            if (pts.Count == 0) continue;
+            string civ = "athen";
+            var id = _cm.QueryInterface<IdentityComponent>(eid);
+            if (id != null)
+            {
+                var parts = id.TemplateName.Split('/');
+                if (parts.Length >= 2 && parts[0] == "structures") civ = parts[1];
+            }
+            return new RallyQueue(eid, pts, civ,
+                _cm.QueryInterface<OwnershipComponent>(eid)?.PlayerId ?? -1);
+        }
+        return null;
+    }
+
+    /// <summary>实体世界位置(相机跟随用;无 Position/不在世界(驻军等)→ null)。
+    /// 消除 RTSCamera 对 SimSystem.Sim 全局单例的直读。</summary>
+    public (float X, float Y, float Z)? GetWorldPosition(EntityId entity)
+    {
+        var pos = _cm.QueryInterface<PositionComponent>(entity);
+        if (pos == null || !pos.InWorld) return null;
+        return (pos.Position.X.ToFloat(), pos.Position.Y.ToFloat(), pos.Position.Z.ToFloat());
+    }
+
     private ComponentManager cm() => _cm;
 }

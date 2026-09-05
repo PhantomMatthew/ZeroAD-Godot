@@ -188,6 +188,7 @@ public sealed partial class Main : Node3D
 
 		_sim = new SimBridge { UnitContainer = _units, ShadowRoot = _shadowRoot };
 		AddChild(_sim);
+		_camera.Sim = _sim;   // 相机跟随的实体位置查询走桥(GuiInterface)
 
 		_mp = new MultiplayerController { Name = "Multiplayer" };
 		AddChild(_mp);
@@ -2571,8 +2572,8 @@ public sealed partial class Main : Node3D
 		{
 			var node = _sim.EntityNodes.GetValueOrDefault(eid);
 			if (node == null) continue;
-			// Read identity/owner/health through the GuiInterface facade.
-			var st = _sim.Gui.GetEntityState(eid);
+			// 选择圈/射程圈/占领条的 sim 态一趟聚合(桥 GetMarkerState)。
+			var st = _sim.Gui.GetMarkerState(eid);
 			bool isBuilding = st?.IsBuilding ?? false;
 			int ownerPlayerId = st?.OwnerPlayerId ?? -1;
 			int healthMax = st?.HealthMax ?? 0;
@@ -2590,16 +2591,15 @@ public sealed partial class Main : Node3D
 			MeshInstance3D ring;
 			if (isBuilding)
 			{
-				var fp = _sim.Sim.QueryInterface<FootprintComponent>(eid);
-				if (fp != null && fp.Shape == FootprintShape.Circle)
+				if (st is { FootprintCircle: true })
 				{
-					ring = SelectionRing.Create(fp.Size0.ToFloat(), friendlyColor, enemyColor,
+					ring = SelectionRing.Create(st.FootprintHalfX * 2f, friendlyColor, enemyColor,
 						SelectionRing.Shape.Circle);
 				}
 				else
 				{
-					float halfX = fp != null ? fp.Size0.ToFloat() * 0.5f : 10f;
-					float halfZ = fp != null ? fp.Size1.ToFloat() * 0.5f : 10f;
+					float halfX = st?.FootprintHalfX ?? 10f;
+					float halfZ = st?.FootprintHalfZ ?? 10f;
 					ring = SelectionRing.CreateRect(halfX, halfZ, friendlyColor);
 				}
 			}
@@ -2616,15 +2616,14 @@ public sealed partial class Main : Node3D
 			// 选中即显示——CC/箭塔的防御半径;近战无此元素不显示)。颜色 = 属主玩家色
 			// (对齐 CCmpRangeOverlayRenderer::UpdateColor → cmpPlayer->GetDisplayedColor),
 			// 此前硬编码白色与原版不符。
-			var attack = _sim.Sim.QueryInterface<AttackComponent>(eid);
-			if (attack is { HasRangeOverlay: true })
+			if (st is { HasRangeOverlay: true })
 			{
+				var ringColor = SimBridge.GetPlayerColor(ownerPlayerId);
+				ringColor.A = 0.75f;
 				var posC = _sim.Sim.QueryInterface<PositionComponent>(eid);
 				if (posC != null)
 				{
-					var ringColor = SimBridge.GetPlayerColor(ownerPlayerId);
-					ringColor.A = 0.75f;
-					var rangeRing = SelectionRing.CreateRangeRing(attack.Range,
+					var rangeRing = SelectionRing.CreateRangeRing(st.Range,
 						posC.Position.X.ToFloat(), posC.Position.Z.ToFloat(),
 						ringColor);
 					node.AddChild(rangeRing);
@@ -2643,17 +2642,14 @@ public sealed partial class Main : Node3D
 				_selectionMarkers.Add(bar);
 
 				// 占领条(蓝条,血条上方;原版可占领建筑的双条):各玩家 CP 占比分段。
-				var capturable = _sim.Sim.QueryInterface<CapturableComponent>(eid);
-				float maxCp = capturable?.MaxCapturePoints.ToFloat() ?? 0f;
-				if (capturable != null && maxCp > 0f)
+				if (st is { MaxCapturePoints: > 0f })
 				{
 					var segs = new List<(float, Color)>();
-					int n = System.Math.Min(capturable.CapturePoints.Length, 9);
-					for (int p = 0; p < n; p++)
+					for (int p = 0; p < st.CapturePoints.Length; p++)
 					{
-						float cp = capturable.CapturePoints[p].ToFloat();
+						float cp = st.CapturePoints[p];
 						if (cp > 0f)
-							segs.Add((cp / maxCp, SimBridge.GetPlayerColor(p)));
+							segs.Add((cp / st.MaxCapturePoints, SimBridge.GetPlayerColor(p)));
 					}
 					var capBar = SelectionRing.CreateCaptureBar(segs);
 					capBar.Position = new Vector3(0, topY + 0.45f, 0);
@@ -2693,7 +2689,7 @@ public sealed partial class Main : Node3D
 		if (ent == default) return;
 
 		var node = _sim.EntityNodes.GetValueOrDefault(ent);
-		var st = _sim.Gui.GetEntityState(ent);
+		var st = _sim.Gui.GetMarkerState(ent);
 		if (node == null || st == null) return;
 
 		// 微光圈(gaia/敌方/己方都用原版高亮白 0.5 透明度,不区分敌我)
@@ -2706,7 +2702,7 @@ public sealed partial class Main : Node3D
 		{
 			float frac = st.HealthMax > 0
 				? st.HealthFraction
-				: st.ResourceAmount / (float)System.Math.Max(1, MaxSupplyOf(ent));
+				: st.ResourceAmount / (float)System.Math.Max(1, st.ResourceMaxAmount);
 			var bar = st.HealthMax > 0
 				? SelectionRing.CreateHealthBar(frac)
 				: SelectionRing.CreateCaptureBar(new List<(float, Color)> { (frac, new Color(0.2f, 0.75f, 0.25f)) });
@@ -2717,12 +2713,6 @@ public sealed partial class Main : Node3D
 	}
 
 	private Node3D? _hoverExtra;
-
-	private int MaxSupplyOf(EntityId ent)
-	{
-		var supply = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.ResourceSupply>(ent);
-		return supply?.MaxAmount ?? 1;
-	}
 
 	/// <summary>实体头顶条高度(原版状态条悬于模型顶):取首个网格 AABB 顶 + 0.3;
 	/// 无网格回退按建筑/单位 6/2.2。结果缓存进节点 meta(模型不换不重用算)。</summary>
@@ -2765,32 +2755,16 @@ public sealed partial class Main : Node3D
 	private void ReconcileRallyMarker()
 	{
 		// v2: the first selected building with a non-empty rally queue drives the marker.
-		EntityId? rallyBuilding = null;
-		List<FixedVector2D>? points = null;
-		string civ = "athen";
-		foreach (var eid in _selectedEntities)
-		{
-			var rally = _sim.Sim.QueryInterface<RallyPointComponent>(eid);
-			if (rally == null) continue;
-			var pts = rally.GetPositions(_sim.Sim, (int)_sim.LocalPlayerId);
-			if (pts.Count == 0) continue;
-			rallyBuilding = eid;
-			points = pts;
-			// Civ from the building template path: structures/{civ}/...
-			var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
-			if (id != null)
-			{
-				var parts = id.TemplateName.Split('/');
-				if (parts.Length >= 2 && parts[0] == "structures") civ = parts[1];
-			}
-			break;
-		}
-
-		if (rallyBuilding == null || points == null)
+		// 查询侧走桥(原版 DisplayRallyPoint 的 GetPositions 扫描收进 GuiInterface)。
+		var rq = _sim.Gui.GetFirstRallyQueue(_selectedEntities, (int)_sim.LocalPlayerId);
+		if (rq == null)
 		{
 			ClearRallyMarker();
 			return;
 		}
+		EntityId rallyBuilding = rq.Building;
+		var points = rq.Points;
+		string civ = rq.Civ;
 
 		// 队列哈希:Fixed.InternalValue 跨帧稳定 → 精确键无 float 漂移;任一点
 		// 变化(追加/清空/目标跟拍移位)都会换键触发重绘。
@@ -2801,14 +2775,12 @@ public sealed partial class Main : Node3D
 			foreach (var p in points)
 				queueHash = queueHash * 31 + p.X.InternalValue * 397 + p.Y.InternalValue;
 		}
-		var key = (rallyBuilding.Value.Value, queueHash, civ);
+		var key = (rallyBuilding.Value, queueHash, civ);
 		if (_rallyMarkerKey == key) return;
 		ClearRallyMarker();
 
 		// Owner colour mirrors the selection-ring friendly/enemy split.
-		var own = _sim.Sim.QueryInterface<OwnershipComponent>(rallyBuilding.Value);
-		int ownerPlayerId = own?.PlayerId ?? -1;
-		Color ownerColor = ownerPlayerId == 1
+		Color ownerColor = rq.OwnerPlayerId == 1
 			? new Color(0.08f, 0.22f, 0.58f) : new Color(0.72f, 0.06f, 0.06f);
 
 		var container = new Node3D();
@@ -2817,7 +2789,7 @@ public sealed partial class Main : Node3D
 		_rallyMarkerKey = key;
 
 		// 每点一面旗(the real per-civ waypoint_flag actor; procedural fallback if it won't load)。
-		int seed = (int)(rallyBuilding.Value.Value * 2654435761u);   // stable per-building hash
+		int seed = (int)(rallyBuilding.Value * 2654435761u);   // stable per-building hash
 		foreach (var p in points)
 		{
 			float px = p.X.ToFloat(), pz = p.Y.ToFloat();
@@ -2840,7 +2812,7 @@ public sealed partial class Main : Node3D
 
 		// 折线:建筑→首点走寻路(read-only; mirrors CCmpRallyPointRenderer),点间直线串联,
 		// 沿路铺 textured ground ribbon。
-		var bpos = _sim.Sim.QueryInterface<PositionComponent>(rallyBuilding.Value);
+		var bpos = _sim.Sim.QueryInterface<PositionComponent>(rallyBuilding);
 		if (bpos != null)
 		{
 			var pts3 = new List<Vector3>();
@@ -3294,29 +3266,22 @@ public sealed partial class Main : Node3D
 	{
 		if (_selectedEntities.Count == 0) return "";
 		// 选中集中各能力只要有一个具备即显示对应光标(原版 actionCheck 同理)。
-		bool canAttack = false, canGather = false, canGarrison = false;
-		foreach (var eid in _selectedEntities)
-		{
-			if (!IsOwn(eid)) continue;
-			if (_sim.Sim.QueryInterface<AttackComponent>(eid) != null) canAttack = true;
-			if (_sim.Sim.QueryInterface<ResourceGatherer>(eid) != null) canGather = true;
-			if (_sim.Sim.QueryInterface<GarrisonableComponent>(eid) != null
-				&& _sim.Sim.QueryInterface<UnitAIComponent>(eid) != null) canGarrison = true;
-		}
-		if (!canAttack && !canGather && !canGarrison) return "";
+		// 选中侧能力一趟聚合(桥 GetSelectedActionCaps)。
+		int lp = (int)_sim.LocalPlayerId;
+		var caps = _sim.Gui.GetSelectedActionCaps(_selectedEntities, lp);
+		if (!caps.CanAttack && !caps.CanGather && !caps.CanGarrison) return "";
 
 		var worldPos = ScreenToWorld(mousePos);
 		if (worldPos == null) return "";
 		var targets = _sim.GetEntitiesAtPosition(worldPos.Value, 3f);
 		if (targets.Count == 0) return "";
 		var e = targets[0];
-		int lp = (int)_sim.LocalPlayerId;
 		var owner = _sim.Sim.QueryInterface<OwnershipComponent>(e);
 		// gaia 实体(鹿/狼等)无 OwnershipComponent,按玩家 0 处理——IsEnemy(lp,0) 恒 true,
 		// 有 Health 的 gaia 动物对士兵显示剑(原版可猎);树木无 Health(原版数据)不显示。
 
 		// 采集者在资源目标上优先采集光标(鹿对村民=猎取;对齐 HandleRightClick 分流)。
-		if (canGather && _sim.Sim.QueryInterface<ResourceSupply>(e) is { } supply)
+		if (caps.CanGather && _sim.Sim.QueryInterface<ResourceSupply>(e) is { } supply)
 		{
 			// 按 specificType 细分(原版 cursors/action-gather-{fruit,fish,meat,...}.png);
 			// 大类兜底(旧数据无 specificType 时回退)。
@@ -3341,7 +3306,7 @@ public sealed partial class Main : Node3D
 				}
 			};
 		}
-		if (canAttack
+		if (caps.CanAttack
 			&& _sim.Sim.Players.IsEnemy(lp, owner?.PlayerId ?? 0)
 			&& (_sim.Sim.QueryInterface<HealthComponent>(e) != null
 				|| _sim.Sim.QueryInterface<CapturableComponent>(e) != null))
@@ -3349,7 +3314,7 @@ public sealed partial class Main : Node3D
 			// Ctrl = 捕获修饰(与右键 HandleRightClick 的 allowCapture 一致)。
 			return Input.IsKeyPressed(Key.Ctrl) ? "action-capture" : "action-attack";
 		}
-		if (canGarrison && owner != null && owner.PlayerId == lp
+		if (caps.CanGarrison && owner != null && owner.PlayerId == lp
 			&& _sim.Sim.QueryInterface<GarrisonHolderComponent>(e) != null)
 			return "action-garrison";
 		return "";
@@ -3896,15 +3861,14 @@ public sealed partial class Main : Node3D
 			_camera.SetFocus(new Vector3(pos.Position.X.ToFloat(), 0, pos.Position.Z.ToFloat()));
 	}
 
-	/// <summary>编队组概览(图标条用):(组号, 存活成员数),升序;空组不列。</summary>
+	/// <summary>编队组概览(图标条用):(组号, 存活成员数),升序;空组不列。
+	/// 存活判定走桥(CountAlive 一趟)。</summary>
 	public List<(int group, int alive)> GetControlGroupInfo()
 	{
 		var result = new List<(int, int)>();
 		foreach (var (g, members) in _controlGroups.OrderBy(kv => kv.Key))
 		{
-			int alive = members.Count(e =>
-				_sim.Sim.QueryInterface<IdentityComponent>(e) != null
-				&& _sim.Sim.QueryInterface<PositionComponent>(e) != null);
+			int alive = _sim.Gui.CountAlive(members);
 			if (alive > 0) result.Add((g, alive));
 		}
 		return result;
@@ -3944,14 +3908,9 @@ public sealed partial class Main : Node3D
 				_sim.CommandSetUnitStance(eid, stance);
 	}
 
-	/// <summary>首个选中有站姿单位的当前站姿(按钮高亮用;无则 null)。</summary>
+	/// <summary>首个选中有站姿单位的当前站姿(按钮高亮用;无则 null;桥聚合)。</summary>
 	public string? GetFirstSelectedStance()
-	{
-		foreach (var eid in _selectedEntities)
-			if (IsOwn(eid) && _sim.Sim.QueryInterface<UnitAIComponent>(eid) is { } ai)
-				return ai.Stance;
-		return null;
-	}
+		=> _sim.Gui.GetFirstStance(_selectedEntities, (int)_sim.LocalPlayerId);
 
 	/// <summary>卸载单个驻军(原版 unload;仅己方建筑)。</summary>
 	public void UnloadGarrison(EntityId holder, EntityId unit)

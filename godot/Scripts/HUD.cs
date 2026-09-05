@@ -1754,64 +1754,64 @@ public sealed partial class HUD : CanvasLayer
 
     /// <summary>专名(SpecificName,如 Loxodonta africana / Oikos)——模板 Identity/SpecificName,
     /// 缓存模式同 GenericNameOf。无专名返回 ""。</summary>
-    private string SpecificNameOf(IdentityComponent identity)
+    private string SpecificNameOf(string templateName)
     {
-        if (_specificNameCache.TryGetValue(identity.TemplateName, out var cached)) return cached;
+        if (_specificNameCache.TryGetValue(templateName, out var cached)) return cached;
         string specific = "";
         try
         {
-            var stats = _sim.Sim.Templates?.ExtractStats(identity.TemplateName);
+            var stats = _sim.Sim.Templates?.ExtractStats(templateName);
             if (stats != null) specific = stats.SpecificName;
         }
         catch { }
-        _specificNameCache[identity.TemplateName] = specific;
+        _specificNameCache[templateName] = specific;
         return specific;
     }
 
     /// <summary>头像:数据驱动(模板 Identity/Icon,原版 selection_details 同款数据源,
     /// 经 PortraitLoader 读 junction 原图);解析失败回退旧的模板名硬编码映射。</summary>
-    private Texture2D? ResolvePortrait(IdentityComponent? identity)
+    private Texture2D? ResolvePortrait(string templateName, bool isBuilding)
     {
-        if (identity == null) return null;
-        if (_portraitCache.TryGetValue(identity.TemplateName, out var cached)) return cached;
+        if (_portraitCache.TryGetValue(templateName, out var cached)) return cached;
         Texture2D? tex = null;
         try
         {
-            var icon = _sim.Sim.Templates?.ExtractStats(identity.TemplateName).Icon;
+            var icon = _sim.Sim.Templates?.ExtractStats(templateName).Icon;
             if (!string.IsNullOrEmpty(icon)) tex = PortraitLoader.Load(icon);
         }
         catch { }
-        tex ??= LoadPortraitForTemplate(identity.TemplateName, identity.IsBuilding);
-        _portraitCache[identity.TemplateName] = tex;
+        tex ??= LoadPortraitForTemplate(templateName, isBuilding);
+        _portraitCache[templateName] = tex;
         return tex;
     }
 
-    private string GenericNameOf(IdentityComponent identity)
+    private string GenericNameOf(string templateName, string identityName)
     {
-        if (_genericNameCache.TryGetValue(identity.TemplateName, out var cached)) return cached;
-        string generic = identity.Name;
+        if (_genericNameCache.TryGetValue(templateName, out var cached)) return cached;
+        string generic = identityName;
         try
         {
-            var stats = _sim.Sim.Templates?.ExtractStats(identity.TemplateName);
+            var stats = _sim.Sim.Templates?.ExtractStats(templateName);
             if (stats != null && stats.GenericName.Length > 0) generic = stats.GenericName;
         }
         catch { }
-        _genericNameCache[identity.TemplateName] = generic;
+        _genericNameCache[templateName] = generic;
         return generic;
     }
 
-    /// <summary>单选详情(原版 detailsAreaSingle 的逐字段填充)。</summary>
+    /// <summary>单选详情(原版 detailsAreaSingle 的逐字段填充)。sim 态一趟聚合
+    /// (GuiInterface.GetSelectionDetails);名字/头像走模板缓存(数据层)。</summary>
     private void FillSingleDetails(EntityId ent)
     {
-        var identity = _sim.Sim.QueryInterface<IdentityComponent>(ent);
-        var health = _sim.Sim.QueryInterface<HealthComponent>(ent);
+        var d = _sim.Gui.GetSelectionDetails(ent);
 
-        _selIcon.Texture = ResolvePortrait(identity);
-        if (identity != null)
+        _selIcon.Texture = d != null ? ResolvePortrait(d.TemplateName, d.IsBuilding) : null;
+        if (d != null)
         {
             // 原版默认 howtoshownames=0:专名主显、通用名次显(无专名回退通用名)。
-            string generic = GenericNameOf(identity);
-            string specific = SpecificNameOf(identity);
+            string generic = d.TemplateName.Length > 0
+                ? GenericNameOf(d.TemplateName, d.IdentityName) : d.IdentityName;
+            string specific = d.TemplateName.Length > 0 ? SpecificNameOf(d.TemplateName) : "";
             _selName.Text = specific.Length > 0 ? specific : generic;
             _selName2.Text = generic;
         }
@@ -1821,21 +1821,15 @@ public sealed partial class HUD : CanvasLayer
             _selName2.Text = "";
         }
 
-        // 军衔图标(Basic/Advanced/Elite → ranks/ 图标;无件或无军衔隐藏)。
-        string rank = identity != null
-            ? identity.HasClass("Elite") ? "Elite"
-            : identity.HasClass("Advanced") ? "Advanced"
-            : identity.HasClass("Basic") ? "Basic" : ""
-            : "";
-        var rankTex = rank.Length > 0 ? LoadIcon($"ranks/{rank}") : null;
+        // 军衔图标(Basic/Advanced/Elite → ranks/ 图标;无军衔隐藏)。
+        var rankTex = d != null && d.Rank.Length > 0 ? LoadIcon($"ranks/{d.Rank}") : null;
         _rankIcon.Texture = rankTex;
         _rankIcon.Visible = rankTex != null;
 
         // 经验条(仅可晋升单位)。
-        var promotion = _sim.Sim.QueryInterface<PromotionComponent>(ent);
-        if (promotion != null && promotion.XpNext > 0)
+        if (d != null && d.XpNext > 0)
         {
-            _xpBar.Value = 100.0 * promotion.XP / promotion.XpNext;
+            _xpBar.Value = 100.0 * d.Xp / d.XpNext;
             _xpBar.Visible = true;
         }
         else
@@ -1845,36 +1839,34 @@ public sealed partial class HUD : CanvasLayer
 
         // 血条(原版 healthSection:无 Health 件整体隐藏——树/岩石不可攻击;
         // 尸体 hp=0 也按无血条处理,资源段上提到顶槽,与原版尸体显示一致)。
-        bool showHealth = health is { Max: > 0, Current: > 0 };
+        bool showHealth = d is { HasHealth: true };
         _selHealth.Visible = showHealth;
         _selHealthText.Visible = showHealth;
         if (showHealth)
         {
-            _selHealth.Value = 100.0 * health.Current / health.Max;
-            _selHealthText.Text = $"{health.Current}/{health.Max}";
+            _selHealth.Value = 100.0 * d!.HealthCurrent / d.HealthMax;
+            _selHealthText.Text = $"{d.HealthCurrent}/{d.HealthMax}";
         }
 
         // 占领条:仅可占领实体(Capturable)显示;分段宽=CP/max,玩家色,升序确定。
-        var capturable = _sim.Sim.QueryInterface<CapturableComponent>(ent);
-        float maxCp = capturable?.MaxCapturePoints.ToFloat() ?? 0f;
-        if (capturable != null && maxCp > 0f)
+        if (d is { HasCapturable: true })
         {
             float total = 0;
-            int n = System.Math.Min(capturable.CapturePoints.Length, CaptureBar.MaxPlayers);
+            int n = d.CapturePoints.Length;
             var sb = new System.Text.StringBuilder("Capture");
             for (int p = 0; p < n; p++)
             {
-                float cp = capturable.CapturePoints[p].ToFloat();
-                _selCapture.Fractions[p] = cp / maxCp;
+                float cp = d.CapturePoints[p];
+                _selCapture.Fractions[p] = cp / d.MaxCapturePoints;
                 total += cp;
                 if (cp > 0f) sb.Append($"  P{p}:{(int)cp}");
             }
             _selCapture.Count = n;
-            _selCapture.TooltipText = sb.Append($"/{(int)maxCp}").ToString();
+            _selCapture.TooltipText = sb.Append($"/{(int)d.MaxCapturePoints}").ToString();
             _selCapture.Visible = true;
             _selCapture.QueueRedraw();
             _captureLabel.Text = "Capture";
-            _captureStats.Text = $"{(int)total}/{(int)maxCp}";
+            _captureStats.Text = $"{(int)total}/{(int)d.MaxCapturePoints}";
         }
         else
         {
@@ -1885,17 +1877,16 @@ public sealed partial class HUD : CanvasLayer
 
         // 资源条(原版 resourceSection:gaia 资源/尸体剩余量;无 health 段时提到顶槽——
         // 原版 sectionPosTop/Middle/Bottom 重排,树/矿的资源段占据血条位置)。
-        var supply = _sim.Sim.QueryInterface<ResourceSupply>(ent);
-        bool showSupply = supply != null && supply.MaxAmount > 0;
+        bool showSupply = d is { HasSupply: true };
         float resY = showHealth ? 50f : 26f;
         _resLabel.Position = new Vector2(100, resY);
         _resStats.Position = new Vector2(100, resY);
         _resBar.Position = new Vector2(100, resY + 14);
         if (showSupply)
         {
-            _resLabel.Text = supply.Type.ToString();
-            _resStats.Text = $"{supply.Amount}/{supply.MaxAmount}";
-            _resBar.Value = 100.0 * supply.Amount / supply.MaxAmount;
+            _resLabel.Text = d!.SupplyType;
+            _resStats.Text = $"{d.SupplyAmount}/{d.SupplyMaxAmount}";
+            _resBar.Value = 100.0 * d.SupplyAmount / d.SupplyMaxAmount;
             _resBar.Visible = true;
         }
         else
@@ -1906,12 +1897,11 @@ public sealed partial class HUD : CanvasLayer
         }
 
         // 携带量(原版 resourceCarryingText/Icon:采集者身上的资源)。
-        var gatherer = _sim.Sim.QueryInterface<ResourceGatherer>(ent);
-        if (gatherer != null && gatherer.CarryAmount > 0)
+        if (d is { CarryAmount: > 0 })
         {
-            _carryText.Text = gatherer.CarryAmount.ToString();
-            _carryIcon.Texture = LoadTex($"session/icons/resources/{gatherer.CarryType.ToString().ToLowerInvariant()}.png")
-                ?? LoadTex($"icon_{gatherer.CarryType.ToString().ToLowerInvariant()}.png");
+            _carryText.Text = d.CarryAmount.ToString();
+            _carryIcon.Texture = LoadTex($"session/icons/resources/{d.CarryType}.png")
+                ?? LoadTex($"icon_{d.CarryType}.png");
             _carryIcon.Visible = true;
         }
         else
@@ -1921,19 +1911,15 @@ public sealed partial class HUD : CanvasLayer
         }
 
         // 攻防 tooltip(原版 attackAndResistanceStats 的悬浮详情)。
-        var attack = _sim.Sim.QueryInterface<AttackComponent>(ent);
-        var resistance = _sim.Sim.QueryInterface<ResistanceComponent>(ent);
-        if (attack != null || resistance != null)
+        if (d != null && (d.HasAttack || d.HasResistance))
         {
             var sb = new System.Text.StringBuilder();
-            if (attack != null)
-                sb.Append($"Attack: {attack.Damage.TotalPhysical}");
-            if (resistance != null)
+            if (d.HasAttack)
+                sb.Append($"Attack: {d.AttackPhysical}");
+            if (d.HasResistance)
             {
                 if (sb.Length > 0) sb.Append("  ");
-                sb.Append($"Resistance: H{resistance.Resistances.GetValueOrDefault(DamageType.Hack)} " +
-                    $"P{resistance.Resistances.GetValueOrDefault(DamageType.Pierce)} " +
-                    $"C{resistance.Resistances.GetValueOrDefault(DamageType.Crush)}");
+                sb.Append($"Resistance: H{d.ResistHack} P{d.ResistPierce} C{d.ResistCrush}");
             }
             _attackIcon.TooltipText = sb.ToString();
         }
@@ -1943,17 +1929,13 @@ public sealed partial class HUD : CanvasLayer
         }
 
         // 玩家带:色块 + 文明徽标 + 玩家名(原版 playerCivIcon/playerColorBackground/player)。
-        // 无 OwnershipComponent = gaia(原版 entState.player=0,玩家名 "Gaia")——此前按 -1
-        // 处理整条留空,gaia 单位/资源没有属主带,与 C++ 版不一致。
-        var owner = _sim.Sim.QueryInterface<OwnershipComponent>(ent);
-        int pid = owner?.PlayerId ?? 0;
+        // 无 OwnershipComponent = gaia(玩家名 "Gaia")。
+        if (d != null)
         {
-            _playerBand.Color = SimBridge.GetPlayerColor(pid) with { A = 0.55f };
-            var player = _sim.Sim.GetPlayerEntity(pid);
-            string civ = player?.Civ ?? "";
-            _playerLabel.Text = pid == 0 ? "Gaia" : $"Player {pid}";
-            var emblemTex = civ.Length > 0
-                ? LoadTex($"session/portraits/emblems/emblem_{CivEmblemNames.GetValueOrDefault(civ, "hellenes")}.png")
+            _playerBand.Color = SimBridge.GetPlayerColor(d.OwnerPlayerId) with { A = 0.55f };
+            _playerLabel.Text = d.OwnerPlayerId == 0 ? "Gaia" : $"Player {d.OwnerPlayerId}";
+            var emblemTex = d.OwnerCiv.Length > 0
+                ? LoadTex($"session/portraits/emblems/emblem_{CivEmblemNames.GetValueOrDefault(d.OwnerCiv, "hellenes")}.png")
                 : null;
             _playerCivEmblem.Texture = emblemTex;
             _playerCivEmblem.Visible = emblemTex != null;
@@ -2165,28 +2147,13 @@ public sealed partial class HUD : CanvasLayer
         _formationRow.Visible = true;
     }
 
-    /// <summary>研究进度条(原版 session_objects research progress):首个己方在研建筑
-    /// 的科技名+进度;图标取科技 JSON icon 的原版立绘。完成/无在研自动隐藏。</summary>
+    /// <summary>研究进度条(原版 session_objects research progress;桥 GetStartedResearch):
+    /// 首个己方在研建筑的科技名+进度;图标取科技 JSON icon 的原版立绘。完成/无在研自动隐藏。</summary>
     private void RefreshResearchProgress()
     {
-        string? tech = null;
-        float progress = 0f, total = 1f;
-        foreach (var eid in _sim.Sim.AllEntities)
-        {
-            var owner = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
-            if (owner == null || owner.PlayerId != (int)_sim.LocalPlayerId) continue;
-            var r = _sim.Sim.QueryInterface<ResearcherComponent>(eid);
-            if (r == null || !r.IsResearching || r.CurrentTech == null) continue;
-            tech = r.CurrentTech;
-            progress = r.Progress;
-            var tm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.TechnologyManager>(
-                _sim.Sim.GetPlayerEntityId((int)_sim.LocalPlayerId) ?? default);
-            var def = tm?.GetDefinition(tech);
-            if (def != null && def.ResearchTime > 0) total = def.ResearchTime;
-            break;
-        }
+        var research = _sim.Gui.GetStartedResearch((int)_sim.LocalPlayerId);
 
-        if (tech == null)
+        if (research == null)
         {
             if (_researchPanel.Visible) _researchPanel.Visible = false;
             _researchTech = "";
@@ -2194,16 +2161,13 @@ public sealed partial class HUD : CanvasLayer
         }
 
         _researchPanel.Visible = true;
-        _researchBar.Value = 100f * progress / total;
-        if (tech != _researchTech)
+        _researchBar.Value = 100f * research.Progress / research.TotalTime;
+        if (research.Tech != _researchTech)
         {
-            _researchTech = tech;
-            var tm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.TechnologyManager>(
-                _sim.Sim.GetPlayerEntityId((int)_sim.LocalPlayerId) ?? default);
-            var def = tm?.GetDefinition(tech);
-            _researchLabel.Text = def?.GenericName ?? tech;
-            _researchIcon.Texture = def != null && def.Icon.Length > 0
-                ? LoadPortraitFromIcon("technologies/" + def.Icon) : null;
+            _researchTech = research.Tech;
+            _researchLabel.Text = research.GenericName;
+            _researchIcon.Texture = research.Icon.Length > 0
+                ? LoadPortraitFromIcon("technologies/" + research.Icon) : null;
         }
     }
 

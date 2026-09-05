@@ -22,6 +22,9 @@ namespace ZeroAD.Godot;
 		private EntityId? _followTarget;
 		private bool _followActive;
 
+		/// <summary>sim 桥(Main._Ready 注入;跟随位置查询走 GuiInterface)。</summary>
+		public SimBridge? Sim { get; set; }
+
 		/// <summary>平滑加减速(原版 CameraController 的 CSmoothedValue):
 		/// 相机位置/缩放/旋转用目标值平滑逼近,停止时按 minDelta 截断——
 		/// 消除输入突变导致的画面抖动(原版 SmoothedValue.Update 语义)。</summary>
@@ -370,9 +373,15 @@ namespace ZeroAD.Godot;
     }
 
 	/// <summary>跟随目标的世界位置(原版 GetInterpolatedTransform 的简化——
-	/// 直接读 PositionComponent 当前位;消失/驻军 → null 停跟随)。</summary>
+	/// 直接读 PositionComponent 当前位;消失/驻军 → null 停跟随)。
+	/// 经 SimBridge.Gui 桥查询(Main 注入;未注入回退 SimSystem.Sim 全局单例)。</summary>
 	private Vector3? GetEntityWorldPosition(EntityId entity)
 	{
+		if (Sim?.Gui is { } gui)
+		{
+			var p = gui.GetWorldPosition(entity);
+			return p.HasValue ? new Vector3(p.Value.X, p.Value.Y, p.Value.Z) : null;
+		}
 		var sim = SimSystem.Sim;
 		if (sim == null) return null;
 		var pos = sim.QueryInterface<PositionComponent>(entity);

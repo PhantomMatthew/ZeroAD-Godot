@@ -18,7 +18,7 @@
 | M2 模拟组件 | ★★★★☆ | 83 JS 组件:22 ✅ / 15 🟡偏完整 / ~11 ❌ |
 | M3 寻路 | ★★★★☆ | 三引擎齐;缺异步任务、增量更新、pass class 数据驱动 |
 | M4 渲染 | ★★★★☆ | 地形/水/迷雾/领土/血条/集结点线/粒子(actor 装配+摧毁烟尘/建造扬尘/落水溅花触发点)/战场贴花齐;缺过场、天空 |
-| M5 GUI | ★★★★☆ | 页面基本齐(prelobby/campaigns/viewer/credits/mod 对话框/autostart 全落);剩引擎级 mod 挂载、GuiInterface 桥收敛 |
+| M5 GUI | ★★★★☆ | 页面基本齐(prelobby/campaigns/viewer/credits/mod 对话框/autostart 全落);GuiInterface 桥热路径收编(详情/选择圈/光标/研究/站姿/编队组/集结点/相机跟随);剩引擎级 mod 挂载、阵型行/生产条等低频段 |
 | M6 网络 | ★★★★★ | 锁步+OOS+大厅+观战+STUN+掉线 AI 接管(4b19ce4);真重连 beyond-upstream |
 | M7 存档录像 | ★★★★★ | 双闭环,亮点项 |
 | M8 Petra AI | ★★★★★ | 攻防军+运输+编组+存档骑缝全落地;bombingAttacks/外交应答/圣物编排(含治疗者训练+危急驻防撤退链+海图换面旗)清零 |
