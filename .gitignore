@@ -19,9 +19,21 @@ godot/.godot/uid_cache.bin
 
 # Godot converted art assets — build product of the asset pipeline
 # (godot/tools/run_full_pipeline.sh converts from binaries/data/mods/public/art
-# via Blender). Regenerable on demand; do NOT track the ~19000 files / ~3GB.
-# Run the pipeline after clone to repopulate godot/assets/.
-godot/assets/
+# via Blender).
+# GLB 网格/动画(+ .import 元数据,共 ~608MB)随仓库跟踪:克隆即得模型,
+# 免装 Blender 跑管线。纹理与 UI 图(~5.5G)仍是构建产物,不入库,管线再生。
+# 注意 gitignore 规则序:先放行两个目录及其子目录(否则无法深入再放行文件)。
+godot/assets/*
+!godot/assets/meshes/
+!godot/assets/animations/
+godot/assets/meshes/**/*
+godot/assets/animations/**/*
+!godot/assets/meshes/**/
+!godot/assets/animations/**/
+!godot/assets/meshes/**/*.glb
+!godot/assets/meshes/**/*.glb.import
+!godot/assets/animations/**/*.glb
+!godot/assets/animations/**/*.glb.import
 
 # Godot export output — standalone release builds (export_presets.cfg targets).
 # Multi-GB packages; distribute via CI artifacts / release channels, never git.
