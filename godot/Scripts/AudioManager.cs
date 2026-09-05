@@ -234,6 +234,22 @@ public static partial class AudioManager
         player.Play();
     }
 
+    /// <summary>直放单个音频文件(非声音组;原版 PlayUISound 的直路径等价——
+    /// flare 警报 alarmally_1.ogg 等散文件用)。relPath 相对 audio/ 目录
+    /// (如 "interface/alarm/alarmally_1.ogg")。channel: "ui"/"action"。</summary>
+    public static void PlayFile(string relPath, string channel = "ui")
+    {
+        if (_dataRoot == null) return;
+        var stream = LoadStream(ResolveAudio(relPath));
+        if (stream == null) return;
+        var player = NextPlayer();
+        player.Stream = stream;
+        float gain = _masterGain * (channel == "ui" ? _uiGain : _actionGain);
+        player.VolumeDb = Mathf.LinearToDb(Mathf.Max(gain, 0.0001f));
+        player.PitchScale = 1f;
+        player.Play();
+    }
+
     /// <summary>注册 3D 世界宿主(Main 场景;菜单/无宿主时位置音退化为 2D 池)。
     /// 重进场景时旧播放器随场景销毁,检测失效引用重建(与 2D 池同款)。</summary>
     public static void Init3D(Node3D worldHost)

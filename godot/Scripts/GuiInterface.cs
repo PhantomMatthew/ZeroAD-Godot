@@ -699,5 +699,27 @@ public sealed class GuiInterface
         return (port, farm, trade);
     }
 
+    // ── 空闲工人(原版 FindIdleUnits;小地图空闲工人钮的计数/循环共用)──
+
+    /// <summary>空闲工人 id 列表(升序,确定性):己方 + 有采集组件 + UnitAI 空闲
+    /// + 非驻防 + 有位置。原版按 idleClasses(Civilian/Trader/FishingBoat/Citizen)
+    /// 过滤,本版以"有 ResourceGatherer"为等价口径(记录在案)。</summary>
+    public List<EntityId> FindIdleUnits(int playerId)
+    {
+        var idle = new List<EntityId>();
+        foreach (var e in _cm.AllEntities)
+        {
+            var own = _cm.QueryInterface<OwnershipComponent>(e);
+            if (own == null || own.PlayerId != playerId) continue;
+            var gatherer = _cm.QueryInterface<ResourceGatherer>(e);
+            var ai = _cm.QueryInterface<UnitAIComponent>(e);
+            if (gatherer == null || ai == null || !ai.IsIdle || ai.IsGarrisoned) continue;
+            if (_cm.QueryInterface<PositionComponent>(e) == null) continue;
+            idle.Add(e);
+        }
+        idle.Sort((a, b) => a.Value.CompareTo(b.Value));
+        return idle;
+    }
+
     private ComponentManager cm() => _cm;
 }

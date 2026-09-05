@@ -1095,6 +1095,9 @@ public sealed partial class Main : Node3D
 		AddChild(_chatPanel);
 		// MP 收到聊天 → 转发到 SimEventBus（ChatPanel 统一订阅）。
 		_mp.OnChatReceived += OnMpChatReceived;
+		// MP 收到信号弹 → 互盟过滤后渲染(原版 handleFlare;SP 由 SendFlare 本地回显,
+		// 自己发的那枚在 TriggerFlare 已渲染,接收侧按 sender==local 跳过)。
+		_mp.OnFlareReceived += OnMpFlareReceived;
 		// 游戏事件 → 系统聊天消息（"Player N was defeated"）。
 		_sim.Sim.Events.PlayerDefeated += OnPlayerDefeatedChat;
 
@@ -2246,7 +2249,10 @@ public sealed partial class Main : Node3D
 			_sim.Sim.Events.CeasefireEnded -= OnCeasefireEnded;
 		}
 		if (_mp != null)
+		{
 			_mp.OnChatReceived -= OnMpChatReceived;
+			_mp.OnFlareReceived -= OnMpFlareReceived;
+		}
 	}
 
 	/// <summary>MP 收到聊天 → 转发到 SimEventBus（ChatPanel 统一订阅展示）。</summary>
@@ -2928,6 +2934,11 @@ public sealed partial class Main : Node3D
 			}
 			// F:跟随选中单位(原版 camera.follow 热键)。
 			if (key.Keycode == Key.F) FollowSelectedUnit();
+			// Period:空闲村民循环(原版 selection.idleworker 热键=Period)。
+			if (key.Keycode == Key.Period) CycleIdleWorker();
+			// Alt+V:外交颜色切换(原版 session.diplomacycolors 热键;小地图着色)。
+			if (key.Keycode == Key.V && key.AltPressed) _hud?.ToggleDiplomacyColors();
+			if (key.Keycode == Key.Escape) FlareArmed = false;
 			if (key.Keycode == Key.F5) QuickSave();
 			if (key.Keycode == Key.F9) QuickLoad();
 			// pause 热键(原版 MenuButtons.js:226 Pause hotkey):Pause/Break 键直接切暂停,
@@ -2968,6 +2979,15 @@ public sealed partial class Main : Node3D
 		{
 			if (mb.ButtonIndex == MouseButton.Left)
 			{
+				// Flare(原版 INPUT_FLARE + session.flare=K 修饰键):武装模式或
+				// 按住 K 的左键 = 发信号弹,不进入选择/放置流程。
+				if (FlareArmed || Input.IsKeyPressed(Key.K))
+				{
+					var flarePos = ScreenToWorld(mb.Position);
+					if (flarePos != null) TriggerFlare(flarePos.Value.X, flarePos.Value.Z);
+					FlareArmed = false;
+					return;
+				}
 				if (_placeBuildingMode)
 				{
 					// 原版 input.js INPUT_BUILDING_CLICK:按下记录起点,松开时若未拖过阈值
@@ -2993,7 +3013,11 @@ public sealed partial class Main : Node3D
 				_bandBox.Visible = false;
 			}
 			else if (mb.ButtonIndex == MouseButton.Right)
+			{
+				// Flare 武装模式:右键 = 取消(原版 INPUT_FLARE 右键退出)。
+				if (FlareArmed) { FlareArmed = false; return; }
 				HandleRightClick(mb.Position, mb.CtrlPressed);
+			}
 		}
 
 		if (@event is InputEventMouseMotion mm && _dragSelecting && mm.Position.DistanceTo(_dragStart) > 8f)
@@ -3839,35 +3863,26 @@ public sealed partial class Main : Node3D
 	public void FocusWorldPosition(float x, float z)
 		=> _camera.SetFocus(new Vector3(x, TerrainHeightService.Sample(x, z), z));
 
-	/// <summary>空闲村民循环(原版 MiniMapIdleWorkerButton):实体 id 升序取下一个
-	/// 空闲采集者(无订单+有采集组件+非驻防),聚焦相机并选中。</summary>
+	/// <summary>空闲村民循环(原版 MiniMapIdleWorkerButton/findIdleUnit;热键 Period):
+	/// 桥 FindIdleUnits(升序)取下一个空闲采集者,聚焦相机并选中。</summary>
 	private int _idleWorkerIndex = -1;
 
 	public void CycleIdleWorker()
 	{
-		var idle = new List<(EntityId e, float x, float z)>();
-		foreach (var eid in _sim.Sim.AllEntities)
-		{
-			var own = _sim.Sim.QueryInterface<OwnershipComponent>(eid);
-			if (own == null || own.PlayerId != (int)_sim.LocalPlayerId) continue;
-			var gatherer = _sim.Sim.QueryInterface<ResourceGatherer>(eid);
-			var ai = _sim.Sim.QueryInterface<UnitAIComponent>(eid);
-			if (gatherer == null || ai == null || !ai.IsIdle || ai.IsGarrisoned) continue;
-			var pos = _sim.Sim.QueryInterface<PositionComponent>(eid);
-			if (pos == null) continue;
-			idle.Add((eid, pos.Position.X.ToFloat(), pos.Position.Z.ToFloat()));
-		}
+		var idle = _sim.Gui.FindIdleUnits((int)_sim.LocalPlayerId);
 		if (idle.Count == 0)
 		{
 			_hud?.ShowToast("No idle workers");
 			return;
 		}
-		idle.Sort((a, b) => a.e.Value.CompareTo(b.e.Value));
 		_idleWorkerIndex = (_idleWorkerIndex + 1) % idle.Count;
-		var (e, x, z) = idle[_idleWorkerIndex];
+		var e = idle[_idleWorkerIndex];
 		_selectedEntities.Clear();
 		_selectedEntities.Add(e);
-		_camera.SetFocus(new Vector3(x, TerrainHeightService.Sample(x, z), z));
+		var pos = _sim.Gui.GetWorldPosition(e);
+		if (pos.HasValue)
+			_camera.SetFocus(new Vector3(pos.Value.X,
+				TerrainHeightService.Sample(pos.Value.X, pos.Value.Z), pos.Value.Z));
 	}
 
 	/// <summary>打包/解包所选攻城器(原版 pack_panel 按钮;PackComponent 自校验)。</summary>
@@ -3876,6 +3891,61 @@ public sealed partial class Main : Node3D
 		foreach (var unit in _selectedEntities)
 			if (_sim.Sim.QueryInterface<PackComponent>(unit) != null)
 				_sim.CommandPack(unit, unpack);
+	}
+
+	// ── Flare 信号弹(原版 input.js INPUT_FLARE + triggerFlareAction)──
+
+	/// <summary>Flare 模式(小地图钮武装):下一次左键(世界或小地图)发信号弹,
+	/// 右键/Esc 取消(原版 inputState 语义)。按住 K(原版 session.flare 修饰键)
+	/// 直接左键点发,不进模式。</summary>
+	public bool FlareArmed;
+	private long _lastFlareMsec = -10000;
+	private const long FlareCooldownMs = 3000;   // 原版 g_FlareCooldown(防滥用)
+
+	/// <summary>发信号弹(原版 triggerFlareAction):冷却 3s;世界标记(原版
+	/// AddTargetMarker special/flare_target_marker,6s 后消)+ 小地图脉冲圈 +
+	/// 警报音(原版 g_FlareSound=alarmally_1)+ MP 广播 + 系统聊天行。
+	/// 接收侧过滤在 OnMpFlareReceived(互盟才显示,原版 handleFlare)。</summary>
+	public void TriggerFlare(float x, float z)
+	{
+		long now = (long)Time.GetTicksMsec();
+		if (now < _lastFlareMsec + FlareCooldownMs) return;
+		_lastFlareMsec = now;
+		FlareArmed = false;
+		int lp = (int)_sim.LocalPlayerId;
+		RenderFlare(x, z, lp);
+		_mp.SendFlare(lp, x, z);
+		_sim.Sim.Events.RaiseChatMessage(new ZeroAD.Sim.Events.ChatMessageEvent
+		{ Kind = ZeroAD.Sim.Events.ChatMessageEvent.KindType.System, Text = $"Player {lp} sent a flare" });
+	}
+
+	/// <summary>MP 收到信号弹(原版 handleFlare):发送者互盟才显示;自己发的
+	/// 本地已渲染,跳过。</summary>
+	private void OnMpFlareReceived(int playerId, float x, float z)
+	{
+		int lp = (int)_sim.LocalPlayerId;
+		if (playerId == lp) return;
+		if (!_sim.Sim.Players.GetMutualAllies(lp).Contains(playerId)) return;
+		RenderFlare(x, z, playerId);
+	}
+
+	/// <summary>信号弹的本地渲染:世界标记(flare_target_marker actor,6s 后释放)
+	/// + 小地图脉冲圈 + 警报音。</summary>
+	private void RenderFlare(float x, float z, int senderPlayerId)
+	{
+		_hud?.AddMinimapFlare(x, z, senderPlayerId);
+		AudioManager.PlayFile("interface/alarm/alarmally_1.ogg");
+		float y = TerrainHeightService.Sample(x, z);
+		var marker = ActorLoader.Instance.Instantiate("special/flare_target_marker.xml",
+			(int)(senderPlayerId * 7919 + x * 31 + z), SimBridge.GetPlayerColor(senderPlayerId));
+		if (marker == null) return;
+		marker.Position = new Vector3(x, y + 0.2f, z);
+		_sim.UnitContainer.AddChild(marker);
+		var markerRef = marker;
+		GetTree().CreateTimer(6.0).Timeout += () =>
+		{
+			if (GodotObject.IsInstanceValid(markerRef)) markerRef.QueueFree();
+		};
 	}
 
 	// ── 编队组(原版 control groups,纯表现层)──

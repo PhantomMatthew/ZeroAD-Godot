@@ -17,6 +17,37 @@ public sealed partial class Minimap : Control
 
     private const int MapSize = 200;
 
+    /// <summary>外交颜色模式(原版 DiplomacyColors toggle;Alt+V/小地图钮):
+    /// 关 = 玩家本色;开 = 按立场 self 蓝/ally 绿/neutral 黄/enemy 红
+    /// (色值取 default.cfg gui.session.diplomacycolors.*)。</summary>
+    public bool DiplomacyColors;
+
+    // 外交色(default.cfg gui.session.diplomacycolors.{self,ally,neutral,enemy})。
+    private static readonly Color DiploSelf = new(21 / 255f, 55 / 255f, 149 / 255f);
+    private static readonly Color DiploAlly = new(86 / 255f, 180 / 255f, 31 / 255f);
+    private static readonly Color DiploNeutral = new(231 / 255f, 200 / 255f, 5 / 255f);
+    private static readonly Color DiploEnemy = new(150 / 255f, 20 / 255f, 20 / 255f);
+
+    /// <summary>展示色(小地图点 + 领土着色共用):外交模式按立场,否则玩家本色;
+    /// gaia(0)恒本色。</summary>
+    private Color DisplayedColor(int owner)
+    {
+        if (!DiplomacyColors || owner <= 0) return SimBridge.GetPlayerColor(owner);
+        int lp = (int)_sim.LocalPlayerId;
+        if (owner == lp) return DiploSelf;
+        if (_sim.Sim.Players.GetMutualAllies(lp).Contains(owner)) return DiploAlly;
+        if (_sim.Sim.Players.IsEnemy(lp, owner)) return DiploEnemy;
+        return DiploNeutral;
+    }
+
+    /// <summary>活跃信号弹(世界坐标 + 发送者 + 灭时刻;gui.session.flarelifetime=6s)。</summary>
+    private readonly List<(float X, float Z, int Player, long EndMsec)> _flares = new();
+    private const long FlareLifetimeMs = 6000;
+
+    /// <summary>登记一枚信号弹(小地图脉冲圈;世界侧标记由 Main 另放)。</summary>
+    public void AddFlare(float wx, float wz, int playerId)
+        => _flares.Add((wx, wz, playerId, (long)Time.GetTicksMsec() + FlareLifetimeMs));
+
     // C++ 小地图约定(CMiniMap::WorldSpaceToMiniMapSpace):x→右,z→上(z 大=北=屏顶)。
     // 本类所有"世界坐标→像素"都走这两个助手,勿内联展开。
     private static int Px(float wx, float worldSize) => (int)(wx / worldSize * MapSize);
@@ -46,6 +77,12 @@ public sealed partial class Minimap : Control
             float wx = local.X / MapSize * worldSize;
             // 对齐 C++ 小地图:z 大=北=屏顶(CMiniMap::GetMouseWorldCoordinates 自底向上量 py)。
             float wz = (MapSize - local.Y) / MapSize * worldSize;
+            // Flare 模式(原版 INPUT_FLARE 的小地图分支):左键 = 发信号弹,不挪相机。
+            if (_main.FlareArmed)
+            {
+                _main.TriggerFlare(wx, wz);
+                return;
+            }
             float h = TerrainHeightService.Sample(wx, wz);
             _main.SetCameraFocus(new Vector3(wx, h, wz));
         }
@@ -83,11 +120,9 @@ public sealed partial class Minimap : Control
 
             Color color;
             if (isBuilding || isUnit)
-            {
-                color = ownerPlayerId == lp
-                    ? new Color(0.08f, 0.22f, 0.58f)
-                    : new Color(0.72f, 0.06f, 0.06f);
-            }
+                // 展示色:外交模式按立场,否则玩家本色(原版默认;此前硬编码
+                // 蓝己/红他=外交色近似,现由 DiplomacyColors 开关区分)。
+                color = DisplayedColor(ownerPlayerId);
             else if (name.Contains("Tree"))
                 color = new Color(0.1f, 0.45f, 0.1f);
             else
@@ -154,7 +189,7 @@ public sealed partial class Minimap : Control
                 var fx = Fixed.FromFloat((px + 0.5f) / MapSize * worldSize);
                 int owner = tm.GetOwner(fx, fz);
                 if (owner <= 0) continue;
-                Color c = SimBridge.GetPlayerColor(owner);
+                Color c = DisplayedColor(owner);
                 float a = 0.35f * (tm.IsTerritoryBlinking(fx, fz) ? blink : 1f);
                 int cr = (int)(c.R * 255), cg = (int)(c.G * 255), cb = (int)(c.B * 255);
                 int o = (pz * MapSize + px) * 4;
@@ -191,6 +226,24 @@ public sealed partial class Minimap : Control
         }
 
         DrawPlayerMarker(worldSize);
+
+        // 信号弹(原版 minimap flare:6s 寿命,脉冲扩张圈,尾段淡出;
+        // flare_animation_speed=10.67 的相位脉冲)。
+        long now = (long)Time.GetTicksMsec();
+        for (int i = _flares.Count - 1; i >= 0; i--)
+        {
+            var f = _flares[i];
+            if (now >= f.EndMsec) { _flares.RemoveAt(i); continue; }
+            float remain = (f.EndMsec - now) / 1000f;
+            float phase = now / 1000f * 10.67f;
+            float radius = 6f + 4f * Mathf.Abs(Mathf.Sin(phase));
+            float alpha = Mathf.Clamp(remain / 0.5f, 0f, 1f);   // 尾部 0.5s 淡出
+            var fc = DisplayedColor(f.Player) with { A = alpha };
+            int fpx = Px(f.X, worldSize);
+            int fpz = Pz(f.Z, worldSize);
+            DrawArc(new Vector2(fpx, fpz), radius, 0, Mathf.Tau, 24, fc, 2f);
+            DrawArc(new Vector2(fpx, fpz), radius * 0.45f, 0, Mathf.Tau, 24, fc, 1.5f);
+        }
 
         if (_circleMask != null)
             DrawTextureRect(_circleMask, new Rect2(Vector2.Zero, MapSize, MapSize), false);

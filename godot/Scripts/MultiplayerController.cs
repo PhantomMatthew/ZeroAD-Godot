@@ -632,6 +632,36 @@ public sealed partial class MultiplayerController : Node
             RpcId(1, nameof(SubmitChatToHost), playerId, text);  // client → host
     }
 
+    // ── Flare 信号弹(直接网络消息,不进锁步;匹配原版 NMT_FLARE/SendNetworkFlare)──
+
+    /// <summary>收到信号弹(发送者玩家号 + 世界坐标;SP 本地回显,MP host 广播)。
+    /// 显示侧负责盟友过滤(原版 handleFlare:互盟/观战才显示)。</summary>
+    public event System.Action<int, float, float>? OnFlareReceived;
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void SubmitFlareToHost(int playerId, float x, float z)
+    {
+        int sender = Multiplayer.GetRemoteSenderId();
+        if (_peerToPlayer.TryGetValue(sender, out var resolved))
+            playerId = (int)resolved;
+        Rpc(nameof(ReceiveFlare), playerId, x, z);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = true, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void ReceiveFlare(int playerId, float x, float z)
+        => OnFlareReceived?.Invoke(playerId, x, z);
+
+    /// <summary>发送信号弹(与 SendChat 同路:SP 回显;MP client→host→广播)。</summary>
+    public void SendFlare(int playerId, float x, float z)
+    {
+        if (_peer == null)
+            OnFlareReceived?.Invoke(playerId, x, z);
+        else if (_isHost)
+            Rpc(nameof(ReceiveFlare), playerId, x, z);
+        else
+            RpcId(1, nameof(SubmitFlareToHost), playerId, x, z);
+    }
+
     public void Shutdown()
     {
         if (_peer != null)
