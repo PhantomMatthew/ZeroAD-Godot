@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Maths;
@@ -161,5 +162,68 @@ public sealed class ObstructionMitigationTests
         var final = w.Cm.QueryInterface<PositionComponent>(walker)!.Position;
         Assert.True(maxDeviation < 1.5f, $"beeline deviated {maxDeviation:F2}m unexpectedly");
         Assert.Equal(56f, final.X.ToFloat(), 0);
+    }
+
+    // --- 编队控制器绕障跳跃(原版 UnitAI.js AttemptObstructionMitigation:6786-6838)---
+
+    private static EntityId MakeFormationMember(ComponentManager cm, float x, float z)
+    {
+        var e = cm.CreateEntity();
+        var pos = new PositionComponent();
+        cm.AddComponent(e, pos);
+        pos.Position = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+        cm.AddComponent(e, new UnitMotion());
+        return e;
+    }
+
+    [Fact]
+    public void FormationController_Stuck_JumpsToMemberClosestToDestination_ThenCooldown()
+    {
+        // 裸世界(无寻路/无障碍):落点校验两段都跳过,专测跳跃决策 + 5s 冷却。
+        var cm = new ComponentManager(42);
+        SimSystem.Init(cm);
+        var controller = cm.CreateEntity();
+        var ctrlPos = new PositionComponent();
+        cm.AddComponent(controller, ctrlPos);
+        ctrlPos.Position = new FixedVector3D(Fixed.Zero, Fixed.Zero, Fixed.Zero);
+        var ctrlMotion = new UnitMotion();
+        cm.AddComponent(controller, ctrlMotion);
+        var ai = new UnitAIComponent();
+        cm.AddComponent(controller, ai);
+        ai.InitAsFormationController();
+        var formation = new FormationComponent { Shape = "square", RequiredMemberCount = 2 };
+        cm.AddComponent(controller, formation);
+
+        // 成员:近目标者 (90,0),远者 (0,10);SetMembers → 控制器跳到质心 (45,5)。
+        var memberNear = MakeFormationMember(cm, 90f, 0f);
+        var memberFar = MakeFormationMember(cm, 0f, 10f);
+        formation.SetMembers(cm, new List<EntityId> { memberNear, memberFar });
+
+        // 锁死控制器移动(Speed=0 → 看门狗 0.6s 窗口零位移 → IsStuckThisLeg)。
+        // ComputeMotionParameters 只在 SetMembers 时跑,后置清零不被覆写。
+        ctrlMotion.Speed = Fixed.Zero;
+        var dest = new FixedVector2D(Fixed.FromInt(100), Fixed.Zero);
+        ai.Walk(dest);
+        ai.Tick(0.1f, cm);   // 派单 → FORMATIONCONTROLLER.WALKING(Enter 重排 + MoveToPoint)
+        Assert.Equal("FORMATIONCONTROLLER.WALKING", ai.FsmStateName);
+
+        for (int i = 0; i < 8; i++) ctrlMotion.Tick(0.1f);   // 0.8s 零位移
+        Assert.True(ctrlMotion.IsStuckThisLeg);
+
+        ai.Tick(0.1f, cm);   // Timer → 绕障跳跃(成员 (90,0) 比控制器近 >2m)
+        Assert.Equal(90f, ctrlPos.Position.X.ToFloat(), 3);
+        Assert.Equal(0f, ctrlPos.Position.Z.ToFloat(), 3);
+        Assert.False(ctrlMotion.IsStuckThisLeg);   // 跳后重解路径,信号清零
+
+        // 冷却:把远成员挪到正目标点(距 0 < 控制器距 10 − 2,本该再跳),
+        // 但 5s 冷却内不得再跳。
+        cm.QueryInterface<PositionComponent>(memberFar)!.Position =
+            new FixedVector3D(Fixed.FromInt(100), Fixed.Zero, Fixed.Zero);
+        // 跳跃后看门狗锚点仍是跳前位置:首个窗口量到"位移 45m"(假恢复),
+        // 第二窗口才重新检出卡死——故需 >0.6+0.6s。
+        for (int i = 0; i < 14; i++) ctrlMotion.Tick(0.1f);
+        Assert.True(ctrlMotion.IsStuckThisLeg);
+        ai.Tick(0.1f, cm);
+        Assert.Equal(90f, ctrlPos.Position.X.ToFloat(), 3);
     }
 }

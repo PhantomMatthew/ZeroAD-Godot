@@ -93,6 +93,7 @@ namespace ZeroAD.Sim.Net
                 case NetCommandType.AttackWalk: ApplyAttackWalk(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.WalkToRange: ApplyWalkToRange(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.SetupTradeRoute: ApplySetupTradeRoute(new EntityId(cmd.EntityId), cmd); break;
+                case NetCommandType.CancelSetupTradeRoute: ApplyCancelSetupTradeRoute(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.CollectTreasure: ApplyCollectTreasure(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.Guard: ApplyGuard(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.Patrol: ApplyPatrol(new EntityId(cmd.EntityId), cmd); break;
@@ -711,12 +712,31 @@ namespace ZeroAD.Sim.Net
 
         private void ApplySetupTradeRoute(EntityId trader, NetCommand cmd)
         {
-            // SetupTradeRoute = TraderComponent.SetTargetMarket(原版 setup-trade-route 命令):
-            // 目标市场(IntParam1),源市场=cmd.EntityId 路线上另一端(由 Trader 组件自洽)。
+            // SetupTradeRoute(原版 setup-trade-route 命令 → UnitAI.SetupTradeRoute):
+            // IntParam1=目标市场,IntParam2=源市场(0=无),FixedParam1=queued。
+            // 走 UnitAI 入口:CanTrade 失败 → WalkToTarget 回退;双市场齐 → 推 Trade 订单
+            // (商队自动往返);单市场 → 走向首市场待命。无 UnitAI 的市场实体 → 仅记账。
             var target = new EntityId((uint)cmd.IntParam1);
-            var tc = _cm.QueryInterface<TraderComponent>(trader);
-            tc?.SetTargetMarket(_cm, target);
+            EntityId? source = cmd.IntParam2 != 0 ? new EntityId((uint)cmd.IntParam2) : null;
+            bool queued = cmd.FixedParam1 != 0;
+            var ai = _cm.QueryInterface<UnitAIComponent>(trader);
+            if (ai != null)
+                ai.SetupTradeRoute(_cm, target, source, route: null, queued);
+            else
+                _cm.QueryInterface<TraderComponent>(trader)?.SetTargetMarket(_cm, target, source);
             _cm.Events.RaisePlayerCommand(new PlayerCommandEvent { Type = "setup-trade-route", Target = target });
+        }
+
+        private void ApplyCancelSetupTradeRoute(EntityId trader, NetCommand cmd)
+        {
+            // 原版 cancel-setup-trade-route → UnitAI.CancelSetupTradeRoute:
+            // 摘掉待定首市场(Trader.RemoveTargetMarket,仅单市场可摘)。
+            var target = new EntityId((uint)cmd.IntParam1);
+            var ai = _cm.QueryInterface<UnitAIComponent>(trader);
+            if (ai != null)
+                ai.CancelSetupTradeRoute(_cm, target);
+            else
+                _cm.QueryInterface<TraderComponent>(trader)?.RemoveTargetMarket(_cm, target);
         }
 
         private void ApplyCollectTreasure(EntityId collector, NetCommand cmd)

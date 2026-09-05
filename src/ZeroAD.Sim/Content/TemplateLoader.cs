@@ -361,6 +361,11 @@ namespace ZeroAD.Sim.Content
                 var stance = unitAi.GetChild("DefaultStance");
                 if (stance.IsOk)
                     stats.DefaultStance = stance.ToString().Trim();
+                // UnitAI/CanGuard(原版 template.CanGuard == "true";template_unit=true,
+                // fauna/siege/ship/trader/catafalque 覆盖 false)。无节点 → false(原版
+                // undefined ≠ "true");真单位模板经继承链必带(template_unit 兜底 true)。
+                var canGuard = unitAi.GetChild("CanGuard");
+                stats.CanGuard = canGuard.IsOk && canGuard.ToString().Trim() == "true";
                 if (unitAi.GetChild("RoamDistance").IsOk)
                     stats.RoamDistance = unitAi.GetChild("RoamDistance").ToFixed().ToFloat();
                 if (unitAi.GetChild("FleeDistance").IsOk)
@@ -1552,6 +1557,9 @@ namespace ZeroAD.Sim.Content
         public string ResearchableTechnologies = "";
         /// <summary>UnitAI/Formations tokens(可编队形列表,special/formations/{shape} 全名)。</summary>
         public string FormationShapes = "";
+        /// <summary>UnitAI/CanGuard(原版 template.CanGuard == "true";无 UnitAI 节点
+        /// 的建筑/无该子节点 → false)。</summary>
+        public bool CanGuard;
 
         /// <summary>升级目标模板(Upgrade 首个子节点的 Entity;含 {civ} 占位)。空 = 不可升级。</summary>
         public string UpgradeToTemplate = "";

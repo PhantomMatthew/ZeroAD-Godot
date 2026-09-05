@@ -430,7 +430,11 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
     /// <summary>原版 UnitAI.SetupTradeRoute(集结点贸易链):建双市场路由
     /// (Trader.SetTargetMarket(target, source))+ Trade 订单带航线 waypoints。
-    /// 不可贸易 → 退化走向目标(原版 WalkToTarget);路由未变更 → 不下单。</summary>
+    /// 不可贸易 → 退化走向目标(原版 WalkToTarget);路由未变更 → 不下单;
+    /// 双市场齐 → AddOrder Trade(force:false,原版同款,可被受击响应打断);
+    /// 否则走向首市场待命(原版 else 分支 WalkToTarget(firstMarket))。
+    /// 已知差异(不移植):AI BackToWork 捷径(UnitAI.js:6006-6019,workOrders 未移植)
+    /// 与编队控制器分支(CallMemberFunction AddOrder Trade + Disband,6041-6047)。</summary>
     public void SetupTradeRoute(ComponentManager cm, EntityId target, EntityId? source,
         List<FixedVector2D>? route, bool queued)
     {
@@ -444,8 +448,33 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         }
         if (!trader.SetTargetMarket(cm, target, source)) return;
         if (trader.HasBothMarkets())
+        {
             PushOrder(new UnitOrder
             { Type = "Trade", Target = trader.FirstMarket, Queued = queued, Route = route });
+        }
+        else if (trader.FirstMarket is { } first)
+        {
+            // 单市场:走向首市场待命(原版 else 分支;第二市场设好后由后续命令接续)。
+            var pos = cm.QueryInterface<PositionComponent>(first);
+            if (pos != null)
+                Walk(new FixedVector2D(pos.Position.X, pos.Position.Z), queued);
+        }
+    }
+
+    /// <summary>原版 UnitAI.CancelSetupTradeRoute:摘掉待定首市场(仅单市场可摘,
+    /// Trader.RemoveTargetMarket);编队控制器广播成员(原版 CallMemberFunction;
+    /// 控制器无 Trader 件 → 整单无效,原版同款早退)。</summary>
+    public void CancelSetupTradeRoute(ComponentManager cm, EntityId target)
+    {
+        var trader = cm.QueryInterface<TraderComponent>(Entity);
+        if (trader == null) return;
+        trader.RemoveTargetMarket(cm, target);
+        if (!IsFormationController) return;
+        var formation = cm.QueryInterface<FormationComponent>(Entity);
+        if (formation == null) return;
+        foreach (var member in formation.Members)
+            if (member != Entity)
+                cm.QueryInterface<UnitAIComponent>(member)?.CancelSetupTradeRoute(cm, target);
     }
     public void Pack() => PushOrder(new UnitOrder { Type = "Pack" });
     public void Unpack() => PushOrder(new UnitOrder { Type = "Unpack" });
@@ -581,9 +610,31 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     }
 
 
-    /// <summary>护卫(原版 Guard):跟随友方目标并响应其周边战斗;目标受伤时可治疗者自动治疗。</summary>
-    public void Guard(EntityId target, bool queued = false) =>
+    /// <summary>护卫(原版 Guard):跟随友方目标并响应其周边战斗;目标受伤时可治疗者自动治疗。
+    /// 模板 UnitAI/CanGuard=false(动物/攻城器/船/商队)→ 退化走向目标(原版 WalkToTarget 回退)。</summary>
+    public void Guard(EntityId target, bool queued = false)
+    {
+        if (!CanGuard(SimSystem.Sim))
+        {
+            var pos = SimSystem.Sim?.QueryInterface<PositionComponent>(target);
+            if (pos != null)
+                Walk(new FixedVector2D(pos.Position.X, pos.Position.Z), queued);
+            return;
+        }
         PushOrder(new UnitOrder { Type = "Guard", Target = target, Queued = queued, Force = !queued });
+    }
+
+    /// <summary>原版 UnitAI.CanGuard:编队控制器恒可(成员各自判断);否则模板
+    /// UnitAI/CanGuard == "true"。无模板库(纯内核测试)→ 按 template_unit 默认 true。</summary>
+    public bool CanGuard(ComponentManager? cm)
+    {
+        if (IsFormationController) return true;
+        var identity = cm?.QueryInterface<IdentityComponent>(Entity);
+        if (identity == null) return true;
+        Content.TemplateStats? stats = null;
+        try { stats = cm!.Templates?.ExtractStats(identity.TemplateName); } catch { }
+        return stats?.CanGuard ?? true;
+    }
 
     /// <summary>原版 UnitAI.IsGuardOf:我正在护卫的目标(无 = null)。</summary>
     public bool IsGuardOf(EntityId target) => _isGuardOf == target;
@@ -733,6 +784,9 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     private float _chaseElapsed;
     /// <summary>WAF/巡逻/护卫的索敌节流器(与 StanceIdleScan 同款 1s)。</summary>
     private float _combatScanElapsed;
+    /// <summary>编队控制器绕障跳跃冷却(原版 obstructionMitigationAttempted + 5s
+    /// SetTimeout 复位;UnitAI.js:6786-6838)。瞬态不入档(原版同:Timer 状态不序列化)。</summary>
+    private float _obstructionMitigationCooldown;
 
     private void FinishOrder()
     {
@@ -794,6 +848,8 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         // 驻防中:订单队列冻结(对齐原版 isGarrisoned 时 FinishOrder 不派发后续订单;
         // 新入队指令留待出驻后处理)。
         if (IsGarrisoned) return;
+        if (_obstructionMitigationCooldown > 0f)
+            _obstructionMitigationCooldown -= dt;   // 原版 5s SetTimeout 复位
 
         long t0 = ProfSw.ElapsedTicks;
         // Dispatch any newly-queued order first (the Order.X handler sets the active state).
@@ -954,11 +1010,12 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             }
             guard.AddGuard(u.Entity);
             u._combatScanElapsed = 0;
-            if (InGuardRange(u, t, m.Cm))
+            var guardRange = GuardRangeOf(u, m.Cm);
+            if (InGuardRange(u, t, m.Cm, guardRange))
                 u.FsmNextState = "GUARD.GUARDING";
             else if (m.Cm.QueryInterface<UnitMotion>(u.Entity) != null)
             {
-                MoveToTargetEdge(u, t, m.Cm, Fixed.FromInt(GuardRange));
+                MoveToTargetEdge(u, t, m.Cm, guardRange);
                 u.FsmNextState = "GUARD.ESCORTING";
             }
             else
@@ -1611,25 +1668,40 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             .On("Timer", (u, m) =>
             {
                 if (u._isGuardOf is not { } t || !ShouldGuard(u, t, m.Cm!)) { u.FinishOrder(); return; }
-                if (InGuardRange(u, t, m.Cm!))
+                var guardRange = GuardRangeOf(u, m.Cm!);
+                // 原版 ESCORTING Timer:3×guardRange 内速度跟随被护方
+                // (TryMatchTargetSpeed(isGuardOf, mayRun:false) → 速度上限 = min(基速, 目标速))。
+                var myMotion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
+                if (myMotion != null && InGuardRange(u, t, m.Cm, guardRange * 3))
+                {
+                    var tMotion = m.Cm.QueryInterface<UnitMotion>(t);
+                    myMotion.FollowSpeedCap = tMotion != null && tMotion.CurrentSpeed > Fixed.Zero
+                        ? (tMotion.CurrentSpeed < myMotion.Speed ? tMotion.CurrentSpeed : myMotion.Speed)
+                        : null;
+                }
+                else if (myMotion != null)
+                    myMotion.FollowSpeedCap = null;
+                if (InGuardRange(u, t, m.Cm, guardRange))
                 {
                     StopMoving(u);
                     u.FsmNextState = "GUARD.GUARDING";
                     return;
                 }
-                var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
-                if (motion != null && !motion.HasMoveTarget)
-                    MoveToTargetEdge(u, t, m.Cm, Fixed.FromInt(GuardRange));
-            });
+                if (myMotion != null && !myMotion.HasMoveTarget)
+                    MoveToTargetEdge(u, t, m.Cm, guardRange);
+            })
+            // 离态清速度跟随上限(不留陈旧减速到 GUARDING/其他订单)。
+            .Leave(u => SimSystem.GetComponent<UnitMotion>(u.Entity)?.ClearFollowSpeedCap());
         spec.State("INDIVIDUAL").State("GUARD").State("GUARDING")
             .On("Timer", (u, m) =>
             {
                 if (u._isGuardOf is not { } t || !ShouldGuard(u, t, m.Cm!)) { u.FinishOrder(); return; }
+                var guardRange = GuardRangeOf(u, m.Cm!);
                 // 出护卫半径 → 回到追赶(原版 GUARDING Timer 同款)
-                if (!InGuardRange(u, t, m.Cm!))
+                if (!InGuardRange(u, t, m.Cm!, guardRange))
                 {
                     if (m.Cm!.QueryInterface<UnitMotion>(u.Entity) == null) { u.FinishOrder(); return; }
-                    MoveToTargetEdge(u, t, m.Cm, Fixed.FromInt(GuardRange));
+                    MoveToTargetEdge(u, t, m.Cm, guardRange);
                     u.FsmNextState = "GUARD.ESCORTING";
                     return;
                 }
@@ -2238,6 +2310,8 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 // 原版 UpdateTwinFormationsForMerge 由 MovementUpdate 驱动(移动途中持续
                 // 检查);2s 计时器对短行军太稀(6m 一跳 ~1s 即到,检查永远赶不上)——每拍查。
                 fc2?.MergeTwinFormations(m.Cm);
+                // 绕障缓释(原版 MovementUpdate veryObstructed → AttemptObstructionMitigation)。
+                TryObstructionMitigation(u, m.Cm);
                 var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
                 if (motion != null && !motion.HasMoveTarget)
                     u.FinishOrder();
@@ -2263,6 +2337,8 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             })
             .On("Timer", (u, m) =>
             {
+                // 绕障缓释(原版 MovementUpdate veryObstructed → AttemptObstructionMitigation)。
+                TryObstructionMitigation(u, m.Cm!);
                 u._combatScanElapsed += m.Dt;
                 if (u._combatScanElapsed >= StanceScanIntervalCombat)
                 {
@@ -2299,6 +2375,9 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             })
             .On("Timer", (u, m) =>
             {
+                // 绕障缓释(原版 PATROLLING 的 MovementUpdate veryObstructed →
+                // AttemptObstructionMitigation 并 return)。
+                TryObstructionMitigation(u, m.Cm!);
                 var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
                 if (motion != null && !motion.HasMoveTarget)
                 {
@@ -2604,6 +2683,90 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         float dx = point.X.ToFloat() - pos.Position.X.ToFloat();
         float dz = point.Y.ToFloat() - pos.Position.Z.ToFloat();
         return dx * dx + dz * dz <= range * range;
+    }
+
+    // =========================================================================
+    // 编队控制器绕障缓释(原版 UnitAI.js AttemptObstructionMitigation:6786-6838):
+    // 控制器(大净空)被障碍卡死但成员仍能走时,控制器跳到"离目的地最近的成员"
+    // 位置绕过障碍;该成员须比控制器离目的地近 >2m;5s 冷却防鬼畜。
+    // 触发点 = 控制器 WALKING/WALKINGANDFIGHTING/PATROLLING 的 Timer(上游是
+    // MovementUpdate 的 veryObstructed;我们用 UnitMotion.IsStuckThisLeg 看门狗信号)。
+    // =========================================================================
+
+    /// <summary>卡死且冷却完毕 → 跳最近成员位。落点校验:ObstructionManager 无推出
+    /// 兜底,故跳前必须确认可站立(不与非本控制组的 BlockMovement 形状重叠;
+    /// 有寻路网格时再查控制器通行类的 navcell 可通行)。</summary>
+    private void AttemptObstructionMitigation(ComponentManager cm, FixedVector2D destination)
+    {
+        if (_obstructionMitigationCooldown > 0f) return;
+        var formation = cm.QueryInterface<FormationComponent>(Entity);
+        if (formation == null) return;
+        var closest = formation.GetClosestMemberToPosition(cm, destination);
+        if (closest is not { } member) return;
+        var memberPos = cm.QueryInterface<PositionComponent>(member);
+        var ctrlPos = cm.QueryInterface<PositionComponent>(Entity);
+        if (memberPos == null || ctrlPos == null || !memberPos.InWorld) return;
+
+        // 成员比控制器离目的地近 >2m 才跳(原版 distanceTo 差值判定,定点)。
+        var memberDiff = new FixedVector2D(
+            destination.X - memberPos.Position.X, destination.Y - memberPos.Position.Z);
+        var ctrlDiff = new FixedVector2D(
+            destination.X - ctrlPos.Position.X, destination.Y - ctrlPos.Position.Z);
+        var closerThreshold = ctrlDiff.Length() - Fixed.FromInt(2);
+        if (closerThreshold <= Fixed.Zero
+            || memberDiff.CompareLength(closerThreshold) >= 0)
+            return;
+        if (!ControllerCanStandAt(cm, memberPos.Position.X, memberPos.Position.Z))
+            return;
+
+        // 跳:直接改 Position + NotifyPositionChanged
+        // (Formation.SetupPositionAndHandleRotation 同款模式)。
+        var old = new FixedVector2D(ctrlPos.Position.X, ctrlPos.Position.Z);
+        ctrlPos.Position = new FixedVector3D(memberPos.Position.X, memberPos.Position.Y,
+            memberPos.Position.Z);
+        cm.NotifyPositionChanged(Entity, old,
+            new FixedVector2D(ctrlPos.Position.X, ctrlPos.Position.Z));
+        _obstructionMitigationCooldown = 5f;
+        // 跳后从落点重解路径(旧路标在障碍另一侧,续走会回溯再卡)。
+        cm.QueryInterface<UnitMotion>(Entity)?.MoveToPoint(destination);
+    }
+
+    /// <summary>落点可站立校验(见 <see cref="AttemptObstructionMitigation"/>)。</summary>
+    private bool ControllerCanStandAt(ComponentManager cm, Fixed x, Fixed z)
+    {
+        var obs = cm.QueryInterface<ObstructionComponent>(Entity);
+        var mgr = SimSystem.Obstructions;
+        if (obs != null && mgr != null)
+        {
+            uint group = obs.ControlGroup;
+            ObstructionShapeFilter filter = (_, flags, g, g2) =>
+                g == group || g2 == group || (flags & ObstructionFlags.BlockMovement) == 0;
+            if (mgr.TestUnitShape(filter, x, z, obs.GetSize()).Count > 0)
+                return false;
+        }
+        var pf = SimSystem.Pathfinder;
+        var motion = cm.QueryInterface<UnitMotion>(Entity);
+        if (pf?.PassabilityGrid is { } grid && motion != null)
+        {
+            var cls = pf.GetClassByName(motion.PassClassName) ?? pf.DefaultClass;
+            int ni = Pathfinding.PathfindingCore.WorldToNavcell(x);
+            int nj = Pathfinding.PathfindingCore.WorldToNavcell(z);
+            if (ni < 0 || nj < 0 || ni >= grid.W || nj >= grid.H)
+                return false;
+            if (!Pathfinding.PathfindingCore.IsPassable(grid.Get(ni, nj), cls.Mask))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>控制器三态 Timer 共用的触发门:卡死信号 + 订单带目的地 → 尝试跳。</summary>
+    private static void TryObstructionMitigation(UnitAIComponent u, ComponentManager cm)
+    {
+        if (u._obstructionMitigationCooldown > 0f) return;
+        if (u.CurrentOrder is not { } order) return;
+        var motion = cm.QueryInterface<UnitMotion>(u.Entity);
+        if (motion == null || !motion.IsStuckThisLeg) return;
+        u.AttemptObstructionMitigation(cm, order.Position);
     }
 
     /// <summary>按订单类型向成员广播对应个体订单(原版 CallMemberFunction 的
@@ -3118,32 +3281,34 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
 
     /// <summary>偏好分组取目标(原版 AttackEntitiesByPreference):
     /// 按攻击件 GetPreference 升序分组,同组内最近优先;无偏好(动物等)垫底。
-    /// 原版对 pref==0 短路直应——这里统一返回全表最优。</summary>
+    /// 原版对 pref==0 短路直应——这里统一返回全表最优。
+    /// 距离比较用定点 internal 差平方(不开方不 float,跨平台逐位一致;
+    /// 16.16 内值 ~6.6e7/1000m,平方和 ~8.6e15 ≪ long 上限)。</summary>
     private EntityId? PickTargetByPreference(ComponentManager cm, List<EntityId> enemies)
     {
         if (enemies.Count == 0) return null;
         var attack = cm.QueryInterface<AttackComponent>(Entity);
         if (attack == null) return enemies[0];
         var pos = cm.QueryInterface<PositionComponent>(Entity);
-        float px = pos?.Position.X.ToFloat() ?? 0f;
-        float pz = pos?.Position.Z.ToFloat() ?? 0f;
+        long px = pos?.Position.X.InternalValue ?? 0;
+        long pz = pos?.Position.Z.InternalValue ?? 0;
 
         EntityId? best = null;
         int bestPref = int.MaxValue;
-        float bestDist = float.MaxValue;
+        long bestDist2 = long.MaxValue;
         foreach (var e in enemies)
         {
             int pref = attack.GetPreference(cm, e) ?? int.MaxValue - 1;
             var ep = cm.QueryInterface<PositionComponent>(e);
-            float dx = (ep?.Position.X.ToFloat() ?? 0f) - px;
-            float dz = (ep?.Position.Z.ToFloat() ?? 0f) - pz;
-            float dist = dx * dx + dz * dz;
+            long dx = (ep?.Position.X.InternalValue ?? 0) - px;
+            long dz = (ep?.Position.Z.InternalValue ?? 0) - pz;
+            long dist2 = dx * dx + dz * dz;
             // 偏好升序 → 距离升序(确定性 tie-break:id 升序)。
-            if (pref < bestPref || pref == bestPref && dist < bestDist
-                || best == null || pref == bestPref && dist == bestDist && best != null && e.Value < best.Value.Value)
+            if (best == null || pref < bestPref || pref == bestPref && dist2 < bestDist2
+                || pref == bestPref && dist2 == bestDist2 && e.Value < best.Value.Value)
             {
                 bestPref = pref;
-                bestDist = dist;
+                bestDist2 = dist2;
                 best = e;
             }
         }
@@ -3221,14 +3386,16 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     // =========================================================================
 
     private const float StanceScanIntervalCombat = 1.0f;   // 原版 StartTimer(0,1000)
-    private const int GuardRange = 12;                     // template_unit.xml Guard/Range
+    // 护卫半径不再用硬编码常量:GuardRangeOf() = GuardComponent.GetRange(护卫自身)
+    // (原版 Guard.js GetRange:8 + footprint 派生;template_unit.xml 的 <Guard/> 无 Range 字段)。
     /// <summary>逃跑距离(template_unit.xml FleeDistance=12;动物模板可覆盖,如 fauna 24)。</summary>
     public float FleeDistance = 12f;
     private const float PatrolWaitTime = 1f;               // template_unit.xml PatrolWaitTime
 
     /// <summary>WAF/巡逻/护卫共用的 1s 节流索敌(原版 FindWalkAndFightTargets):
-    /// stance 允许索敌时取首个可见敌人前插 Attack;攻击订单完成后队列回到当前订单,
-    /// 自动继续(= 原版 returningState 语义)。</summary>
+    /// stance 允许索敌时按攻击偏好取目标前插 Attack(AttackEntitiesByPreference——
+    /// 偏好升序 → 距离升序 → id 保平手,不再是裸取 enemies[0]);攻击订单完成后
+    /// 队列回到当前订单,自动继续(= 原版 returningState 语义)。</summary>
     private static void ScanAndEngage(UnitAIComponent u, FsmMessage m)
     {
         u._combatScanElapsed += m.Dt;
@@ -3237,8 +3404,10 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         var flags = u.CurrentStanceFlags;
         if (!flags.TargetVisibleEnemies) return;
         var enemies = u.FindVisibleEnemies(m.Cm!, flags);
-        if (enemies.Count > 0)
-            u.PushOrderFront(new UnitOrder { Type = "Attack", Target = enemies[0], Force = false });
+        if (enemies.Count == 0) return;
+        var pick = u.PickTargetByPreference(m.Cm!, enemies);
+        if (pick.HasValue)
+            u.PushOrderFront(new UnitOrder { Type = "Attack", Target = pick.Value, Force = false });
     }
 
     /// <summary>原版 FLEEING.enter:背离威胁移动 FleeDistance(原版 distanceToFlee =
@@ -3260,7 +3429,9 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         return true;
     }
 
-    /// <summary>原版 ShouldGuard:目标存在、存活、且为我方/盟军。</summary>
+    /// <summary>原版 ShouldGuard:我方/盟军 且(存活 || 有 Capturable || 有
+    /// StatusEffectsReceiver)——后两支让"可占领/可上状态效果的实体"(如可占建筑)
+    /// 在无 Health/将死时仍可被护卫(UnitAI.js:5584-5589)。</summary>
     private static bool ShouldGuard(UnitAIComponent u, EntityId target, ComponentManager cm)
     {
         var own = cm.QueryInterface<OwnershipComponent>(u.Entity);
@@ -3268,18 +3439,26 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         if (own == null || tOwn == null || tOwn.PlayerId <= 0) return false;
         if (cm.Players.IsEnemy(own.PlayerId, tOwn.PlayerId)) return false;
         var h = cm.QueryInterface<HealthComponent>(target);
-        return h != null && !h.IsDead;
+        if (h != null && !h.IsDead) return true;
+        return cm.QueryInterface<CapturableComponent>(target) != null
+            || cm.QueryInterface<StatusEffectsReceiverComponent>(target) != null;
     }
 
-    /// <summary>是否在护卫半径内(原版 CheckTargetRangeExplicit(isGuardOf, 0, guardRange))。</summary>
-    private static bool InGuardRange(UnitAIComponent u, EntityId target, ComponentManager cm)
+    /// <summary>护卫半径(原版 this.guardRange = cmpGuard.GetRange(this.entity),
+    /// AddGuard 时取):8 + 护卫自身 footprint 派生。按需重算(footprint 恒定,
+    /// 省去序列化字段)。</summary>
+    private static Fixed GuardRangeOf(UnitAIComponent u, ComponentManager cm) =>
+        GuardComponent.GetRange(cm, u.Entity);
+
+    /// <summary>是否在护卫半径内(原版 CheckTargetRangeExplicit(isGuardOf, 0, guardRange);
+    /// 中心距,定点比较)。</summary>
+    private static bool InGuardRange(UnitAIComponent u, EntityId target, ComponentManager cm, Fixed range)
     {
         var pos = cm.QueryInterface<PositionComponent>(u.Entity);
         var tp = cm.QueryInterface<PositionComponent>(target);
         if (pos == null || tp == null) return false;
-        float dx = pos.Position.X.ToFloat() - tp.Position.X.ToFloat();
-        float dz = pos.Position.Z.ToFloat() - tp.Position.Z.ToFloat();
-        return dx * dx + dz * dz <= GuardRange * GuardRange;
+        var diff = new FixedVector2D(pos.Position.X - tp.Position.X, pos.Position.Z - tp.Position.Z);
+        return diff.CompareLength(range) <= 0;
     }
 
     private void TryPushStanceAttack(EntityId target, ComponentManager cm)

@@ -60,6 +60,9 @@ namespace ZeroAD.Sim.Net
         /// unit_actions.js F 热键修饰右键)。EntityId=建筑, IntParam1=目标,
         /// IntParam2 bit0=queued(追加尾), bit1=pushFront(头插)。</summary>
         FocusFire = 31,
+        /// <summary>CancelSetupTradeRoute: 取消待定贸易路线(仅单市场可摘)。
+        /// EntityId=trader, IntParam1=target market。原版 cmd {type:"cancel-setup-trade-route"}。</summary>
+        CancelSetupTradeRoute = 32,
     }
 
     /// <summary>
@@ -294,10 +297,19 @@ namespace ZeroAD.Sim.Net
         public static NetCommand WalkToRange(uint player, uint unitId, uint targetId, Fixed minRange, Fixed maxRange) =>
             new(player, NetCommandType.WalkToRange, unitId, (int)targetId, 0, minRange.InternalValue, maxRange.InternalValue);
 
-        /// <summary>SetupTradeRoute: 建立贸易路线。EntityId=trader, IntParam1=target market。
-        /// 原版 cmd {type:"setup-trade-route", target}。</summary>
-        public static NetCommand SetupTradeRoute(uint player, uint traderId, uint marketId) =>
-            new(player, NetCommandType.SetupTradeRoute, traderId, (int)marketId);
+        /// <summary>SetupTradeRoute: 建立贸易路线。EntityId=trader, IntParam1=target market,
+        /// IntParam2=source market(0 = 无;原版 cmd.source,GUI 恒 null、集结点贸易链用),
+        /// FixedParam1=queued(0/1)。原版 cmd {type:"setup-trade-route", target, source, route, queued}。
+        /// route(GUI 恒 null;集结点折叠 waypoints)不经命令通道——集结点侧在执行时现算。</summary>
+        public static NetCommand SetupTradeRoute(uint player, uint traderId, uint marketId,
+            uint sourceMarketId = 0, bool queued = false) =>
+            new(player, NetCommandType.SetupTradeRoute, traderId, (int)marketId,
+                (int)sourceMarketId, queued ? 1 : 0);
+
+        /// <summary>CancelSetupTradeRoute: 取消待定贸易路线。EntityId=trader, IntParam1=target market。
+        /// 原版 cmd {type:"cancel-setup-trade-route", target}。</summary>
+        public static NetCommand CancelSetupTradeRoute(uint player, uint traderId, uint marketId) =>
+            new(player, NetCommandType.CancelSetupTradeRoute, traderId, (int)marketId);
 
         /// <summary>CollectTreasure: 收集宝藏。EntityId=collector, IntParam1=treasure。</summary>
         public static NetCommand CollectTreasureCmd(uint player, uint collectorId, uint treasureId) =>

@@ -419,4 +419,127 @@ public sealed class SimCommandExecutorTests
         Assert.Equal(0, queue.QueueCount);
         Assert.Equal(200, cm.QueryInterface<PlayerComponent>(playerEntity)!.Wood);
     }
+
+    // --- SetupTradeRoute / CancelSetupTradeRoute(原版 setup-trade-route 命令:
+    // 双市场齐 → 推 Trade 订单,商队自动往返;否则走向首市场待命)---
+
+    private static EntityId MakeTrader(ComponentManager cm, float x, float z)
+    {
+        SimSystem.Init(cm);
+        var e = cm.CreateEntity();
+        cm.AddComponent(e, new PositionComponent());
+        cm.QueryInterface<PositionComponent>(e)!.Position =
+            new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+        cm.AddComponent(e, new UnitMotion());
+        var id = new IdentityComponent();
+        cm.AddComponent(e, id);
+        id.Classes.AddRange("Organic Support".Split(' '));
+        cm.AddComponent(e, new OwnershipComponent { PlayerId = 1 });
+        cm.AddComponent(e, new TraderComponent { GainMultiplier = 0.75f });
+        cm.AddComponent(e, new UnitAIComponent());
+        return e;
+    }
+
+    private static EntityId MakeMarket(ComponentManager cm, float x, float z)
+    {
+        var e = cm.CreateEntity();
+        cm.AddComponent(e, new PositionComponent());
+        cm.QueryInterface<PositionComponent>(e)!.Position =
+            new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+        var market = new MarketComponent();
+        cm.AddComponent(e, market);
+        market.TradeTypes.Add("land");
+        cm.AddComponent(e, new OwnershipComponent { PlayerId = 1 });
+        return e;
+    }
+
+    private static PlayerComponent AddPlayer(ComponentManager cm)
+    {
+        var pe = cm.CreateEntity();
+        var pc = new PlayerComponent();
+        cm.AddComponent(pe, pc);
+        pc.Wood = 0; pc.Food = 0; pc.Stone = 0; pc.Metal = 0;
+        cm.Players.AddPlayer(1, pe);
+        return pc;
+    }
+
+    [Fact]
+    public void SetupTradeRoute_BothMarkets_TraderShuttlesAutomatically()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        var player = AddPlayer(cm);
+        var trader = MakeTrader(cm, 0f, 0f);
+        var a = MakeMarket(cm, 0f, 0f);
+        var b = MakeMarket(cm, 60f, 0f);   // 60m:每程 gain=1(同 TraderTests 基准)
+        var tc = cm.QueryInterface<TraderComponent>(trader)!;
+        var ai = cm.QueryInterface<UnitAIComponent>(trader)!;
+
+        // 首市场:路由登记 + 走向首市场待命(原版 WalkToTarget(firstMarket))。
+        executor.Apply(NetCommand.SetupTradeRoute(1, trader.Value, a.Value));
+        Assert.Equal(a, tc.FirstMarket);
+        Assert.False(tc.HasBothMarkets());
+        Assert.Equal("Walk", ai.CurrentOrder?.Type);
+
+        // 第二市场:双市场齐 → 推 Trade 订单(目标 = 首市场,force:false)。
+        executor.Apply(NetCommand.SetupTradeRoute(1, trader.Value, b.Value));
+        Assert.True(tc.HasBothMarkets());
+        Assert.Equal("Trade", ai.CurrentOrder?.Type);
+        Assert.Equal(a, ai.CurrentOrder!.Target);
+        Assert.False(ai.CurrentOrder.Force);
+
+        // 端到端:商队自动往返两市场并产生贸易收入。
+        for (int i = 0; i < 400; i++)
+        {
+            cm.QueryInterface<UnitMotion>(trader)?.Tick(0.1f);
+            ai.Tick(0.1f, cm);
+        }
+        int total = player.Food + player.Wood + player.Stone + player.Metal;
+        Assert.True(total > 0, $"expected trade income; state={ai.FsmStateName} idx={tc.Index}");
+    }
+
+    [Fact]
+    public void SetupTradeRoute_WithSource_EstablishesRouteInOneCommand()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        AddPlayer(cm);
+        var trader = MakeTrader(cm, 0f, 0f);
+        var a = MakeMarket(cm, 0f, 0f);
+        var b = MakeMarket(cm, 60f, 0f);
+        var tc = cm.QueryInterface<TraderComponent>(trader)!;
+
+        // source 参数(原版 cmd.source):一条命令建双市场路由 → 直接推 Trade。
+        executor.Apply(NetCommand.SetupTradeRoute(1, trader.Value, b.Value, sourceMarketId: a.Value));
+        Assert.Equal(a, tc.FirstMarket);
+        Assert.Equal(b, tc.SecondMarket);
+        Assert.Equal("Trade", cm.QueryInterface<UnitAIComponent>(trader)!.CurrentOrder?.Type);
+    }
+
+    [Fact]
+    public void CancelSetupTradeRoute_RemovesPendingFirstMarket_OnlyWhenSingle()
+    {
+        var cm = new ComponentManager(1);
+        var executor = new SimCommandExecutor(cm);
+        AddPlayer(cm);
+        var trader = MakeTrader(cm, 0f, 0f);
+        var a = MakeMarket(cm, 0f, 0f);
+        var b = MakeMarket(cm, 60f, 0f);
+        var tc = cm.QueryInterface<TraderComponent>(trader)!;
+
+        executor.Apply(NetCommand.SetupTradeRoute(1, trader.Value, a.Value));
+        Assert.Equal(a, tc.FirstMarket);
+
+        // 单市场 → 摘除(原版 RemoveTargetMarket)。
+        executor.Apply(NetCommand.CancelSetupTradeRoute(1, trader.Value, a.Value));
+        Assert.Null(tc.FirstMarket);
+        Assert.Equal(-1, tc.Index);
+
+        // 双市场 → 拒绝摘除(原版:仅待定首市场可撤)。
+        executor.Apply(NetCommand.SetupTradeRoute(1, trader.Value, a.Value));
+        executor.Apply(NetCommand.SetupTradeRoute(1, trader.Value, b.Value));
+        Assert.True(tc.HasBothMarkets());
+        executor.Apply(NetCommand.CancelSetupTradeRoute(1, trader.Value, a.Value));
+        Assert.True(tc.HasBothMarkets());
+    }
 }

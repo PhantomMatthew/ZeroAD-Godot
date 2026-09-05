@@ -58,6 +58,12 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     /// 瞬态不序列化(冷加载后一回合内由推挤重建——同 waypoints 惯例)。</summary>
     public int PushingPressure;
 
+    /// <summary>跟随速度上限(原版 UnitAI.TryMatchTargetSpeed 的 SetSpeedMultiplier 近似,
+    /// 定点绝对速):UnitAI GUARD.ESCORTING 每拍设置/清除;null = 不限。
+    /// 瞬态不序列化(读档后一拍内由 ESCORTING 重建)。</summary>
+    public Fixed? FollowSpeedCap;
+    public void ClearFollowSpeedCap() => FollowSpeedCap = null;
+
     /// <summary>模板通行类名 → 位掩码(原版 pathfinder.xml 9 类注册表;
     /// default/large/ship/ship-small/unrestricted 等单位类直接按名查,未知名 → default)。
     /// 顺带刷新净空缓存(类定义即掩码与净空的共同数据源)。</summary>
@@ -139,6 +145,12 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     private bool _mitigationAttempted;
     private bool _sidestepping;                     // 正在走侧绕点(到点 → 重解原目标)
 
+    /// <summary>本腿卡死信号(瞬态):看门狗窗口内位移 &lt; StuckMinProgress 时置位,
+    /// 下个窗口恢复位移或全新求解/Stop/到站时清零。编队控制器的绕障跳跃
+    /// (UnitAI.AttemptObstructionMitigation)以此为触发源,对应上游 MovementUpdate
+    /// 的 veryObstructed 标志。</summary>
+    public bool IsStuckThisLeg { get; private set; }
+
     protected override void OnInit()
     {
         Speed = Fixed.FromFloat(8.0f);
@@ -188,6 +200,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         // 全新求解 = 新的移动尝试:阻挡缓释重新获得一次机会。
         _mitigationAttempted = false;
         _sidestepping = false;
+        IsStuckThisLeg = false;
 
         _waypoints.Clear();
         _currentWaypoint = 0;
@@ -299,6 +312,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         CurrentSpeed = Fixed.Zero;
         _waypoints.Clear();
         _pendingPathTicket = 0;   // 在途结果到时自然作废(ticket 校验)
+        IsStuckThisLeg = false;
         // Drop the cached goal so the next MoveToPoint always solves a fresh path (a Stop
         // means the caller deliberately cancelled movement, not a chase tick).
         _hasLastGoal = false;
@@ -325,6 +339,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
             CurrentSpeed = Fixed.Zero;
             _stuckTimer = 0;
             _stuckAnchorValid = false;
+            IsStuckThisLeg = false;
             return;
         }
 
@@ -455,6 +470,7 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
             float disp = (newPos2D - _stuckAnchor).Length().ToFloat();
             _stuckAnchor = newPos2D;
             _stuckTimer = 0;
+            IsStuckThisLeg = disp < StuckMinProgress;
             if (disp < StuckMinProgress && !_mitigationAttempted && !_sidestepping)
                 TrySidestep(posComp);
         }
@@ -519,7 +535,11 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         var cm = SimSystem.Sim;
         var baseSpeed = cm == null ? Speed
             : Fixed.FromFloat(cm.Modifiers.Apply("UnitMotion/WalkSpeed", Speed.ToFloat(), Entity));
-        return ApplyPushingPressure(baseSpeed);
+        var speed = ApplyPushingPressure(baseSpeed);
+        // 跟随速度上限(护卫 ESCORTING;原版 SetSpeedMultiplier 语义)——压过推挤地板。
+        if (FollowSpeedCap is { } cap && speed > cap)
+            speed = cap;
+        return speed;
     }
 
     /// <summary>压力减速(原版 CCmpUnitMotion::PerformMove L1236-1255 逐字):

@@ -71,6 +71,46 @@ public sealed class GuardTests
     }
 
     [Fact]
+    public void EntityRenamed_GuardPromoted_RenamesRegistration()
+    {
+        var (cm, guard, guarded, _) = World();
+        var ai = cm.QueryInterface<UnitAIComponent>(guard)!;
+        ai.Guard(guarded);
+        ai.Tick(0.1f, cm);
+        var gc = cm.QueryInterface<GuardComponent>(guarded)!;
+        Assert.Contains(guard, gc.Entities);
+
+        // 护卫单位晋升换号(原版 Transform.js → RenameGuard;本移植走
+        // Promotion.Promote 的 EntityRenamed 广播接线):登记改指新号。
+        var promoted = cm.CreateEntity();
+        cm.Events.RaiseEntityRenamed(new ZeroAD.Sim.Events.EntityRenamedEvent
+        { OldEntity = guard, NewEntity = promoted });
+        Assert.DoesNotContain(guard, gc.Entities);
+        Assert.Contains(promoted, gc.Entities);
+    }
+
+    [Fact]
+    public void GetRange_FootprintDerived_MatchesOriginalFormula()
+    {
+        var cm = new ComponentManager(42);
+        SimSystem.Init(cm);
+        var e = cm.CreateEntity();
+        // 无 footprint → 仅基准 8(原版 GetRange 同款)。
+        Assert.Equal(8f, GuardComponent.GetRange(cm, e).ToFloat(), 3);
+
+        cm.AddComponent(e, new FootprintComponent
+        { Shape = FootprintShape.Square, Size0 = Fixed.FromInt(6), Size1 = Fixed.FromInt(6) });
+        // square:8 + √(6²+6²)×2/3 ≈ 13.657
+        Assert.Equal(13.657, GuardComponent.GetRange(cm, e).ToFloat(), 2);
+
+        var fp = cm.QueryInterface<FootprintComponent>(e)!;
+        fp.Shape = FootprintShape.Circle;
+        fp.Size0 = Fixed.FromInt(3);
+        // circle:8 + 3×1.5 = 12.5
+        Assert.Equal(12.5, GuardComponent.GetRange(cm, e).ToFloat(), 2);
+    }
+
+    [Fact]
     public void DiplomacyFlip_RemovesGuardFromList()
     {
         var (cm, guard, guarded, _) = World();

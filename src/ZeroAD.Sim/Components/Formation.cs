@@ -814,7 +814,16 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
     {
         var pos = cm.QueryInterface<PositionComponent>(ent);
         if (pos == null || !pos.InWorld) return null;
-        float px = pos.Position.X.ToFloat(), pz = pos.Position.Z.ToFloat();
+        return GetClosestMemberToPoint(cm, pos.Position.X.ToFloat(), pos.Position.Z.ToFloat());
+    }
+
+    /// <summary>Port of GetClosestMemberToPosition:距指定点最近的在世成员(无 → null)。
+    /// 绕障缓释(UnitAI.AttemptObstructionMitigation)用——原版 Formation.js 同名。</summary>
+    public EntityId? GetClosestMemberToPosition(ComponentManager cm, FixedVector2D pos) =>
+        GetClosestMemberToPoint(cm, pos.X.ToFloat(), pos.Y.ToFloat());
+
+    private EntityId? GetClosestMemberToPoint(ComponentManager cm, float px, float pz)
+    {
         EntityId? best = null;
         float bestD2 = float.MaxValue;
         foreach (var member in Members)
