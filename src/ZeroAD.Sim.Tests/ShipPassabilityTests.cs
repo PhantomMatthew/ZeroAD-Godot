@@ -129,6 +129,67 @@ public sealed class ShipPassabilityTests
     }
 
     [Fact]
+    public void CheckUnitPlacement_ShipSmall_NeedsWater_NotLand()
+    {
+        var (_, pf) = SetupWaterBandWorld();
+        var water = Fixed.FromInt(64);
+        var land = Fixed.FromInt(16);
+        var z = Fixed.FromInt(64);
+        var clearance = Fixed.FromInt(1);
+
+        // 字符串二分时代 ship-small 被当陆军(!="ship" → 需陆地):渔船/商船/火船的
+        // 水面出生点被 FailTerrain 拒掉,码头训练渔船出生在岸上。按类定义查后:
+        // ship-small(MinWaterDepth=1,净空 3)在水带中央可放,岸上被拒。
+        Assert.Equal(PlacementResult.Success,
+            pf.CheckUnitPlacement(water, z, clearance, passClass: "ship-small"));
+        Assert.Equal(PlacementResult.FailTerrain,
+            pf.CheckUnitPlacement(land, z, clearance, passClass: "ship-small"));
+        // 大船(ship,净空 10)在水带边界的浅岸点被拒,ship-small 同点可放——
+        // 证明走的是逐类 navcell 位(净空膨胀不同),不是统一水陆二分。
+        var nearShore = Fixed.FromInt(46);   // 水带内,距岸 6m:> ship-small 净空 3,< ship 净空 10
+        Assert.Equal(PlacementResult.FailTerrain,
+            pf.CheckUnitPlacement(nearShore, z, clearance, passClass: "ship"));
+        Assert.Equal(PlacementResult.Success,
+            pf.CheckUnitPlacement(nearShore, z, clearance, passClass: "ship-small"));
+    }
+
+    [Fact]
+    public void SetPassabilityClassName_RefreshesClearanceCache()
+    {
+        var (cm, _) = SetupWaterBandWorld();
+        var ship = MakeWalker(cm, 16, 64);
+        var motion = cm.QueryInterface<UnitMotion>(ship)!;
+
+        Assert.Equal(Fixed.FromFraction(4, 5), motion.Clearance);   // default 类 0.8
+        motion.SetPassabilityClassName("ship");
+        Assert.Equal("ship", motion.PassClassName);
+        Assert.Equal(Fixed.FromInt(10), motion.Clearance);
+        motion.SetPassabilityClassName("ship-small");
+        Assert.Equal(Fixed.FromInt(3), motion.Clearance);
+        // 未知名回退 default 类(与 MaskOf 语义一致)。
+        motion.SetPassabilityClassName("no-such-class");
+        Assert.Equal(Fixed.FromFraction(4, 5), motion.Clearance);
+    }
+
+    [Fact]
+    public void PickSpawnPoint_ShipSmallClass_FindsWaterSlot()
+    {
+        var (cm, _) = SetupWaterBandWorld();
+        // 码头训练渔船(ship-small)的出生回归:出生点必须落在水带内且通过该类放置检查。
+        var dock = cm.CreateEntity();
+        var pos = new PositionComponent();
+        cm.AddComponent(dock, pos);
+        pos.Position = new FixedVector3D(Fixed.FromInt(64), Fixed.Zero, Fixed.FromInt(64));
+        var fp = new FootprintComponent { MaxSpawnDistance = Fixed.FromInt(24) };
+        cm.AddComponent(dock, fp);
+
+        var spawn = fp.PickSpawnPoint(Fixed.FromInt(1), "ship-small");
+        Assert.True(spawn.X.ToFloat() >= 0, "no water spawn point found for ship-small class");
+        Assert.True(spawn.X.ToFloat() >= 40f && spawn.X.ToFloat() <= 88f,
+            $"ship-small spawn not on water: x={spawn.X.ToFloat():F1}");
+    }
+
+    [Fact]
     public void PickSpawnPoint_ShipClass_FindsWaterSlot()
     {
         var (cm, _) = SetupWaterBandWorld();

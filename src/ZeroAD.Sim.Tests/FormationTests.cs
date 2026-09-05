@@ -206,6 +206,43 @@ public sealed class FormationTests
     }
 
     [Fact]
+    public void ComputeMotionParameters_RollsUpMemberPassClass_ByMaxClearance()
+    {
+        // 原版 Formation.js ComputeMotionParameters 尾段:控制器通行类 = 成员中注册表
+        // Clearance 最大者的类(混编步兵 default 0.8 + 象兵 large 3.0 → large)。
+        var cm = new ComponentManager(rngSeed: 1);
+        var ctrl = MakeController(cm);
+        var f = cm.QueryInterface<FormationComponent>(ctrl)!;
+        var infantry = MakeMember(cm, x: 0f, z: 0f);
+        var elephant = MakeMember(cm, x: 6f, z: 0f);
+        // MakeMember/MakeController 内部的 SimSystem.Init 会重置静态寻路组件——
+        // 在实体建完后注入(默认 9 类注册表,无需网格),再设成员类。
+        SimSystem.SetPathfinder(new PathfinderComponent(cm));
+        cm.QueryInterface<UnitMotion>(elephant)!.SetPassabilityClassName("large");
+
+        f.SetMembers(cm, new List<EntityId> { infantry, elephant });
+
+        var ctrlMotion = cm.QueryInterface<UnitMotion>(ctrl)!;
+        Assert.Equal("large", ctrlMotion.PassClassName);
+        Assert.Equal(Fixed.FromInt(3), ctrlMotion.Clearance);
+    }
+
+    [Fact]
+    public void ComputeMotionParameters_AllDefaultMembers_KeepsDefaultClass()
+    {
+        var cm = new ComponentManager(rngSeed: 1);
+        var ctrl = MakeController(cm);
+        var f = cm.QueryInterface<FormationComponent>(ctrl)!;
+        var m1 = MakeMember(cm, x: 0f, z: 0f);
+        var m2 = MakeMember(cm, x: 6f, z: 0f);
+        SimSystem.SetPathfinder(new PathfinderComponent(cm));
+
+        f.SetMembers(cm, new List<EntityId> { m1, m2 });
+
+        Assert.Equal("default", cm.QueryInterface<UnitMotion>(ctrl)!.PassClassName);
+    }
+
+    [Fact]
     public void SetMembers_LinksController_Centers_SetsSpeed()
     {
         var cm = new ComponentManager(rngSeed: 1);

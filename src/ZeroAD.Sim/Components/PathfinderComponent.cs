@@ -39,11 +39,13 @@ namespace ZeroAD.Sim.Components
         public PassabilityClassDef ShipClass => _gridBuilder.Ship;
 
         /// <summary>注入 pathfinder.xml 数据根(mods 目录);下次 RebuildGrid 生效。
-        /// 原版 CCmpPathfinder 从 VFS 读 simulation/data/pathfinder.xml;此处走文件系统。</summary>
+        /// 原版 CCmpPathfinder 从 VFS 读 simulation/data/pathfinder.xml;此处走文件系统。
+        /// 同回合即答预算(MaxSameTurnMoves)随配置一并刷新。</summary>
         public void SetPassabilityConfig(string? dataModsDir)
         {
             _config = PathfinderConfig.Load(dataModsDir);
             _gridBuilder = new PassabilityGridBuilder(_config);
+            MaxSameTurnPaths = _config.MaxSameTurnMoves;
         }
 
         /// <summary>世界坐标 → 陆地区域 id(分层寻路的 global region;0 = 未建网格/
@@ -80,20 +82,37 @@ namespace ZeroAD.Sim.Components
         /// <summary>
         /// Check placing a unit circle at (x,z) with <paramref name="clearance"/> against terrain +
         /// obstructions. <paramref name="skipTag"/> optionally excludes one shape (e.g. the entity's
-        /// own when it's relocating). Mirrors <c>CCmpPathfinder::CheckUnitPlacement</c> minus the
-        /// per-passability-class grid (we use one Land/Water grid).
-        /// <paramref name="passClass"/>:原版按通行类判地形——陆军(default)需陆地,
-        /// 船(ship)需水面(此前恒按陆地判,船在任何水面出生点都被 FailTerrain 拒掉)。
+        /// own when it's relocating). Mirrors <c>CCmpPathfinder::CheckUnitPlacement</c>
+        /// (CCmpPathfinder.cpp:987-1011):地形判定按通行类——网格在位时直接查该类的
+        /// navcell 位(IS_PASSABLE;含地形规则 + 净空膨胀 + 静态障碍印戳,障碍会与下方
+        /// TestUnitShape 冗余双测,上游同),网格未建(无头测试)回退类水深语义
+        /// (MinWaterDepth ≥ 0 = 水类需水面,否则陆类需陆地)。
+        /// 不再做 "ship" vs 其余的字符串二分——它把 ship-small(渔船/商船/火船)误判为
+        /// 陆军,码头训练渔船会出生在岸上。
         /// </summary>
         public PlacementResult CheckUnitPlacement(Fixed x, Fixed z, Fixed clearance, ObstructionTag? skipTag = null,
             string passClass = "default")
         {
             if (Terrain != null && !Terrain.IsInBounds(new FixedVector2D(x, z)))
                 return PlacementResult.FailOutOfBounds;
-            if (Terrain != null)
+
+            // 未知名回退 default 类(与 MaskOf 一致)。
+            var cls = _config.ByName(passClass) ?? _config.Classes[0];
+            var grid = _gridBuilder.Grid;
+            if (grid != null)
+            {
+                int ni = PathfindingCore.WorldToNavcell(x);
+                int nj = PathfindingCore.WorldToNavcell(z);
+                if (ni < 0 || nj < 0 || ni >= grid.W || nj >= grid.H)
+                    return PlacementResult.FailOutOfBounds;
+                if (!PathfindingCore.IsPassable(grid.Get(ni, nj), cls.Mask))
+                    return PlacementResult.FailTerrain;
+            }
+            else if (Terrain != null)
             {
                 bool onLand = Terrain.IsLand(x, z);
-                if (passClass == "ship" ? onLand : !onLand)
+                bool needsWater = cls.MinWaterDepth.InternalValue >= 0;
+                if (needsWater ? onLand : !onLand)
                     return PlacementResult.FailTerrain;
             }
 
@@ -543,7 +562,12 @@ namespace ZeroAD.Sim.Components
         }
 
         /// <summary>True if a straight line between two world points is unobstructed (no impassable
-        /// navcell crossed). Mirrors CCmpPathfinder::CheckMovement.</summary>
+        /// navcell crossed). Mirrors CCmpPathfinder::CheckMovement.
+        /// 与原版的有意分歧(记录在案):原版查 m_TerrainOnlyGrid + 对 obstruction 形状
+        /// TestLine(带 clearance);此处直接查全量网格——UnitSeparation 推挤已替代原版的
+        /// unit-obstruction TestLine,若改查 TerrainOnly 再补形状线检会与之双计;
+        /// 全网格线检已含各类净空膨胀,语义更保守(直线段不许可穿墙/上岸),故不再加
+        /// clearance 形参。</summary>
         public bool CheckMovement(FixedVector2D from, FixedVector2D to, PassClass passClass)
         {
             if (_gridBuilder.Grid == null) return true;

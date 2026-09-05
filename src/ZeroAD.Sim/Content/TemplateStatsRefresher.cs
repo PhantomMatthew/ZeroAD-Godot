@@ -90,7 +90,7 @@ public static class TemplateStatsRefresher
         if (cm.QueryInterface<UnitMotion>(entity) is { } motion)
         {
             motion.Speed = Fixed.FromFloat(stats.WalkSpeed);
-            motion.PassClassName = stats.PassabilityClass;
+            motion.SetPassabilityClassName(stats.PassabilityClass);   // setter 顺带刷新净空缓存
             motion.Weight = stats.MovementWeight;
             motion.InstantTurnAngle = Fixed.FromFloat(stats.InstantTurnAngle);
             if (cm.QueryInterface<PositionComponent>(entity) is { } pos)

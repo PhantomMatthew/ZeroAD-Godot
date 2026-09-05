@@ -19,6 +19,15 @@ public sealed class PathfinderConfig
     public readonly IReadOnlyList<PassabilityClassDef> Classes;
     private readonly Dictionary<string, PassabilityClassDef> _byName = new(StringComparer.Ordinal);
 
+    /// <summary>同回合同步即答的路径请求预算(原版 pathfinder.xml MaxSameTurnMoves;
+    /// PathfinderComponent.MaxSameTurnPaths 由 SetPassabilityConfig 注入此值)。</summary>
+    public int MaxSameTurnMoves = 20;
+
+    /// <summary>推挤参数块(原版 pathfinder.xml 的 Pushing)。仅解析存档备用:
+    /// UnitSeparation 用的是 v1 调参常数(见该处字段注释,与 XML 值有意分歧),
+    /// 不从 XML 重灌,避免双源漂移。</summary>
+    public PushingSettings Pushing { get; private set; } = new();
+
     private PathfinderConfig(IReadOnlyList<PassabilityClassDef> classes)
     {
         Classes = classes;
@@ -41,13 +50,15 @@ public sealed class PathfinderConfig
                 yield return c;
     }
 
-    /// <summary>从数据根加载(mod 包优先——pathfinder.xml 在 mods/mod/simulation/data/)。
+    /// <summary>从数据根加载(pathfinder.xml 在 mods/&lt;mod&gt;/simulation/data/)。
+    /// 遍历顺序 = 上游 VFS 覆盖语义:public 后挂载、优先命中(可覆盖 mod 同名文件);
+    /// 上游目前只在 mods/mod 提供该文件,顺序调整对现内容零行为差。
     /// 缺失/解析失败 → 内建默认。返回(配置, 是否来自 XML)。</summary>
     public static PathfinderConfig Load(string? dataModsDir = null)
     {
         if (dataModsDir != null)
         {
-            foreach (var mod in new[] { "mod", "public" })
+            foreach (var mod in new[] { "public", "mod" })
             {
                 string path = Path.Combine(dataModsDir, mod, "simulation", "data", "pathfinder.xml");
                 if (File.Exists(path) && TryParse(path, out var cfg))
@@ -89,15 +100,23 @@ public sealed class PathfinderConfig
         return new PathfinderConfig(classes);
     }
 
-    /// <summary>XML 解析(原版 PathfinderPassability 字段同名)。位号 = 文档序。</summary>
+    /// <summary>XML 解析(原版 PathfinderPassability 字段同名)。类位号 = 文档序;
+    /// 根级 MaxSameTurnMoves/Pushing 块一并解析(缺省保留字段初值 = 上游 XML 值)。</summary>
     private static bool TryParse(string path, out PathfinderConfig cfg)
     {
         cfg = Default();
         try
         {
             var doc = XDocument.Load(path);
-            var parent = doc.Root?.Element("PassabilityClasses");
+            var root = doc.Root;
+            var parent = root?.Element("PassabilityClasses");
             if (parent == null) return false;
+
+            int? maxSameTurnMoves = null;
+            if (int.TryParse(root!.Element("MaxSameTurnMoves")?.Value, out int maxMoves))
+                maxSameTurnMoves = maxMoves;
+            var pushing = ParsePushing(root.Element("Pushing"));
+
             var classes = new List<PassabilityClassDef>();
             foreach (var el in parent.Elements())
             {
@@ -127,6 +146,8 @@ public sealed class PathfinderConfig
             for (int i = 0; i < classes.Count; i++)
                 classes[i].Mask = PathfindingCore.PassClassMaskFromIndex(i);
             cfg = new PathfinderConfig(classes);
+            if (maxSameTurnMoves.HasValue) cfg.MaxSameTurnMoves = maxSameTurnMoves.Value;
+            if (pushing != null) cfg.Pushing = pushing;
             return true;
         }
         catch (Exception ex)
@@ -135,4 +156,43 @@ public sealed class PathfinderConfig
             return false;
         }
     }
+
+    /// <summary>Pushing 子块解析;任字段缺失保留 PushingSettings 初值(上游 XML 逐值)。
+    /// 块整体缺失 → null(调用侧保留默认实例)。</summary>
+    private static PushingSettings? ParsePushing(XElement? el)
+    {
+        if (el == null) return null;
+        var p = new PushingSettings();
+        if (decimal.TryParse(el.Element("Radius")?.Value, out decimal radius))
+            p.Radius = Fixed.FromFloat((float)radius);
+        if (decimal.TryParse(el.Element("StaticExtension")?.Value, out decimal staticExt))
+            p.StaticExtension = Fixed.FromFloat((float)staticExt);
+        if (decimal.TryParse(el.Element("MovingExtension")?.Value, out decimal movingExt))
+            p.MovingExtension = Fixed.FromFloat((float)movingExt);
+        if (decimal.TryParse(el.Element("StaticSpread")?.Value, out decimal staticSpread))
+            p.StaticSpread = Fixed.FromFloat((float)staticSpread);
+        if (decimal.TryParse(el.Element("MovingSpread")?.Value, out decimal movingSpread))
+            p.MovingSpread = Fixed.FromFloat((float)movingSpread);
+        if (decimal.TryParse(el.Element("MinimalForce")?.Value, out decimal minForce))
+            p.MinimalForce = Fixed.FromFloat((float)minForce);
+        if (decimal.TryParse(el.Element("PressureStrength")?.Value, out decimal strength))
+            p.PressureStrength = Fixed.FromFloat((float)strength);
+        if (decimal.TryParse(el.Element("PressureDecay")?.Value, out decimal decay))
+            p.PressureDecay = Fixed.FromFloat((float)decay);
+        return p;
+    }
+}
+
+/// <summary>原版 pathfinder.xml 的 Pushing 块:推挤半径/动静扩展/散布/最小力/压力强度
+/// 与衰减。初值与上游 XML 逐值一致(单位:米/无量纲系数)。</summary>
+public sealed class PushingSettings
+{
+    public Fixed Radius = Fixed.FromFloat(1.4f);
+    public Fixed StaticExtension = Fixed.FromFloat(0.5f);
+    public Fixed MovingExtension = Fixed.FromFloat(4.0f);
+    public Fixed StaticSpread = Fixed.FromFloat(0.9f);
+    public Fixed MovingSpread = Fixed.FromFloat(0.4f);
+    public Fixed MinimalForce = Fixed.FromFloat(0.2f);
+    public Fixed PressureStrength = Fixed.FromFloat(0.5f);
+    public Fixed PressureDecay = Fixed.FromFloat(0.6f);
 }

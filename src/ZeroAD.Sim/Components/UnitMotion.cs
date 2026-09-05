@@ -27,10 +27,18 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     public FixedVector2D TargetPos;
     public bool HasMoveTarget;
 
-    /// <summary>原版 UnitMotion/PassabilityClass("default"/"ship";plane 的 unrestricted
-    /// 未移植)。决定寻路/阻挡缓释用哪套通行网格:船走水路,陆军走陆地(此前一律
-    /// Default 陆地类——船在陆网格上无解,永远卡岸)。装配时由模板写入,随存档序列化。</summary>
+    /// <summary>原版 UnitMotion/PassabilityClass:通行类名,任意注册表类均可
+    /// (default/large/ship/ship-small 等单位寻路类;plane 的 unrestricted 未移植)。
+    /// 经 PathfinderConfig 按名解析位掩码/净空,未知名回退 default——船走水路,
+    /// 陆军走陆地(此前一律 Default 陆地类——船在陆网格上无解,永远卡岸)。
+    /// 装配时由模板写入,随存档序列化;运行期换类走 SetPassabilityClassName。</summary>
     public string PassClassName = "default";
+
+    /// <summary>当前通行类的净空缓存(原版 CCmpUnitMotion m_Clearance;米)。
+    /// 派生自 PassClassName × 类注册表——瞬态不序列化,Deserialize 末尾按
+    /// PassClassName 重导(上游 CCmpUnitMotion.h:385 同款);ResolvePassClass
+    /// 与 SetPassabilityClassName 也会刷新。</summary>
+    public Fixed Clearance { get; private set; } = Fixed.FromFraction(4, 5);   // default 类 0.8
 
     /// <summary>推挤权重(原版 UnitMotion/Weight,"10 is the base value"):
     /// 大者更难被推也推得更狠(象兵 vs 步兵)。装配自模板,随存档序列化。</summary>
@@ -50,11 +58,36 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
     /// 瞬态不序列化(冷加载后一回合内由推挤重建——同 waypoints 惯例)。</summary>
     public int PushingPressure;
 
-    /// <summary>当前单位的通行类掩码(ship → Ship 水类;其余 → Default 陆地类)。</summary>
     /// <summary>模板通行类名 → 位掩码(原版 pathfinder.xml 9 类注册表;
-    /// default/large/ship/ship-small/unrestricted 等单位类直接按名查,未知名 → default)。</summary>
-    private Pathfinding.PassClass ResolvePassClass(PathfinderComponent pf) =>
-        pf.GetPassabilityClassMask(PassClassName);
+    /// default/large/ship/ship-small/unrestricted 等单位类直接按名查,未知名 → default)。
+    /// 顺带刷新净空缓存(类定义即掩码与净空的共同数据源)。</summary>
+    private Pathfinding.PassClass ResolvePassClass(PathfinderComponent pf)
+    {
+        var cls = pf.GetClassByName(PassClassName) ?? pf.DefaultClass;
+        Clearance = cls.Clearance;
+        return cls.Mask;
+    }
+
+    /// <summary>原版 SetPassabilityClassName/SetPassabilityData:换通行类并按类定义
+    /// 重导派生缓存(净空)。Formation 成员类上卷与晋升/换模板路径用。</summary>
+    public void SetPassabilityClassName(string name)
+    {
+        PassClassName = name;
+        RefreshPassabilityData();
+    }
+
+    /// <summary>按 PassClassName 重导净空缓存。无寻路组件(纯测试/读档早期)用内建
+    /// 默认注册表(与上游 XML 逐值一致);未知名回退 default 类(与 MaskOf 一致)。</summary>
+    private void RefreshPassabilityData()
+    {
+        var pf = SimSystem.Pathfinder;
+        var cls = pf != null
+            ? pf.GetClassByName(PassClassName) ?? pf.DefaultClass
+            : FallbackConfig.ByName(PassClassName) ?? FallbackConfig.Classes[0];
+        Clearance = cls.Clearance;
+    }
+
+    private static readonly PathfinderConfig FallbackConfig = PathfinderConfig.Default();
 
     /// <summary>路标(定点;原版 m_LongPath/m_ShortPath 序列化——读档续走不重复寻路,
     /// 存档-不存档两端演化逐位一致;此前 float 瞬态,读档后单位停摆到下次重请求)。
@@ -542,6 +575,8 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
         if (_currentWaypoint > _waypoints.Count) _currentWaypoint = _waypoints.Count;
         // 在途 ticket 读档作废(瞬态;节流到期自然重请求)。
         _pendingPathTicket = 0;
+        // 净空缓存按 PassClassName 重导(瞬态不序列化;上游 Deserialize→SetPassabilityData 同款)。
+        RefreshPassabilityData();
     }
 
     public void HandleMessage(IMessage message) { }

@@ -20,7 +20,8 @@ namespace ZeroAD.Sim.Components;
 //  - 分配:按组合逆优先级 splice(-n) 取偏移段(最具体的组合最后分,拿列表前部=前排),
 //    段内 TakeClosestOffset 最近空位。
 //  - 速度:ComputeMotionParameters = 最慢成员速度 × SpeedMultiplier(原版经
-//    SetSpeedMultiplier 达成同值;我们直接设绝对速度,见方法注)。
+//    SetSpeedMultiplier 达成同值;我们直接设绝对速度,见方法注);同函数尾段的成员
+//    通行类上卷(取 Clearance 最大者的类写控制器)亦已移植。
 //  - 生命周期:RemoveMembers 低于 RequiredMemberCount → Disband(毁控制器实体)。
 //
 // 已对齐但不移植/简化(记录在案的分歧):
@@ -710,24 +711,42 @@ public sealed class FormationComponent : ComponentBase, IComponentMessageHandler
 
     /// <summary>Port of ComputeMotionParameters:控制器速度 = 最慢成员速度 ×
     /// SpeedMultiplier。原版经 SetSpeedMultiplier(minSpeed/控制器基速) 达成同值;我们
-    /// 直接设绝对速度,效果一致且更直白。加速度/通行类别(Pathfinder clearance)无
-    /// 对应物,不移植。成员速度取修正值管线后的有效值(原版 GetWalkSpeed 同)。</summary>
+    /// 直接设绝对速度,效果一致且更直白。加速度无对应物,不移植。成员速度取修正值
+    /// 管线后的有效值(原版 GetWalkSpeed 同)。
+    /// 成员通行类上卷(原版 Formation.js:940-965 同函数尾段):扫成员 PassClassName,
+    /// 取注册表中 Clearance 最大者的类写给控制器(混编步兵+象兵 → large,
+    /// 船队 → ship)——编队控制器按最大净空类寻路,整队才不被窄缝卡散。
+    /// 遍历 = 成员列表序(确定性),Fixed 严格大于取先(平手保留先遍历者);
+    /// 未知名按 MaskOf 同款回退 default 类。无寻路组件(纯测试)跳过上卷。</summary>
     public void ComputeMotionParameters(ComponentManager cm)
     {
         if (Members.Count == 0) return;
         float minSpeed = float.MaxValue;
+        var maxClearance = Fixed.Zero;
+        string maxPassClass = "default";
+        var pf = SimSystem.Pathfinder;
         foreach (var ent in Members)
         {
             var motion = cm.QueryInterface<UnitMotion>(ent);
             if (motion == null) continue;
             float speed = cm.Modifiers.Apply("UnitMotion/WalkSpeed", motion.Speed.ToFloat(), ent);
             minSpeed = MathF.Min(minSpeed, speed);
+            var cls = pf == null ? null : pf.GetClassByName(motion.PassClassName) ?? pf.DefaultClass;
+            if (cls != null && cls.Clearance > maxClearance)
+            {
+                maxClearance = cls.Clearance;
+                maxPassClass = cls.Name;
+            }
         }
         if (minSpeed == float.MaxValue) return;
         minSpeed *= GetSpeedMultiplier();
         var ctrlMotion = cm.QueryInterface<UnitMotion>(Entity);
         if (ctrlMotion != null)
+        {
             ctrlMotion.Speed = Fixed.FromFloat(minSpeed);
+            if (pf != null)
+                ctrlMotion.SetPassabilityClassName(maxPassClass);
+        }
     }
 
     // =========================================================================

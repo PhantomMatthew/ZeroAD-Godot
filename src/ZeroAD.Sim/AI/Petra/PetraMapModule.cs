@@ -9,8 +9,9 @@ namespace ZeroAD.Sim.AI.Petra;
 /// createBorderMap: 地图边界 + 领土前线图。
 ///
 /// 简化版：算法框架移植，依赖 GameState 的完整 passability/territory 接口的部分标 TODO。
-/// createObstructionMap 完整版需 GameState.GetPassabilityClassMask（building-land/building-shore），
-/// 当前 C# PassabilityGrid 只有 Default/Ship 两个 class——需扩展命名 class mask（Phase 2 后续）。</summary>
+/// createObstructionMap 用的命名通行类掩码已就绪:PassabilityGrid 是逐 navcell 16 位
+/// 位掩码,PathfinderConfig 9 类注册表(default/ship/building-land/building-shore/
+/// *-terrain-only 等,pathfinder.xml 数据驱动)经 GetPassabilityClassMask 按名查询。</summary>
 public static class PetraMapModule
 {
     private const int TerritoryPlayerMask = 0x1F;

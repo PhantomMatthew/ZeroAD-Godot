@@ -74,8 +74,8 @@ namespace ZeroAD.Sim
             if (motion != null && stats != null)
             {
                 motion.Speed = Fixed.FromFloat(stats.WalkSpeed);
-                // PassabilityClass(船="ship" → 水路寻路/水面出生)。
-                motion.PassClassName = stats.PassabilityClass;
+                // PassabilityClass(船="ship" → 水路寻路/水面出生;setter 顺带刷新净空缓存)。
+                motion.SetPassabilityClassName(stats.PassabilityClass);
                 // 推挤权重(原版 GetWeight;推挤力按双方 Weight 动量配比)。
                 motion.Weight = stats.MovementWeight;
                 // 转向物理:InstantTurnAngle(UnitMotion 模板位)。

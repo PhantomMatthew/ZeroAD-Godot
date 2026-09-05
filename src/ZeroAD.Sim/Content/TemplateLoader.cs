@@ -684,8 +684,8 @@ namespace ZeroAD.Sim.Content
                 if (runMult.IsOk) stats.RunMultiplier = runMult.ToFixed().ToFloat();
                 var accel = unitMotion.GetChild("Acceleration");
                 if (accel.IsOk) stats.Acceleration = accel.ToFixed().ToFloat();
-                // PassabilityClass(原版:default/ship;plane 的 unrestricted 未移植)——
-                // 船走水路寻路、水面出生;陆军走陆地。
+                // PassabilityClass(注册表任意类名:default/large/ship/ship-small…;
+                // plane 的 unrestricted 未移植)——船走水路寻路、水面出生;陆军走陆地。
                 var passClass = unitMotion.GetChild("PassabilityClass");
                 if (passClass.IsOk) stats.PassabilityClass = passClass.ToString().Trim();
             }
@@ -1475,8 +1475,8 @@ namespace ZeroAD.Sim.Content
         public float HealthIdleRegenRate;
         public string PromotionEntity = "";
         public int PromotionRequiredXp = 100;
-        /// <summary>UnitMotion/PassabilityClass("default"/"ship";原版 plane 另有
-        /// unrestricted,未移植)。船 = "ship" → 水路寻路 + 水面出生。</summary>
+        /// <summary>UnitMotion/PassabilityClass(注册表任意类名:default/large/ship/
+        /// ship-small…;原版 plane 另有 unrestricted,未移植)。船类 → 水路寻路 + 水面出生。</summary>
         public string PassabilityClass = "default";
         public int VisionRange = 20;
         /// <summary>&lt;Fogging/&gt; 模板(建筑/gaia):雾中由 mirage 顶替。对齐 Fogging.js。</summary>
