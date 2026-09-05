@@ -195,7 +195,8 @@ public sealed class ProductionQueue : ComponentBase, IComponentMessageHandler
         {
             TrainerEntity = Entity,
             UnitTemplate = templateName,
-            Count = count
+            Count = count,
+            PlayerId = pid
         });
         return true;
     }

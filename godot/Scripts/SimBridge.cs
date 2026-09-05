@@ -405,6 +405,9 @@ public sealed partial class SimBridge : Node
 			script.OnInit(_sim);
 			ZeroAD.Sim.Diag.Log("Map", $"trigger script installed: {mapName}");
 		}
+		// OnInitGame 派发(原版 OnGlobalInitGame):脚本/战役注册的 OnInitGame
+		// 事件触发器在此点火(此前从不派发,注册了也永不触发)。
+		_sim.Triggers.NotifyInitGame(_sim);
 	}
 
 	/// <summary>地图加载/障碍定型后重建 AI 水陆可达性区域图(原版 Accessibility
@@ -759,6 +762,9 @@ public sealed partial class SimBridge : Node
 		}
 
 		ZeroAD.Godot.Actors.ActorDiagnostics.DumpSummary();
+
+		// OnInitGame 派发(场景图路径;原版 OnGlobalInitGame 在全部实体落地后广播)。
+		_sim.Triggers.NotifyInitGame(_sim);
 	}
 
 	private EntityId SpawnScenarioEntity(ScenarioEntityDef def)
@@ -771,6 +777,12 @@ public sealed partial class SimBridge : Node
 			try { stats = Templates.ExtractStats(def.Template); }
 			catch { }
 		}
+
+		// 触发点(trigger/trigger_point_* 模板;<TriggerPoint><Reference> 驱动):
+		// 极简标记实体,自动注册进触发系统(原版 TriggerPoint 实体)。
+		if (!string.IsNullOrEmpty(stats?.TriggerPointReference))
+			return SpawnTriggerPointMarker(def.Template, stats!.TriggerPointReference,
+				def.X, def.Z, def.Player);
 
 		bool isBuilding = def.Template.StartsWith("structures/", StringComparison.Ordinal);
 		bool isGaia = def.Template.StartsWith("gaia/", StringComparison.Ordinal);
@@ -2147,6 +2159,36 @@ public sealed partial class SimBridge : Node
 		return null;
 	}
 
+	/// <summary>触发点标记实体(trigger/trigger_point_* 模板;原版 TriggerPoint 实体——
+	/// 位置注册锚点 + OnRange 查询源:无 Health/Motion,不可选不可攻击不占人口;
+	/// 游戏中不可见(原版 VisibleInAtlasOnly),不建 Godot 视觉节点。
+	/// 装配即经 EntityAssembler.AttachTriggerPoint 注册进触发系统(销毁自动移除)。</summary>
+	private EntityId SpawnTriggerPointMarker(string templateName, string reference,
+		float x, float z, int playerId)
+	{
+		var entity = _sim.CreateEntity();
+		_sim.AddComponent(entity, new PositionComponent());
+		_sim.AddComponent(entity, new IdentityComponent
+		{
+			Name = "Trigger Point " + reference,
+			TemplateName = templateName,
+			IsUnit = false,
+			Undeletable = true,
+		});
+		if (playerId > 0)
+			_sim.AddComponent(entity, new OwnershipComponent { PlayerId = playerId });
+		var fx = ZeroAD.Sim.Maths.Fixed.FromFloat(x);
+		var fz = ZeroAD.Sim.Maths.Fixed.FromFloat(z);
+		var pos = _sim.QueryInterface<PositionComponent>(entity)!;
+		pos.Position = new ZeroAD.Sim.Maths.FixedVector3D(fx, ZeroAD.Sim.Maths.Fixed.Zero, fz);
+		EntityAssembler.AttachTriggerPoint(_sim, entity, reference);
+		_sim.NotifyEntityCreated(entity);
+		_sim.NotifyPositionChanged(entity,
+			new ZeroAD.Sim.Maths.FixedVector2D(ZeroAD.Sim.Maths.Fixed.Zero, ZeroAD.Sim.Maths.Fixed.Zero),
+			new ZeroAD.Sim.Maths.FixedVector2D(fx, fz));
+		return entity;
+	}
+
 	public EntityId SpawnFromTemplate(string templateName, float x, float z, int playerId = 0)
 	{
 		_lastSpawnedTemplate = templateName;
@@ -2155,6 +2197,11 @@ public sealed partial class SimBridge : Node
 		{
 			try { stats = Templates.ExtractStats(templateName); } catch { }
 		}
+
+		// 触发点(trigger/trigger_point_* 模板;<TriggerPoint><Reference> 驱动):
+		// rmgen/scenario 统一的组件摄入路径(替代原 Main.cs 的名字前缀特判)。
+		if (!string.IsNullOrEmpty(stats?.TriggerPointReference))
+			return SpawnTriggerPointMarker(templateName, stats!.TriggerPointReference, x, z, playerId);
 
 		// Dispatch by template kind so static entities aren't assembled as movable units.
 		// SpawnUnit otherwise adds UnitMotion + IsUnit=true unconditionally, which made Town

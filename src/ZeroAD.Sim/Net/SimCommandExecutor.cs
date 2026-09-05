@@ -372,7 +372,8 @@ namespace ZeroAD.Sim.Net
             _cm.Events.RaiseResearchQueued(new ResearchQueuedEvent
             {
                 ResearcherEntity = building,
-                TechnologyTemplate = cmd.TemplateName
+                TechnologyTemplate = cmd.TemplateName,
+                PlayerId = (int)cmd.Player
             });
         }
 

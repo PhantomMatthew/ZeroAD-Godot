@@ -184,10 +184,13 @@ namespace ZeroAD.Sim
         /// via PlayerComponent's Active-only transition guard. Ported from ConquestCommon.js +
         /// EndGameManager.AlliedVictoryCheck.
         /// </summary>
+        /// <summary>回合长度(定点秒;0.1s/回合)。TriggerSystem/EndGame 的 dt 真源。</summary>
+        internal static readonly Maths.Fixed TurnLengthSeconds = Maths.Fixed.FromFraction(1, 10);
+
         public void TickVictory()
         {
             // 触发器始终推进(原版 Trigger 组件不受终局状态影响;动作自身可判胜/判负)。
-            Triggers.Tick(this, 0.1f);
+            Triggers.Tick(this, TurnLengthSeconds);
 
             if (IsGameOver) return;
 
@@ -287,6 +290,21 @@ namespace ZeroAD.Sim
                             Events.RaiseGameEnded(new GameEndedEvent { WinnerPlayerId = actives[0] });
                             return;
                         }
+                    }
+                }
+                else
+                {
+                    // 无活跃玩家(TriggerHelper.SetPlayerWon →
+                    // EndGameManager.MarkPlayerAndAlliesAsWon 路径:判胜/判负全在
+                    // TickVictory 外完成):有人已判胜 → 补 GameEnded 收尾;
+                    // 全员同归于尽(无胜者)→ 平局,不发。
+                    foreach (int pid in Players.GetNonGaiaPlayerIds())
+                    {
+                        var player = Players.GetPlayerEntity(pid);
+                        if (player == null || !player.HasWon()) continue;
+                        IsGameOver = true;
+                        Events.RaiseGameEnded(new GameEndedEvent { WinnerPlayerId = pid });
+                        return;
                     }
                 }
             }
@@ -430,6 +448,9 @@ namespace ZeroAD.Sim
             // Let system listeners (RangeManager, ObstructionManager via ObstructionComponent)
             // drop this entity from their indices before we tear down the components.
             NotifyEntityDestroyed(entity);
+            // TriggerPoint 移除(原版 TriggerPoint.OnDestroy → RemoveRegisteredTriggerPoint)。
+            if (QueryInterface<Components.TriggerPointComponent>(entity) is { } triggerPoint)
+                Triggers.UnregisterTriggerPoint(triggerPoint.Reference, entity);
             foreach (var comp in components.Values)
                 comp.Deinit();
             _componentsByEntity.Remove(entity);

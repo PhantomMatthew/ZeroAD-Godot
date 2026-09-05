@@ -49,10 +49,10 @@ public static class TriggerHelper
     public static List<EntityId> GetEntitiesByPlayer(ComponentManager cm, int playerId) =>
         SimSystem.Range?.GetEntitiesByPlayer(playerId).ToList() ?? new List<EntityId>();
 
-    /// <summary>全部玩家(含 gaia)的实体(原版 GetAllPlayersEntities)。</summary>
+    /// <summary>全部非 gaia 玩家的实体(原版 GetAllPlayersEntities:
+    /// PlayerManager.GetAllPlayers 不含 gaia,原版也不拼 gaia)。</summary>
     public static List<EntityId> GetAllPlayersEntities(ComponentManager cm) =>
-        SimSystem.Range?.GetNonGaiaEntities().Concat(GetEntitiesByPlayer(cm, 0)).ToList()
-            ?? new List<EntityId>();
+        SimSystem.Range?.GetNonGaiaEntities().ToList() ?? new List<EntityId>();
 
     /// <summary>玩家总数(含 gaia 与已败;原版 GetNumPlayers)。</summary>
     public static int GetNumberOfPlayers(ComponentManager cm) =>
@@ -72,9 +72,9 @@ public static class TriggerHelper
         SimSystem.Net?.SubmitAiCommand(Net.NetCommand.FormationCmd((uint)playerId, formation, entities));
     }
 
-    /// <summary>升级模板(原版 AddUpgradeTemplate:模板名应用 Upgrade 链——
-    /// 我们的 Promotion 用 destroy+respawn;此处 = 原样返回模板名占位,
-    /// 升级链在模板加载期已合并(SpecMerger))。</summary>
+    /// <summary>升级模板(原版 AddUpgradeTemplate:模板名应用 Upgrade 链)。
+    /// TODO(WS 晋升链):原版沿 Upgrade 组件链把 "_upgraded" 等晋升模板逐级合并出
+    /// 新模板名;我们的 Promotion 用 destroy+respawn,晋升链未移植,暂原样返回模板名。</summary>
     public static string AddUpgradeTemplate(ComponentManager cm, int owner, string template) =>
         template;
 
@@ -157,19 +157,25 @@ public static class TriggerHelper
         return entities;
     }
 
-    /// <summary>按触发点生成(原版 SpawnUnitsFromTriggerPoints;返回 触发点序 → 实体组)。</summary>
-    public static List<EntityId> SpawnUnitsFromTriggerPoints(ComponentManager cm,
-        TriggerSystem triggers, string reference, string template, int count, int? owner = null)
+    /// <summary>按触发点生成(原版 SpawnUnitsFromTriggerPoints):
+    /// 返回 {触发点实体 → 生成实体组} 字典(原版按点分组,地图脚本按点下命令)。
+    /// 简化:触发点即坐标,直接在坐标生成(原版以触发点实体为源走 footprint)。</summary>
+    public static Dictionary<EntityId, List<EntityId>> SpawnUnitsFromTriggerPoints(
+        ComponentManager cm, TriggerSystem triggers, string reference,
+        string template, int count, int? owner = null)
     {
-        var entities = new List<EntityId>();
-        foreach (var pos in triggers.GetTriggerPoints(reference))
+        var result = new Dictionary<EntityId, List<EntityId>>();
+        foreach (var pointEnt in triggers.GetTriggerPointEntities(reference))
         {
-            // 简化:触发点即坐标,直接在坐标生成(原版以触发点实体为源走 footprint)。
+            var pos = cm.QueryInterface<PositionComponent>(pointEnt);
+            if (pos == null || !pos.InWorld) continue;
+            var group = new List<EntityId>();
             for (int i = 0; i < count; i++)
-                entities.Add(cm.SpawnEntity(template,
-                    pos.X.ToFloat(), pos.Y.ToFloat(), owner ?? 0));
+                group.Add(cm.SpawnEntity(template,
+                    pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), owner ?? 0));
+            result[pointEnt] = group;
         }
-        return entities;
+        return result;
     }
 
     /// <summary>可采集资源的 generic 类型(原版 GetResourceType)。</summary>
@@ -207,14 +213,11 @@ public static class TriggerHelper
 
     // ── 胜负 ──
 
-    /// <summary>判胜(原版 SetPlayerWon → EndGameManager.MarkPlayerAndAlliesAsWon;
-    /// 盟友连带胜利/其余判负由 EndGameManager 承载)。</summary>
-    public static void SetPlayerWon(ComponentManager cm, int playerId, string reason = "")
-    {
-        var p = cm.Players.GetPlayerEntity(playerId);
-        if (p != null && p.SetWon())
-            cm.Events.RaisePlayerWon(new Events.PlayerWonEvent { PlayerId = playerId });
-    }
+    /// <summary>判胜(原版 SetPlayerWon → EndGameManager.MarkPlayerAndAlliesAsWon):
+    /// alliedVictory 下盟友连带判胜、其余活跃玩家判负。</summary>
+    public static void SetPlayerWon(ComponentManager cm, int playerId,
+        string victoryReason = "", string defeatReason = "") =>
+        cm.EndGame.MarkPlayerAndAlliesAsWon(cm, playerId, victoryReason, defeatReason);
 
     /// <summary>判负(原版 DefeatPlayer → Player.SetState defeated)。</summary>
     public static void DefeatPlayer(ComponentManager cm, int playerId, string reason = "")
@@ -243,12 +246,22 @@ public static class TriggerHelper
     public static List<EntityId> GetAllPlayersEntitiesByClass(ComponentManager cm, string classes) =>
         MatchEntitiesByClass(cm, GetAllPlayersEntities(cm), classes);
 
-    /// <summary>科技已研或在研(原版 HasDealtWithTech)。</summary>
+    /// <summary>科技已研或在研(原版 HasDealtWithTech =
+    /// IsTechnologyQueued || IsTechnologyResearched)。在研 = 该玩家任一建筑的
+    /// 研究队列含该科技(原版查 TechnologyManager,我们的队列在 Researcher 组件上)。</summary>
     public static bool HasDealtWithTech(ComponentManager cm, int playerId, string techName)
     {
         var pEnt = cm.Players.GetPlayerEntityId(playerId);
         var tm = pEnt.HasValue ? cm.QueryInterface<TechnologyManager>(pEnt.Value) : null;
-        return tm != null && tm.IsResearched(techName);
+        if (tm != null && tm.IsResearched(techName)) return true;
+        var range = SimSystem.Range;
+        if (range == null) return false;
+        foreach (var ent in range.GetEntitiesByPlayer(playerId))
+        {
+            var researcher = cm.QueryInterface<ResearcherComponent>(ent);
+            if (researcher != null && researcher.IsTechnologyQueued(techName)) return true;
+        }
+        return false;
     }
 
     // ── 模板检索/编组 ──
@@ -307,37 +320,61 @@ public static class TriggerHelper
         return counts;
     }
 
-    /// <summary>均衡编组(原版 BalancedTemplateComposition 简化:count 项定量,
-    /// 其余按 frequency 比例分余额;uniqueEntities 去重——同名模板已在场则跳过)。</summary>
-    public sealed record TemplateBalance(IReadOnlyList<string> Templates, double Frequency = 1,
+    /// <summary>均衡编组(原版 BalancedTemplateComposition 两段式,TriggerHelper.js:495-541):
+    /// 1) 过滤——uniqueEntities 已在场的同名模板剔除(英雄唯一性)、空组剔除;
+    /// 2) count 组按数组序先定额(min(余额, count)),每组内 RandomTemplateComposition 分配;
+    /// 3) frequency 组按权重分总余额(round(freq/Σfreq × totalCount),末组吃余数)。
+    /// RNG 走 cm.RNG(经 RandomTemplateComposition;消耗次数与旧简化版不同,属预期)。</summary>
+    /// <summary>编组定义。Frequency/Count 默认 0/-1 = 未设置(对齐原版字段缺省语义:
+    /// 两者皆无的组不参与分配;两者皆有的组按原版会两段都加,属病理输入不提倡)。</summary>
+    public sealed record TemplateBalance(IReadOnlyList<string> Templates, double Frequency = 0,
         int Count = -1, IReadOnlyList<uint>? UniqueEntities = null);
 
     public static Dictionary<string, int> BalancedTemplateComposition(ComponentManager cm,
         IReadOnlyList<TemplateBalance> balancing, int totalCount)
     {
-        var counts = new Dictionary<string, int>();
-        int remaining = totalCount;
+        // 1) 过滤(原版 templateBalancingFiltered 段)。
+        var filtered = new List<TemplateBalance>();
         foreach (var b in balancing)
         {
-            if (b.Templates.Count == 0) continue;
-            // unique:已在场的模板剔除(英雄唯一性)。
-            var candidates = b.UniqueEntities != null
-                ? b.Templates.Where(t => !b.UniqueEntities.Any(id =>
-                    cm.QueryInterface<IdentityComponent>(new EntityId(id))?.TemplateName == t))
+            var templates = b.UniqueEntities != null
+                ? b.Templates.Where(t => b.UniqueEntities.All(id =>
+                    cm.QueryInterface<IdentityComponent>(new EntityId(id))?.TemplateName != t))
                     .ToList()
                 : b.Templates.ToList();
-            if (candidates.Count == 0) continue;
-            int n = b.Count >= 0 ? Math.Min(b.Count, remaining)
-                : (int)Math.Round(b.Frequency * remaining);
-            for (int i = 0; i < n; i++)
-            {
-                var pick = candidates[(int)(cm.RNG.NextDouble() * candidates.Count)
-                    % candidates.Count];
-                counts[pick] = counts.GetValueOrDefault(pick) + 1;
-            }
-            if (b.Count >= 0) remaining -= n;
+            if (templates.Count > 0)
+                filtered.Add(b with { Templates = templates });
         }
-        return counts;
+
+        var results = new Dictionary<string, int>();
+        int remainder = totalCount;
+        void AddTemplates(IReadOnlyList<string> names, int count)
+        {
+            foreach (var (name, n) in RandomTemplateComposition(cm, names, count))
+            {
+                results[name] = results.GetValueOrDefault(name) + n;
+                remainder -= n;
+            }
+        }
+
+        // 2) count 组先定额(原版第一段)。
+        foreach (var b in filtered)
+            if (b.Count > 0)
+                AddTemplates(b.Templates, Math.Min(remainder, b.Count));
+
+        // 3) frequency 组按权重分余额(原版第二段;末组吃余数)。
+        var freqGroups = filtered.Where(b => b.Frequency > 0).ToList();
+        double freqSum = freqGroups.Sum(b => b.Frequency);
+        for (int i = 0; i < freqGroups.Count; i++)
+        {
+            AddTemplates(freqGroups[i].Templates,
+                i == freqGroups.Count - 1
+                    ? remainder
+                    : Math.Min(remainder,
+                        (int)Math.Round(freqGroups[i].Frequency / freqSum * totalCount,
+                            MidpointRounding.AwayFromZero)));
+        }
+        return results;
     }
 
     /// <summary>按类找建筑并生成驻军(原版 SpawnAndGarrisonAtClasses:

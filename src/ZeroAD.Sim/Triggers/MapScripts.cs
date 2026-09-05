@@ -15,9 +15,9 @@ public sealed class PolarSeaScript : IMapScriptBehavior
     private const string AttackerTemplate = "gaia/fauna_wolf_arctic_violent";
     private const int MinWaveSize = 1;
     private const int MaxWaveSize = 3;
-    private const float FirstWaveSec = 5 * 60;
-    private const float MinWaveSec = 2 * 60;
-    private const float MaxWaveSec = 4 * 60;
+    private static readonly Fixed FirstWaveSec = Fixed.FromInt(5 * 60);
+    private static readonly Fixed MinWaveSec = Fixed.FromInt(2 * 60);
+    private static readonly Fixed MaxWaveSec = Fixed.FromInt(4 * 60);
     private const int TargetCount = 3;
     private const float TargetSearchRadius = 200f;
 
@@ -27,8 +27,8 @@ public sealed class PolarSeaScript : IMapScriptBehavior
         "gather_lumbering_strongeraxes", "gather_wicker_baskets"
     };
 
-    private float _elapsed;
-    private float _nextWaveAt = FirstWaveSec;
+    private Fixed _elapsed = Fixed.Zero;
+    private Fixed _nextWaveAt = FirstWaveSec;
 
     /// <summary>原版 OnInitGame → DisableTechnologies。</summary>
     public void OnInit(ComponentManager cm)
@@ -41,12 +41,12 @@ public sealed class PolarSeaScript : IMapScriptBehavior
         }
     }
 
-    public void Tick(ComponentManager cm, float dt)
+    public void Tick(ComponentManager cm, Fixed dt)
     {
         _elapsed += dt;
         if (_elapsed < _nextWaveAt) return;
         _nextWaveAt = _elapsed + MinWaveSec
-            + (float)(cm.RNG.NextDouble() * (MaxWaveSec - MinWaveSec));
+            + Fixed.FromDouble(cm.RNG.NextDouble() * (MaxWaveSec - MinWaveSec).ToDouble());
         // 原版 Math.round(random × (max-min) + min)。
         int waveSize = (int)MathF.Round(
             (float)cm.RNG.NextDouble() * (MaxWaveSize - MinWaveSize) + MinWaveSize,
@@ -54,7 +54,7 @@ public sealed class PolarSeaScript : IMapScriptBehavior
 
         var sink = cm.Triggers.Sink;
         if (sink == null) return;
-        foreach (var point in cm.Triggers.GetTriggerPoints("A"))
+        foreach (var point in cm.Triggers.GetTriggerPoints(cm, "A"))
         {
             float px = point.X.ToFloat(), pz = point.Y.ToFloat();
             var wolves = sink.SpawnEntities(AttackerTemplate, 0, px, pz, waveSize, 2f);
@@ -146,7 +146,7 @@ public sealed class ElephantineScript : IMapScriptBehavior
         }
     }
 
-    public void Tick(ComponentManager cm, float dt) { }
+    public void Tick(ComponentManager cm, Fixed dt) { }
 }
 
 /// <summary>survivalofthefittest_triggers.js 移植:周期宝物 + 渐强攻击波。
@@ -154,13 +154,13 @@ public sealed class ElephantineScript : IMapScriptBehavior
 /// (原版 DoRepeatedly 的周期触发;timer 用 cm 时基累计,锁步确定)。</summary>
 public sealed class SurvivalOfTheFittestScript : IMapScriptBehavior
 {
-    private float _elapsed;
-    private float _nextTreasure = 180f;   // 首个宝物约 3 分钟(原版 treasureTime 3-5 分)
-    private float _nextWave = 270f;       // 首波约 4.5 分钟(原版 firstWaveTime 4-6 分)
+    private Fixed _elapsed = Fixed.Zero;
+    private Fixed _nextTreasure = Fixed.FromInt(180);   // 首个宝物约 3 分钟(原版 treasureTime 3-5 分)
+    private Fixed _nextWave = Fixed.FromInt(270);       // 首波约 4.5 分钟(原版 firstWaveTime 4-6 分)
 
     public void OnInit(ComponentManager cm) { }
 
-    public void Tick(ComponentManager cm, float dt)
+    public void Tick(ComponentManager cm, Fixed dt)
     {
         _elapsed += dt;
         if (_elapsed >= _nextTreasure)
@@ -172,7 +172,7 @@ public sealed class SurvivalOfTheFittestScript : IMapScriptBehavior
                 var pos = RandomPassablePoint(cm);
                 sink.SpawnEntities("gaia/treasure/food_bin", 0, pos.X, pos.Y, 1, 0f);
             }
-            _nextTreasure += (float)(cm.RNG.NextDouble() * 120 + 180);
+            _nextTreasure += Fixed.FromDouble(cm.RNG.NextDouble() * 120 + 180);
         }
         if (_elapsed >= _nextWave)
         {
@@ -184,14 +184,14 @@ public sealed class SurvivalOfTheFittestScript : IMapScriptBehavior
                 // 1.05^minutes 的渐增(原版 percentPerMinute):整次幂
                 // 近似(Math.Pow 属 libm,跨平台低位不同 → 门禁禁;
                 // 分钟级整幂 ≈ 原版连续渐增的分钟粒度)。
-                int minutes = (int)(_elapsed / 60f);
+                int minutes = _elapsed.ToIntRoundToZero() / 60;
                 double growth = 1.0;
                 for (int m = 0; m < minutes; m++) growth *= 1.05;
                 int count = (int)(5 * growth);
                 sink.SpawnEntities("units/kush/infantry_spearman_b", 0, pos.X, pos.Y,
                     System.Math.Min(count, 200), 3f);
             }
-            _nextWave += (float)(cm.RNG.NextDouble() * 120 + 120);
+            _nextWave += Fixed.FromDouble(cm.RNG.NextDouble() * 120 + 120);
         }
     }
 
@@ -213,15 +213,15 @@ public sealed class SurvivalOfTheFittestScript : IMapScriptBehavior
 /// (原版 DoAfterDelay 的周期触发;timer 用 cm 时基累计)。</summary>
 public sealed class FloodScript : IMapScriptBehavior
 {
-    private float _elapsed;
-    private float _nextRise = 260f;        // 首次升水位约 4.3 分钟(原版 schedule 260s)
-    private const float DeltaTime = 2.4f;  // 每步间隔(原版 deltaTime)
+    private Fixed _elapsed = Fixed.Zero;
+    private Fixed _nextRise = Fixed.FromInt(260);        // 首次升水位约 4.3 分钟(原版 schedule 260s)
+    private static readonly Fixed DeltaTime = Fixed.FromFloat(2.4f);  // 每步间隔(原版 deltaTime)
     private const float DeltaWater = 0.5f; // 每步水位(原版 deltaWaterLevel)
     private const float DrownDepth = 2f;   // 淹没深度(原版 drownDepth)
 
     public void OnInit(ComponentManager cm) { }
 
-    public void Tick(ComponentManager cm, float dt)
+    public void Tick(ComponentManager cm, Fixed dt)
     {
         _elapsed += dt;
         if (_elapsed < _nextRise) return;
@@ -258,9 +258,9 @@ public sealed class FloodScript : IMapScriptBehavior
 /// 计时器),木塔驻罗马冠军兵。简化版:OnInit 驻塔兵 + 周期升水位(上限 70)。</summary>
 public sealed class ExtinctVolcanoScript : IMapScriptBehavior
 {
-    private float _elapsed;
-    private float _nextRise = 1500f;       // 首次升水位约 25 分钟(原版 SeaLevelRiseTime 默认 25 分)
-    private const float IncreaseTime = 30f; // 升水位间隔(原版 waterIncreaseTime 0.5-1 分)
+    private Fixed _elapsed = Fixed.Zero;
+    private Fixed _nextRise = Fixed.FromInt(1500);       // 首次升水位约 25 分钟(原版 SeaLevelRiseTime 默认 25 分)
+    private static readonly Fixed IncreaseTime = Fixed.FromInt(30); // 升水位间隔(原版 waterIncreaseTime 0.5-1 分)
     private const float IncreaseHeight = 1f; // 每步水位(原版 waterLevelIncreaseHeight)
     private const float MaxLevel = 70f;     // 上限(原版 maxWaterLevel)
     private const float DrownHeight = 1f;   // 淹没高度(原版 drownHeight)
@@ -288,7 +288,7 @@ public sealed class ExtinctVolcanoScript : IMapScriptBehavior
         }
     }
 
-    public void Tick(ComponentManager cm, float dt)
+    public void Tick(ComponentManager cm, Fixed dt)
     {
         _elapsed += dt;
         if (_elapsed < _nextRise) return;
@@ -319,9 +319,9 @@ public sealed class ExtinctVolcanoScript : IMapScriptBehavior
 /// 用周期 SpawnEntities 替代原版的舰船实体+卸载逻辑)。</summary>
 public sealed class DanubiusScript : IMapScriptBehavior
 {
-    private float _elapsed;
-    private float _nextWave = 300f;   // 首波约 5 分钟(原版 shipUngarrisonInterval 首波)
-    private const float WaveInterval = 240f;
+    private Fixed _elapsed = Fixed.Zero;
+    private Fixed _nextWave = Fixed.FromInt(300);   // 首波约 5 分钟(原版 shipUngarrisonInterval 首波)
+    private static readonly Fixed WaveInterval = Fixed.FromInt(240);
 
     public void OnInit(ComponentManager cm)
     {
@@ -378,7 +378,7 @@ public sealed class DanubiusScript : IMapScriptBehavior
         }
     }
 
-    public void Tick(ComponentManager cm, float dt)
+    public void Tick(ComponentManager cm, Fixed dt)
     {
         _elapsed += dt;
         if (_elapsed < _nextWave) return;
@@ -410,14 +410,14 @@ public sealed class DanubiusScript : IMapScriptBehavior
 /// 随时间渐强;timer 用 cm 时基累计)。</summary>
 public sealed class JebelBarkalScript : IMapScriptBehavior
 {
-    private float _elapsed;
-    private float _nextPatrol = 300f;   // 首巡逻约 5 分钟(原版 firstCityPatrolTime)
-    private float _nextAttack = 420f;   // 首攻击约 7 分钟(原版 attackInterval 首波)
+    private Fixed _elapsed = Fixed.Zero;
+    private Fixed _nextPatrol = Fixed.FromInt(300);   // 首巡逻约 5 分钟(原版 firstCityPatrolTime)
+    private Fixed _nextAttack = Fixed.FromInt(420);   // 首攻击约 7 分钟(原版 attackInterval 首波)
     private const float MaxPopulation = 1200f;   // 原版 8×150 上限
 
     public void OnInit(ComponentManager cm) { }
 
-    public void Tick(ComponentManager cm, float dt)
+    public void Tick(ComponentManager cm, Fixed dt)
     {
         _elapsed += dt;
         var sink = cm.Triggers.Sink;
@@ -427,7 +427,7 @@ public sealed class JebelBarkalScript : IMapScriptBehavior
         // 旁生成步兵冠军巡逻队,按时间渐增数量)。
         if (_elapsed >= _nextPatrol)
         {
-            _nextPatrol += 180f;
+            _nextPatrol += Fixed.FromInt(180);
             var range = SimSystem.Range;
             if (range != null)
             {
@@ -441,7 +441,7 @@ public sealed class JebelBarkalScript : IMapScriptBehavior
                         continue;
                     var pos = cm.QueryInterface<PositionComponent>(ent);
                     if (pos == null) continue;
-                    int count = System.Math.Min(20, 10 + (int)(_elapsed / 120f));
+                    int count = System.Math.Min(20, 10 + _elapsed.ToIntRoundToZero() / 120);
                     sink.SpawnEntities("units/kush/champion_infantry_spearman", 0,
                         pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), count, 3f);
                 }
@@ -452,7 +452,7 @@ public sealed class JebelBarkalScript : IMapScriptBehavior
         // 数量按时间渐增;上限 1200 人口)。
         if (_elapsed >= _nextAttack)
         {
-            _nextAttack += (float)(cm.RNG.NextDouble() * 120 + 300);
+            _nextAttack += Fixed.FromDouble(cm.RNG.NextDouble() * 120 + 300);
             var range = SimSystem.Range;
             if (range != null)
             {
@@ -462,7 +462,7 @@ public sealed class JebelBarkalScript : IMapScriptBehavior
                     if (identity == null || !identity.HasClass("CivCentre")) continue;
                     var pos = cm.QueryInterface<PositionComponent>(ent);
                     if (pos == null) continue;
-                    int count = System.Math.Min(50, 15 + (int)(_elapsed / 60f));
+                    int count = System.Math.Min(50, 15 + _elapsed.ToIntRoundToZero() / 60);
                     sink.SpawnEntities("units/kush/infantry_spearman_b", 0,
                         pos.Position.X.ToFloat(), pos.Position.Z.ToFloat(), count, 4f);
                     sink.SpawnEntities("units/kush/champion_infantry_spearman", 0,

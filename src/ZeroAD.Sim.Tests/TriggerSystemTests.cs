@@ -21,6 +21,8 @@ public sealed class TriggerSystemTests
         }
     }
 
+    private static readonly ZeroAD.Sim.Maths.Fixed Dt = ZeroAD.Sim.Maths.Fixed.FromFloat(0.1f);
+
     private static ComponentManager SetupWorld()
     {
         var cm = new ComponentManager(rngSeed: 1);
@@ -83,14 +85,14 @@ public sealed class TriggerSystemTests
             Actions = { Act("ShowMessage", ("Text", "hello")) }
         });
 
-        for (int i = 0; i < 5; i++) ts.Tick(cm, 0.1f);   // 0.5s < 1s
+        for (int i = 0; i < 5; i++) ts.Tick(cm, Dt);   // 0.5s < 1s
         Assert.Empty(sink.Messages);
 
-        for (int i = 0; i < 10; i++) ts.Tick(cm, 0.1f);  // 累计 1.5s > 1s → 触发
+        for (int i = 0; i < 10; i++) ts.Tick(cm, Dt);  // 累计 1.5s > 1s → 触发
         Assert.Single(sink.Messages);
         Assert.Equal("hello", sink.Messages[0]);
 
-        for (int i = 0; i < 20; i++) ts.Tick(cm, 0.1f);  // Once:不再触发
+        for (int i = 0; i < 20; i++) ts.Tick(cm, Dt);  // Once:不再触发
         Assert.Single(sink.Messages);
     }
 
@@ -108,7 +110,7 @@ public sealed class TriggerSystemTests
         });
 
         int fired = 0;
-        for (int i = 0; i < 5; i++) fired += ts.Tick(cm, 0.1f);
+        for (int i = 0; i < 5; i++) fired += ts.Tick(cm, Dt);
         Assert.True(fired >= 3, $"repeating trigger should fire most ticks, got {fired}");
     }
 
@@ -131,10 +133,10 @@ public sealed class TriggerSystemTests
             Actions = { Act("ShowMessage", ("Text", "revealed")) }
         });
 
-        for (int i = 0; i < 3; i++) ts.Tick(cm, 0.1f);   // 0.3s:gate 未到时,reveal 禁用
+        for (int i = 0; i < 3; i++) ts.Tick(cm, Dt);   // 0.3s:gate 未到时,reveal 禁用
         Assert.Empty(sink.Messages);
 
-        for (int i = 0; i < 5; i++) ts.Tick(cm, 0.1f);   // gate 触发 → 启用 reveal → 下回合触发
+        for (int i = 0; i < 5; i++) ts.Tick(cm, Dt);   // gate 触发 → 启用 reveal → 下回合触发
         Assert.Single(sink.Messages);
         Assert.Equal("revealed", sink.Messages[0]);
     }
@@ -151,11 +153,11 @@ public sealed class TriggerSystemTests
             Actions = { Act("VictoryPlayer", ("PlayerId", "1")) }
         });
 
-        ts.Tick(cm, 0.1f);
+        ts.Tick(cm, Dt);
         Assert.False(cm.Players.GetPlayerEntity(1)!.HasWon());
 
         cm.Players.GetPlayerEntity(2)!.SetDefeated();
-        ts.Tick(cm, 0.1f);
+        ts.Tick(cm, Dt);
         Assert.True(cm.Players.GetPlayerEntity(1)!.HasWon());
     }
 
@@ -187,7 +189,7 @@ public sealed class TriggerSystemTests
             Actions = { Act("ShowMessage", ("Text", "yes")) }
         });
 
-        ts.Tick(cm, 0.1f);
+        ts.Tick(cm, Dt);
         Assert.Single(sink.Messages);
         Assert.Equal("yes", sink.Messages[0]);
     }
@@ -208,7 +210,7 @@ public sealed class TriggerSystemTests
             Actions = { Act("ShowMessage", ("Text", "low")) }
         });
 
-        ts.Tick(cm, 0.1f);
+        ts.Tick(cm, Dt);
         Assert.Empty(sink.Messages);   // 2 个实体 > 1
 
         // 杀一个 → 1 ≤ 1 → 触发
@@ -221,7 +223,7 @@ public sealed class TriggerSystemTests
             cm.DestroyEntity(ent);
             break;
         }
-        ts.Tick(cm, 0.1f);
+        ts.Tick(cm, Dt);
         Assert.Single(sink.Messages);
     }
 
@@ -240,7 +242,7 @@ public sealed class TriggerSystemTests
                 ("X", "50"), ("Z", "60"), ("Count", "3"), ("Spread", "4")) }
         });
 
-        ts.Tick(cm, 0.1f);
+        ts.Tick(cm, Dt);
         Assert.Single(sink.Spawns);
         var s = sink.Spawns[0];
         Assert.Equal("units/athen/infantry_spearman_b", s.Template);
@@ -263,7 +265,7 @@ public sealed class TriggerSystemTests
             Conditions = { Cond("OnPlayerCommand") },
             Actions = { Act("ShowMessage", ("Text", "x")) }
         });
-        for (int i = 0; i < 10; i++) ts.Tick(cm, 0.1f);
+        for (int i = 0; i < 10; i++) ts.Tick(cm, Dt);
         Assert.Empty(sink.Messages);
     }
 
@@ -277,7 +279,7 @@ public sealed class TriggerSystemTests
         scenario.ApplyTriggers(ts);
 
         Assert.Equal(3, ts.Triggers.Count);
-        for (int i = 0; i < 25; i++) ts.Tick(cm, 0.1f);  // 2.5s → 第一条(2s)到
+        for (int i = 0; i < 25; i++) ts.Tick(cm, Dt);  // 2.5s → 第一条(2s)到
         Assert.Single(sink.Messages);
         Assert.Contains("select", sink.Messages[0]);
     }

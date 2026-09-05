@@ -1277,7 +1277,11 @@ public sealed partial class Main : Node3D
 		WireMirageSwapBack();
 
 		if (!string.IsNullOrEmpty(meta.MapPath))
+		{
 			SetupTerrain(meta.MapPath);
+			// 同 ColdLoad:脚本重注册先于反序列化(尾部的 NotifyDeserialized 广播)。
+			_sim.InitMapScript(System.IO.Path.GetFileNameWithoutExtension(meta.MapPath));
+		}
 
 		// 反序列化初始状态（从录像 payload，与 SaveGameManager.Load 同路径）。
 		using var ms = new System.IO.MemoryStream(reader.InitialStatePayload);
@@ -1359,6 +1363,12 @@ public sealed partial class Main : Node3D
 
 		// Terrain + spatial-index bounds + passability + pathfinder grid, sized to the real map.
 		SetupTerrain(meta.MapPath);
+
+		// 地图脚本重注册(读档路径):事件触发器/OnRange 注册不进存档,由脚本 OnInit
+		// 重建——必须先于 DeserializeSaveGame(其尾部 NotifyDeserialized 向脚本瞬态广播)。
+		// OnInit 的世界改写/生成会被紧随的 ResetState+存档覆盖,无残留。
+		if (!string.IsNullOrEmpty(meta.MapPath))
+			_sim.InitMapScript(System.IO.Path.GetFileNameWithoutExtension(meta.MapPath));
 
 		// Overlay the saved component state, re-injecting the runtime managers each component
 		// needs before deserialization (same prepareComponent as QuickLoad). The player registry
@@ -1666,17 +1676,9 @@ public sealed partial class Main : Node3D
 					_sim.SpawnDecorative(ent.TemplateName.Substring("actor|".Length), x, z, yaw);
 					continue;
 				}
-				if (ent.TemplateName.StartsWith("trigger/trigger_point_", System.StringComparison.Ordinal))
-				{
-					// 触发点(trigger_point_X):注册进触发系统(地图脚本的生成/区域锚点),
-					// 不生成实体(原版 TriggerPoint 实体只作位置注册)。
-					string tref = ent.TemplateName.Substring("trigger/trigger_point_".Length);
-					_sim.Sim.Triggers.RegisterTriggerPoint(tref,
-						new ZeroAD.Sim.Maths.FixedVector2D(
-							ZeroAD.Sim.Maths.Fixed.FromFloat(x), ZeroAD.Sim.Maths.Fixed.FromFloat(z)));
-					continue;
-				}
 				// 属主随 rmgen PlayerID(上游 ParseEntities 同款)——玩家基地/起始单位归属。
+				// 触发点(trigger/trigger_point_*)不再名字特判:模板 <TriggerPoint><Reference>
+				// 驱动,SpawnFromTemplate 内部走 SpawnTriggerPointMarker 统一摄入。
 				var eid = _sim.SpawnFromTemplate(ent.TemplateName, x, z, ent.PlayerID);
 				if (_sim.EntityNodes.TryGetValue(eid, out var node) && yaw != 0f)
 					node.Rotation = new Vector3(0, yaw, 0);

@@ -41,7 +41,7 @@ namespace ZeroAD.Sim.Triggers
         public List<TriggerAction> Actions = new();
         /// <summary>TimeElapsed/Interval 条件用:启用期间累计秒数(存档保持,
         /// 读档后间隔不重置——原版 OnInterval 的 SetInterval 状态骑缝)。</summary>
-        internal float Elapsed;
+        internal Maths.Fixed Elapsed;
 
         /// <summary>序列化(存档骑缝;原版 Trigger 组件的 triggerData.enabled +
         /// 定时器状态)。条件/动作表为静态定义不序列化,Enabled/Elapsed 为动态。</summary>
@@ -49,14 +49,14 @@ namespace ZeroAD.Sim.Triggers
         {
             s.StringASCII("name", Name);
             s.Bool("enabled", Enabled);
-            s.NumberFixed("elapsed", Maths.Fixed.FromFloat(Elapsed));
+            s.NumberFixed("elapsed", Elapsed);
         }
 
         public void Deserialize(ZeroAD.Sim.Serialization.IDeserializer d)
         {
             Name = d.StringASCII("name");
             Enabled = d.Bool("enabled");
-            Elapsed = d.NumberFixed("elapsed").ToFloat();
+            Elapsed = d.NumberFixed("elapsed");
         }
     }
 
@@ -73,11 +73,11 @@ namespace ZeroAD.Sim.Triggers
     /// <summary>地图脚本行为(maps/random/*_triggers.js 的 C# 移植接口)。
     /// OnInit 在地图加载完成时调一次(原版 OnInitGame);Tick 每 sim 回合由
     /// TriggerSystem.Tick 驱动(原版 DoAfterDelay/DoRepeatedly 用脚本内自排程实现,
-    /// RNG 一律走 cm.RNG 保锁步一致)。</summary>
+    /// RNG 一律走 cm.RNG 保锁步一致)。dt 为定点秒(内核禁 float)。</summary>
     public interface IMapScriptBehavior
     {
         void OnInit(ComponentManager cm);
-        void Tick(ComponentManager cm, float dt);
+        void Tick(ComponentManager cm, Maths.Fixed dt);
     }
 
     /// <summary>触发器系统(原版 Trigger.js 的 C# 数据驱动移植框架)。
@@ -105,8 +105,14 @@ namespace ZeroAD.Sim.Triggers
         /// <summary>地图脚本(当前图的 _triggers.js 移植件;null = 该图无脚本)。</summary>
         public IMapScriptBehavior? MapScript;
 
-        // 触发点注册表(ref → 世界坐标;rmgen 的 trigger/trigger_point_X 实体经此入库)。
-        private readonly Dictionary<string, List<Maths.FixedVector2D>> _triggerPoints = new(StringComparer.Ordinal);
+        // 触发点注册表(ref → 实体;模板带 <TriggerPoint><Reference> 的实体装配时自动入库,
+        // 原版 Trigger.RegisterTriggerPoint)。坐标经 PositionComponent 取——存实体而非坐标,
+        // 是因为实体同时是 OnRange 主动查询的 source。
+        private readonly Dictionary<string, List<EntityId>> _triggerPoints = new(StringComparer.Ordinal);
+
+        // OnRange 主动查询注册表(tag → 触发器名;原版 TriggerPoint.RegisterRangeTrigger 的
+        // currentCollections/triggers 两表)。注册序 = 回合末派发序(确定性)。
+        private readonly List<(int Tag, string Name)> _rangeTriggers = new();
 
         /// <summary>接 sim 事件总线(原版 Trigger 组件订阅 sim 消息的等价):
         /// OwnershipChanged/StructureBuilt/TrainingFinished/ResearchFinished 经
@@ -144,26 +150,51 @@ namespace ZeroAD.Sim.Triggers
             cm.Events.PlayerAttackedAlert += e =>
                 CallEvent(cm, "OnAttackDetected", e);
             // OnCinemaPathEnded/OnCinemaQueueEnded:表现层 CinemaManager 经
-            // SimBridge 转调 CallEvent(过场播放完成时);OnRange:范围查询由
-            // OnInterval 轮询语义承载(原版 OnRange 由 Trigger 组件注册范围事件,
-            // 移植见 GetTriggerPoints + AreaContainsEntities 条件)。
+            // SimBridge 转调 CallEvent(过场播放完成时);OnRange:主动范围查询——
+            // AddRangeTrigger 建查询,Tick 回合末按 added/removed 增量派发
+            // (原版 RangeManager PerformActiveQueries → MT_RangeUpdate →
+            // TriggerPoint.OnRangeUpdate → CallTrigger("OnRange"))。
         }
 
         public IReadOnlyList<TriggerDefinition> Triggers => _triggers;
 
-        /// <summary>注册触发点(原版 Trigger.RegisterTriggerPoint 的坐标版——
-        /// 我们只记位置不建实体)。</summary>
-        public void RegisterTriggerPoint(string reference, Maths.FixedVector2D pos)
+        /// <summary>注册触发点(原版 Trigger.RegisterTriggerPoint:ref → 实体)。
+        /// 由 EntityAssembler 在装配带 &lt;TriggerPoint&gt;&lt;Reference&gt; 模板的实体时调用。</summary>
+        public void RegisterTriggerPoint(string reference, EntityId entity)
         {
             if (!_triggerPoints.TryGetValue(reference, out var list))
-                _triggerPoints[reference] = list = new List<Maths.FixedVector2D>();
-            list.Add(pos);
+                _triggerPoints[reference] = list = new List<EntityId>();
+            if (!list.Contains(entity)) list.Add(entity);
         }
 
-        /// <summary>取触发点(原版 GetTriggerPoints;无该 ref → 空表)。</summary>
-        public IReadOnlyList<Maths.FixedVector2D> GetTriggerPoints(string reference) =>
+        /// <summary>移除触发点(原版 Trigger.RemoveRegisteredTriggerPoint;
+        /// ComponentManager.DestroyEntity 在销毁 TriggerPointComponent 实体时调用)。</summary>
+        public void UnregisterTriggerPoint(string reference, EntityId entity)
+        {
+            if (!_triggerPoints.TryGetValue(reference, out var list)) return;
+            list.Remove(entity);
+            if (list.Count == 0) _triggerPoints.Remove(reference);
+        }
+
+        /// <summary>取触发点实体(原版 GetTriggerPoints 的实体形态;无该 ref → 空表)。
+        /// 注册序 = 生成序(确定性)。</summary>
+        public IReadOnlyList<EntityId> GetTriggerPointEntities(string reference) =>
             _triggerPoints.TryGetValue(reference, out var list) ? list
-                : (IReadOnlyList<Maths.FixedVector2D>)Array.Empty<Maths.FixedVector2D>();
+                : (IReadOnlyList<EntityId>)Array.Empty<EntityId>();
+
+        /// <summary>取触发点坐标(经各实体的 PositionComponent;不在世界的跳过)。
+        /// 无该 ref → 空表。</summary>
+        public List<Maths.FixedVector2D> GetTriggerPoints(ComponentManager cm, string reference)
+        {
+            var result = new List<Maths.FixedVector2D>();
+            foreach (var ent in GetTriggerPointEntities(reference))
+            {
+                var pos = cm.QueryInterface<PositionComponent>(ent);
+                if (pos == null || !pos.InWorld) continue;
+                result.Add(new Maths.FixedVector2D(pos.Position.X, pos.Position.Z));
+            }
+            return result;
+        }
 
         public void Add(TriggerDefinition trigger) => _triggers.Add(trigger);
 
@@ -181,6 +212,8 @@ namespace ZeroAD.Sim.Triggers
         {
             _triggers.Clear();
             _eventTriggers.Clear();
+            _triggerPoints.Clear();
+            _rangeTriggers.Clear();
         }
 
         /// <summary>事件总线(原版 Trigger.CallEvent):按事件名投递到全部启用
@@ -197,6 +230,38 @@ namespace ZeroAD.Sim.Triggers
             }
         }
 
+        /// <summary>具名派发(原版 Trigger.CallTrigger(event, name, data)):只投递到
+        /// 该事件下 Name 匹配的启用触发器。OnRange 增量用此通道。</summary>
+        public void CallTrigger(ComponentManager cm, string eventName, string triggerName, object? data = null)
+        {
+            if (!_eventTriggers.TryGetValue(eventName, out var list)) return;
+            foreach (var t in list)
+            {
+                if (t.Name != triggerName || !t.Enabled) continue;
+                foreach (var action in t.Actions)
+                    Execute(cm, action);
+                if (t.Once) t.Enabled = false;
+            }
+        }
+
+        /// <summary>注册持续范围触发器(原版 TriggerPoint.RegisterRangeTrigger):
+        /// 以 source 实体为圆心建主动查询;回合末出现 added/removed 增量时
+        /// CallTrigger("OnRange", name, RangeUpdateData)。返回查询 tag。
+        /// maxRange &lt; 0 = 不限。players 空 = 任意属主。</summary>
+        public int AddRangeTrigger(ComponentManager cm, EntityId source, string triggerName,
+            Maths.Fixed minRange, Maths.Fixed maxRange, IReadOnlyList<int>? players = null,
+            string requiredClass = "", bool enabled = true)
+        {
+            var range = SimSystem.Range
+                ?? throw new InvalidOperationException("AddRangeTrigger requires a RangeManager");
+            int tag = range.CreateActiveQuery(source, minRange, maxRange, players, requiredClass, enabled);
+            _rangeTriggers.Add((tag, triggerName));
+            return tag;
+        }
+
+        public void EnableRangeTrigger(int tag) => SimSystem.Range?.EnableActiveQuery(tag);
+        public void DisableRangeTrigger(int tag) => SimSystem.Range?.DisableActiveQuery(tag);
+
         public TriggerDefinition? Find(string name)
         {
             foreach (var t in _triggers)
@@ -205,17 +270,32 @@ namespace ZeroAD.Sim.Triggers
         }
 
         /// <summary>序列化(存档骑缝;原版 Trigger 组件的 triggerData.enabled +
-        /// 定时器状态):条件/动作为静态定义不序列化,只写 Name/Enabled/Elapsed。
-        /// 与 Deserialize 写序逐位一致。</summary>
+        /// 定时器状态 + triggerPoints 表):条件/动作为静态定义不序列化。
+        /// v20 起附触发点注册表(ref → 实体 id 列表,ref 字典序、id 升序,写序固定);
+        /// 读档后坐标经各实体 PositionComponent 复原。与 Deserialize 写序逐位一致。</summary>
         public void Serialize(ZeroAD.Sim.Serialization.ISerializer s)
         {
             s.NumberI32("count", _triggers.Count);
             foreach (var t in _triggers)
                 t.Serialize(s);
+            // v20 尾段:触发点注册表。
+            var refs = new List<string>(_triggerPoints.Keys);
+            refs.Sort(StringComparer.Ordinal);
+            s.NumberI32("pointRefs", refs.Count);
+            foreach (var r in refs)
+            {
+                s.StringASCII("ref", r);
+                var ids = new List<EntityId>(_triggerPoints[r]);
+                ids.Sort((a, b) => a.Value.CompareTo(b.Value));
+                s.NumberI32("n", ids.Count);
+                foreach (var id in ids)
+                    s.NumberU32("ent", id.Value);
+            }
         }
 
         /// <summary>反序列化(与 Serialize 写序逐位一致)。条件/动作静态定义
-        /// 由地图脚本重注(OnInitGame 时 Add 的触发器先 Reset 再 Fill)。</summary>
+        /// 由地图脚本重注(OnInitGame 时 Add 的触发器先 Reset 再 Fill)。
+        /// v19 及更早的档无触发点尾段 → 注册表置空(v20 前触发点本就不进档)。</summary>
         public void Deserialize(ZeroAD.Sim.Serialization.IDeserializer d)
         {
             int count = d.NumberI32("count");
@@ -226,7 +306,27 @@ namespace ZeroAD.Sim.Triggers
                 t.Deserialize(d);
                 _triggers.Add(t);
             }
+            _triggerPoints.Clear();
+            if (Serialization.SaveFormat.LoadedVersion >= 20)
+            {
+                int refCount = d.NumberI32("pointRefs");
+                for (int i = 0; i < refCount; i++)
+                {
+                    string r = d.StringASCII("ref");
+                    int n = d.NumberI32("n");
+                    var list = new List<EntityId>(n);
+                    for (int j = 0; j < n; j++)
+                        list.Add(new EntityId(d.NumberU32("ent")));
+                    _triggerPoints[r] = list;
+                }
+            }
         }
+
+        /// <summary>地图加载完成后投递 OnInitGame(原版 OnGlobalInitGame 广播:
+        /// 地图脚本/战役注册的 OnInitGame 事件触发器在此点火)。由 SimBridge 在
+        /// 地图脚本安装后(rmgen 路径)与场景实体生成完成后(scenario 路径)各调一次。</summary>
+        public void NotifyInitGame(ComponentManager cm) =>
+            CallEvent(cm, "OnInitGame", null);
 
         /// <summary>读档完成后投递(原版 OnDeserialized:Trigger 组件反序列化后
         /// 广播,触发器脚本重建瞬态)。由存档加载路径(SaveGameManager/SimBridge)
@@ -234,9 +334,19 @@ namespace ZeroAD.Sim.Triggers
         public void NotifyDeserialized(ComponentManager cm) =>
             CallEvent(cm, "OnDeserialized", null);
 
-        /// <summary>每回合推进。dt 为本回合秒数(0.1)。返回本回合触发次数(测试观察用)。
-        /// OnInterval 事件在此投递(原版 SetInterval 语义:Interval 秒一到即投递)。</summary>
-        public int Tick(ComponentManager cm, float dt)
+        /// <summary>OnRange 增量载荷(原版 TriggerPoint.OnRangeUpdate 的 r 对象:
+        /// {added, removed, currentCollection})。</summary>
+        public sealed class RangeUpdateData
+        {
+            public IReadOnlyList<EntityId> Added = Array.Empty<EntityId>();
+            public IReadOnlyList<EntityId> Removed = Array.Empty<EntityId>();
+            public IReadOnlyList<EntityId> CurrentCollection = Array.Empty<EntityId>();
+        }
+
+        /// <summary>每回合推进。dt 为本回合秒数(定点,0.1)。返回本回合触发次数(测试观察用)。
+        /// OnInterval 事件在此投递(原版 SetInterval 语义:Interval 秒一到即投递);
+        /// 回合末统一派发 OnRange 增量(原版 RangeManager 回合更新的时点)。</summary>
+        public int Tick(ComponentManager cm, Maths.Fixed dt)
         {
             MapScript?.Tick(cm, dt);
             int fired = 0;
@@ -265,18 +375,46 @@ namespace ZeroAD.Sim.Triggers
             foreach (var t in _triggers)
             {
                 if (!t.Enabled) continue;
-                float interval = 0f;
+                var interval = Maths.Fixed.Zero;
                 foreach (var cond in t.Conditions)
                     if (cond.Type == "Interval")
                     {
-                        interval = GetFloat(cond, "Seconds", 0f);
+                        interval = GetFixed(cond, "Seconds", Maths.Fixed.Zero);
                         break;
                     }
-                if (interval <= 0) continue;
+                if (interval <= Maths.Fixed.Zero) continue;
                 if (t.Elapsed >= interval)
                 {
-                    t.Elapsed = 0;
+                    t.Elapsed = Maths.Fixed.Zero;
                     CallEvent(cm, "OnInterval", null);
+                    fired++;
+                }
+            }
+            // 回合末:OnRange 主动查询增量(原版 PerformActiveQueries →
+            // TriggerPoint.OnRangeUpdate → CallTrigger("OnRange", name, r))。
+            fired += DispatchRangeUpdates(cm);
+            return fired;
+        }
+
+        /// <summary>回合末派发全部启用中的 OnRange 主动查询增量(注册序)。
+        /// 返回派发的触发器次数。</summary>
+        private int DispatchRangeUpdates(ComponentManager cm)
+        {
+            if (_rangeTriggers.Count == 0) return 0;
+            var range = SimSystem.Range;
+            if (range == null) return 0;
+            int fired = 0;
+            foreach (var update in range.UpdateActiveQueries())
+            {
+                foreach (var (tag, name) in _rangeTriggers)
+                {
+                    if (tag != update.Tag) continue;
+                    CallTrigger(cm, "OnRange", name, new RangeUpdateData
+                    {
+                        Added = update.Added,
+                        Removed = update.Removed,
+                        CurrentCollection = update.Current,
+                    });
                     fired++;
                 }
             }
@@ -288,7 +426,7 @@ namespace ZeroAD.Sim.Triggers
             switch (cond.Type)
             {
                 case "TimeElapsed":
-                    return owner.Elapsed >= GetFloat(cond, "Seconds", 0f);
+                    return owner.Elapsed >= GetFixed(cond, "Seconds", Maths.Fixed.Zero);
                 case "PlayerDefeated":
                 {
                     var p = cm.Players.GetPlayerEntity(GetInt(cond, "PlayerId", -1));
@@ -417,6 +555,10 @@ namespace ZeroAD.Sim.Triggers
         private static int GetInt(TriggerAction a, string key, int fallback) =>
             a.Params.TryGetValue(key, out var v) &&
             int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? i : fallback;
+        private static Maths.Fixed GetFixed(TriggerCondition c, string key, Maths.Fixed fallback) =>
+            c.Params.TryGetValue(key, out var v) &&
+            float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var f)
+                ? Maths.Fixed.FromFloat(f) : fallback;
         private static float GetFloat(TriggerCondition c, string key, float fallback) =>
             c.Params.TryGetValue(key, out var v) &&
             float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : fallback;

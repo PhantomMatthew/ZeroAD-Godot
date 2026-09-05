@@ -16,6 +16,8 @@ namespace ZeroAD.Sim.Events
         public EntityId TrainerEntity;
         public string UnitTemplate = "";
         public int Count = 1;
+        /// <summary>训练属主玩家号(原版 MT_TrainingQueued 的 playerid)。</summary>
+        public int PlayerId;
     }
 
     public sealed class TrainingFinishedEvent
@@ -34,6 +36,8 @@ namespace ZeroAD.Sim.Events
     {
         public EntityId ResearcherEntity;
         public string TechnologyTemplate = "";
+        /// <summary>研究属主玩家号(原版 MT_ResearchQueued 的 playerid)。</summary>
+        public int PlayerId;
     }
 
     public sealed class ResearchFinishedEvent

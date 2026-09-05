@@ -15,6 +15,18 @@ namespace ZeroAD.Sim
     /// </summary>
     public static class EntityAssembler
     {
+        /// <summary>TriggerPoint 摄入(原版 TriggerPoint.js Init → Trigger.RegisterTriggerPoint):
+        /// 模板带 &lt;TriggerPoint&gt;&lt;Reference&gt; 的实体挂 TriggerPointComponent 并注册进
+        /// 触发系统;坐标经 PositionComponent 取,注册表存实体。幂等(已有组件跳过)。
+        /// 销毁侧由 ComponentManager.DestroyEntity 移除(原版 OnDestroy)。</summary>
+        public static void AttachTriggerPoint(ComponentManager cm, EntityId entity, string? reference)
+        {
+            if (string.IsNullOrEmpty(reference)) return;
+            if (cm.QueryInterface<TriggerPointComponent>(entity) != null) return;
+            cm.AddComponent(entity, new TriggerPointComponent { Reference = reference });
+            cm.Triggers.RegisterTriggerPoint(reference, entity);
+        }
+
         /// <summary>
         /// Assemble a unit entity (mobile, optionally combatant/gatherer) from template stats.
         /// Adds: Position, UnitMotion, Health, Identity, and conditionally Attack / Gatherer+Builder /
@@ -463,6 +475,9 @@ namespace ZeroAD.Sim
 
             // Register the obstruction now that Position is set, so it's tracked from frame 1.
             cm.QueryInterface<ObstructionComponent>(entity)?.EnsureRegistered();
+
+            // TriggerPoint(trigger/trigger_point_* 模板):挂组件并注册进触发系统。
+            AttachTriggerPoint(cm, entity, stats?.TriggerPointReference);
         }
 
         /// <summary>
@@ -637,6 +652,9 @@ namespace ZeroAD.Sim
                     MetalRate = stats.TrickleMetal,
                 });
             }
+
+            // TriggerPoint(trigger/trigger_point_* 模板):挂组件并注册进触发系统。
+            AttachTriggerPoint(cm, entity, stats?.TriggerPointReference);
 
             cm.NotifyEntityCreated(entity); // RangeManager subscribes → indexes + Refresh
             int owner = cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId ?? -1;

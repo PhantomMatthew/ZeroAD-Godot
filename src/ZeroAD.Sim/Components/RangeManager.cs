@@ -120,6 +120,8 @@ namespace ZeroAD.Sim.Components
         private readonly ComponentManager _cm;
         private readonly Dictionary<EntityId, RangeEntityData> _data = new();
         private FastSpatialSubdivision _subdivision;
+        // 世界边长(米):active query 的 maxRange<0(不限)时作 AABB 上限。SetBounds 更新。
+        private Fixed _worldMeters;
         // Reused scratch buffer — never exposed across calls.
         private readonly List<EntityId> _scratch = new();
 
@@ -146,6 +148,7 @@ namespace ZeroAD.Sim.Components
         public RangeManager(ComponentManager cm, Fixed maxX, Fixed maxZ)
         {
             _cm = cm;
+            _worldMeters = maxX;
             _subdivision = new FastSpatialSubdivision(maxX, maxZ);
             Los = new LosGrid(maxX.ToIntRoundToNearest());
             cm.EntityCreated += OnEntityCreated;
@@ -159,6 +162,7 @@ namespace ZeroAD.Sim.Components
         /// current entity data, in sorted entity order for determinism.</summary>
         public void SetBounds(Fixed worldMeters)
         {
+            _worldMeters = worldMeters;
             _subdivision = new FastSpatialSubdivision(worldMeters, worldMeters);
             Los = new LosGrid(worldMeters.ToIntRoundToNearest());
             _playerLosDirtyMask = 0xFFFF; // everything re-evaluated against the fresh grid
@@ -497,6 +501,135 @@ namespace ZeroAD.Sim.Components
             // Stable, deterministic order: sort by entity id so results don't depend on hash order.
             result.Sort((a, b) => a.Value.CompareTo(b.Value));
             return result;
+        }
+
+        // --- Active range queries (原版 CCmpRangeManager::CreateActiveQuery /
+        //     EnableActiveQuery/DisableActiveQuery + 每回合 PerformActiveQueries →
+        //     MT_RangeUpdate;消费方是 TriggerPoint.OnRangeUpdate → Trigger.CallTrigger("OnRange")) ---
+
+        /// <summary>持续范围查询(原版 active query):每回合同一查询重跑,与上次结果
+        /// 求 added/removed 增量。Current 恒为最近一次结果(实体 id 升序)。</summary>
+        public sealed class ActiveRangeQuery
+        {
+            public int Tag;
+            public EntityId Source;
+            public Fixed MinRange;
+            /// <summary>最大查询半径;&lt; 0 = 不限(原版 maxRange=-1 语义)。</summary>
+            public Fixed MaxRange;
+            /// <summary>属主过滤(玩家号列表;空 = 任意属主)。</summary>
+            public List<int> Players = new();
+            /// <summary>类别过滤(Identity 类表表达式;空 = 不限)。</summary>
+            public string RequiredClass = "";
+            public bool Enabled;
+            /// <summary>最近一次查询结果(实体 id 升序;原版 currentCollection)。</summary>
+            public readonly List<EntityId> Current = new();
+        }
+
+        /// <summary>一次主动查询的增量结果(原版 MT_RangeUpdate 的载荷:
+        /// added/removed/currentCollection)。</summary>
+        public sealed class RangeQueryUpdate
+        {
+            public int Tag;
+            public List<EntityId> Added = new();
+            public List<EntityId> Removed = new();
+            public IReadOnlyList<EntityId> Current = System.Array.Empty<EntityId>();
+        }
+
+        private readonly Dictionary<int, ActiveRangeQuery> _activeQueries = new();
+        private int _nextQueryTag = 1;
+
+        /// <summary>创建主动范围查询(原版 CreateActiveQuery;返回 tag)。
+        /// 查询默认建即启用(原版 enabled 参数默认 true)。</summary>
+        public int CreateActiveQuery(EntityId source, Fixed minRange, Fixed maxRange,
+            IReadOnlyList<int>? players, string requiredClass, bool enabled = true)
+        {
+            int tag = _nextQueryTag++;
+            _activeQueries[tag] = new ActiveRangeQuery
+            {
+                Tag = tag,
+                Source = source,
+                MinRange = minRange,
+                MaxRange = maxRange,
+                Players = players != null ? new List<int>(players) : new List<int>(),
+                RequiredClass = requiredClass,
+                Enabled = enabled,
+            };
+            return tag;
+        }
+
+        public void EnableActiveQuery(int tag)
+        {
+            if (_activeQueries.TryGetValue(tag, out var q)) q.Enabled = true;
+        }
+
+        public void DisableActiveQuery(int tag)
+        {
+            if (_activeQueries.TryGetValue(tag, out var q)) q.Enabled = false;
+        }
+
+        /// <summary>读档/换图时清空全部主动查询(注册由地图脚本重建)。</summary>
+        public void ResetActiveQueries()
+        {
+            _activeQueries.Clear();
+            _nextQueryTag = 1;
+        }
+
+        public bool TryGetActiveQuery(int tag, out ActiveRangeQuery? query) =>
+            _activeQueries.TryGetValue(tag, out query);
+
+        /// <summary>每回合推进全部启用中的主动查询(原版 PerformActiveQueries):
+        /// 重跑查询 → 与 Current 求增量(两侧均实体 id 升序,双指针确定性 diff)→
+        /// 有变化才产出一条 RangeQueryUpdate 并更新 Current。tag 升序处理。</summary>
+        public List<RangeQueryUpdate> UpdateActiveQueries()
+        {
+            var updates = new List<RangeQueryUpdate>();
+            if (_activeQueries.Count == 0) return updates;
+            var tags = new List<int>(_activeQueries.Keys);
+            tags.Sort();
+            foreach (int tag in tags)
+            {
+                var q = _activeQueries[tag];
+                if (!q.Enabled) continue;
+                // maxRange < 0 = 不限:以世界对角线为 AABB 上限(原版用全图查询)。
+                Fixed effectiveMax = q.MaxRange < Fixed.Zero ? _worldMeters * 2 : q.MaxRange;
+                var now = ExecuteQuery(q.Source, q.MinRange, effectiveMax,
+                    e => ActiveQueryMatches(q, e));
+                // 双指针 diff(两表均升序)。
+                var added = new List<EntityId>();
+                var removed = new List<EntityId>();
+                int i = 0, j = 0;
+                while (i < q.Current.Count || j < now.Count)
+                {
+                    if (i < q.Current.Count && (j >= now.Count || q.Current[i].Value < now[j].Value))
+                    { removed.Add(q.Current[i]); i++; }
+                    else if (j < now.Count && (i >= q.Current.Count || now[j].Value < q.Current[i].Value))
+                    { added.Add(now[j]); j++; }
+                    else { i++; j++; }
+                }
+                if (added.Count == 0 && removed.Count == 0) continue;
+                q.Current.Clear();
+                q.Current.AddRange(now);
+                updates.Add(new RangeQueryUpdate
+                {
+                    Tag = tag, Added = added, Removed = removed, Current = now,
+                });
+            }
+            return updates;
+        }
+
+        private bool ActiveQueryMatches(ActiveRangeQuery q, EntityId entity)
+        {
+            if (q.Players.Count > 0)
+            {
+                if (!_data.TryGetValue(entity, out var d) || !q.Players.Contains(d.Owner))
+                    return false;
+            }
+            if (q.RequiredClass.Length > 0)
+            {
+                var id = _cm.QueryInterface<IdentityComponent>(entity);
+                if (id == null || !id.MatchesClassList(q.RequiredClass)) return false;
+            }
+            return true;
         }
 
         /// <summary>Return all entities owned by <paramref name="playerId"/> (0 = gaia).</summary>

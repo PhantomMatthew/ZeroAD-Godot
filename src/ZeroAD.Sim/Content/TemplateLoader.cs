@@ -703,6 +703,15 @@ namespace ZeroAD.Sim.Content
                     stats.VisionRange = range.ToInt();
             }
 
+            // TriggerPoint(trigger/trigger_point_* 模板;原版 TriggerPoint.js Schema):
+            // <TriggerPoint><Reference>X</Reference></TriggerPoint> → 装配时自动注册触发点。
+            var triggerPoint = node.GetChild("TriggerPoint");
+            if (triggerPoint.IsOk)
+            {
+                var tref = triggerPoint.GetChild("Reference");
+                if (tref.IsOk) stats.TriggerPointReference = tref.ToString().Trim();
+            }
+
             // Fog-of-war: <Fogging/> (structures/gaia) enables mirage spawning;
             // <Visibility><RetainInFog> keeps the entity standing in explored fog.
             if (node.GetChild("Fogging").IsOk)
@@ -1484,6 +1493,9 @@ namespace ZeroAD.Sim.Content
         /// ship-small…;原版 plane 另有 unrestricted,未移植)。船类 → 水路寻路 + 水面出生。</summary>
         public string PassabilityClass = "default";
         public int VisionRange = 20;
+        /// <summary>&lt;TriggerPoint&gt;&lt;Reference&gt;(trigger/trigger_point_* 模板;
+        /// 原版 TriggerPoint.js)。空 = 非触发点。装配时 EntityAssembler 自动注册。</summary>
+        public string TriggerPointReference = "";
         /// <summary>&lt;Fogging/&gt; 模板(建筑/gaia):雾中由 mirage 顶替。对齐 Fogging.js。</summary>
         public bool HasFogging;
         /// <summary>&lt;Visibility&gt;&lt;RetainInFog&gt;:已探索雾中保持可见(FOGGED)。单位 false,建筑/gaia true。</summary>

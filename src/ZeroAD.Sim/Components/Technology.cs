@@ -211,6 +211,15 @@ public sealed class ResearcherComponent : ComponentBase, IComponentMessageHandle
         return true;
     }
 
+    /// <summary>队列含该科技(原版 TechnologyManager.IsTechnologyQueued 的移植面:
+    /// 原版查 ProductionQueue,我们的研究队列在 Researcher 组件上,逐建筑查)。</summary>
+    public bool IsTechnologyQueued(string techName)
+    {
+        foreach (var it in _queue)
+            if (it.Tech == techName) return true;
+        return false;
+    }
+
     /// <summary>取消研究(原版 StopResearching):全额退款,清出队列。
     /// 取消头项时进度清零。</summary>
     public bool CancelResearch(string techName, TechnologyManager techMgr, PlayerComponent player)

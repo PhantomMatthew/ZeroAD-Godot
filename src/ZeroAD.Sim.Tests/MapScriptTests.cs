@@ -113,15 +113,23 @@ public sealed class MapScriptTests
         var cm = SetupWorld();
         var sink = new SpawningSink { Cm = cm };
         cm.Triggers.Sink = sink;
-        cm.Triggers.RegisterTriggerPoint("A",
-            new ZeroAD.Sim.Maths.FixedVector2D(ZeroAD.Sim.Maths.Fixed.FromInt(50), ZeroAD.Sim.Maths.Fixed.FromInt(50)));
+        // 触发点实体(WS5 起注册表存实体;坐标经 PositionComponent 取)。
+        var point = cm.CreateEntity();
+        var pp = new PositionComponent();
+        cm.AddComponent(point, pp);
+        pp.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+            ZeroAD.Sim.Maths.Fixed.FromInt(50), ZeroAD.Sim.Maths.Fixed.Zero, ZeroAD.Sim.Maths.Fixed.FromInt(50));
+        cm.NotifyEntityCreated(point);
+        var ppv = new ZeroAD.Sim.Maths.FixedVector2D(pp.Position.X, pp.Position.Z);
+        cm.NotifyPositionChanged(point, ppv, ppv);
+        cm.Triggers.RegisterTriggerPoint("A", point);
         var prey = MakePlayerUnit(cm, 1, 55, 50);   // 触发点附近
 
         var script = new PolarSeaScript();
         cm.Triggers.MapScript = script;
         // 首波 5 分钟 = 3000 回合;推 3100 拍。
         for (int i = 0; i < 3100; i++)
-            cm.Triggers.Tick(cm, 0.1f);
+            cm.Triggers.Tick(cm, ZeroAD.Sim.Maths.Fixed.FromFloat(0.1f));
 
         Assert.NotEmpty(sink.Spawned);
         Assert.Equal("gaia/fauna_wolf_arctic_violent", sink.Spawned[0].Template);

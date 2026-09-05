@@ -208,6 +208,58 @@ namespace ZeroAD.Sim.Components
             return -1;
         }
 
+        /// <summary>判胜并连带(原版 EndGameManager.MarkPlayerAndAlliesAsWon):
+        /// alliedVictory 下该玩家的互盟友军(活跃)一并判胜,其余活跃玩家判负。
+        /// 触发器/地图脚本判胜(TriggerHelper.SetPlayerWon)走此入口。</summary>
+        public void MarkPlayerAndAlliesAsWon(ComponentManager cm, int playerId,
+            string victoryReason = "", string defeatReason = "")
+        {
+            var player = cm.Players.GetPlayerEntity(playerId);
+            if (player == null || !player.IsActive()) return;
+            // 原版 GetMutualAllies 含自身;我们的 PlayerManager.GetMutualAllies 不含,补上。
+            var winners = new List<int> { playerId };
+            if (AlliedVictory)
+            {
+                foreach (int ally in cm.Players.GetMutualAllies(playerId))
+                {
+                    var allyPlayer = cm.Players.GetPlayerEntity(ally);
+                    if (allyPlayer != null && allyPlayer.IsActive()) winners.Add(ally);
+                }
+            }
+            MarkPlayersAsWon(cm, winners, victoryReason, defeatReason);
+        }
+
+        /// <summary>给定玩家判胜、其余活跃玩家判负(原版 MarkPlayersAsWon):
+        /// 胜者按 id 升序逐个 SetWon + PlayerWon 事件;随后其余活跃玩家
+        /// SetDefeated + PlayerDefeated 事件(顺序固定,确定性)。</summary>
+        public void MarkPlayersAsWon(ComponentManager cm, List<int> winningPlayers,
+            string victoryReason = "", string defeatReason = "")
+        {
+            var winners = new List<int>(winningPlayers);
+            winners.Sort();
+            foreach (int pid in winners)
+            {
+                var p = cm.Players.GetPlayerEntity(pid);
+                if (p != null && p.SetWon())
+                    cm.Events.RaisePlayerWon(new PlayerWonEvent { PlayerId = pid });
+            }
+            var defeated = new List<int>();
+            foreach (int pid in cm.Players.GetNonGaiaPlayerIds())
+            {
+                if (winners.Contains(pid)) continue;
+                var p = cm.Players.GetPlayerEntity(pid);
+                if (p != null && p.IsActive()) defeated.Add(pid);
+            }
+            defeated.Sort();
+            foreach (int pid in defeated)
+            {
+                var p = cm.Players.GetPlayerEntity(pid);
+                if (p != null && p.SetDefeated())
+                    cm.Events.RaisePlayerDefeated(new PlayerDefeatedEvent
+                    { PlayerId = pid, Reason = defeatReason });
+            }
+        }
+
         private static void DeclareWinner(ComponentManager cm, int playerId, string reason)
         {
             var player = cm.Players.GetPlayerEntity(playerId);
