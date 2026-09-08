@@ -52,7 +52,18 @@ public static class RuntimePaths
 			}
 		}
 
-		// 开发期:工程根上溯 binaries junction。
+		// 开发期仓库内暂存根:godot/export/data(tools/stage_release_data.sh 生成,
+		// 与发行包同一份内容)。放在 junction 探测之前——开发机可以完全不建
+		// 上游软链:跑一次暂存脚本,游戏/编辑器即自持。发行包下 res:// 进 PCK,
+		// GlobalizePath 非物理路径,探测自然落空,不受影响。
+		string staged = ProjectSettings.GlobalizePath("res://export");
+		if (staged.Length > 0 && HasDataDir(staged))
+		{
+			_binariesRoot = Path.GetFullPath(staged);
+			return _binariesRoot;
+		}
+
+		// 开发期:工程根上溯 binaries junction(无暂存根时的兜底;上游检出存在才有效)。
 		string projRoot = ProjectSettings.GlobalizePath("res://");
 		foreach (string up in new[] { "..", "../.." })
 		{
