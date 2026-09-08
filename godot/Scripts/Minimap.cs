@@ -13,9 +13,10 @@ public sealed partial class Minimap : Control
     private ImageTexture _texture = null!;
     private Image _image = null!;
     private Texture2D? _bgTexture;
-    private Texture2D? _circleMask;
 
-    private const int MapSize = 200;
+    /// 渲染像素尺寸 = 节点宽(原版小地图 184px 内缩于 200×204 面板;HUD 布局设定 Size,
+    /// 不再硬编码 200——硬编码曾使节点 Size 被 min-size 钳回 200,右/下缘越出面板 8/6px)。
+    private int MapSizePx => Mathf.Max(1, (int)Size.X);
 
     /// <summary>外交颜色模式(原版 DiplomacyColors toggle;Alt+V/小地图钮):
     /// 关 = 玩家本色;开 = 按立场 self 蓝/ally 绿/neutral 黄/enemy 红
@@ -50,22 +51,21 @@ public sealed partial class Minimap : Control
 
     // C++ 小地图约定(CMiniMap::WorldSpaceToMiniMapSpace):x→右,z→上(z 大=北=屏顶)。
     // 本类所有"世界坐标→像素"都走这两个助手,勿内联展开。
-    private static int Px(float wx, float worldSize) => (int)(wx / worldSize * MapSize);
-    private static int Pz(float wz, float worldSize) => MapSize - 1 - (int)(wz / worldSize * MapSize);
+    private int Px(float wx, float worldSize) => (int)(wx / worldSize * MapSizePx);
+    private int Pz(float wz, float worldSize) => MapSizePx - 1 - (int)(wz / worldSize * MapSizePx);
 
     public Minimap(SimBridge sim, Main main)
     {
         _sim = sim;
         _main = main;
-        CustomMinimumSize = new Vector2(MapSize, MapSize);
+        CustomMinimumSize = new Vector2(64, 64);
     }
 
     public override void _Ready()
     {
-        _image = Image.CreateEmpty(MapSize, MapSize, false, Image.Format.Rgba8);
+        _image = Image.CreateEmpty(MapSizePx, MapSizePx, false, Image.Format.Rgba8);
         _texture = ImageTexture.CreateFromImage(_image);
         _bgTexture = LoadTex("background_circle_spart.png");
-        _circleMask = LoadTex("minimap_circle_modern.png");
     }
 
     public override void _GuiInput(InputEvent @event)
@@ -74,9 +74,9 @@ public sealed partial class Minimap : Control
         {
             Vector2 local = mb.Position;
             float worldSize = _sim.Terrain.MapSize * _sim.Terrain.TileSize;
-            float wx = local.X / MapSize * worldSize;
+            float wx = local.X / MapSizePx * worldSize;
             // 对齐 C++ 小地图:z 大=北=屏顶(CMiniMap::GetMouseWorldCoordinates 自底向上量 py)。
-            float wz = (MapSize - local.Y) / MapSize * worldSize;
+            float wz = (MapSizePx - local.Y) / MapSizePx * worldSize;
             // Flare 模式(原版 INPUT_FLARE 的小地图分支):左键 = 发信号弹,不挪相机。
             if (_main.FlareArmed)
             {
@@ -110,7 +110,7 @@ public sealed partial class Minimap : Control
             int px = Px(dot.X, worldSize);
             int pz = Pz(dot.Z, worldSize);
 
-            if (px < 0 || px >= MapSize || pz < 0 || pz >= MapSize) continue;
+            if (px < 0 || px >= MapSizePx || pz < 0 || pz >= MapSizePx) continue;
 
             bool isBuilding = dot.IsBuilding;
             bool isUnit = dot.IsUnit;
@@ -155,20 +155,20 @@ public sealed partial class Minimap : Control
         int fn = _sim.Range.Los.VerticesPerSide;
         if (fn <= 1) return;
         byte[] rgba = _image.GetData();
-        for (int pz = 0; pz < MapSize; pz++)
+        for (int pz = 0; pz < MapSizePx; pz++)
         {
-            int fj = Mathf.Min((MapSize - 1 - pz) * fn / MapSize, fn - 1);
-            for (int px = 0; px < MapSize; px++)
+            int fj = Mathf.Min((MapSizePx - 1 - pz) * fn / MapSizePx, fn - 1);
+            for (int px = 0; px < MapSizePx; px++)
             {
-                int bright = fog[fj * fn + Mathf.Min(px * fn / MapSize, fn - 1)];
+                int bright = fog[fj * fn + Mathf.Min(px * fn / MapSizePx, fn - 1)];
                 if (bright >= 252) continue;
-                int o = (pz * MapSize + px) * 4;
+                int o = (pz * MapSizePx + px) * 4;
                 rgba[o] = (byte)(rgba[o] * bright / 255);
                 rgba[o + 1] = (byte)(rgba[o + 1] * bright / 255);
                 rgba[o + 2] = (byte)(rgba[o + 2] * bright / 255);
             }
         }
-        _image.SetData(MapSize, MapSize, false, Image.Format.Rgba8, rgba);
+        _image.SetData(MapSizePx, MapSizePx, false, Image.Format.Rgba8, rgba);
     }
 
     /// <summary>Territory tint under the entity dots(对齐原版小地图领土着色):owner 色
@@ -180,33 +180,33 @@ public sealed partial class Minimap : Control
         if (tm == null || tm.GridWidth <= 0) return;
         float blink = 0.55f + 0.45f * Mathf.Sin(Time.GetTicksMsec() / 1000f * 4f);
         byte[] rgba = _image.GetData();
-        for (int pz = 0; pz < MapSize; pz++)
+        for (int pz = 0; pz < MapSizePx; pz++)
         {
-            float wz = ((MapSize - 1 - pz) + 0.5f) / MapSize * worldSize;
+            float wz = ((MapSizePx - 1 - pz) + 0.5f) / MapSizePx * worldSize;
             var fz = Fixed.FromFloat(wz);
-            for (int px = 0; px < MapSize; px++)
+            for (int px = 0; px < MapSizePx; px++)
             {
-                var fx = Fixed.FromFloat((px + 0.5f) / MapSize * worldSize);
+                var fx = Fixed.FromFloat((px + 0.5f) / MapSizePx * worldSize);
                 int owner = tm.GetOwner(fx, fz);
                 if (owner <= 0) continue;
                 Color c = DisplayedColor(owner);
                 float a = 0.35f * (tm.IsTerritoryBlinking(fx, fz) ? blink : 1f);
                 int cr = (int)(c.R * 255), cg = (int)(c.G * 255), cb = (int)(c.B * 255);
-                int o = (pz * MapSize + px) * 4;
+                int o = (pz * MapSizePx + px) * 4;
                 rgba[o] = (byte)(rgba[o] + (cr - rgba[o]) * a);
                 rgba[o + 1] = (byte)(rgba[o + 1] + (cg - rgba[o + 1]) * a);
                 rgba[o + 2] = (byte)(rgba[o + 2] + (cb - rgba[o + 2]) * a);
             }
         }
-        _image.SetData(MapSize, MapSize, false, Image.Format.Rgba8, rgba);
+        _image.SetData(MapSizePx, MapSizePx, false, Image.Format.Rgba8, rgba);
     }
 
     public override void _Draw()
     {
         if (_bgTexture != null)
-            DrawTextureRect(_bgTexture, new Rect2(Vector2.Zero, MapSize, MapSize), false);
+            DrawTextureRect(_bgTexture, new Rect2(Vector2.Zero, MapSizePx, MapSizePx), false);
 
-        DrawTextureRect(_texture, new Rect2(Vector2.Zero, MapSize, MapSize), false);
+        DrawTextureRect(_texture, new Rect2(Vector2.Zero, MapSizePx, MapSizePx), false);
 
         float worldSize = _sim.Terrain.MapSize * _sim.Terrain.TileSize;
         if (worldSize <= 0) return;
@@ -245,8 +245,6 @@ public sealed partial class Minimap : Control
             DrawArc(new Vector2(fpx, fpz), radius * 0.45f, 0, Mathf.Tau, 24, fc, 1.5f);
         }
 
-        if (_circleMask != null)
-            DrawTextureRect(_circleMask, new Rect2(Vector2.Zero, MapSize, MapSize), false);
     }
 
     private void DrawViewCone(float worldSize)
@@ -287,7 +285,7 @@ public sealed partial class Minimap : Control
             for (int dx = -size / 2; dx <= size / 2; dx++)
             {
                 int x = px + dx, z = pz + dz;
-                if (x >= 0 && x < MapSize && z >= 0 && z < MapSize)
+                if (x >= 0 && x < MapSizePx && z >= 0 && z < MapSizePx)
                     _image.SetPixel(x, z, color);
             }
     }

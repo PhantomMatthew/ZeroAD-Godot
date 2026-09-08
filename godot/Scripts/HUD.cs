@@ -545,35 +545,34 @@ public sealed partial class HUD : CanvasLayer
     {
         var frame = new Control { Position = pos, Size = size };
         AddBorderFrame(frame);
+        // 原版 MiniMap.xml 200×204 面板:圆环图内缩 (4,6)、小地图内缩 (8,10),
+        // 角钮贴图铺满 115×115 角区——弧垫恰好压在圆环角上(此前全幅布局导致错位)。
         var ring = new TextureRect
         {
             Texture = LoadTex("minimap_circle_modern.png"),
+            Position = new Vector2(4, 6),
+            Size = new Vector2(192, 192),
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
         };
-        ring.SetAnchorsPreset(Control.LayoutPreset.FullRect);
         ring.MouseFilter = Control.MouseFilterEnum.Ignore;
         frame.AddChild(ring);
 
         _minimap = new Minimap(_sim, _main)
         {
-            Position = new Vector2(0, 0),
-            Size = new Vector2(200, 200),
+            Position = new Vector2(8, 10),
+            Size = new Vector2(184, 184),
         };
         frame.AddChild(_minimap);
 
-        // 空闲村民按钮(原版 MiniMapIdleWorkerButton:小地图区右下角;点击循环聚焦
+        // 空闲村民按钮(原版 MiniMapIdleWorkerButton:116×116 角区贴图铺满小地图
+        // 右下角——贴图含 1/4 弧框,图标在角上,不是 30px 独立图标;点击循环聚焦
         // 下一个空闲采集者并选中;角标显示空闲数,0 时禁用)。
-        _idleButton = new TextureButton
-        {
-            CustomMinimumSize = new Vector2(30, 30),
-            TooltipText = "Find idle worker (.)",
-            StretchMode = TextureButton.StretchModeEnum.KeepAspectCentered,
-        };
-        var idleTex = LoadTex("session/minimap-idle.png") ?? LoadIcon("back-to-work");
-        if (idleTex != null) _idleButton.TextureNormal = idleTex;
+        _idleButton = MakeMinimapCornerButton(
+            "Find idle worker (.)",
+            "session/minimap-idle.png", "session/minimap-idle-highlight.png", "session/minimap-idle-disabled.png");
+        _idleButton.Position = new Vector2(MinimapCornerBtnRight, MinimapCornerBtnBottom);
         _idleButton.Pressed += () => _main.CycleIdleWorker();
-        _idleButton.SetAnchorsPreset(Control.LayoutPreset.BottomRight);
         frame.AddChild(_idleButton);
         _idleCountLabel = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
         _idleCountLabel.AddThemeFontSizeOverride("font_size", 12);
@@ -584,39 +583,60 @@ public sealed partial class HUD : CanvasLayer
         _idleCountLabel.Position = new Vector2(-34, -22);
         frame.AddChild(_idleCountLabel);
 
-        // 外交颜色钮(原版 MiniMapDiplomacyColorsButton:小地图区左下角;
-        // 切换小地图点/领土着色的立场模式,热键 Alt+V)。
-        _diploButton = new TextureButton
-        {
-            CustomMinimumSize = new Vector2(30, 30),
-            TooltipText = "Toggle Diplomacy Colors (Alt+V)",
-            StretchMode = TextureButton.StretchModeEnum.KeepAspectCentered,
-        };
-        var diploTex = LoadTex("session/minimap-diplomacy-off.png");
-        if (diploTex != null) _diploButton.TextureNormal = diploTex;
+        // 外交颜色钮(原版 MiniMapDiplomacyColorsButton:同款角区贴图,小地图区
+        // 左下角;切换小地图点/领土着色的立场模式,热键 Alt+V)。on/off 贴图在
+        // ToggleDiplomacyColors 里随状态换。
+        _diploButton = MakeMinimapCornerButton(
+            "Toggle Diplomacy Colors (Alt+V)",
+            "session/minimap-diplomacy-off.png", "session/minimap-diplomacy-off-highlight.png", null);
+        _diploButton.Position = new Vector2(3, MinimapCornerBtnBottom);
         _diploButton.Pressed += ToggleDiplomacyColors;
-        _diploButton.SetAnchorsPreset(Control.LayoutPreset.BottomLeft);
         frame.AddChild(_diploButton);
 
-        // 信号弹钮(原版 MiniMapFlareButton:小地图区左上角;武装 Flare 模式,
-        // 下一次左键(世界或小地图)发信号弹,右键/Esc 取消;K+左键直发)。
-        _flareButton = new TextureButton
-        {
-            CustomMinimumSize = new Vector2(30, 30),
-            TooltipText = "Send a flare to your allies (then click map; K+click direct)",
-            StretchMode = TextureButton.StretchModeEnum.KeepAspectCentered,
-        };
-        var flareTex = LoadTex("session/minimap-player-flare.png");
-        if (flareTex != null) _flareButton.TextureNormal = flareTex;
+        // 信号弹钮(原版 MiniMapFlareButton:同款角区贴图,小地图区左上角;武装
+        // Flare 模式,下一次左键(世界或小地图)发信号弹,右键/Esc 取消;K+左键直发)。
+        _flareButton = MakeMinimapCornerButton(
+            "Send a flare to your allies (then click map; K+click direct)",
+            "session/minimap-player-flare.png", null, "session/minimap-flare-disabled.png");
+        _flareButton.Position = new Vector2(2, 4);
         _flareButton.Pressed += () =>
         {
             _main.FlareArmed = true;
             ShowToast("Flare armed — click the map or minimap (right-click/Esc to cancel)");
         };
-        _flareButton.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
         frame.AddChild(_flareButton);
 
         parent.AddChild(frame);
+    }
+
+    // 角钮尺寸:原版 200×204 面板上 115×115(MiniMap.xml 实测值,直接照抄;
+    // 右缘内缩 4、底缘内缩 6、左上内缩 2/4)。
+    private const float MinimapCornerBtn = 115f;
+    private const float MinimapCornerBtnRight = 200f - MinimapCornerBtn - 4f;
+    private const float MinimapCornerBtnBottom = 200f - MinimapCornerBtn - 6f;
+
+    /// <summary>小地图角钮:stretched 角区贴图 + 悬停/禁用变体 + 非透明像素点击掩码
+    /// (原版 mouse_event_mask="texture:..." —— 弧外透明区不挡小地图点击)。</summary>
+    private static TextureButton MakeMinimapCornerButton(string tooltip,
+        string normal, string? hover, string? disabled)
+    {
+        var btn = new TextureButton
+        {
+            Size = new Vector2(MinimapCornerBtn, MinimapCornerBtn),
+            TooltipText = tooltip,
+            StretchMode = TextureButton.StretchModeEnum.Scale,
+        };
+        var img = AssetIO.LoadImageRes($"res://assets/ui/{normal}");
+        if (img != null)
+        {
+            btn.TextureNormal = ImageTexture.CreateFromImage(img);
+            var mask = new Bitmap();
+            mask.CreateFromImageAlpha(img);
+            btn.TextureClickMask = mask;
+        }
+        if (hover != null) { var t = LoadTex(hover); if (t != null) btn.TextureHover = t; }
+        if (disabled != null) { var t = LoadTex(disabled); if (t != null) btn.TextureDisabled = t; }
+        return btn;
     }
 
     private TextureButton? _idleButton;
@@ -630,9 +650,20 @@ public sealed partial class HUD : CanvasLayer
         _minimap.DiplomacyColors = !_minimap.DiplomacyColors;
         if (_diploButton != null)
         {
-            var tex = LoadTex(_minimap.DiplomacyColors
-                ? "session/minimap-diplomacy-on.png" : "session/minimap-diplomacy-off.png");
-            if (tex != null) _diploButton.TextureNormal = tex;
+            // on/off 常态+悬停贴图同步换(原版 MiniMapDiplomacyColorsButton 的 sprite 切换)。
+            bool on = _minimap.DiplomacyColors;
+            string normal = on ? "session/minimap-diplomacy-on.png" : "session/minimap-diplomacy-off.png";
+            string hover = on ? "session/minimap-diplomacy-on-highlight.png" : "session/minimap-diplomacy-off-highlight.png";
+            var img = AssetIO.LoadImageRes($"res://assets/ui/{normal}");
+            if (img != null)
+            {
+                _diploButton.TextureNormal = ImageTexture.CreateFromImage(img);
+                var mask = new Bitmap();
+                mask.CreateFromImageAlpha(img);
+                _diploButton.TextureClickMask = mask;
+            }
+            var ht = LoadTex(hover);
+            if (ht != null) _diploButton.TextureHover = ht;
         }
     }
 
