@@ -49,7 +49,15 @@ PUBLIC_DIRS=(
 for d in "${PUBLIC_DIRS[@]}"; do
     if [ -d "$SRC/mods/public/$d" ]; then
         mkdir -p "$DST/mods/public/$(dirname "$d")"
-        rsync -a --delete "$SRC/mods/public/$d" "$DST/mods/public/$(dirname "$d")/"
+        # simulation 排除 ai/ 子树:原版 Petra/common-api JS 是 C# 运行时的死码
+        # (我们的 AI 全在 ZeroAD.Sim;且 entitycollection.js 的 eval(f) 会被
+        # 安全扫描判注入)。components/*.js 保留——schema grammar 提取源。
+        if [ "$d" = "simulation" ]; then
+            rsync -a --delete --exclude='ai' \
+                "$SRC/mods/public/$d" "$DST/mods/public/$(dirname "$d")/"
+        else
+            rsync -a --delete "$SRC/mods/public/$d" "$DST/mods/public/$(dirname "$d")/"
+        fi
     else
         echo "warn: missing $SRC/mods/public/$d (skipped)"
     fi

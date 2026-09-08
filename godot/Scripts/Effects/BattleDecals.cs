@@ -51,22 +51,27 @@ public sealed partial class BattleDecals : Node
     {
         if (_texturesLoaded) return;
         _texturesLoaded = true;
+        // 转换集优先(res://assets/textures/props 的 .png;DDS→PNG 已由管线转好——
+        // Godot 运行时解不了 DDS,junction 直读 blood_*.dds 是静默失败)。
+        // 回退:binaries junction 原目录(镜像未覆盖 skins 子树)。
         string? dir = RuntimePaths.FindPublicPath("art", "textures", "skins", "props");
-        if (dir == null) return;
         foreach (var name in BloodTextures)
-        {
-            string path = System.IO.Path.Combine(dir, name);
-            if (!System.IO.File.Exists(path)) continue;
-            var img = Image.LoadFromFile(path);
-            if (img != null) _textures.Add(ImageTexture.CreateFromImage(img));
-        }
+            LoadInto(_textures, name, dir);
         foreach (var name in ImpactTextures)
-        {
-            string path = System.IO.Path.Combine(dir, name);
-            if (!System.IO.File.Exists(path)) continue;
-            var img = Image.LoadFromFile(path);
-            if (img != null) _impactTextures.Add(ImageTexture.CreateFromImage(img));
-        }
+            LoadInto(_impactTextures, name, dir);
+    }
+
+    private static void LoadInto(List<Texture2D> list, string name, string? upstreamDir)
+    {
+        string baseName = System.IO.Path.GetFileNameWithoutExtension(name);
+        string local = ProjectSettings.GlobalizePath($"res://assets/textures/props/{baseName}.png");
+        string? path = System.IO.File.Exists(local) ? local
+            : upstreamDir != null && System.IO.File.Exists(System.IO.Path.Combine(upstreamDir, name))
+                ? System.IO.Path.Combine(upstreamDir, name)
+                : null;
+        if (path == null) return;
+        var img = Image.LoadFromFile(path);
+        if (img != null) list.Add(ImageTexture.CreateFromImage(img));
     }
 
     /// <summary>击杀/重击落地血斑(原版 blood_*.xml 的 decal 触发语义;

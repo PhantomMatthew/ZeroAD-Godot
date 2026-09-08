@@ -75,13 +75,25 @@ public static class RuntimePaths
 		return Directory.Exists(publicDir) ? publicDir : null;
 	}
 
-	/// <summary>探测 mods/public 下的文件或目录;不存在返回 null。</summary>
+	/// <summary>探测 mods/public 下的文件或目录;不存在返回 null。
+	/// 文件查询:仓库内镜像 godot/assets/upstream/<rel...>(stage_upstream_textures.py
+	/// 生成,DDS/TGA 已转 PNG——Godot 运行时解不了 DDS)优先于 junction。
+	/// 目录查询:junction 优先,镜像兜底——否则镜像的 art/(只有 textures/terrains
+	/// 子树)会劫持 ActorLoader 的美术根,actors/ 缺失 → 全部 actor 解析失败落
+	/// placeholder 盒(2026-09-08 教程全盒子回归的根因)。</summary>
 	public static string? FindPublicPath(params string[] relParts)
 	{
+		string mirror = ProjectSettings.GlobalizePath(
+			"res://assets/upstream/" + string.Join("/", relParts));
+		if (File.Exists(mirror)) return mirror;
+
 		string? root = FindPublicModRoot();
-		if (root == null) return null;
-		string path = Path.GetFullPath(Path.Combine(root, Path.Combine(relParts)));
-		return File.Exists(path) || Directory.Exists(path) ? path : null;
+		if (root != null)
+		{
+			string path = Path.GetFullPath(Path.Combine(root, Path.Combine(relParts)));
+			if (File.Exists(path) || Directory.Exists(path)) return path;
+		}
+		return Directory.Exists(mirror) ? mirror : null;
 	}
 
 	/// <summary>探测 data/config 下的配置文件(如 default.cfg);不存在返回 null。</summary>

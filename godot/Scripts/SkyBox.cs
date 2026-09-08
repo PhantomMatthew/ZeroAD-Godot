@@ -17,14 +17,18 @@ public static class SkyBox
         string? dir = FindSkyDir(skySet);
         if (dir == null) return null;
 
-        // 原版 5 面 DDS(back/front/left/right/top)。拼 PanoramaSkyMaterial:
-        // Godot PanoramaSkyMaterial 接受单张全景贴图;原版贴图即渲染全景,
-        // 用 front(主视野)作全景近似(5 面完整 cubemap 为 Godot 渲染器
-        // 限制——原版 C++ SkyBox 用六面体,PanoramaSkyMaterial 只接全景)。
-        string frontPath = System.IO.Path.Combine(dir, "front.dds");
-        if (!System.IO.File.Exists(frontPath))
-            frontPath = System.IO.Path.Combine(dir, "top.dds");
-        if (!System.IO.File.Exists(frontPath)) return null;
+        // 原版 5 面(back/front/left/right/top)。拼 PanoramaSkyMaterial:Godot 接受单张
+        // 全景贴图;用 front(主视野)作全景近似(top 次选)。逐"文件"探测(经
+        // RuntimePaths):镜像里 DDS 已转 PNG(运行时解不了 DDS),文件级查询才会
+        // 命中镜像;junction 原目录仍可用(.dds 兜底)。
+        string? frontPath = null;
+        foreach (var name in new[] { "front.png", "front.dds", "top.png", "top.dds" })
+        {
+            frontPath = RuntimePaths.FindPublicPath(
+                "art", "textures", "skies", skySet, name);
+            if (frontPath != null) break;
+        }
+        if (frontPath == null) return null;
 
         Texture2D? tex = LoadTexture(frontPath);
         if (tex == null) return null;
