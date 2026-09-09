@@ -1717,27 +1717,20 @@ public sealed partial class HUD : CanvasLayer
 
         // 训练队列(仅生产建筑有非空 ProductionQueue 时显示):头项画进度遮罩,余者待训压暗。
         // 位置 = 第四面板上方横条(原版 unitQueuePanel);剩余时间 = 队列总秒数。
-        var queue = _sim.Sim.QueryInterface<ProductionQueue>(first);
-        if (queue != null && queue.QueueCount > 0)
+        // 无生产队列时复用横条单槽显示升级进度(原版 Upgrade.js GetProgress 的 GUI 条)。
+        // 数据侧已收编 GuiInterface.GetQueueStripState。
+        var strip = _sim.Gui.GetQueueStripState(first, _queueSlots.Length);
+        if (strip != null)
         {
-            int n = System.Math.Min(queue.QueueCount, _queueSlots.Length);
-            float remaining = 0f;
-            for (int i = 0; i < n; i++)
-            {
-                var item = queue.Queue[i];
-                remaining += item.BuildTime * item.Count;
-            }
-            if (n > 0) remaining -= queue.Progress;
-            _queueTime.Text = $"{(int)System.Math.Max(remaining, 0f)}s";
+            _queueTime.Text = $"{strip.RemainingSeconds}s";
             for (int i = 0; i < _queueSlots.Length; i++)
             {
                 var slot = _queueSlots[i];
-                if (i >= n) { slot.Visible = false; continue; }
-                var item = queue.Queue[i];
+                if (i >= strip.Items.Count) { slot.Visible = false; continue; }
+                var item = strip.Items[i];
                 slot.Portrait = LoadPortraitForTemplate(item.TemplateName);
-                slot.Progress = i == 0 && item.BuildTime > 0f
-                    ? Mathf.Clamp(queue.Progress / item.BuildTime, 0f, 1f) : 0f;
-                slot.BatchCount = item.Count;
+                slot.Progress = item.Progress;
+                slot.BatchCount = item.BatchCount;
                 slot.Visible = true;
                 slot.RefreshCount();
                 slot.QueueRedraw();
@@ -1746,59 +1739,40 @@ public sealed partial class HUD : CanvasLayer
         }
         else
         {
-            // 升级进度条(原版 Upgrade.js GetProgress 的 GUI 条):无生产队列时,
-            // 复用该横条单槽显示"目标模板 + 进度遮罩"。
-            var up = _sim.Sim.QueryInterface<UpgradeComponent>(first);
-            if (up != null && up.IsUpgrading)
-            {
-                _queueTime.Text = $"{(int)System.Math.Max(up.RequiredTime - up.ElapsedTime, 0f)}s";
-                var slot = _queueSlots[0];
-                slot.Portrait = LoadPortraitForTemplate(up.TargetTemplate);
-                slot.Progress = Mathf.Clamp(up.GetProgress(), 0f, 1f);
-                slot.BatchCount = 0;
-                slot.Visible = true;
-                slot.RefreshCount();
-                slot.QueueRedraw();
-                for (int i = 1; i < _queueSlots.Length; i++) _queueSlots[i].Visible = false;
-                _queueStrip.Visible = true;
-            }
-            else
-            {
-                _queueStrip.Visible = false;
-            }
+            _queueStrip.Visible = false;
         }
 
         // 驻军数 + 驻军头像行(原版 garrison 选择面板:头像点击=卸载该单位,
         // 末位按钮=全部卸载;仅己方建筑可卸载——Main.Unload* 有归属门)。
-        var holder = _sim.Sim.QueryInterface<GarrisonHolderComponent>(first);
-        bool ownHolder = holder != null && _main.IsOwn(first);
-        _selGarrison.Text = holder != null && holder.Entities.Count > 0
-            ? $"Garrison: {holder.Entities.Count}/{holder.GetCapacity(_sim.Sim)}" : "";
-        if (ownHolder && holder!.Entities.Count > 0)
+        // 数据侧已收编 GuiInterface.GetGarrisonPanelState。
+        var gar = _sim.Gui.GetGarrisonPanelState(first, (int)_sim.LocalPlayerId);
+        _selGarrison.Text = gar != null && gar.Count > 0
+            ? $"Garrison: {gar.Count}/{gar.Capacity}" : "";
+        if (gar != null && gar.CanUnload && gar.Count > 0)
         {
             // 签名 = 宿主 + 驻军名单;变才重建(每帧重建按钮会闪烁且打断 hover)。
             var sig = new System.Text.StringBuilder(first.Value.ToString());
-            foreach (var ge in holder.Entities) sig.Append(':').Append(ge.Value);
+            foreach (var m in gar.Members) sig.Append(':').Append(m.Id.Value);
             if (sig.ToString() != _garrisonSignature)
             {
                 _garrisonSignature = sig.ToString();
                 foreach (var child in _garrisonRow.GetChildren()) child.QueueFree();
-                foreach (var ge in holder.Entities)
+                foreach (var m in gar.Members)
                 {
-                    var identity2 = _sim.Sim.QueryInterface<IdentityComponent>(ge);
                     var btn = new Button
                     {
                         Theme = UITheme.GetTheme(),
                         CustomMinimumSize = new Vector2(28, 28),
-                        TooltipText = $"Unload {identity2?.Name ?? ge.Value.ToString()}",
+                        TooltipText = $"Unload {m.DisplayName}",
                         ExpandIcon = true,
                         IconAlignment = HorizontalAlignment.Center,
                         VerticalIconAlignment = VerticalAlignment.Center,
                     };
                     ApplySessionIconButtonStyle(btn);
-                    var tex = LoadPortraitForIdentity(identity2);
+                    var tex = m.TemplateName.Length > 0
+                        ? LoadPortraitForTemplate(m.TemplateName, m.IsBuilding) : null;
                     if (tex != null) btn.Icon = tex;
-                    EntityId captured = ge;
+                    EntityId captured = m.Id;
                     btn.Pressed += () => _main.UnloadGarrison(first, captured);
                     _garrisonRow.AddChild(btn);
                 }
@@ -2025,49 +1999,40 @@ public sealed partial class HUD : CanvasLayer
     }
 
     // 多选网格的健康微条引用(按钮按签名重建,血条每帧刷新)。
-    private readonly List<(ColorRect Bar, List<EntityId> Group)> _multiBars = new();
+    private readonly List<ColorRect> _multiBars = new();
     private string _multiSignature = "";
 
     /// <summary>多选详情(原版 detailsAreaMultiple):按模板分组的图标网格
     /// (38×38,头像+计数+底部健康微条),右侧总数 + 竖向平均血条;
-    /// 点击图标 = 选中该模板组(原版 unitSelectionButton 行为)。</summary>
+    /// 点击图标 = 选中该模板组(原版 unitSelectionButton 行为)。
+    /// 数据侧已收编 GuiInterface.GetMultiSelectionState。</summary>
     private void FillMultiDetails(IReadOnlySet<EntityId> selected)
     {
-        // 分组:模板名 → 成员(组序按模板名字典序,确定性)。
-        var groups = new Dictionary<string, List<EntityId>>(System.StringComparer.Ordinal);
-        foreach (var eid in selected)
-        {
-            string key = _sim.Sim.QueryInterface<IdentityComponent>(eid)?.TemplateName ?? "?";
-            if (!groups.TryGetValue(key, out var list)) groups[key] = list = new List<EntityId>();
-            list.Add(eid);
-        }
-        var ordered = groups.OrderBy(k => k.Key, System.StringComparer.Ordinal).ToList();
+        var state = _sim.Gui.GetMultiSelectionState(selected);
 
-        string sig = string.Join('|', ordered.Select(k => $"{k.Key}:{k.Value.Count}"));
+        string sig = string.Join('|', state.Groups.Select(g => $"{g.TemplateKey}:{g.Members.Count}"));
         if (sig != _multiSignature)
         {
             _multiSignature = sig;
             foreach (var child in _multiGrid.GetChildren()) child.QueueFree();
             _multiBars.Clear();
-            foreach (var (template, members) in ordered)
+            foreach (var g in state.Groups)
             {
                 var btn = new Button
                 {
                     Theme = UITheme.GetTheme(),
                     CustomMinimumSize = new Vector2(38, 38),
-                    TooltipText = members[0].ToString(),
+                    TooltipText = g.DisplayName,
                     ExpandIcon = true,
                     IconAlignment = HorizontalAlignment.Center,
                     VerticalIconAlignment = VerticalAlignment.Center,
                 };
-                var identity = _sim.Sim.QueryInterface<IdentityComponent>(members[0]);
-                btn.TooltipText = identity?.Name ?? template;
-                var tex = LoadPortraitForIdentity(identity);
+                var tex = LoadPortraitForTemplate(g.TemplateKey, g.IsBuilding);
                 if (tex != null) btn.Icon = tex;
                 // 计数角标 + 底部健康微条。
                 var count = new Label
                 {
-                    Text = members.Count > 1 ? members.Count.ToString() : "",
+                    Text = g.Members.Count > 1 ? g.Members.Count.ToString() : "",
                     Position = new Vector2(20, 22),
                     Size = new Vector2(18, 14),
                     HorizontalAlignment = HorizontalAlignment.Right,
@@ -2086,33 +2051,17 @@ public sealed partial class HUD : CanvasLayer
                     MouseFilter = Control.MouseFilterEnum.Ignore,
                 };
                 btn.AddChild(bar);
-                var group = members;
+                var group = g.Members;
                 btn.Pressed += () => _main.SelectOnly(group);
                 _multiGrid.AddChild(btn);
-                _multiBars.Add((bar, group));
+                _multiBars.Add(bar);
             }
         }
 
         // 每帧刷新:微条宽度 = 组平均血;右侧竖条 = 全体平均血;计数 = 总数。
-        float totalFrac = 0;
-        int healthCounted = 0;
-        foreach (var (bar, group) in _multiBars)
-        {
-            float sum = 0;
-            int n = 0;
-            foreach (var eid in group)
-            {
-                var h = _sim.Sim.QueryInterface<HealthComponent>(eid);
-                if (h == null || h.Max <= 0) continue;
-                sum += (float)h.Current / h.Max;
-                n++;
-            }
-            float frac = n > 0 ? sum / n : 1f;
-            bar.Size = new Vector2(34 * frac, 3);
-            totalFrac += frac;
-            healthCounted++;
-        }
-        _multiHealth.Value = healthCounted > 0 ? 100.0 * totalFrac / healthCounted : 100;
+        for (int i = 0; i < _multiBars.Count && i < state.Groups.Count; i++)
+            _multiBars[i].Size = new Vector2(34 * state.Groups[i].HealthFraction, 3);
+        _multiHealth.Value = 100.0 * state.OverallHealthFraction;
         _multiCount.Text = $"×{selected.Count}";
     }
 
@@ -2122,30 +2071,22 @@ public sealed partial class HUD : CanvasLayer
     /// 列出其模板 UnitAI/Formations 并集(原版:玩家可用阵型按"任一选中单位拥有"过滤,
     /// 与并集同效);每按钮按原版 CanMoveEntsIntoFormation 置灰——支持该阵型的选中单位数
     /// ≥ RequiredMemberCount 才可点,否则禁用+disabledTooltip。
-    /// 签名防抖(成员集+阵型集不变不重建,与驻军行同款)。</summary>
+    /// 数据侧已收编 GuiInterface.GetFormationRowState;签名防抖不变(成员集不变不重建)。</summary>
     private void RefreshFormationRow()
     {
         var sel = _main.SelectedEntities;
-        bool hasController = false;
-        var ownUnits = new List<EntityId>();
-        foreach (var eid in sel)
-        {
-            var ai = _sim.Sim.QueryInterface<UnitAIComponent>(eid);
-            if (ai == null) continue;
-            if (ai.IsFormationController) { hasController = true; continue; }
-            if (_main.IsOwn(eid) && !ai.IsGarrisoned && !ai.IsTurret)
-                ownUnits.Add(eid);
-        }
+        var state = _sim.Gui.GetFormationRowState(sel, (int)_sim.LocalPlayerId);
 
         // 签名含全部选中 id:非 Unit 混选(首门)也要触发重建,不能只看可编队成员。
-        string sig = hasController ? "ctrl" : string.Join(',', sel.Select(u => u.Value));
+        string sig = state.Mode == GuiInterface.FormationRowMode.ControllerOnly
+            ? "ctrl" : string.Join(',', sel.Select(u => u.Value));
         if (sig == _formationSignature) return;
         _formationSignature = sig;
 
         foreach (var child in _formationRow.GetChildren())
             child.QueueFree();
 
-        if (hasController)
+        if (state.Mode == GuiInterface.FormationRowMode.ControllerOnly)
         {
             var btn = MakeSmallIconButton(LoadIcon("formations/null"), "Disband formation");
             btn.Pressed += () => _main.FormSelectedUnits("null");
@@ -2153,76 +2094,21 @@ public sealed partial class HUD : CanvasLayer
             _formationRow.Visible = true;
             return;
         }
-
-        // 原版 getItems 首门:任一选中实体非 Unit 类 → 整行不显示(建筑/资源混选)。
-        foreach (var eid in sel)
-        {
-            var identity = _sim.Sim.QueryInterface<IdentityComponent>(eid);
-            if (identity == null
-                || !ZeroAD.Sim.Content.EntityClassHelper.MatchesClassList(identity.Classes, "Unit"))
-            {
-                _formationRow.Visible = false;
-                return;
-            }
-        }
-
-        // 只数"可编队"单位(模板 FormationShapes 非空):support 系(村民)原版即
-        // <Formations disable=""/>——不可编队单位不计数、不出现在成员表(原版
-        // unitAI.formations 为空 → CanUseFormation 恒 false)。
-        var formable = new List<(EntityId Id, ZeroAD.Sim.Content.TemplateStats Stats)>();
-        foreach (var eid in ownUnits)
-        {
-            var id = _sim.Sim.QueryInterface<IdentityComponent>(eid);
-            var st = id != null ? _sim.Sim.Templates?.ExtractStats(id.TemplateName) : null;
-            if (st != null && st.FormationShapes.Length > 0)
-                formable.Add((eid, st));
-        }
-        // 原版:全部选中单位都无 formations 才隐藏;仅 1 个可编队单位也显示(按钮全置灰)。
-        if (formable.Count == 0)
+        if (state.Mode == GuiInterface.FormationRowMode.Hidden)
         {
             _formationRow.Visible = false;
             return;
         }
 
-        // 阵型列表 = 可编队单位模板 FormationShapes 并集(去重保序;原版:玩家可用阵型
-        // 列表按"任一选中单位拥有"过滤,单位 token ⊆ 玩家列表,故与并集同效)。
-        var shapes = new List<string>();
-        foreach (var (_, st) in formable)
-            foreach (var tok in st.FormationShapes.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
-                if (!shapes.Contains(tok)) shapes.Add(tok);
-
-        foreach (var tok in shapes)
+        foreach (var b in state.Buttons)
         {
-            string shape = tok.Replace("special/formations/", "");
-            // 原版 CanMoveEntsIntoFormation:支持该阵型的选中单位数 ≥ RequiredMemberCount
-            // 才可点(否则置灰+disabledTooltip);null(解散)恒可点。
-            bool ok = tok == "special/formations/null";
-            string disabledTip = "";
-            if (!ok)
-            {
-                int capable = 0;
-                foreach (var (_, st) in formable)
-                {
-                    foreach (var t in st.FormationShapes.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
-                        if (t == tok) { capable++; break; }
-                }
-                int required = 1;
-                ZeroAD.Sim.Content.TemplateStats? fst = null;
-                try { fst = _sim.Sim.Templates?.ExtractStats(tok); } catch { }
-                if (fst != null && fst.HasFormation)
-                {
-                    required = System.Math.Max(1, fst.FormationRequiredMemberCount);
-                    disabledTip = fst.FormationDisabledTooltip;
-                }
-                ok = capable >= required;
-            }
-            var tex = LoadIcon($"formations/{shape}");
-            string tip = $"Formation: {shape}";
-            if (!ok && disabledTip.Length > 0) tip += $"\n{disabledTip}";
+            var tex = LoadIcon($"formations/{b.Shape}");
+            string tip = $"Formation: {b.Shape}";
+            if (!b.Enabled && b.DisabledTooltip.Length > 0) tip += $"\n{b.DisabledTooltip}";
             var btn = MakeSmallIconButton(tex, tip);
-            if (tex == null) btn.Text = shape;   // 贴图缺失时保底显示名(不致"空按钮看不见")
-            btn.Disabled = !ok;
-            string s = shape;
+            if (tex == null) btn.Text = b.Shape;   // 贴图缺失时保底显示名(不致"空按钮看不见")
+            btn.Disabled = !b.Enabled;
+            string s = b.Shape;
             btn.Pressed += () => _main.FormSelectedUnits(s);
             _formationRow.AddChild(btn);
         }
@@ -2322,9 +2208,6 @@ public sealed partial class HUD : CanvasLayer
                 ? new Color(1f, 0.85f, 0.35f)
                 : Colors.White;
     }
-
-    private static Texture2D? LoadPortraitForIdentity(IdentityComponent? identity) =>
-        identity == null ? null : LoadPortraitForTemplate(identity.TemplateName, identity.IsBuilding);
 
     /// <summary>按模板名解析头像路径。队列槽持模板名(无 IdentityComponent)直接调;
     /// isBuilding 仅兜底占位图。映射对齐原版 selection_details 头像选择。</summary>

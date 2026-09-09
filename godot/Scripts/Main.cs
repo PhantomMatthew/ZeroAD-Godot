@@ -2656,7 +2656,7 @@ public sealed partial class Main : Node3D
 			if (healthMax > 0)
 			{
 				// 头顶高度 = 模型 AABB 顶 + 0.3(原版状态条悬于实体顶;固定 2.5/6 对
-                // 高塔矮兵都不对)。缓存进 meta,重复选择不重算。
+				// 高塔矮兵都不对)。缓存进 meta,重复选择不重算。
 				float topY = BarTopHeight(node);
 				var bar = SelectionRing.CreateHealthBar(healthFraction);
 				bar.Position = new Vector3(0, topY, 0);
@@ -3059,32 +3059,32 @@ public sealed partial class Main : Node3D
 		if (_wallSet == null || _placeAnchorWorld == null) return;
 		var pieces = WallPlacer.Compute(_wallSet,
 			new Vector2(_wallStart.X, _wallStart.Z), new Vector2(simPos.X, simPos.Z));
-        // 签名:件数 + 各件模板/坐标(0.5m 粒度),不变不重建(每 mouse-motion 都触发)。
-        var sig = new System.Text.StringBuilder();
-        foreach (var p in pieces)
-            sig.Append(p.Template).Append('@').Append((int)(p.X * 2)).Append(',').Append((int)(p.Z * 2)).Append(';');
-        if (sig.ToString() == _wallGhostSignature) return;
-        _wallGhostSignature = sig.ToString();
+		// 签名:件数 + 各件模板/坐标(0.5m 粒度),不变不重建(每 mouse-motion 都触发)。
+		var sig = new System.Text.StringBuilder();
+		foreach (var p in pieces)
+			sig.Append(p.Template).Append('@').Append((int)(p.X * 2)).Append(',').Append((int)(p.Z * 2)).Append(';');
+		if (sig.ToString() == _wallGhostSignature) return;
+		_wallGhostSignature = sig.ToString();
 
-        foreach (var g in _wallGhosts) g.QueueFree();
-        _wallGhosts.Clear();
-        Color color = SimBridge.GetPlayerColor((int)_sim.LocalPlayerId);
-        foreach (var p in pieces)
-        {
-            var node = ModelLibrary.InstantiateForTemplate(p.Template, p.X, p.Z, color);
-            if (node == null) continue;
-            // ghost 挂 Main(非 _worldRoot),z 手动镜像,与单件 ghost 同套约定。
-            node.Position = new Vector3(p.X, TerrainHeightService.Sample(p.X, p.Z),
-                TerrainHeightService.MirrorZ(p.Z));
-            node.Rotation = new Vector3(0, p.Angle, 0);
-            SetGhostTransparency(node, 0.5f);
-            AddChild(node);
-            _wallGhosts.Add(node);
-        }
+		foreach (var g in _wallGhosts) g.QueueFree();
+		_wallGhosts.Clear();
+		Color color = SimBridge.GetPlayerColor((int)_sim.LocalPlayerId);
+		foreach (var p in pieces)
+		{
+			var node = ModelLibrary.InstantiateForTemplate(p.Template, p.X, p.Z, color);
+			if (node == null) continue;
+			// ghost 挂 Main(非 _worldRoot),z 手动镜像,与单件 ghost 同套约定。
+			node.Position = new Vector3(p.X, TerrainHeightService.Sample(p.X, p.Z),
+				TerrainHeightService.MirrorZ(p.Z));
+			node.Rotation = new Vector3(0, p.Angle, 0);
+			SetGhostTransparency(node, 0.5f);
+			AddChild(node);
+			_wallGhosts.Add(node);
+		}
 	}
 
 	/// <summary>松开下单:每个部件一条 Build 命令(首件强制,其余排队——建造者沿链施工)。
-    /// 费用按件在执行端各自收取(与原版一致:每件是独立地基)。</summary>
+	/// 费用按件在执行端各自收取(与原版一致:每件是独立地基)。</summary>
 	private void PlaceWall(Vector2 screenPos)
 	{
 		if (_wallSet == null || _placeAnchorWorld == null) { ExitBuildMode(); return; }
@@ -4169,6 +4169,50 @@ public sealed partial class Main : Node3D
 		var eid = _sim.SpawnFromTemplate($"units/{civ}/cavalry_swordsman_b", focus.X, focus.Z);
 		_sim.AssignOwner(eid, (int)_sim.LocalPlayerId);
 		ZeroAD.Sim.Diag.Log("Main", $"debug-spawn cavalry ({civ}) at ({focus.X:0.#},{focus.Z:0.#})");
+	}
+
+	/// <summary>dev/MCP 测试钩子:选中本地玩家的前 max 个单位(formableOnly=true 时
+	/// 只要模板 FormationShapes 非空的可编队单位,阵型行测试用)。自动化环境下世界坐标
+	/// 点击拾取不可靠(MCP 注入事件的视口变换与截图空间不一致), selection 逻辑仍需
+	/// 覆盖——此钩子走与 SelectOnly 相同的 UpdateSelectionMarkers 通路。返回选中数。</summary>
+	public int DebugSelectOwnUnits(int max = 8, bool formableOnly = false)
+	{
+		_selectedEntities.Clear();
+		int n = 0;
+		foreach (var e in _sim.Range.GetEntitiesByPlayer((int)_sim.LocalPlayerId))
+		{
+			var id = _sim.Sim.QueryInterface<IdentityComponent>(e);
+			if (id == null || !id.IsUnit) continue;
+			if (formableOnly)
+			{
+				var st = _sim.Sim.Templates?.ExtractStats(id.TemplateName);
+				if (st == null || st.FormationShapes.Length == 0) continue;
+			}
+			_selectedEntities.Add(e);
+			if (++n >= max) break;
+		}
+		if (n > 0) UpdateSelectionMarkers();
+		return n;
+	}
+
+	/// <summary>dev/MCP 测试钩子:选中本地玩家首个带非空训练队列能力的建筑
+	/// (生产队列条测试;优先市政中心——Stoa 等建筑有 ProductionQueue 件但无可训练项)。
+	/// 返回是否选中。</summary>
+	public bool DebugSelectProducer()
+	{
+		_selectedEntities.Clear();
+		for (int pass = 0; pass < 2; pass++)
+			foreach (var e in _sim.Range.GetEntitiesByPlayer((int)_sim.LocalPlayerId))
+			{
+				if (_sim.Sim.QueryInterface<ProductionQueue>(e) == null) continue;
+				var id = _sim.Sim.QueryInterface<IdentityComponent>(e);
+				if (id == null || !id.IsBuilding) continue;
+				if (pass == 0 && !id.TemplateName.Contains("civil_centre")) continue;
+				_selectedEntities.Add(e);
+				UpdateSelectionMarkers();
+				return true;
+			}
+		return false;
 	}
 
 	/// <summary>F12:dump 选中(首个)实体的全部组件到控制台 + user://debug/entity_dump.txt。

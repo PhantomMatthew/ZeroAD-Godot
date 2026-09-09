@@ -38,7 +38,7 @@
 - **渲染**:~~天气(上游本无天气系统=静态环境+地图粒子 actor;粒子 actor 装配本波落地)~~;~~蒙皮阴影动画姿势(共轭骨架代理,本波落地)~~;~~粒子触发点~~✅(摧毁烟尘三件套 smoke/dust/dust_gray 按障碍半径 small/med/large 分档=原版 destruction_* 变体的粒子 props,仅被杀建筑触发——地基完工销毁不炸;建造扬尘 construction_dust 常驻地基、NumBuilders>0 才喷=原版 fndn_* actor prop;落水命中 water_splash 替代扬尘——增补触发点,上游溅花只挂瀑布 actor,记录在案;OneShotParticlePool 池化复用)。
 - **音频**:~~环境音多轨叠加(现单层)~~✅(AmbientMixer 分层:基础 dayscape + 水域邻近层(相机焦点地形 vs 水位)+ 建筑邻近层(port/farm/trade,桥 GetAmbientBuildingLevels 45m 衰减)+ 天气层(图名启发:雪地/沙漠);各层独立循环播放器,增益平滑淡入淡出(0.5s 节拍驱动)。beyond-upstream——上游 Ambient.js 单轨+TODO,building/weather 数据目录存在但未接线,记录在案)。
 - **GUI**:间谍请求(需逐对 LOS 共享基建);mod.io minisigs Ed25519 验签(现只验存在性);~~campaigns 末关 endgame 页/useGameSetup 分支~~✅(本波收尾:胜负均走 endgame 流程——胜 markLevelComplete、胜负均收地图脚本自定义结算数据入 run.data;ICampaignGameEndData 钩子=原版 Trigger.prototype.OnCampaignGameEnd;离开回跳战役菜单=原版 nextPage,getMenuPath)。
-- **GuiInterface 桥**:~~覆盖面约原版 1/5,HUD/Minimap 热路径仍有零散 QueryInterface 直读~~本波扩面 8 查询(单选详情 SelectionDetails 一趟聚合 9 组件/选择圈 MarkerState 含 footprint+射程圈+占领段/悬停动作能力 ActionCaps 一趟/在研科技 GetStartedResearch=原版同名/站姿/编队组存活/集结点队列/相机跟随位),HUD FillSingleDetails、Main 选择圈/光标/集结点/hover 条、RTSCamera 跟随(消除 SimSystem.Sim 全局直读)全收编;余:阵型行/生产队列条/多选血微条/FindIdleUnits(模板耦合重或低频,按需再补)。
+- **GuiInterface 桥**:~~覆盖面约原版 1/5,HUD/Minimap 热路径仍有零散 QueryInterface 直读~~本波扩面 8 查询(单选详情 SelectionDetails 一趟聚合 9 组件/选择圈 MarkerState 含 footprint+射程圈+占领段/悬停动作能力 ActionCaps 一趟/在研科技 GetStartedResearch=原版同名/站姿/编队组存活/集结点队列/相机跟随位),HUD FillSingleDetails、Main 选择圈/光标/集结点/hover 条、RTSCamera 跟随(消除 SimSystem.Sim 全局直读)全收编;第三波收尾选择重建段:生产队列条 GetQueueStripState(队列槽+剩余秒,升级进度条回退=原版 Upgrade.js GetProgress 条)/多选网格 GetMultiSelectionState(模板分组+组均血微条+全体竖条,无血件组按 1 计的原版语义)/阵型行 GetFormationRowState(控制器→只显解散、非 Unit 混选首门、CanMoveEntsIntoFormation 置灰+disabledTooltip,全量原版口径)。HUD 选择面板 QueryInterface 直读清零;余:模板/贴图数据层读取(Templates.ExtractStats/头像缓存,按设计留 HUD)。
 
 ## 5. 模板 hotloading(已闭环)
 
@@ -64,7 +64,7 @@
 - ⏳ **非干净退出**:SIGTERM 杀进程时 teardown 段 `recursive_mutex lock failed` abort(游玩期无影响,排入低优先)。
 - ⏳ **Linux/Windows 导出未实测**(preset 骨架在,模板已装,同管线理论可复用)。
 - ⏳ **体积决策**:包 4.6G(assets PCK 压缩后)+ data 1.4G 旁置;是否开 VRAM 纹理压缩再压、剔除冗余待定。
-- ⏳ **许可证随包**:0 A.D. 资产 CC-BY-SA / 代码 GPL,发布包需附 LICENSE 文本。
+- ✅ **许可证随包**(2026-09-08):`stage_release_data.sh` 末段收编——data/ 根四件(LICENSE-ZeroAD-Godot.md 本仓库 GPL-2+署名 / LICENSE-0AD-upstream.md 上游目录级许可拆分 / license_gpl-2.0.txt 全文 / license_cc-by-sa-3.0.txt 官方 legalcode,22K 已入仓库根)+ art/LICENSE.txt 显式补位(art 只拷运行时子集目录,含 CGTextures 派生纹理特别许可的该文件不在任何子集内);audio、maps/random 目录级 LICENSE.txt 随整目录 rsync 本就在包(后者含 NASA/OSM 署名)。增量实跑验证产物布局无误。
 
 ## 建议下一波
 

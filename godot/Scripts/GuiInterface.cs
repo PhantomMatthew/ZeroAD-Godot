@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
 
@@ -659,6 +660,199 @@ public sealed class GuiInterface
                 _cm.QueryInterface<OwnershipComponent>(eid)?.PlayerId ?? -1);
         }
         return null;
+    }
+
+    // ── 桥扩面第三波:生产队列条 / 多选网格血微条 / 阵型行(HUD 选择重建段收尾)──
+
+    /// <summary>生产队列条单槽(原版 unitQueuePanel):Progress 仅首项非零(进度遮罩),
+    /// BatchCount = 批量待出数。</summary>
+    public record QueueStripItem(string TemplateName, float Progress, int BatchCount);
+
+    /// <summary>生产队列条快照:队列非空 → 各槽 + 剩余总秒(只计可见槽,与 HUD 原口径
+    /// 一致);否则升级中 → 单槽目标模板进度(原版 Upgrade.js GetProgress 的 GUI 条,
+    /// BatchCount 恒 0)。均无可显 → null。</summary>
+    public record QueueStripState(int RemainingSeconds, IReadOnlyList<QueueStripItem> Items);
+
+    public QueueStripState? GetQueueStripState(EntityId entity, int maxSlots)
+    {
+        var queue = _cm.QueryInterface<ProductionQueue>(entity);
+        if (queue != null && queue.QueueCount > 0)
+        {
+            int n = System.Math.Min(queue.QueueCount, maxSlots);
+            float remaining = 0f;
+            var items = new List<QueueStripItem>(n);
+            for (int i = 0; i < n; i++)
+            {
+                var item = queue.Queue[i];
+                remaining += item.BuildTime * item.Count;
+                items.Add(new QueueStripItem(item.TemplateName,
+                    i == 0 && item.BuildTime > 0f
+                        ? System.Math.Clamp(queue.Progress / item.BuildTime, 0f, 1f) : 0f,
+                    item.Count));
+            }
+            if (n > 0) remaining -= queue.Progress;
+            return new QueueStripState((int)System.Math.Max(remaining, 0f), items);
+        }
+        var up = _cm.QueryInterface<UpgradeComponent>(entity);
+        if (up != null && up.IsUpgrading)
+        {
+            return new QueueStripState(
+                (int)System.Math.Max(up.RequiredTime - up.ElapsedTime, 0f),
+                [new QueueStripItem(up.TargetTemplate,
+                    System.Math.Clamp(up.GetProgress(), 0f, 1f), 0)]);
+        }
+        return null;
+    }
+
+    /// <summary>多选网格单组(原版 detailsAreaMultiple 的模板组):Members 保序,
+    /// HealthFraction = 组内平均血比(无血件成员不参与;全组无血件按 1 计,原版语义)。</summary>
+    public record MultiSelectionGroup(string TemplateKey, string DisplayName,
+        IReadOnlyList<EntityId> Members, bool IsBuilding, float HealthFraction);
+
+    /// <summary>多选网格快照:按模板名分组(字典序,确定性)+ 全体平均血比
+    /// (组均值的均值,无血件组按 1 计入,与原版右侧竖条一致)。</summary>
+    public record MultiSelectionState(IReadOnlyList<MultiSelectionGroup> Groups,
+        float OverallHealthFraction);
+
+    public MultiSelectionState GetMultiSelectionState(IEnumerable<EntityId> selected)
+    {
+        var groups = new Dictionary<string, List<EntityId>>(System.StringComparer.Ordinal);
+        foreach (var eid in selected)
+        {
+            string key = _cm.QueryInterface<IdentityComponent>(eid)?.TemplateName ?? "?";
+            if (!groups.TryGetValue(key, out var list)) groups[key] = list = new List<EntityId>();
+            list.Add(eid);
+        }
+        var result = new List<MultiSelectionGroup>(groups.Count);
+        float totalFrac = 0f;
+        foreach (var k in groups.OrderBy(k => k.Key, System.StringComparer.Ordinal))
+        {
+            float sum = 0f;
+            int n = 0;
+            foreach (var eid in k.Value)
+            {
+                var h = _cm.QueryInterface<HealthComponent>(eid);
+                if (h == null || h.Max <= 0) continue;
+                sum += (float)h.Current / h.Max;
+                n++;
+            }
+            float frac = n > 0 ? sum / n : 1f;
+            totalFrac += frac;
+            var id0 = _cm.QueryInterface<IdentityComponent>(k.Value[0]);
+            result.Add(new MultiSelectionGroup(k.Key, id0?.Name ?? k.Key,
+                k.Value, id0?.IsBuilding ?? false, frac));
+        }
+        return new MultiSelectionState(result,
+            result.Count > 0 ? totalFrac / result.Count : 1f);
+    }
+
+    /// <summary>阵型行模式(原版 formation_panel getItems):Hidden=整行隐藏(非 Unit
+    /// 混选首门 / 无可编队单位);ControllerOnly=选中编队控制器,只显解散;Shapes=列出
+    /// 可用阵型按钮。</summary>
+    public enum FormationRowMode { Hidden, ControllerOnly, Shapes }
+
+    /// <summary>阵型按钮:Shape=去掉 "special/formations/" 前缀的短名(icon 与
+    /// FormationCmd 用);Enabled=false 置灰,DisabledTooltip 取自阵型模板。</summary>
+    public record FormationButton(string Shape, bool Enabled, string DisabledTooltip);
+
+    public record FormationRowState(FormationRowMode Mode, IReadOnlyList<FormationButton> Buttons);
+
+    /// <summary>阵型行快照(原版 formation_panel):任一选中实体是编队控制器 →
+    /// ControllerOnly;任一选中实体非 Unit 类 → Hidden(原版 getItems 首门);
+    /// 可编队(模板 FormationShapes 非空)己方单位为零 → Hidden;否则列模板阵型并集
+    /// (去重保序),按原版 CanMoveEntsIntoFormation 置灰——支持该阵型的选中单位数
+    /// ≥ RequiredMemberCount 才可点。</summary>
+    public FormationRowState GetFormationRowState(
+        IReadOnlyCollection<EntityId> selected, int localPlayerId)
+    {
+        var ownUnits = new List<EntityId>();
+        foreach (var eid in selected)
+        {
+            var ai = _cm.QueryInterface<UnitAIComponent>(eid);
+            if (ai == null) continue;
+            if (ai.IsFormationController)
+                return new FormationRowState(FormationRowMode.ControllerOnly, []);
+            if (_cm.QueryInterface<OwnershipComponent>(eid)?.PlayerId == localPlayerId
+                && !ai.IsGarrisoned && !ai.IsTurret)
+                ownUnits.Add(eid);
+        }
+
+        foreach (var eid in selected)
+        {
+            var identity = _cm.QueryInterface<IdentityComponent>(eid);
+            if (identity == null
+                || !ZeroAD.Sim.Content.EntityClassHelper.MatchesClassList(identity.Classes, "Unit"))
+                return new FormationRowState(FormationRowMode.Hidden, []);
+        }
+
+        var formable = new List<ZeroAD.Sim.Content.TemplateStats>();
+        foreach (var eid in ownUnits)
+        {
+            var id = _cm.QueryInterface<IdentityComponent>(eid);
+            var st = id != null ? _cm.Templates?.ExtractStats(id.TemplateName) : null;
+            if (st != null && st.FormationShapes.Length > 0) formable.Add(st);
+        }
+        if (formable.Count == 0) return new FormationRowState(FormationRowMode.Hidden, []);
+
+        var shapes = new List<string>();
+        foreach (var st in formable)
+            foreach (var tok in st.FormationShapes.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+                if (!shapes.Contains(tok)) shapes.Add(tok);
+
+        var buttons = new List<FormationButton>(shapes.Count);        foreach (var tok in shapes)
+        {
+            bool ok = tok == "special/formations/null";
+            string disabledTip = "";
+            if (!ok)
+            {
+                int capable = 0;
+                foreach (var st in formable)
+                {
+                    foreach (var t in st.FormationShapes.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
+                        if (t == tok) { capable++; break; }
+                }
+                int required = 1;
+                ZeroAD.Sim.Content.TemplateStats? fst = null;
+                try { fst = _cm.Templates?.ExtractStats(tok); } catch { }
+                if (fst != null && fst.HasFormation)
+                {
+                    required = System.Math.Max(1, fst.FormationRequiredMemberCount);
+                    disabledTip = fst.FormationDisabledTooltip;
+                }
+                ok = capable >= required;
+            }
+            buttons.Add(new FormationButton(
+                tok.Replace("special/formations/", ""), ok, disabledTip));
+        }
+        return new FormationRowState(FormationRowMode.Shapes, buttons);
+    }
+
+    /// <summary>驻军面板单员:DisplayName 取 Identity.Name(无 → 实体 id 字符串,
+    /// 与 HUD 原口径一致);TemplateName/IsBuilding 供头像加载(数据层留 HUD)。</summary>
+    public record GarrisonPanelMember(EntityId Id, string DisplayName,
+        string TemplateName, bool IsBuilding);
+
+    /// <summary>驻军面板快照(原版 garrison 选择面板):Count/Capacity 供
+    /// "Garrison: n/cap" 文本;CanUnload=归本地玩家(仅己方建筑可卸载,执行端另有归属门);
+    /// Members 保序。无 GarrisonHolder 件 → null。</summary>
+    public record GarrisonPanelState(int Count, int Capacity, bool CanUnload,
+        IReadOnlyList<GarrisonPanelMember> Members);
+
+    public GarrisonPanelState? GetGarrisonPanelState(EntityId entity, int localPlayerId)
+    {
+        var holder = _cm.QueryInterface<GarrisonHolderComponent>(entity);
+        if (holder == null) return null;
+        var members = new List<GarrisonPanelMember>(holder.Entities.Count);
+        foreach (var ge in holder.Entities)
+        {
+            var id = _cm.QueryInterface<IdentityComponent>(ge);
+            members.Add(new GarrisonPanelMember(ge,
+                id?.Name ?? ge.Value.ToString(),
+                id?.TemplateName ?? "", id?.IsBuilding ?? false));
+        }
+        return new GarrisonPanelState(holder.Entities.Count, holder.GetCapacity(_cm),
+            _cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId == localPlayerId,
+            members);
     }
 
     /// <summary>实体世界位置(相机跟随用;无 Position/不在世界(驻军等)→ null)。

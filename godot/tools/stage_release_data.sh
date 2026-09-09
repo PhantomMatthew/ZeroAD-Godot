@@ -34,6 +34,7 @@ PUBLIC_DIRS=(
     maps              # PMP + scenario XML + random 图 JSON/heightmap
     audio             # ogg + 声音组 XML(AudioManager 直读,未经 Godot 导入)
     art/actors        # actor XML(变体/材质定义)
+    art/variants      # 变体文件(actor <variant file="..."> 引用的 mesh/贴图覆写;缺失会导致盾等 prop 白盒)
     art/terrains      # 地形定义 XML
     art/particles     # 环境粒子 XML
     art/textures/terrain/alphamaps   # splat 形状图
@@ -76,6 +77,28 @@ fi
 # data/l10n(引擎级翻译目录,与 public/l10n 并存)
 if [ -d "$SRC/l10n" ]; then
     rsync -a --delete "$SRC/l10n" "$DST/"
+fi
+
+# 许可证文本随包(发行合规——0 A.D. 数据 GPL-2+ / 美术音频 CC-BY-SA 3.0,均要求随附文本):
+#   LICENSE-ZeroAD-Godot.md    本仓库许可(GPL-2 + Wildfire Games 署名条款)
+#   LICENSE-0AD-upstream.md   上游按目录的许可拆分说明(binaries/data 各子树的授权归属)
+#   license_gpl-2.0.txt       GPL-2 全文(本仓库代码 + 上游数据文件共用)
+#   license_cc-by-sa-3.0.txt  CC-BY-SA 3.0 法定文本(上游 art/audio 及其衍生转换资产)
+# 另补 art/LICENSE.txt:art 只拷运行时子集目录,该文件(含 CGTextures 派生纹理特别许可)
+# 不在任何子集里,需显式带上;audio/ 与 maps/ 系整目录 rsync,各自 LICENSE.txt 已随包。
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cp "$REPO_ROOT/LICENSE.md" "$DST/LICENSE-ZeroAD-Godot.md"
+cp "$REPO_ROOT/license_gpl-2.0.txt" "$DST/"
+cp "$REPO_ROOT/license_cc-by-sa-3.0.txt" "$DST/"
+UP_ROOT="$(cd "$SRC/../.." && pwd)"
+if [ -f "$UP_ROOT/LICENSE.md" ]; then
+    cp "$UP_ROOT/LICENSE.md" "$DST/LICENSE-0AD-upstream.md"
+else
+    echo "warn: upstream LICENSE.md not found at $UP_ROOT (licensing details doc skipped)" >&2
+fi
+if [ -f "$SRC/mods/public/art/LICENSE.txt" ]; then
+    mkdir -p "$DST/mods/public/art"
+    cp "$SRC/mods/public/art/LICENSE.txt" "$DST/mods/public/art/"
 fi
 
 echo "staged: $DST"
