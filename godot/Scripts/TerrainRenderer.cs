@@ -84,6 +84,8 @@ public static class TerrainRenderer
             // (用户截图 + A/B 实证:整图连续 UV 无此现象);整图烘焙保留 C++ 风格的
             // 混合色,2048-8192px 密度足够。
             var bakedWhole = SplatBaker.BakeAlbedo(map);
+            if (System.Environment.GetEnvironmentVariable("ZEROAD_TERRAIN_DUMP") == "1" && bakedWhole != null)
+                bakedWhole.SavePng("user://terrain_dump.png");
             if (bakedWhole != null)
             {
                 // Uv1Scale:网格 UV=world×0.125(1024m 图 → 0..128)压回 0..1,整图

@@ -474,13 +474,29 @@ public sealed partial class SimBridge : Node
 	}
 
 	/// <summary>教程启动(原版两张教程图:introductory_tutorial / starting_economy_walkthrough)。
-	/// 按图名选目标表(原版各图自带 tutorialGoals);空/未知回落 introductory。</summary>
+	/// 目标表数据驱动:res://data/tutorials/&lt;图名&gt;.json(原版各图自带 tutorialGoals;
+	/// C# 无法执行地图 JS,目标表以 JSON 描述,TutorialLevelLoader 内置绑定装配)。
+	/// 空图名回落 introductory;文件缺失给单条错误说明目标的兜底引擎(不崩、面板可见)。</summary>
 	public void StartTutorial(string mapName = "")
 	{
 		IsTutorialMode = true;
-		Tutorial = mapName.Contains("starting_economy_walkthrough", System.StringComparison.Ordinal)
-			? ZeroAD.Sim.Tutorial.EconomyWalkthroughTutorial.Create(_sim, Events)
-			: IntroductoryTutorial.Create(_sim, Events);
+		string baseName = System.IO.Path.GetFileNameWithoutExtension(mapName);
+		if (string.IsNullOrEmpty(baseName))
+			baseName = "introductory_tutorial";
+		string path = ProjectSettings.GlobalizePath("res://data/tutorials/" + baseName + ".json");
+		try
+		{
+			Tutorial = ZeroAD.Sim.Tutorial.TutorialLevelLoader.CreateEngine(_sim, Events, path);
+		}
+		catch (System.Exception ex)
+		{
+			ZeroAD.Sim.Diag.Err("Sim", $"Tutorial goals load failed ({path}): {ex.Message}");
+			Tutorial = new TutorialEngine(new System.Collections.Generic.List<TutorialGoal>
+			{
+				new() { Instructions = { "Tutorial data failed to load: " + baseName + ".json" } }
+			});
+			Tutorial.Init(_sim, Events);
+		}
 	}
 
 	public ScenarioData? LoadTutorialScenario(string dataRoot, string mapName = "introductory_tutorial")

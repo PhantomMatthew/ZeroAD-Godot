@@ -170,7 +170,8 @@
 ### 教程(TutorialEngine.cs)
 - [x] starting_economy_walkthrough 移植(66e4f51:26 目标全量,按图名选引擎,
   战役 eco_walkthrough 关卡直通)
-- [ ] 教程 JSON 数据驱动(现 C# 目标表硬编;CampaignLevel/GoalSpec 框架已具备)
+- [x] 教程 JSON 数据驱动(godot/data/tutorials/*.json + TutorialLevelLoader 装配,
+  硬编目标表已删;引擎 Recheck 按 IsDone 收口复合条件,Delay:-1 强制 Ready 按钮)
 - [x] goal Delay 计时器(早前已落)+ TriggerHelper 成体系(66e4f51)
 
 ---

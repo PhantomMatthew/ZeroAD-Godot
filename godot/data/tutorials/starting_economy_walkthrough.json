@@ -1,0 +1,282 @@
+{
+  "Map": "maps/tutorials/starting_economy_walkthrough",
+  "Goals": [
+    {
+      "Instructions": [
+        "This tutorial will teach the basics of developing your economy. You start with a Civic Center and a couple units in Village Phase; your goal is to develop and expand, evolving to Town Phase and City Phase.\n",
+        "Toggle fullscreen with Alt+Enter; zoom with the mouse wheel; move the camera with the arrow keys."
+      ]
+    },
+    {
+      "Instructions": ["To start off, select your building, the Civic Center, by clicking on it. A selection ring in your player color will be displayed."]
+    },
+    {
+      "Instructions": [
+        "With the Civic Center selected, the production panel appears at the lower right. Available actions are unmasked; gray = not unlocked; red = insufficient resources. Hover icons for tooltips.\n",
+        "The top row trains units; the bottom rows research technologies. The II icon advances to Town Phase — it requires more structures plus food and wood."
+      ]
+    },
+    {
+      "Instructions": [
+        "Two main starting unit types: Civilians (pure economy) and Citizen Soldiers (workers that can fight). Civilians and Infantry gather all land resources; Cavalry can only gather meat from animals.\n"
+      ]
+    },
+    {
+      "Instructions": ["Rule of thumb: left-click selects; right-click with a selection issues an order (gather, build, fight…).\n"]
+    },
+    {
+      "Instructions": [
+        "Food and wood matter most early. Civilians gather vegetables fastest. Select all your Civilians (drag a rectangle / click then Shift+click / double-click for same-type) and right-click the berries southeast of the Civic Center."
+      ],
+      "On": [
+        { "Event": "playerCommand", "Command": "gather", "ResourceSpecific": "fruit" }
+      ]
+    },
+    {
+      "Instructions": ["Now gather wood with your Infantry Citizen Soldiers: select them and right-click the nearest tree."],
+      "On": [
+        { "Event": "playerCommand", "Command": "gather", "ResourceSpecific": "tree" }
+      ]
+    },
+    {
+      "Instructions": ["Cavalry Citizen Soldiers are good hunters. Select your Cavalry and order it to slaughter the chickens around your Civic Center."],
+      "On": [
+        { "Event": "playerCommand", "Command": "gather", "ResourceSpecific": "meat" }
+      ]
+    },
+    {
+      "Instructions": [
+        "Set a rally point so newly trained units go straight to work: select the Civic Center and right-click a tree south of it.\n",
+        "Rally points show as a small flag at the end of the blue line."
+      ],
+      "On": [
+        {
+          "Event": "playerCommand",
+          "Command": "set-rallypoint",
+          "RallyCommand": "gather",
+          "RallyResource": "tree",
+          "Warn": "Select the Civic Center, then right-click a tree (cursor turns into a wood icon).",
+          "WarnAlways": true
+        }
+      ]
+    },
+    {
+      "Instructions": [
+        "Train more units: with the Civic Center selected, hold the batch-train key and click the second unit icon (Hoplites) to train five at once — cheaper than five single clicks.\n"
+      ],
+      "On": [
+        {
+          "Event": "trainingQueued",
+          "TemplateContains": "infantry_spearman",
+          "MinCount": 2,
+          "WarnOnCount": "Hold the batch hotkey while clicking to train several units.",
+          "WarnOnTemplate": "The second icon trains the Hoplites."
+        }
+      ]
+    },
+    {
+      "Instructions": [
+        "Wait for the units to be trained.\n",
+        "Watch the top-left resource counters: resources only count once workers deposit them at the Civic Center or another dropsite — minimize the walk distance for efficiency."
+      ],
+      "On": [
+        { "Event": "trainingFinished" }
+      ]
+    },
+    {
+      "Instructions": [
+        "New units gather wood automatically, but the walk back is long. Build a Storehouse (wood/stone/metal dropsite) near the trees: select your five Citizen Soldiers, click the Storehouse icon, and place it by the trees.\n",
+        "Invalid (obstructed) spots show the building preview in red."
+      ],
+      "On": [
+        { "Event": "playerCommand", "Command": "construct", "TemplateContains": "/storehouse" }
+      ]
+    },
+    {
+      "Instructions": ["The selected Citizens start constructing automatically once the foundation is placed."],
+      "On": [
+        { "Event": "structureBuilt", "DropsiteAccepts": "wood" }
+      ]
+    },
+    {
+      "Instructions": [
+        "Builders now gather wood automatically. We have enough woodcutters — remove the rally point: right-click on the selected Civic Center (the flag icon shows crossed out)."
+      ],
+      "On": [
+        { "Event": "playerCommand", "Command": "unset-rallypoint" },
+        { "Event": "trainingFinished", "SetFlag": "trainingDone" }
+      ]
+    },
+    {
+      "Instructions": ["Train Civilians for more food: select the Civic Center, hold the batch key, and click the Civilian icon to train five."],
+      "Init": { "ClearFlags": ["trainingDone"] },
+      "On": [
+        {
+          "Event": "trainingQueued",
+          "TemplateContains": "support_civilian",
+          "MinCount": 2,
+          "WarnOnCount": "Hold the batch hotkey and click to train several units.",
+          "WarnOnTemplate": "The first icon trains the Civilians."
+        }
+      ]
+    },
+    {
+      "Instructions": [
+        "The units will be ready soon.\n",
+        "Watch the population counter (fifth item top-left): current population (including units in training) vs limit, which your structures set."
+      ],
+      "Require": { "Flags": ["trainingDone"] },
+      "On": [
+        { "Event": "trainingFinished", "SetFlag": "trainingDone" }
+      ]
+    },
+    {
+      "Instructions": [
+        "Near the population cap you must raise it with new structures — the House is cheapest.\n",
+        "Let's build several Houses in a row."
+      ]
+    },
+    {
+      "Instructions": [
+        "Select two newly-trained Civilians and build Houses east of the Civic Center: click the House icon, then hold the queue key while clicking several spots — units work through queued orders in order. Press Escape to drop the House cursor.\n",
+        "Reminder: click the first Civilian, then hold the add key and click the second."
+      ],
+      "Require": { "Counter": { "Key": "houseCount", "Min": 2 } },
+      "On": [
+        { "Event": "ownershipChanged", "TrackHouses": true }
+      ]
+    },
+    {
+      "Instructions": [
+        "Berries are finite — Fields give unlimited food but gather slower.\n",
+        "First build a Farmstead (a food dropsite) to minimize the walk."
+      ],
+      "Delay": -1,
+      "On": [
+        { "Event": "ownershipChanged", "TrackHouses": true }
+      ]
+    },
+    {
+      "Instructions": [
+        "Select the three remaining idle Civilians and build a Farmstead in the open area west of the Civic Center.\n",
+        "Leave room for Fields around it. Goats to the west can improve food income if hunted.\n",
+        "Tip: hold the idle-only key while drag-selecting to pick just the idle units."
+      ],
+      "On": [
+        { "Event": "playerCommand", "Command": "construct", "TemplateContains": "/farmstead" },
+        { "Event": "ownershipChanged", "TrackHouses": true }
+      ]
+    },
+    {
+      "Instructions": [
+        "Finished Farmstead builders will seek the goats automatically.\n",
+        "House builders idle once done — wait for them to finish both Houses."
+      ],
+      "Require": { "HouseSetEmpty": true },
+      "On": [
+        { "Event": "ownershipChanged", "TrackHouses": true }
+      ]
+    },
+    {
+      "Instructions": ["With both Houses up, select your two Civilians and build a Field as close as possible to the Farmstead (it accepts all food)."],
+      "On": [
+        { "Event": "playerCommand", "Command": "construct", "TemplateContains": "/field" }
+      ]
+    },
+    {
+      "Instructions": [
+        "Field builders will gather it automatically once done.\n",
+        "The cavalry should be done with the chickens — take it south past the Civic Center to the lake and right-click a camel to hunt."
+      ],
+      "On": [
+        { "Event": "playerCommand", "Command": "gather", "ResourceSpecific": "meat" }
+      ]
+    },
+    {
+      "Instructions": ["Up to five Workers per Field. Set the Civic Center rally point on the Field: new Workers will help build it, then gather it."],
+      "On": [
+        { "Event": "playerCommand", "Command": "set-rallypoint", "RallyCommand": "build" },
+        {
+          "Event": "playerCommand",
+          "Command": "set-rallypoint",
+          "RallyCommand": "gather",
+          "RallyResource": "grain",
+          "Warn": "Select the Civic Center and right-click on the Field.",
+          "WarnAlways": true
+        }
+      ]
+    },
+    {
+      "Instructions": ["Click the Civilian icon three times to train three more farmers."],
+      "Require": { "Counter": { "Key": "femaleCount", "Min": 3 } },
+      "On": [
+        {
+          "Event": "trainingQueued",
+          "TemplateContains": "support_civilian",
+          "ExactCount": 1,
+          "Increment": "femaleCount",
+          "WarnOnCount": "Click without the batch key to train a single unit.",
+          "WarnOnTemplate": "Click on the Civilian icon."
+        }
+      ]
+    },
+    {
+      "Instructions": [
+        "Gather rates improve with technologies. Select the Farmstead: its production panel lists researchable technologies — hover for costs/effects and pick one."
+      ],
+      "Require": { "TechsDealtAny": ["gather_wicker_baskets", "gather_farming_plows"] },
+      "On": [
+        { "Event": "researchQueued", "ResearcherClass": "Farmstead" }
+      ]
+    },
+    {
+      "Instructions": [
+        "Prepare for Town Phase: hover its icon in the Civic Center panel to see what's missing.\n",
+        "Resources suffice but a structure is missing — and defense never hurts. Select four soldiers and build a Barracks near the Civic Center."
+      ],
+      "On": [
+        { "Event": "playerCommand", "Command": "construct", "TemplateContains": "/barracks" }
+      ]
+    },
+    {
+      "Instructions": ["While the Barracks builds, rally two more builders onto its foundation (right-click it; hammer cursor) and train two more Hoplites."],
+      "On": [
+        { "Event": "structureBuilt", "Class": "Barracks" }
+      ]
+    },
+    {
+      "Instructions": [
+        "You can now research Town Phase: select the Civic Center and click the technology icon.\n",
+        "If the icon shows red, wait for your workers to gather the missing resources."
+      ],
+      "Require": { "TechsDealtAny": ["phase_town_athen", "phase_town_generic"] },
+      "On": [
+        { "Event": "researchQueued", "ResearcherClass": "CivilCentre" }
+      ]
+    },
+    {
+      "Instructions": [
+        "Later phases need stone and metal for bigger structures and better soldiers.\n",
+        "While researching, send half your idle Citizen Soldiers to the stone quarry and half to the metal mine west of the Civic Center."
+      ]
+    },
+    {
+      "Instructions": [
+        "Soldiers carrying wood would lose it when switching resources — queue orders: hold the queue key, right-click the Civic Center to deposit, then right-click the quarry.\n",
+        "Repeat with the remaining soldiers and the metal mine."
+      ],
+      "Init": { "ClearFlags": ["stone", "metal"] },
+      "Require": {
+        "Flags": ["stone", "metal"],
+        "TechsDealtAny": ["phase_town_athen", "phase_town_generic"]
+      },
+      "On": [
+        { "Event": "playerCommand", "Command": "gather", "ResourceGeneric": "stone", "SetFlag": "stone" },
+        { "Event": "playerCommand", "Command": "gather", "ResourceGeneric": "metal", "SetFlag": "metal" }
+      ]
+    },
+    {
+      "Instructions": ["This is the end of the walkthrough. You now know the basics of setting up your economy."]
+    }
+  ]
+}

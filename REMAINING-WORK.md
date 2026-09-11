@@ -47,7 +47,6 @@
 ## 6. 架构性保留项(判定不搬 / beyond-upstream)
 
 - 触发器任意 JS 表达力——数据驱动模型是刻意的架构选择。
-- 教程 JSON 化——上游目标表也在地图 JS 里,C# 目标表是等价物。
 - 真断线重连(状态转移+回合追赶)——0 A.D. 0.29 亦无此能力。
 - MotionBall/Settlement(演示/空壳件)、PopulationCapManager(职能已折叠进 PlayerComponent)、Upgrade 组件(命令层等价已存在,如需原版进度条 UI 再补)。
 

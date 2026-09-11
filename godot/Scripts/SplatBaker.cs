@@ -221,6 +221,8 @@ public static class SplatBaker
         float tileSize = ctx.TileSize;
         var outp = new byte[pxSize * pxSize * 3];
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        // 形状图缺失时的兜底几何衰减(正常路径只用 alphamap——对齐上游,无额外启发式)。
+        bool shapesDown = _shapes == null || _shapes.Length == 0;
 
         Parallel.For(0, pxSize, y =>
         {
@@ -245,10 +247,8 @@ public static class SplatBaker
                 {
                     ref readonly var ov = ref ovs[k];
                     float alpha = ov.Full ? 1f : SampleShape(ov, fu, fv);
-                    // 形状图朝向一旦和 tile 边错开,交界 alpha 会落到 0,CC/河岸就剩 4m 硬块。
-                    // 用邻居位几何衰减垫底,有 alphamap 时取两者较大值(C++ 溅开 + 保证硬边被抹掉)。
-                    if (ov.Mask != 0)
-                        alpha = MathF.Max(alpha, GeometricAlpha(ov.Mask, fu, fv));
+                    if (shapesDown && ov.Mask != 0)
+                        alpha = GeometricAlpha(ov.Mask, fu, fv);
                     if (alpha <= 0f) continue;
                     SampleLayer(layers[ov.Tex], layerSizes[ov.Tex], uvMat[ov.Tex], wx, wz, ovRgb);
                     float a = alpha > 1f ? 1f : alpha;
@@ -256,11 +256,6 @@ public static class SplatBaker
                     rgb[1] = (byte)(rgb[1] + (ovRgb[1] - rgb[1]) * a + 0.5f);
                     rgb[2] = (byte)(rgb[2] + (ovRgb[2] - rgb[2]) * a + 0.5f);
                 }
-
-                // 覆盖层依赖 priority 截断:低优先级贴图(常是河岸/CC 底图一侧)根本没有 overlay。
-                // 再按 4 邻接不同 tex1 做一次与 priority 无关的边混合,楼梯两侧都会软掉。
-                BlendCardinalNeighbor(layers, layerSizes, uvMat, tileTex1, t, tx, tz,
-                    fu, fv, wx, wz, rgb, ovRgb);
 
                 int o = rowBytes + x * 3;
                 outp[o] = rgb[0]; outp[o + 1] = rgb[1]; outp[o + 2] = rgb[2];
@@ -392,7 +387,9 @@ public static class SplatBaker
         return ov;
     }
 
-    /// <summary>tile 内 (fu,fv) 处采样覆盖层 alpha:角点 UV 双线性 → 形状图双线性。</summary>
+    /// <summary>tile 内 (fu,fv) 处采样覆盖层 alpha:角点 UV 双线性 → 形状图双线性。
+    /// 形状图是反向掩码(上游 terrain_common.fs: alpha = 1.0 - blendTex.a)——
+    /// PNG 白(255)= 覆盖层不可见,黑(0)= 完全覆盖,故这里取 1 − 亮度。</summary>
     private static float SampleShape(in Overlay ov, float fu, float fv)
     {
         var shape = _shapes;
@@ -413,7 +410,7 @@ public static class SplatBaker
         y0 = Math.Clamp(y0, 0, ShapeSize - 1); y1 = Math.Clamp(y1, 0, ShapeSize - 1);
         float top = data[y0 * ShapeSize + x0] + (data[y0 * ShapeSize + x1] - data[y0 * ShapeSize + x0]) * ax;
         float bot = data[y1 * ShapeSize + x0] + (data[y1 * ShapeSize + x1] - data[y1 * ShapeSize + x0]) * ax;
-        return (top + (bot - top) * ay) / 255f;
+        return 1f - (top + (bot - top) * ay) / 255f;
     }
 
     /// <summary>形状图在 binaries/ 下(工程外)。用 .NET 读字节再 LoadPngFromBuffer,避免
@@ -471,8 +468,9 @@ public static class SplatBaker
         }
     }
 
-    /// <summary>形状图朝向偏差时的几何衰减:按邻居位从对应边/角做 smoothstep。
-    /// bit0=-X bit2=-Z bit4=+X bit6=+Z,奇数位为对角。</summary>
+    /// <summary>形状图不可用时的兜底几何衰减:按邻居位从对应边/角做 smoothstep。
+    /// bit0=-X bit2=-Z bit4=+X bit6=+Z,奇数位为对角。仅在 alphamap 加载失败的
+    /// 降级路径使用——正常烘焙严格按形状图(对齐上游,不做几何加料)。</summary>
     private static float GeometricAlpha(int mask, float fu, float fv)
     {
         float a = 0f;
@@ -488,34 +486,6 @@ public static class SplatBaker
         return a * a * (3f - 2f * a);
     }
 
-    /// <summary>与 priority 无关:当前 tile 四邻若 tex1 不同,在靠那条边的半格内混入邻图。
-    /// 覆盖层只把高优先级溅到低优先级上,河岸/CC 低优先级那一侧会留下硬直角;这里两侧都抹。</summary>
-    private static void BlendCardinalNeighbor(
-        byte[][] layers, int[] layerSizes, (float m11, float m13, float m21, float m23)[] uvMat,
-        ushort[] tileTex1, int t, int tx, int tz, float fu, float fv, float wx, float wz,
-        byte[] rgb, byte[] scratch)
-    {
-        int self = tileTex1[tz * t + tx];
-        BlendOne(tx - 1, tz, 1f - fu);
-        BlendOne(tx + 1, tz, fu);
-        BlendOne(tx, tz - 1, 1f - fv);
-        BlendOne(tx, tz + 1, fv);
-
-        void BlendOne(int nx, int nz, float along)
-        {
-            if (along <= 0f || nx < 0 || nz < 0 || nx >= t || nz >= t) return;
-            int ntex = tileTex1[nz * t + nx];
-            if (ntex == self) return;
-            // 只在靠邻边的半格内混合,避免整 tile 被邻图染透。
-            float w = along * 2f - 1f;
-            if (w <= 0f) return;
-            w = w * w * (3f - 2f * w);
-            SampleLayer(layers[ntex], layerSizes[ntex], uvMat[ntex], wx, wz, scratch);
-            rgb[0] = (byte)(rgb[0] + (scratch[0] - rgb[0]) * w + 0.5f);
-            rgb[1] = (byte)(rgb[1] + (scratch[1] - rgb[1]) * w + 0.5f);
-            rgb[2] = (byte)(rgb[2] + (scratch[2] - rgb[2]) * w + 0.5f);
-        }
-    }
 
     /// <summary>把任意 Godot 图像格式收成 ShapeSize² 亮度。灰度 PNG 被扩成 RGBA 时亮度可能在
     /// A 而非 RGB——只 Convert(L8) 会得到全黑。两边均值谁更像"有内容的掩码"用谁。</summary>
