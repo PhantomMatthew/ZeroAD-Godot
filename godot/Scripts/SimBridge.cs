@@ -511,6 +511,7 @@ public sealed partial class SimBridge : Node
 		var scenario = ScenarioLoader.Load(xmlPath);
 		// 图形状(同 LoadMapScenario;教程图走独立加载路径,也要下一局 RebuildGrid 前设旗)。
 		_obstructions.SetPassabilityCircular(scenario.CircularMap);
+		_range.LosCircular = scenario.CircularMap;
 		ApplyScenarioPlayers(scenario);
 		SpawnScenarioEntities(scenario);
 		// Re-seed diplomacy from the scenario's Team assignments (covers the enemy player
@@ -594,6 +595,7 @@ public sealed partial class SimBridge : Node
 		// 图形状(原版 Setup.js:SetPassabilityCircular(!!settings.CircularMap))——
 		// 寻路图外缘方/圆印戳在下次 RebuildGrid 生效(spawn 后 Main 必重建一次)。
 		_obstructions.SetPassabilityCircular(scenario.CircularMap);
+		_range.LosCircular = scenario.CircularMap;
 		ApplyScenarioCivs(scenario);
 		ApplyVictoryConditions(scenario);
 		SpawnScenarioEntities(scenario);

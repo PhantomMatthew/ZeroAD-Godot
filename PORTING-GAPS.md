@@ -184,6 +184,9 @@
 - [x] **战场贴花**(4bb75a1+5c0eea8:BattleDecals——击杀血斑+炮击弹坑/建筑毁坏贴花,45s/90s 消融回收;与 ImpactEffectPool 互补)
 - [x] CCmpDecay 尸体消融表现(4bb75a1:贴花线性淡出+缩小消融回收)
 - [x] 后处理对齐原版选项(5999290 bloom/MSAA/sharpness;ded5353 水质两档 + fa3b170 DOF 远距模糊)
+- [x] 地图边界三件套(LosGrid 离世外环 LosIsOffWorld——外圈 3 顶点环/圆图收缩半径永不探索,
+  SoD 边缘渐黑;TerrainRenderer 黑色裙边 BuildSides——图缘垂到 y=0,顶 clamp 到水面;
+  RTSCamera 焦点钳制——图内 8m,圆图钳半径,图外不再露出亮色天空)
 - ✅ 已存在勿重复造:单位血条(DrawHealth/HealthBar)、集结点标记+路径线(Main.cs:2482)、投射物视觉池(ProjectilePool/ImpactEffectPool)、迷雾小地图层(FogTextureBuilder)
 
 ## 8. M5 GUI / 音频 / 相机 / GuiInterface
@@ -218,6 +221,7 @@
 - [x] 俯仰限制、右键 pan 拖拽(6aa8abe)
 - [x] 缩放锚定鼠标指向点(8d7fef9:zoom-to-cursor)
 - [x] 滚轮旋转热键映射对齐(8d7fef9:Shift+Wheel)
+- [x] 焦点边界钳制(CameraController.cpp:313-349:图内 8m 边距,圆图钳图心半径)
 
 ### GuiInterface(sim→UI 桥)
 - [x] TradePanel/DiplomacyPanel/MatchSettingsPanel 绕桥直查已收敛(fb43094 后 commit:桥新增 GetDiplomacyState/GetBarterQuote/GetPlayerRoster DTO,面板零内核直查)

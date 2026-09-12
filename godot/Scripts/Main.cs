@@ -1488,7 +1488,11 @@ public sealed partial class Main : Node3D
 			try
 			{
 				var pmp = PmpMap.Load(pmpPath);
-				var (terrainNode, overlayMesh) = TerrainRenderer.CreateFromHeightmap(pmp);
+				// 水 XML 提前读(纯数据):裙边顶要 clamp 到水面(上游 BuildSide 同款)。
+				string? xmlPath = pmpPath.Replace(".pmp", ".xml");
+				var water = WaterRenderer.LoadWaterFromXml(xmlPath);
+				var (terrainNode, overlayMesh) = TerrainRenderer.CreateFromHeightmap(pmp,
+					water?.Height ?? float.NegativeInfinity);
 				// 地形顶点已预翻转为世界坐标(TerrainRenderer 注释):挂场景根(无负 scale),
 				// 两个渲染器都走原生光照/受影;阴影直接自投,无需镜像代理。
 				AddChild(terrainNode);
@@ -1515,7 +1519,6 @@ public sealed partial class Main : Node3D
 				ZeroAD.Sim.Diag.Log("Main", $"Loaded PMP terrain: {pmpPath} ({pmp.PatchesPerSide} patches, {pmp.MapSizeMeters}m, height at spawn: {h:F1}m)");
 				_currentMapName = System.IO.Path.GetFileNameWithoutExtension(pmpPath).ToLowerInvariant();
 
-				string? xmlPath = pmpPath.Replace(".pmp", ".xml");
 				// 地图 Environment 光照(太阳方向/色 + 环境光 + 雾色,公式对齐 CLightEnv);
 				// 镜像世界后太阳必须随之镜像,否则面向相机的坡面整体背光发暗。
 				(MapEnvironment.LoadFromXml(xmlPath) ?? MapEnvironment.Default).Apply(_light, _env, _camera);
@@ -1524,7 +1527,6 @@ public sealed partial class Main : Node3D
 				_cinema?.LoadFromMapXml(xmlPath);
 				// HQ 上采样(MSAA 3D 2x/4x,原版 HQ 选项;Viewport 属性)。
 				MapEnvironment.ApplyViewport(GetViewport());
-				var water = WaterRenderer.LoadWaterFromXml(xmlPath);
 				float waterHeight = water?.Height ?? -999f;
 				if (water != null)
 				{
@@ -1640,8 +1642,11 @@ public sealed partial class Main : Node3D
 		// MapExport → PmpMap 适配(共享实现,封装 VerticesPerSide/TileTex2 两个坑)
 		var pmp = PmpMap.FromExport(export);
 
+		// rmgen 水面配置提前取(纯数据):裙边顶 clamp 到水面(上游 BuildSide 同款)。
+		var rmgenWater = WaterRenderer.FromRmgen(export.Environment);
+
 		// 地形渲染（复用 PMP 路径）
-		var (terrainNode, overlayMesh) = TerrainRenderer.CreateFromHeightmap(pmp);
+		var (terrainNode, overlayMesh) = TerrainRenderer.CreateFromHeightmap(pmp, rmgenWater.Height);
 		AddChild(terrainNode);
 		_worldRoot.Position = new Vector3(0f, 0f, pmp.MapSizeMeters);
 
@@ -1666,7 +1671,6 @@ public sealed partial class Main : Node3D
 		MapEnvironment.FromRmgen(export.Environment).Apply(_light, _env, _camera);
 		MapEnvironment.ApplyViewport(GetViewport());
 
-		var rmgenWater = WaterRenderer.FromRmgen(export.Environment);
 		WaterRenderer.TerrainHeight = TerrainHeightService.Sample;
 		_worldRoot.AddChild(WaterRenderer.CreateWaterPlane(rmgenWater, pmp.MapSizeMeters));
 		_sim.Sim.Water.SetWaterLevel(ZeroAD.Sim.Maths.Fixed.FromFloat(rmgenWater.Height));
@@ -1677,6 +1681,7 @@ public sealed partial class Main : Node3D
 		// 图形状先行(原版 Setup.js → SetPassabilityCircular):RebuildGrid 在
 		// FillPassabilityAllLand 内发生,外缘方/圆印戳依此旗。
 		_sim.Obstructions.SetPassabilityCircular(settings.CircularMap);
+		_sim.Range.LosCircular = settings.CircularMap;
 		FillPassabilityAllLand(pmp, rmgenWater.Height);
 
 		// 放置实体（从 MapExport.Entities）。rmgen 实体坐标单位是 TILES——上游

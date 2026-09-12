@@ -246,6 +246,7 @@ namespace ZeroAD.Godot;
 		// 平滑更新(原版 Update(deltaRealTime):按 smoothness^10dt 指数逼近目标)。
 		// Update 返回的是**增量**——真值读 Current(此前误把增量赋给 _focus/_distance,
 		// 滚轮缩放被钳成最小距、只剩锚点平移,表现成"水平方向缩放地图")。
+		ClampFocusToMap();
 		_smFocusX.Update(dt);
 		_focus.X = _smFocusX.Current;
 		_smFocusZ.Update(dt);
@@ -360,7 +361,7 @@ namespace ZeroAD.Godot;
 
     public void SetFocus(Vector3 focus)
     {
-        _focus = focus;
+        _focus = ClampToMapBounds(focus);
         _focus.Y = TerrainHeightService.Sample(_focus.X, _focus.Z);
         // 外部强制取景(开局 FocusCameraOnLocalPlayer/小地图点击/过场)必须同步平滑锚点:
         // _Process 每帧无条件 _focus = _smFocus.Current,不同步则下一帧静默回滚内部焦点
@@ -371,6 +372,47 @@ namespace ZeroAD.Godot;
         _smFocusZ.SetValue(_focus.Z);
         UpdateTransform();
     }
+
+	// 原版 CameraController.Update 的边界钳制(CameraController.cpp:313-349):
+	// CAMERA_EDGE_MARGIN = 2×TERRAIN_TILE_SIZE = 8m;焦点永不出图,最多窥见
+	// 边缘黑环+裙边,看不到图外虚空(天空地面半球)。FreeFly 调试模式不钳。
+	private const float EdgeMarginMeters = 8f;
+
+	/// <summary>每帧把平滑目标钳回图内(键盘/边缘滚动/跟随全走平滑目标)。</summary>
+	private void ClampFocusToMap()
+	{
+		if (_freeFly) return;
+		var clamped = ClampToMapBounds(new Vector3(_smFocusX.Target, 0f, _smFocusZ.Target));
+		_smFocusX.SetValueSmoothly(clamped.X);
+		_smFocusZ.SetValueSmoothly(clamped.Z);
+	}
+
+	private Vector3 ClampToMapBounds(Vector3 pos)
+	{
+		var los = Sim?.Range?.Los;
+		if (los == null) return pos;
+		float size = (los.VerticesPerSide - 1) * ZeroAD.Sim.Components.LosGrid.TileSize;
+		if (size <= EdgeMarginMeters * 2f) return pos;
+		if (los.Circular)
+		{
+			// 圆形图:钳到图心半径 size/2 − margin(原版圆图分支同式)。
+			float c = size / 2f, r = c - EdgeMarginMeters;
+			float dx = pos.X - c, dz = pos.Z - c;
+			float d2 = dx * dx + dz * dz;
+			if (d2 > r * r)
+			{
+				float d = Mathf.Sqrt(d2);
+				pos.X = c + dx / d * r;
+				pos.Z = c + dz / d * r;
+			}
+		}
+		else
+		{
+			pos.X = Mathf.Clamp(pos.X, EdgeMarginMeters, size - EdgeMarginMeters);
+			pos.Z = Mathf.Clamp(pos.Z, EdgeMarginMeters, size - EdgeMarginMeters);
+		}
+		return pos;
+	}
 
 	/// <summary>跟随目标的世界位置(原版 GetInterpolatedTransform 的简化——
 	/// 直接读 PositionComponent 当前位;消失/驻军 → null 停跟随)。

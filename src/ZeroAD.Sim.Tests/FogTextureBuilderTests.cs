@@ -42,11 +42,13 @@ public sealed class FogTextureBuilderTests
         Assert.True(blurred[10 * n + 10] == 0, "far stays black");
 
         // A fully-visible board is a constant signal — the binomial kernel must leave it flat.
+        // 离世界环(LosIsOffWorld)恒 0,环边会被压暗——平坦性断言取远离环的内点。
         var los2 = new LosGrid(64);
         los2.AddLos(1, Fixed.FromInt(32), Fixed.FromInt(32), Fixed.FromInt(100));
         byte[] flat = builder.BuildBlurred(los2, 1);
         int n2 = los2.VerticesPerSide;
-        Assert.Equal(255, flat[4 * n2 + 4]);
         Assert.Equal(255, flat[8 * n2 + 8]);
+        Assert.Equal(255, flat[9 * n2 + 9]);
+        Assert.True(flat[4 * n2 + 4] < 255, "off-world ring darkens the edge band");
     }
 }

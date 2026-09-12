@@ -9,7 +9,8 @@ public static class TerrainRenderer
     /// N×N 个 patch MeshInstance3D 子节点 + 1 个碰撞用子节点)与一份独立的整图 overlay
     /// mesh(仅 position/normal/UV,供 fog/territory 透明层复用,UV 约定与此前一致:
     /// world×0.125,不受 patch 分块影响)。</summary>
-    public static (Node3D Root, Mesh OverlayMesh) CreateFromHeightmap(PmpMap map)
+    public static (Node3D Root, Mesh OverlayMesh) CreateFromHeightmap(PmpMap map,
+        float waterLevel = float.NegativeInfinity)
     {
         // 早失败:VerticesPerSide 未赋值(适配器漏填)会静默建出 0 顶点空 mesh——
         // 地形不可见只剩天空色,极难排查。抛出让加载失败路径(回主菜单+日志)接管。
@@ -70,6 +71,11 @@ public static class TerrainRenderer
                 $"patches={map.PatchesPerSide})");
 
         var root = new Node3D { Name = "Terrain" };
+
+        // 黑色裙边(原版 PatchRData.BuildSides + TerrainRenderer.cpp:354-368 的纯黑 solid
+        // pass):四条图缘三角带,顶 = max(边缘地形高, 水面),底 = y=0;无光照纯黑。
+        // 图外视线越过边缘看到的是黑色截面而非天空亮面;双面渲染(z 预翻转反转手性)。
+        root.AddChild(BuildSkirt(map, waterLevel));
 
         // 烘焙 splat albedo → StandardMaterial3D:自定义 spatial shader 在 Compatibility
         // 完全收不到方向光阴影(渲染器限制),烘焙后走标准管线,受影/光照与 C++ 固定管线
@@ -140,6 +146,52 @@ public static class TerrainRenderer
     }
 
 
+
+    /// <summary>图缘黑色裙边(上游 BuildSide 逐字语义):每条边从边缘顶点
+    /// (clamp 到水面)垂到 y=0。返回挂好纯黑无光照材质的 MeshInstance3D。</summary>
+    private static MeshInstance3D BuildSkirt(PmpMap map, float waterLevel)
+    {
+        int verts = map.VerticesPerSide;
+        float tileSize = PmpMap.TileSize;
+        float mapSize = map.MapSizeMeters;
+
+        var st = new SurfaceTool();
+        st.Begin(Mesh.PrimitiveType.Triangles);
+
+        // 一条边上相邻两点的四边形(顶 a/b,底 y=0)。CullMode Disabled,绕序无关。
+        void Quad(Vector3 a, Vector3 b)
+        {
+            var aBot = new Vector3(a.X, 0f, a.Z);
+            var bBot = new Vector3(b.X, 0f, b.Z);
+            st.AddVertex(a); st.AddVertex(b); st.AddVertex(aBot);
+            st.AddVertex(b); st.AddVertex(bBot); st.AddVertex(aBot);
+        }
+
+        Vector3 Top(int x, int z)
+        {
+            float h = Mathf.Max(map.GetHeight(x, z), waterLevel);
+            return new Vector3(x * tileSize, h, mapSize - z * tileSize);   // z 预翻转同主网格
+        }
+
+        for (int x = 0; x < verts - 1; x++) Quad(Top(x, 0), Top(x + 1, 0));                 // 南(z=0)
+        for (int x = 0; x < verts - 1; x++) Quad(Top(x, verts - 1), Top(x + 1, verts - 1)); // 北
+        for (int z = 0; z < verts - 1; z++) Quad(Top(0, z), Top(0, z + 1));                 // 西
+        for (int z = 0; z < verts - 1; z++) Quad(Top(verts - 1, z), Top(verts - 1, z + 1)); // 东
+
+        var mesh = st.Commit();
+        mesh.SurfaceSetMaterial(0, new StandardMaterial3D
+        {
+            AlbedoColor = Colors.Black,
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+        });
+        return new MeshInstance3D
+        {
+            Mesh = mesh,
+            Name = "TerrainSkirt",
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        };
+    }
 
     public static MeshInstance3D CreateFlat(int patchesPerSide, float height = 0f)
     {

@@ -26,15 +26,31 @@ public sealed class LosGrid
 {
     public const int TileSize = 4;
     public const int MaxPlayers = 16;
+    /// <summary>离世外环宽度(地块;原版 MapEdgeTiles.h MAP_EDGE_TILES=3)。
+    /// 与寻路 PassabilityGrid.MapEdgeTiles 同源——LOS 外环永不探索,SoD 在边缘渐黑。</summary>
+    public const int MapEdgeTiles = 3;
 
     public int VerticesPerSide { get; private set; }
+
+    /// <summary>圆形图标志(原版 m_LosCircular):圆形图按图心半径收缩判离世界,
+    /// 方形图按 4 边 3 顶点环。改动即重算 _totalInworld(探索百分比分母)。</summary>
+    public bool Circular
+    {
+        get => _circular;
+        set { _circular = value; _totalInworld = CountInworld(); }
+    }
+    private bool _circular;
 
     private uint[] _state = Array.Empty<uint>();
     private ushort[]?[] _counts = new ushort[MaxPlayers + 1][];
     private readonly int[] _explored = new int[MaxPlayers + 1];
     private int _totalInworld;
 
-    public LosGrid(int worldMeters) => Reset(worldMeters);
+    public LosGrid(int worldMeters, bool circular = false)
+    {
+        _circular = circular;
+        Reset(worldMeters);
+    }
 
     /// <summary>(Re)size the grid for a new map. Wipes all state (called on map load).</summary>
     public void Reset(int worldMeters)
@@ -43,7 +59,31 @@ public sealed class LosGrid
         _state = new uint[VerticesPerSide * VerticesPerSide];
         _counts = new ushort[MaxPlayers + 1][];
         Array.Clear(_explored);
-        _totalInworld = VerticesPerSide * VerticesPerSide;
+        _totalInworld = CountInworld();
+    }
+
+    /// <summary>离世界顶点(原版 CCmpRangeManager::LosIsOffWorld,CCmpRangeManager.cpp:2208-2231):
+    /// 圆形图 dist2 ≥ (n/2 − MapEdgeTiles + 1)²;方形图外圈 MapEdgeTiles 顶点环。
+    /// 这些顶点永不探索/可见 → SoD 纹理在图缘渐黑。</summary>
+    public bool IsOffWorld(int i, int j)
+    {
+        int n = VerticesPerSide;
+        if (_circular)
+        {
+            long di = i - n / 2, dj = j - n / 2;
+            long r = n / 2 - MapEdgeTiles + 1;
+            return di * di + dj * dj >= r * r;
+        }
+        return i < MapEdgeTiles || j < MapEdgeTiles || i >= n - MapEdgeTiles || j >= n - MapEdgeTiles;
+    }
+
+    private int CountInworld()
+    {
+        int n = VerticesPerSide, total = 0;
+        for (int j = 0; j < n; j++)
+            for (int i = 0; i < n; i++)
+                if (!IsOffWorld(i, j)) total++;
+        return total;
     }
 
     // --- Queries ---
@@ -91,9 +131,13 @@ public sealed class LosGrid
         if (player < 1 || player > MaxPlayers) return;
         int shift = Shift(player);
         uint exploredBit = 1u << shift;
-        int n = VerticesPerSide * VerticesPerSide;
-        for (int idx = 0; idx < n; idx++)
-            _state[idx] |= exploredBit;
+        int n = VerticesPerSide;
+        for (int j = 0; j < n; j++)
+            for (int i = 0; i < n; i++)
+            {
+                if (IsOffWorld(i, j)) continue;   // 离世界环永不探索(原版 ExploreAll 同款跳过)
+                _state[j * n + i] |= exploredBit;
+            }
         _explored[player] = _totalInworld;
     }
 
@@ -147,6 +191,7 @@ public sealed class LosGrid
         {
             for (int i = i0; i <= i1; i++)
             {
+                if (IsOffWorld(i, j)) continue;   // 离世界顶点不累计数——永不探索/可见
                 int idx = rowBase + i;
                 if (counts[idx]++ == 0)
                 {

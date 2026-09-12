@@ -128,6 +128,16 @@ namespace ZeroAD.Sim.Components
         /// <summary>Per-player LOS grids. Rebuilt by <see cref="SetBounds"/> on map load.</summary>
         public LosGrid Los { get; private set; }
 
+        /// <summary>圆形图 LOS 标志(原版 m_LosCircular;与 ObstructionManager 的
+        /// PassabilityCircular 同一地图设置)。地图加载路径在 SetBounds/建图后设置;
+        /// 改动即作用于当前网格(重算探索百分比分母,离世界判定是读取时动态求值)。</summary>
+        public bool LosCircular
+        {
+            get => _losCircular;
+            set { _losCircular = value; Los.Circular = value; }
+        }
+        private bool _losCircular;
+
         // --- Visibility (fog-of-war) state ---
         // Players whose LOS grid changed this turn (bit p-1 set): all entities re-evaluated.
         private uint _playerLosDirtyMask;
@@ -150,7 +160,7 @@ namespace ZeroAD.Sim.Components
             _cm = cm;
             _worldMeters = maxX;
             _subdivision = new FastSpatialSubdivision(maxX, maxZ);
-            Los = new LosGrid(maxX.ToIntRoundToNearest());
+            Los = new LosGrid(maxX.ToIntRoundToNearest(), _losCircular);
             cm.EntityCreated += OnEntityCreated;
             cm.EntityDestroyed += OnEntityDestroyed;
             cm.PositionChanged += OnPositionChanged;
@@ -164,7 +174,7 @@ namespace ZeroAD.Sim.Components
         {
             _worldMeters = worldMeters;
             _subdivision = new FastSpatialSubdivision(worldMeters, worldMeters);
-            Los = new LosGrid(worldMeters.ToIntRoundToNearest());
+            Los = new LosGrid(worldMeters.ToIntRoundToNearest(), _losCircular);
             _playerLosDirtyMask = 0xFFFF; // everything re-evaluated against the fresh grid
             var keys = new List<EntityId>(_data.Keys);
             keys.Sort((a, b) => a.Value.CompareTo(b.Value));

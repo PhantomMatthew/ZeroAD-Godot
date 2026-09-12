@@ -83,7 +83,8 @@ public sealed class LosGridTests
                     {
                         var dx = Fixed.FromInt(i) - xt;
                         var dy = Fixed.FromInt(j) - zt;
-                        bool expected = dx.Square() + dy.Square() <= r2;
+                        // 离世界环(LosIsOffWorld)永不计数——oracle 同样排除(原版同款语义)。
+                        bool expected = dx.Square() + dy.Square() <= r2 && !g.IsOffWorld(i, j);
                         Assert.Equal(expected, g.GetCount(1, i, j) > 0);
                     }
             }
