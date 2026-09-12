@@ -596,15 +596,12 @@ public sealed class FormationTests
 
     private static ComponentManager? SetupRealWorld()
     {
-        // 从测试程序集向上找数据树(binaries 是指向上游的 junction;相对路径在 bin/
+        // 从测试程序集向上找数据树(暂存数据根 godot/export/data 优先;相对路径在 bin/
         // 下解析不到——RealTemplate_Box_ParsesAndAssembles 的旧相对路径因此静默跳过)。
-        const string rel = "binaries/data/mods/public/simulation/templates";
-        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
-        while (dir != null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, rel)))
-            dir = dir.Parent;
-        if (dir == null) return null;   // 数据树未拉取则跳过
+        var templatesDir = RepoPaths.Resolve("binaries/data/mods/public/simulation/templates");
+        if (templatesDir == null) return null;   // 数据树未拉取则跳过
         var cm = new ComponentManager(rngSeed: 1,
-            templates: new Content.TemplateLoader(System.IO.Path.Combine(dir.FullName, rel)));
+            templates: new Content.TemplateLoader(templatesDir));
         SimSystem.Init(cm);
         return cm;
     }

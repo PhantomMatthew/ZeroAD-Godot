@@ -10,11 +10,9 @@ public sealed class TechnologyLoaderTests
 {
     private static string RepoDir(string relative)
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        Assert.True(dir != null, $"repo marker not found: {relative}");
-        return Path.Combine(dir!.FullName, relative);
+        var p = RepoPaths.Resolve(relative);
+        Assert.True(p != null, $"repo marker not found: {relative}");
+        return p!;
     }
 
     private static string TechDir() =>

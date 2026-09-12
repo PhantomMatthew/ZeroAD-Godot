@@ -10,7 +10,10 @@ import sys
 import os
 from pathlib import Path
 
-ANIM_SRC = Path("../binaries/data/mods/public/art/animation")
+# 上游 DAE 源:ZEROAD_UPSTREAM 指向上游 0 A.D. 检出根(2026-09-12 起禁用
+# ../binaries 软链);未设置时在 convert() 里报清晰错误。
+_upstream = os.environ.get("ZEROAD_UPSTREAM")
+ANIM_SRC = Path(_upstream) / "binaries/data/mods/public/art/animation" if _upstream else None
 OUT = Path("assets/animations")
 
 # Manifest file: one DAE path (relative to art/animation/) per line.
@@ -45,6 +48,9 @@ MANIFEST = (
 
 
 def convert(rel: str) -> bool:
+    if ANIM_SRC is None:
+        print("  ERROR: ZEROAD_UPSTREAM not set (point it at the upstream 0 A.D. checkout root)")
+        return False
     src = ANIM_SRC / rel
     dst = OUT / rel.replace(".dae", ".glb")
     if not src.exists():

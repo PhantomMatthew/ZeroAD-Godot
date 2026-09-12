@@ -201,13 +201,7 @@ public sealed class TerritoryManagerTests
 
     // ---------- ApplyBuild 集成 ----------
 
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
-        while (dir != null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : System.IO.Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     [Fact]
     public void ApplyBuild_TerritoryCheck_GaiaRejectsHouse_CcFoundationExpandsTerritory()

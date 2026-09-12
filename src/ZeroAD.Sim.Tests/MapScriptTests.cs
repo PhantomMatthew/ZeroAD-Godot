@@ -9,7 +9,7 @@ using Xunit;
 namespace ZeroAD.Sim.Tests;
 
 // 地图脚本移植件:polar_sea(科技禁用+狼群波次+袭击下单)、elephantine(防御站姿+驻军)。
-// 全合成世界(无 junction 依赖);sink 真造实体以便验证命令落点。
+// 全合成世界(无暂存数据依赖);sink 真造实体以便验证命令落点。
 public sealed class MapScriptTests
 {
     /// <summary>真造实体的测试 sink:生成带 UnitAI/Health/Identity/Garrisonable 的最小单位。</summary>

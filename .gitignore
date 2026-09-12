@@ -40,9 +40,8 @@ godot/assets/animations/**/*
 godot/export/
 
 # Original 0 A.D. upstream trees — removed from this repo to slim it down.
-# The C# rewrite reads data/assets verbatim from these via local directory
-# junctions pointing at the upstream checkout (see tools/setup-upstream-junctions.ps1
-# and AGENTS.md "Where to find the original C++/JS source"). Do NOT track them.
+# The C# rewrite reads data/assets from the in-repo staged root godot/export/data
+# (see AGENTS.md "No upstream junctions"). Do NOT track or recreate these links.
 /binaries/
 /build/
 /libraries/

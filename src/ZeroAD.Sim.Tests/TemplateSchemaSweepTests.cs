@@ -7,19 +7,13 @@ using ZeroAD.Sim.Content.Schema;
 
 namespace ZeroAD.Sim.Tests;
 
-/// <summary>全量 schema sweep:对真实数据树(binaries/  junction)构建完整 grammar
+/// <summary>全量 schema sweep:对真实数据树(暂存数据根 godot/export/data)构建完整 grammar
 /// (JS 组件提取 + 原生表),校验全部模板的合并树。这是 schema 移植正确性的金丝雀:
 /// 任何提取器/grammar/校验器缺陷都会在这里现形(原版 libxml2 校验同一语料通过)。
-/// junction 缺失时静默跳过(与 AllTemplatesParseTests 同约定)。</summary>
+/// 数据根缺失时静默跳过(与 AllTemplatesParseTests 同约定)。</summary>
 public class TemplateSchemaSweepTests
 {
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     [Fact]
     public void AllComponentsExtractCleanly()

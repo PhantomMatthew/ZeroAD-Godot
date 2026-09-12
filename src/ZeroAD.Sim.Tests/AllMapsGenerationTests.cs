@@ -17,20 +17,14 @@ namespace ZeroAD.Sim.Tests;
 /// <summary>
 /// 全地图生成扫雷:78 张 rmgen 图 × 多种子全生成,校验导出结构完整
 /// (尺寸/高度/贴图索引/实体越界),并全量校验贴图名(terrain XML 注册表)
-/// 与实体模板(junction templates)可解析性。任何一张图坏掉都点名。
+/// 与实体模板(暂存数据根 templates)可解析性。任何一张图坏掉都点名。
 /// </summary>
 public sealed class AllMapsGenerationTests
 {
     private readonly ITestOutputHelper _out;
     public AllMapsGenerationTests(ITestOutputHelper o) => _out = o;
 
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     private static MapSettings MakeSettings(string? dataRoot, int numPlayers = 2)
     {

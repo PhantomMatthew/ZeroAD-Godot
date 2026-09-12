@@ -19,19 +19,13 @@ public sealed class PmpLoadSweepTests
 {
     private const string LogPath = "/tmp/pmp_sweep.log";
 
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     [Fact]
     public void Sweep_AllPmpMaps_LoadAndTemplates()
     {
         var root = FindRepoPath("binaries/data/mods/public");
-        Assert.True(root != null, "binaries junction missing");
+        Assert.True(root != null, "staged data root (godot/export/data) missing");
         File.WriteAllText(LogPath, $"=== pmp sweep {DateTime.Now:HH:mm:ss} ===\n");
 
         var loader = new TemplateLoader(Path.Combine(root, "simulation/templates"));

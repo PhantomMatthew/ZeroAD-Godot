@@ -16,13 +16,7 @@ namespace ZeroAD.Sim.Tests;
 /// </summary>
 public sealed class BiomePipelineTests
 {
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     private static MapSettings MakeSettings(string? dataRoot, BiomeSet? biome = null)
     {
@@ -49,7 +43,7 @@ public sealed class BiomePipelineTests
     public void BiomeLoader_FromJunction_LoadsRealJson()
     {
         var root = FindRepoPath("binaries/data/mods/public");
-        if (root == null) return;   // junction 缺失按惯例跳过
+        if (root == null) return;   // 数据根缺失按惯例跳过
         var alpine = BiomeLoader.Load(root, "generic/alpine", new RmgenRng(1));
         Assert.Equal("alpine_forestfloor_01", alpine.ForestFloor1);
         Assert.StartsWith("steppe_grass", alpine.MainTerrain0);   // alpine.json: steppe_grass_02

@@ -24,13 +24,7 @@ public sealed class RmgenConfigSweepTests
     private static readonly TimeSpan PerConfigTimeout = TimeSpan.FromSeconds(90);
     private static readonly object Gate = new();
 
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     private static MapSettings MakeSettings(string? dataRoot, int size, int numPlayers,
         string placement, bool twoTeams, uint seed)

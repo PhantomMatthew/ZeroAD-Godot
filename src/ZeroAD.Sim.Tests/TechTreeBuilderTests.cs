@@ -7,21 +7,11 @@ using Xunit;
 
 namespace ZeroAD.Sim.Tests;
 
-// 科技树构建(junction 数据缺失时跳过):BFS 须沿 Trainer(建筑→单位)与
+// 科技树构建(暂存数据缺失时跳过):BFS 须沿 Trainer(建筑→单位)与
 // Builder(单位→建筑)双链展开——回归"只剩 CC 一张卡"。
 public sealed class TechTreeBuilderTests
 {
-    private static string? FindSimRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            if (Directory.Exists(Path.Combine(dir.FullName, "binaries/data/mods/public/simulation")))
-                return Path.Combine(dir.FullName, "binaries/data/mods/public/simulation");
-            dir = dir.Parent;
-        }
-        return null;
-    }
+    private static string? FindSimRoot() => RepoPaths.Resolve("binaries/data/mods/public/simulation");
 
     [Fact]
     public void Athen_TreeHasManyBuildingsAcrossPhases()

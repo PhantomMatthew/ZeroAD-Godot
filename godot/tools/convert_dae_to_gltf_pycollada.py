@@ -201,11 +201,15 @@ def convert_dae_to_gltf(dae_path, output_dir, remap, input_root=None):
         return False
 
 def main():
-    # 常量化输入(污点源=外部输入,连根拔):仓库相对固定根;自定义路径
+    # 常量化输入(污点源=外部输入,连根拔):上游检出根经 ZEROAD_UPSTREAM
+    # 环境变量给(2026-09-12 起禁用 ../binaries 软链);自定义路径
     # 走 tools/run_full_pipeline.sh(那里是 shell 管线,不经本文件)。
+    _upstream = _os.environ.get("ZEROAD_UPSTREAM")
+    if not _upstream:
+        raise SystemExit("ZEROAD_UPSTREAM not set: point it at the upstream 0 A.D. checkout root")
     class _Args: pass
     args = _Args()
-    args.input = str(_Path(_REPO_ROOT) / "binaries" / "data" / "mods" / "public" / "art" / "meshes")
+    args.input = str(_Path(_upstream) / "binaries" / "data" / "mods" / "public" / "art" / "meshes")
     args.output = str(_Path(_REPO_ROOT) / "godot" / "assets" / "meshes")
     args.skeletons = ""
     args.filter = "*.dae"

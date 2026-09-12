@@ -6,13 +6,7 @@ namespace ZeroAD.Sim.Tests;
 /// <summary>actor| 合成模板(原版 ConstructTemplateActor)+ Trainer/Entities 引用校验。</summary>
 public sealed class ActorTemplateTests
 {
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
-        while (dir != null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : System.IO.Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     [Fact]
     public void ActorPipe_SynthesizesFromSpecialActor()

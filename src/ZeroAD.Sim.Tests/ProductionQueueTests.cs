@@ -15,15 +15,14 @@ namespace ZeroAD.Sim.Tests;
 public class ProductionQueueTests
 {
     /// <summary>
-    /// Path to the real 0 A.D. templates shipped in this repo. Tests that need real cost/build-time
-    /// data load from here; if the data tree isn't present (LFS not pulled), those tests skip.
+    /// Resolves the real 0 A.D. templates (staged data root godot/export/data preferred).
+    /// Tests that need real cost/build-time data load from here; if the data tree isn't
+    /// present (not staged / LFS not pulled), those tests skip.
     /// </summary>
-    private const string TemplatesRoot = "../../../binaries/data/mods/public/simulation/templates";
-
     private static TemplateLoader? TryLoadTemplates()
     {
-        if (!System.IO.Directory.Exists(TemplatesRoot)) return null;
-        return new TemplateLoader(TemplatesRoot);
+        var templatesRoot = RepoPaths.Resolve("binaries/data/mods/public/simulation/templates");
+        return templatesRoot == null ? null : new TemplateLoader(templatesRoot);
     }
 
     private static ComponentManager BuildWorldWithPlayer(out EntityId trainer, out EntityId playerEntity)

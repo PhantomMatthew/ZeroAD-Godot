@@ -14,13 +14,7 @@ namespace ZeroAD.Sim.Tests;
 /// NetTurnManager/GameState/Headquarters。</summary>
 internal static class PetraEconomyFixtures
 {
-    public static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    public static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     public sealed class AiWorld
     {

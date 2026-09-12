@@ -14,15 +14,9 @@ public sealed class BuildFlowSmokeTests
 {
     private const string TemplatesRel = "binaries/data/mods/public/simulation/templates";
 
-    /// <summary>从测试程序集向上找到数据树(binaries 是指向上游 0 A.D. 的 junction,
+    /// <summary>从测试程序集向上找到数据树(暂存数据根 godot/export/data 优先,
     /// 相对路径在 bin/ 下解析不到——曾因此整组真实模板测试静默跳过)。</summary>
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
-        while (dir != null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : System.IO.Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     private static ComponentManager? SetupWorld()
     {

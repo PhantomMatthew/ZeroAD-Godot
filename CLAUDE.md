@@ -9,9 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A **Godot 4.7.2 (.NET) + C# rewrite of 0 A.D.** Two trees coexist:
 
 - `src/ZeroAD.Sim/` + `godot/` — the active C# rewrite. Edit here.
-- `binaries/` `build/` `libraries/` `source/` — untracked junctions/symlinks into an external 0 A.D. checkout (`<0ad upstream>`: `/Users/matthew/SourceCode/gitea/0ad` on macOS, `C:\SourceCode\0ad` on Windows). The rewrite reads its XML templates and art verbatim; its C++/JS is the authoritative behavioral reference.
+- `<0ad upstream>` (external: `/Users/matthew/SourceCode/gitea/0ad` on macOS, `C:\SourceCode\0ad` on Windows) — original C++/JS, the authoritative behavioral reference. **No symlinks/junctions into it from this repo** (removed 2026-09-12): game runtime and `dotnet test` read the in-repo staged data root `godot/export/data`; asset pipeline tools take the upstream path explicitly (or via `$ZEROAD_UPSTREAM`).
 
-After a fresh clone, create the links once: `tools/setup-upstream-links.sh <0ad upstream>` (macOS/Linux) or `powershell -File tools/setup-upstream-junctions.ps1` (Windows — do not run the bash script under Git Bash; its `ln -s` deep-copies the tree).
+After a fresh clone, stage the runtime data once: `cd godot && sh tools/stage_release_data.sh <0ad upstream>/binaries/data`.
 
 Plan of record: `godot-rewrite-plan.md` (modules M0–M10, milestones MS1–MS7). Subsystem deep-dives on the original engine: `claude-analyze/*.md`.
 

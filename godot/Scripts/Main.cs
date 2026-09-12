@@ -162,6 +162,9 @@ public sealed partial class Main : Node3D
 		env.FogEnabled = OptionsApplier.GetBool("fog", true);
 		env.FogLightColor = new Color(0.5f, 0.7f, 0.95f);
 		env.FogDensity = 0.001f;
+		// 雾不吃天空(C++ SkyManager 无雾):地平线以下虚空保持纯黑,否则地图
+		// 边缘远处天空被刷成雾色露白。地图加载后 MapEnvironment.Apply 同样置 0。
+		env.FogSkyAffect = 0f;
 		sky.Environment = env;
 		AddChild(sky);
 		_env = env;

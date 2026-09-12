@@ -15,17 +15,11 @@ namespace ZeroAD.Sim.Tests;
 
 /// <summary>
 /// NavalManager 启用:海图判定 → 岸线选点建码头 → 码头建成后训船。
-/// junction 数据(模板)缺失时按惯例跳过。
+/// 暂存数据(模板)缺失时按惯例跳过。
 /// </summary>
 public sealed class PetraNavalTests
 {
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     // 16×16 navcell 微型海图:左 6 列陆,中 6 列水,右 4 列陆(cellSize=1m)。
     private static Accessibility BuildTestAccessibility()

@@ -11,20 +11,14 @@ namespace ZeroAD.Sim.Tests;
 
 public sealed class SimCommandExecutorTests
 {
-    private const string TemplatesRoot = "../../../binaries/data/mods/public/simulation/templates";
-    private const string TechDir = "../../../binaries/data/mods/public/simulation/data/technologies";
-
     /// <summary>从测试程序集位置向上找仓库标记目录(相对 ../../../ 依赖 CWD,会静默解析失败)。</summary>
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
-        while (dir != null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : System.IO.Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
-    private static Content.TemplateLoader? TryLoadTemplates() =>
-        System.IO.Directory.Exists(TemplatesRoot) ? new Content.TemplateLoader(TemplatesRoot) : null;
+    private static Content.TemplateLoader? TryLoadTemplates()
+    {
+        var root = RepoPaths.Resolve("binaries/data/mods/public/simulation/templates");
+        return root == null ? null : new Content.TemplateLoader(root);
+    }
 
     private static EntityId MakeUnitWithAI(ComponentManager cm, int player = 1)
     {

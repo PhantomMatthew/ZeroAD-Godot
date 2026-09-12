@@ -3,8 +3,10 @@
 The game reads several texture categories directly from the upstream 0 A.D.
 checkout at runtime (skyboxes, animated water normals, UI portraits/buttons,
 cursors, selection outlines, particles, terrain alpha shape maps, terrain
-type XMLs). In dev this resolves through the binaries/ junction; any other
-layout (standalone build, fresh checkout without links) loses them wholesale.
+type XMLs). The source tree is located via the ZEROAD_UPSTREAM environment
+variable pointing at the upstream 0 A.D. checkout root (repo-root binaries/
+junctions were removed on 2026-09-12); without the staged mirror, layouts
+other than a full dev checkout lose these assets wholesale.
 
 This tool mirrors those categories, preserving the upstream relative path
 under godot/assets/upstream/, converting .dds/.tga to .png (Godot cannot
@@ -25,13 +27,16 @@ import bpy
 _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 _GODOT_DIR = os.path.dirname(_TOOLS_DIR)          # godot/
 _REPO_ROOT = Path(_GODOT_DIR).parent.resolve()    # repo root
-_SRC_ROOT = (_REPO_ROOT / "binaries" / "data" / "mods" / "public" / "art").resolve()
 _DST_ROOT = (Path(_GODOT_DIR) / "assets" / "upstream" / "art").resolve()
 
-# ZEROAD_UPSTREAM 覆盖(对齐 tools/setup-upstream-links.sh 解析顺序)。
-_env = os.environ.get("ZEROAD_UPSTREAM")
-if _env:
-    _SRC_ROOT = (Path(_env) / "art").resolve()
+# 上游源:ZEROAD_UPSTREAM 指向上游 0 A.D. 检出根(仓库根 binaries/ 软链已于
+# 2026-09-12 禁用);未设置即拒绝运行。
+_upstream = os.environ.get("ZEROAD_UPSTREAM")
+if not _upstream:
+    raise SystemExit(
+        "ZEROAD_UPSTREAM not set: point it at the upstream 0 A.D. checkout root"
+    )
+_SRC_ROOT = (Path(_upstream) / "binaries" / "data" / "mods" / "public" / "art").resolve()
 
 # 目标必须落在仓库内(路径穿越护栏:resolve 后 relative_to 校验);源侧由
 # relative_to(_SRC_ROOT) 兜底,rglob 结果越出源根即抛错拒绝。

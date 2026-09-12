@@ -7,8 +7,9 @@ namespace ZeroAD.Godot;
 /// <summary>
 /// 统一数据根解析器:所有"运行时直读文件"的入口。发行包与开发环境共用一套语义——
 /// 候选顺序:ZEROAD_DATA_DIR 环境变量 → 可执行文件旁目录(含 data/ 子目录)→
-/// 开发期 res:// 上溯 ../binaries、../../binaries(junction,见 AGENTS.md)。
+/// 仓库内暂存根 godot/export/data(stage_release_data.sh 生成)。
 /// 返回 null 表示没找到;调用方保持原有 null 回退(静默/默认)。
+/// 不再探测 ../binaries 上游软链(2026-09-12 起禁用:所有资产必须在仓库内)。
 /// </summary>
 public static class RuntimePaths
 {
@@ -53,9 +54,8 @@ public static class RuntimePaths
 		}
 
 		// 开发期仓库内暂存根:godot/export/data(tools/stage_release_data.sh 生成,
-		// 与发行包同一份内容)。放在 junction 探测之前——开发机可以完全不建
-		// 上游软链:跑一次暂存脚本,游戏/编辑器即自持。发行包下 res:// 进 PCK,
-		// GlobalizePath 非物理路径,探测自然落空,不受影响。
+		// 与发行包同一份内容)。发行包下 res:// 进 PCK,GlobalizePath 非物理路径,
+		// 探测自然落空,不受影响。
 		string staged = ProjectSettings.GlobalizePath("res://export");
 		if (staged.Length > 0 && HasDataDir(staged))
 		{
@@ -63,17 +63,6 @@ public static class RuntimePaths
 			return _binariesRoot;
 		}
 
-		// 开发期:工程根上溯 binaries junction(无暂存根时的兜底;上游检出存在才有效)。
-		string projRoot = ProjectSettings.GlobalizePath("res://");
-		foreach (string up in new[] { "..", "../.." })
-		{
-			string candidate = Path.GetFullPath(Path.Combine(projRoot, up, "binaries"));
-			if (HasDataDir(candidate))
-			{
-				_binariesRoot = candidate;
-				return _binariesRoot;
-			}
-		}
 		return null;
 	}
 
@@ -88,10 +77,11 @@ public static class RuntimePaths
 
 	/// <summary>探测 mods/public 下的文件或目录;不存在返回 null。
 	/// 文件查询:仓库内镜像 godot/assets/upstream/<rel...>(stage_upstream_textures.py
-	/// 生成,DDS/TGA 已转 PNG——Godot 运行时解不了 DDS)优先于 junction。
-	/// 目录查询:junction 优先,镜像兜底——否则镜像的 art/(只有 textures/terrains
-	/// 子树)会劫持 ActorLoader 的美术根,actors/ 缺失 → 全部 actor 解析失败落
-	/// placeholder 盒(2026-09-08 教程全盒子回归的根因)。</summary>
+	/// 生成,DDS/TGA 已转 PNG——Godot 运行时解不了 DDS)优先于暂存数据根。
+	/// 目录查询:暂存数据根(FindPublicModRoot,即 godot/export/data/mods/public)
+	/// 优先,镜像兜底——否则镜像的 art/(只有 textures/terrains 子树)会劫持
+	/// ActorLoader 的美术根,actors/ 缺失 → 全部 actor 解析失败落 placeholder 盒
+	/// (2026-09-08 教程全盒子回归的根因)。</summary>
 	public static string? FindPublicPath(params string[] relParts)
 	{
 		string mirror = ProjectSettings.GlobalizePath(

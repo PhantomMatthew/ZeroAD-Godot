@@ -27,12 +27,12 @@ Prerequisites: **.NET 8 SDK**, **Godot 4.7.2 (.NET/Mono build)**, and a local ch
 upstream 0 A.D.
 
 ```bash
-# 1. Link the upstream data tree (one-time; macOS/Linux shown, Windows: tools/setup-upstream-junctions.ps1)
-tools/setup-upstream-links.sh /path/to/0ad
+# 1. Stage the runtime data tree into the repo (one-time; pass the upstream data dir explicitly)
+cd godot && sh tools/stage_release_data.sh /path/to/0ad/binaries/data   # → godot/export/data (1.4G, gitignored)
 
 # 2. Models/animations (GLB) are tracked in git — a fresh clone already has them.
 #    Textures are a build product; regenerate with Blender 4.2 LTS:
-cd godot && sh tools/run_full_pipeline.sh
+sh tools/run_full_pipeline.sh /path/to/0ad/binaries/data/mods/public/art
 
 # 3. Build
 dotnet build src/ZeroAD.Sim/ZeroAD.Sim.csproj        # kernel (headless, no Godot needed)

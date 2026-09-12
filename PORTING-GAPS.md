@@ -180,13 +180,18 @@
 
 - [x] **粒子系统**:EnvironmentParticles.cs(c16f21b 后):原版 art/particles/*.xml schema(emissionrate/lifetime uniform/velocity/size/color/blend)→ GPUParticles3D 映射装配;LoadDef 缓存 + BuildByName 直装(cloud/smoke/water_splash/...) 与 ImpactEffectPool(命中血雾/扬尘)互补——环境粒子就绪,需注册触发点的水面溅花/烟尘触发逻辑后续按需接
 - [x] **CinemaManager 过场动画**(3b48944+c3947ed:相机路径队列播放+OnCinemaPathEnded/QueueEnded 事件广播;数据驱动地图 <Paths> 段注册+触发器驱动剧情)
-- [x] **天空盒**(ef5d6b5:SkyBox.cs——<SkySet>名 → 5 面贴图 + 程序化天空兜底)
+- [x] **天空盒**(ef5d6b5:SkyBox.cs——<SkySet>名 → 5 面贴图 + 程序化天空兜底;
+  SkySet=default/贴图缺失时 Apply 层回落程序化,不再漏成 Main 的蓝色 Color 背景)
 - [x] **战场贴花**(4bb75a1+5c0eea8:BattleDecals——击杀血斑+炮击弹坑/建筑毁坏贴花,45s/90s 消融回收;与 ImpactEffectPool 互补)
 - [x] CCmpDecay 尸体消融表现(4bb75a1:贴花线性淡出+缩小消融回收)
 - [x] 后处理对齐原版选项(5999290 bloom/MSAA/sharpness;ded5353 水质两档 + fa3b170 DOF 远距模糊)
 - [x] 地图边界三件套(LosGrid 离世外环 LosIsOffWorld——外圈 3 顶点环/圆图收缩半径永不探索,
-  SoD 边缘渐黑;TerrainRenderer 黑色裙边 BuildSides——图缘垂到 y=0,顶 clamp 到水面;
+  SoD 边缘渐黑;TerrainRenderer 黑色裙边 BuildSides——图缘垂到 y=0,顶 clamp 到水面,
+  terrain_skirt.gdshader 无光照无雾,对齐 C++ str_solid 直写纯黑;
   RTSCamera 焦点钳制——图内 8m,圆图钳半径,图外不再露出亮色天空)
+- [x] 图外虚空纯黑(SkyBox 程序化天空地面半球改黑——C++ SkyBox 无底面、地平线以下漏清屏黑;
+  SkySet 全景路径换 sky_panorama.gdshader 地平线以下输出黑;
+  FogSkyAffect=0——C++ SkyManager 渲染无雾,Godot 默认雾吃天空会把远处虚空刷成雾色露白)
 - ✅ 已存在勿重复造:单位血条(DrawHealth/HealthBar)、集结点标记+路径线(Main.cs:2482)、投射物视觉池(ProjectilePool/ImpactEffectPool)、迷雾小地图层(FogTextureBuilder)
 
 ## 8. M5 GUI / 音频 / 相机 / GuiInterface

@@ -1,14 +1,17 @@
 import bpy, os
 
 # Resolve paths relative to this script (godot/tools/), so it works on any
-# machine without hardcoded absolute paths. Requires the upstream 0 A.D.
-# checkout to be reachable via the binaries/ junction at the repo root
-# (see tools/setup-upstream-junctions.ps1 and AGENTS.md).
+# machine without hardcoded absolute paths. The upstream 0 A.D. checkout is
+# located via the ZEROAD_UPSTREAM environment variable (repo-root binaries/
+# junctions were removed on 2026-09-12; see AGENTS.md).
 _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 _GODOT_DIR = os.path.dirname(_TOOLS_DIR)          # godot/
-_REPO_ROOT = os.path.dirname(_GODOT_DIR)          # repo root
 
-SRC = os.path.join(_REPO_ROOT, "binaries", "data", "mods", "public", "art", "textures")
+_upstream = os.environ.get("ZEROAD_UPSTREAM")
+if not _upstream:
+    raise SystemExit("ZEROAD_UPSTREAM not set: point it at the upstream 0 A.D. checkout root")
+
+SRC = os.path.join(_upstream, "binaries", "data", "mods", "public", "art", "textures")
 DST_ROOT = os.path.join(_GODOT_DIR, "assets", "textures")
 
 def target_dir(rel):

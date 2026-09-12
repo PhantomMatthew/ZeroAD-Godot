@@ -18,13 +18,7 @@ namespace ZeroAD.Sim.Tests;
 /// </summary>
 public sealed class SaveLoadRoundTripTests
 {
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     private static string Dump(ComponentManager cm)
     {

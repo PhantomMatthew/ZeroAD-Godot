@@ -2,15 +2,16 @@
 # Full asset pipeline — run from the godot/ directory.
 # Converts ALL meshes via Blender 4.2 + copies ALL textures.
 #
-# Usage: sh tools/run_full_pipeline.sh
+# Usage: sh tools/run_full_pipeline.sh <0ad upstream art dir>
+#   e.g.: sh tools/run_full_pipeline.sh /path/to/0ad/binaries/data/mods/public/art
+#   (or set ZEROAD_UPSTREAM to the upstream 0 A.D. checkout root)
 #
 # Requirements:
 #   - Blender 4.2 LTS. Set BLender path via $BLENDER env var, or let the
 #     script auto-detect the default install location for your OS:
 #       macOS : /Applications/Blender 4.2 LTS.app/Contents/MacOS/Blender
 #       Windows: "C:/Program Files/Blender Foundation/Blender 4.2/blender.exe"
-#   - 0 A.D. upstream data at ../binaries/data/mods/public/art
-#     (provided by the binaries/ junction — see tools/setup-upstream-junctions.ps1)
+#   - 0 A.D. upstream art, passed explicitly (2026-09-12 起禁用 ../binaries 软链)
 
 set -e
 
@@ -27,8 +28,14 @@ else
 fi
 
 SCRIPT="$(dirname "$0")/convert_all_assets.py"
-SRC="../binaries/data/mods/public/art"
+SRC="${1:-${ZEROAD_UPSTREAM:+$ZEROAD_UPSTREAM/binaries/data/mods/public/art}}"
 OUT="assets"
+
+if [ -z "$SRC" ] || [ ! -d "$SRC/meshes" ]; then
+    echo "ERROR: upstream art dir not given or invalid (no meshes/): '${SRC:-<unset>}'" >&2
+    echo "       pass it explicitly: sh tools/run_full_pipeline.sh /path/to/0ad/binaries/data/mods/public/art" >&2
+    exit 1
+fi
 
 echo "============================================"
 echo "  0 A.D. → Godot Full Asset Pipeline"

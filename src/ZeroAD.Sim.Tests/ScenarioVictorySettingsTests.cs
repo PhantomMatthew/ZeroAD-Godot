@@ -69,7 +69,7 @@ public sealed class ScenarioVictorySettingsTests
         // 真实数据冒烟:全部 scenario/skirmish XML 都能解析,胜利条件只含已知值。
         // ("domination" 是更新版上游的条件,本上游树无实现——解析放行,sim 侧忽略未知条件。)
         string? dataRoot = FindDataRoot();
-        if (dataRoot == null) return;   // 无 junction 环境(CI)跳过
+        if (dataRoot == null) return;   // 无暂存数据根环境(CI)跳过
         var known = new HashSet<string>
         {
             "conquest", "conquest_units", "conquest_civic_centers",
@@ -93,14 +93,7 @@ public sealed class ScenarioVictorySettingsTests
 
     private static string? FindDataRoot()
     {
-        // 从测试程序集向上找 binaries/data(仓库 junction)。
-        var dir = new DirectoryInfo(System.AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            string candidate = Path.Combine(dir.FullName, "binaries", "data");
-            if (Directory.Exists(candidate)) return candidate;
-            dir = dir.Parent;
-        }
-        return null;
+        // 从测试程序集向上找数据根(暂存数据根 godot/export/data 优先)。
+        return RepoPaths.Resolve("binaries/data");
     }
 }

@@ -18,21 +18,25 @@ Usage:
     python tools/reconvert_empty_glb.py            # dry run
     python tools/reconvert_empty_glb.py --write    # actually write GLBs
 
-Paths follow the same convention as the other tools: run from `godot/`,
-upstream tree located via the `binaries/` junction.
+Paths follow the same convention as the other tools: run from `godot/`;
+the upstream tree is located via the ZEROAD_UPSTREAM environment variable
+pointing at the upstream 0 A.D. checkout root (repo-root `binaries/`
+junctions were removed on 2026-09-12).
 """
 
 import argparse
 import json
+import os
 import struct
 from pathlib import Path
 
 import trimesh
 
 GODOT_MESHES = Path(__file__).resolve().parent.parent / "assets" / "meshes"
+# 上游 DAE 源:ZEROAD_UPSTREAM 指向上游 0 A.D. 检出根;未设置时在 main() 报错。
+_upstream = os.environ.get("ZEROAD_UPSTREAM")
 UPSTREAM_MESHES = (
-    Path(__file__).resolve().parent.parent.parent
-    / "binaries" / "data" / "mods" / "public" / "art" / "meshes"
+    Path(_upstream) / "binaries" / "data/mods/public/art/meshes" if _upstream else None
 )
 
 
@@ -53,6 +57,9 @@ def main() -> None:
         "--write", action="store_true", help="write converted GLBs (default: dry run)"
     )
     args = parser.parse_args()
+
+    if UPSTREAM_MESHES is None:
+        raise SystemExit("ZEROAD_UPSTREAM not set: point it at the upstream 0 A.D. checkout root")
 
     converted, failed, missing = [], [], []
     for glb in sorted(GODOT_MESHES.rglob("*.glb")):

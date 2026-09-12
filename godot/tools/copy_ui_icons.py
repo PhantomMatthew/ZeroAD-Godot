@@ -2,8 +2,8 @@
 """Copy tooltip UI icons from the upstream 0 A.D. tree into res://assets.
 
 godot/assets/ is a gitignored build product, so every icon the GUI needs at
-runtime must be re-copyable from `binaries/` by a committed tool. This covers
-the RichTextLabel [img] icons used by GameTooltip:
+runtime must be re-copyable from the upstream 0 A.D. tree by a committed
+tool. This covers the RichTextLabel [img] icons used by GameTooltip:
 
   resources dir  (art/textures/ui/session/icons/resources/):
     food/wood/stone/metal _small.png   — cost / dropsite / loot / gather rows
@@ -14,12 +14,15 @@ the RichTextLabel [img] icons used by GameTooltip:
     promote.png                       — xp loot icon (icon_xp)
 
 Idempotent: skips files that already exist with identical size.
-Run from anywhere; resolves ../binaries relative to this file's repo root.
+Run from anywhere; the upstream tree is located via an explicit argument or
+the ZEROAD_UPSTREAM environment variable pointing at the upstream 0 A.D.
+checkout root (repo-root `binaries/` junctions were removed on 2026-09-12).
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -44,13 +47,11 @@ ICONS: list[tuple[str, str]] = [
 
 
 def find_binaries_dir(explicit: str | None) -> Path | None:
-    """Upstream resolution order: explicit arg > ZEROAD_UPSTREAM > walk up."""
-    if explicit:
-        return Path(explicit)
-    env = Path(__import__("os").environ.get("ZEROAD_UPSTREAM", ""))
-    candidates = [env] if str(env) else []
-    for parent in GODOT_DIR.parents:
-        candidates.append(parent / "binaries")
+    """Upstream resolution order: explicit binaries/ dir > $ZEROAD_UPSTREAM/binaries."""
+    candidates = [Path(explicit)] if explicit else []
+    upstream = os.environ.get("ZEROAD_UPSTREAM")
+    if upstream:
+        candidates.append(Path(upstream) / "binaries")
     for cand in candidates:
         modroot = cand / "data" / "mods" / "public" / "art"
         if modroot.is_dir():
@@ -60,12 +61,15 @@ def find_binaries_dir(explicit: str | None) -> Path | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("upstream", nargs="?", help="path to upstream 0ad root (contains binaries/)")
+    parser.add_argument(
+        "upstream", nargs="?", help="path to the upstream binaries/ directory"
+    )
     args = parser.parse_args()
 
     binaries = find_binaries_dir(args.upstream)
     if binaries is None:
-        print("error: could not locate binaries/ (pass the upstream path or set ZEROAD_UPSTREAM)")
+        print("error: could not locate binaries/ (pass the upstream binaries/ path "
+              "or set ZEROAD_UPSTREAM)")
         return 1
     art_root = binaries / "data" / "mods" / "public" / "art" / "textures" / "ui" / "session"
     dest_root = GODOT_DIR / "assets"

@@ -16,17 +16,11 @@ namespace ZeroAD.Sim.Tests;
 /// Petra HQ 填充的端到端运营测试:AI 世界(CC+村民)→ HQ.Update 驱动决策 →
 /// Queues 启动计划 → AI 命令经 SubmitAiCommand 落 NetTurnManager._aiBundles →
 /// AdvanceTurn 执行——验证"训练村民"与"建房"真的落进 sim(不是只停在计划层)。
-/// junction 数据(模板)缺失时按惯例跳过。
+/// 暂存数据(模板)缺失时按惯例跳过。
 /// </summary>
 public sealed class PetraEconomyTests
 {
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
 
     /// <summary>给玩家补 N 座 Village 类建筑(phase 科技 entity 前置的满足件);

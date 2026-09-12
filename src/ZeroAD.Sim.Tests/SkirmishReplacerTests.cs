@@ -9,7 +9,7 @@ namespace ZeroAD.Sim.Tests;
 /// <summary>
 /// SkirmishReplacer 测试——原版 components/SkirmishReplacer.js ReplaceEntities 的移植验证。
 /// 合成夹具精确测决策矩阵（civ 表优先 / general 兜底 / 销毁 / 保留 / {civ} 代入），
-/// 真实数据冒烟测走 binaries junction（缺失时按惯例跳过）。
+/// 真实数据冒烟测走暂存数据根 godot/export/data（缺失时按惯例跳过）。
 /// </summary>
 public sealed class SkirmishReplacerTests : IDisposable
 {
@@ -145,15 +145,9 @@ public sealed class SkirmishReplacerTests : IDisposable
         Assert.Single(entities);
     }
 
-    // ---------- 真实数据冒烟（binaries junction 缺失时跳过,同既有测试惯例） ----------
+    // ---------- 真实数据冒烟（暂存数据根缺失时跳过,同既有测试惯例） ----------
 
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     private static SkirmishReplacer? MakeRealReplacer()
     {

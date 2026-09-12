@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import json
+import os
 import struct
 import sys
 import xml.parsers.expat
@@ -400,13 +401,25 @@ def main() -> int:
     parser.add_argument("--anims-root", default="godot/assets/animations")
     parser.add_argument(
         "--dae-root",
-        default="../binaries/data/mods/public/art/animation",
+        default=None,
         help=(
             "source DAE animation root used to repair goat local translations "
-            "(default assumes cwd is godot/, matching run_full_pipeline.sh)"
+            "(default: $ZEROAD_UPSTREAM/binaries/data/mods/public/art/animation; "
+            "ZEROAD_UPSTREAM points at the upstream 0 A.D. checkout root)"
         ),
     )
     args = parser.parse_args()
+
+    if args.dae_root is None:
+        upstream = os.environ.get("ZEROAD_UPSTREAM")
+        if not upstream:
+            raise SystemExit(
+                "ZEROAD_UPSTREAM not set: point it at the upstream 0 A.D. checkout root "
+                "(or pass --dae-root explicitly)"
+            )
+        args.dae_root = str(
+            Path(upstream) / "binaries" / "data/mods/public/art/animation"
+        )
 
     n_anim = 0
     anims_root = Path(args.anims_root)

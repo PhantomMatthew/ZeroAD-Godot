@@ -15,17 +15,11 @@ namespace ZeroAD.Sim.Tests;
 /// <summary>
 /// Petra 守家:DefenseManager 调兵回防 + GarrisonManager 威胁塞人/安全放出。
 /// 命令经 SubmitAiCommand → NetTurnManager._aiBundles → AdvanceTurn 落 sim。
-/// junction 数据(模板)缺失时按惯例跳过。
+/// 暂存数据(模板)缺失时按惯例跳过。
 /// </summary>
 public sealed class PetraDefenseTests
 {
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     private sealed class DefWorld
     {

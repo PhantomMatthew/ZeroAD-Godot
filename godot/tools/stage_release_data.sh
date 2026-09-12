@@ -1,7 +1,8 @@
 #!/bin/bash
 # stage_release_data.sh — 把运行时直读的上游数据子集拷贝成发行包数据目录。
 #
-# 背景:游戏运行时经 RuntimePaths 读取"数据根"(开发期 = ../binaries junction)。
+# 背景:游戏运行时经 RuntimePaths 读取"数据根"(开发期 = 仓库内暂存根
+# godot/export/data,即本脚本产物;2026-09-12 起禁用 ../binaries 上游软链)。
 # 发行包不带上游树,改为在可执行文件旁放一个 data/ 目录,布局与 binaries/data 一致:
 #   <exe>/data/mods/public/{simulation,maps,audio,art(子集),gui,l10n,campaigns}
 #   <exe>/data/mods/mod/          (modern UI / audio 回落层)
@@ -11,14 +12,14 @@
 #
 # 用法(从 godot/ 目录运行):
 #   sh tools/stage_release_data.sh [源data目录] [目标目录]
-# 默认:源 = ../binaries/data(junction),目标 = export/data
+# 源目录必须显式给(或设 ZEROAD_UPSTREAM 指向上游 0 A.D. 检出根);目标默认 export/data。
 set -euo pipefail
 
-SRC="${1:-../binaries/data}"
+SRC="${1:-${ZEROAD_UPSTREAM:+$ZEROAD_UPSTREAM/binaries/data}}"
 DST="${2:-export/data}"
 
-if [ ! -d "$SRC/mods/public/simulation" ]; then
-    echo "error: source '$SRC' does not look like binaries/data (no mods/public/simulation)" >&2
+if [ -z "$SRC" ] || [ ! -d "$SRC/mods/public/simulation" ]; then
+    echo "error: source '${SRC:-<unset>}' does not look like binaries/data (no mods/public/simulation)" >&2
     echo "       pass the upstream data dir explicitly: sh tools/stage_release_data.sh /path/to/0ad/binaries/data" >&2
     exit 1
 fi

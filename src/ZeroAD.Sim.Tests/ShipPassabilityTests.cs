@@ -212,14 +212,11 @@ public sealed class ShipPassabilityTests
     [Fact]
     public void RealTemplate_ShipClass_Extracted_AndWired()
     {
-        const string rel = "binaries/data/mods/public/simulation/templates";
-        var dir = new DirectoryInfo(System.AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, rel)))
-            dir = dir.Parent;
-        if (dir == null) return;   // 数据树未拉取则跳过
+        var templatesDir = RepoPaths.Resolve("binaries/data/mods/public/simulation/templates");
+        if (templatesDir == null) return;   // 数据树未拉取则跳过
 
         var cm = new ComponentManager(rngSeed: 1,
-            templates: new Content.TemplateLoader(Path.Combine(dir.FullName, rel)));
+            templates: new Content.TemplateLoader(templatesDir));
         SimSystem.Init(cm);
 
         // template_unit_ship 显式 ship;athen 战舰经父链继承。

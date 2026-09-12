@@ -179,12 +179,18 @@ public static class TerrainRenderer
         for (int z = 0; z < verts - 1; z++) Quad(Top(verts - 1, z), Top(verts - 1, z + 1)); // 东
 
         var mesh = st.Commit();
-        mesh.SurfaceSetMaterial(0, new StandardMaterial3D
-        {
-            AlbedoColor = Colors.Black,
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-        });
+        // 纯黑无光照且无雾(C++ str_solid 直写黑):StandardMaterial3D 关不了雾,
+        // 雾图会把裙边刷白,故用 terrain_skirt.gdshader;加载失败兜底纯黑标准材质。
+        var skirtShader = GD.Load<Shader>("res://Shaders/terrain_skirt.gdshader");
+        Material skirtMat = skirtShader != null
+            ? new ShaderMaterial { Shader = skirtShader }
+            : new StandardMaterial3D
+            {
+                AlbedoColor = Colors.Black,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            };
+        mesh.SurfaceSetMaterial(0, skirtMat);
         return new MeshInstance3D
         {
             Mesh = mesh,

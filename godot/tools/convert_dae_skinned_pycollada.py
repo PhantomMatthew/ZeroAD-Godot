@@ -126,9 +126,13 @@ def convert(dae_path, glb_path):
     return f'{len(verts)}v/{len(joints_flat)}j'
 
 if __name__ == '__main__':
-    # 无外部参数(污点源=外部输入,连根拔):转换清单 = 仓库内扫描
-    # binaries art 的 dae → 同相对路径 godot/assets/meshes 下的 .glb。
-    _meshes_src = _Path(_REPO_ROOT) / "godot" / ".." / "binaries" / "data" / "mods" / "public" / "art" / "meshes"
+    # 无外部参数(污点源=外部输入,连根拔):转换清单 = 上游 art 的 dae →
+    # 同相对路径 godot/assets/meshes 下的 .glb。上游检出根经 ZEROAD_UPSTREAM
+    # 环境变量给(2026-09-12 起禁用 ../binaries 软链),未设置直接报错退出。
+    _upstream = _os.environ.get("ZEROAD_UPSTREAM")
+    if not _upstream:
+        raise SystemExit("ZEROAD_UPSTREAM not set: point it at the upstream 0 A.D. checkout root")
+    _meshes_src = _Path(_upstream) / "binaries" / "data" / "mods" / "public" / "art" / "meshes"
     _out_root = _Path(_REPO_ROOT) / "godot" / "assets" / "meshes"
     import glob as _glob
     for _src in _glob.glob(str(_meshes_src / "**" / "*.dae"), recursive=True):

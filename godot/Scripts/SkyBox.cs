@@ -33,6 +33,16 @@ public static class SkyBox
         Texture2D? tex = LoadTexture(frontPath);
         if (tex == null) return null;
 
+        // 自定义 sky shader(地平线以下纯黑,见 shader 注释);加载失败退回
+        // PanoramaSkyMaterial(地平线以下会裹贴图下半部,略亮,仅为兜底)。
+        var shader = GD.Load<Shader>("res://Shaders/sky_panorama.gdshader");
+        if (shader != null)
+        {
+            var mat = new ShaderMaterial();
+            mat.SetShaderParameter("panorama", tex);
+            return new Sky { SkyMaterial = mat };
+        }
+
         return new Sky
         {
             SkyMaterial = new PanoramaSkyMaterial
@@ -50,8 +60,10 @@ public static class SkyBox
         {
             SkyHorizonColor = new Color(0.65f, 0.72f, 0.85f),
             SkyTopColor = new Color(0.35f, 0.5f, 0.75f),
-            GroundHorizonColor = new Color(0.7f, 0.75f, 0.8f),
-            GroundBottomColor = new Color(0.35f, 0.4f, 0.45f),
+            // 地面半球纯黑:C++ SkyBox 只装 5 面(无底面),地平线以下漏清屏黑;
+            // 图外虚空因此是黑的。此前地面半球近白,拖到地图边缘露出白色空白。
+            GroundHorizonColor = Colors.Black,
+            GroundBottomColor = Colors.Black,
             SunAngleMax = 25f,
             SunCurve = 0.15f,
         };

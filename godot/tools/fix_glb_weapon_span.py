@@ -34,10 +34,19 @@ import argparse, glob, json, os, re, struct
 
 def main() -> int:
     # 常量化根目录(污点源=外部输入,连根拔;自定义走 run_full_pipeline.sh)。
+    # 上游 actor 源:ZEROAD_UPSTREAM 指向上游 0 A.D. 检出根(仓库根 binaries/
+    # 软链已禁用);未设置即拒绝运行。
     class _Args: pass
     args = _Args()
     args.meshes_root = str(_Path(_REPO_ROOT) / "godot" / "assets" / "meshes")
-    args.actors_root = str(_Path(_REPO_ROOT) / "binaries" / "data" / "mods" / "public" / "art" / "actors")
+    _upstream = _os.environ.get("ZEROAD_UPSTREAM")
+    if not _upstream:
+        raise SystemExit(
+            "ZEROAD_UPSTREAM not set: point it at the upstream 0 A.D. checkout root"
+        )
+    args.actors_root = str(
+        _Path(_upstream) / "binaries" / "data" / "mods" / "public" / "art" / "actors"
+    )
 
     meshes = set()
     for p in glob.glob(args.actors_root + "/props/units/weapons/**/*.xml", recursive=True):

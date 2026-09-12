@@ -138,6 +138,9 @@ public sealed record MapEnvironment(
         // (0.0025×0.44=0.0011:z=100 本色 90% vs C++ 95%,z=350 68% vs 54%)。
         // FogMax(远处最少本色)Godot 无对应字段,以密度主项近似。density=0(原版默认)即关雾。
         env.FogDensity = FogFactor > 0f ? FogFactor * 0.44f : 0.0001f;
+        // 雾不吃天空:C++ SkyManager 渲染无雾(源码零 fog 引用),地平线以下虚空
+        // 保持纯黑;默认 FogSkyAffect=1 会把远处天空/虚空刷成雾色(地图边缘露白)。
+        env.FogSkyAffect = 0f;
 
         // hdr.fs: color += brightness; (color-0.5)*contrast+0.5; mix(luma, color, sat)。
         // Godot AdjustmentBrightness 是乘数,1+brightness 近似原版加法项(地图值约 0±0.02)。
@@ -183,7 +186,12 @@ public sealed record MapEnvironment(
 
         // 天空盒(原版 <SkySet>:art/textures/skies/{name}/ 5 面贴图装载;
         // 无贴图走程序化天空兜底——原版 C++ SkyBox 的背景替代)。
-        SkyBox.Apply(env, SkySet.Length > 0 ? SkyBox.Load(SkySet) : SkyBox.CreateProcedural());
+        // SkySet=default 是 Atlas 默认串,上游 skies/ 下并无 default 目录,
+        // Load 必返 null;null 直接传给 Apply 会留着 Main 的蓝色 Color 背景
+        // (地图边缘露蓝),故 null 一律回落程序化天空。rmgen 侧已把 default
+        // 归一化成空串,这里在应用层兜底,PMP/rmgen 两路都不再漏。
+        SkyBox.Apply(env,
+            (SkySet.Length > 0 ? SkyBox.Load(SkySet) : null) ?? SkyBox.CreateProcedural());
     }
 
     /// <summary>HQ 上采样施加到视口(MSAA 是 Viewport 属性非 Environment;

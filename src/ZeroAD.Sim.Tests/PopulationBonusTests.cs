@@ -18,15 +18,8 @@ public class PopulationBonusTests
     /// (see test-suite-silent-skips). Returns null when the data tree is absent.</summary>
     private static TemplateLoader? TryLoadTemplates()
     {
-        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            string candidate = System.IO.Path.Combine(dir.FullName, "binaries/data/mods/public/simulation/templates");
-            if (System.IO.Directory.Exists(candidate))
-                return new TemplateLoader(candidate);
-            dir = dir.Parent;
-        }
-        return null;
+        var templatesDir = RepoPaths.Resolve("binaries/data/mods/public/simulation/templates");
+        return templatesDir == null ? null : new TemplateLoader(templatesDir);
     }
 
     [Fact]

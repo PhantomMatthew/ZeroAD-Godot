@@ -452,13 +452,7 @@ public sealed class UseSiteModifierTests
         Assert.Equal(cm3.ComputeStateHash(), cm4.ComputeStateHash());
     }
 
-    private static string? FindRepoPath(string relative)
-    {
-        var dir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, relative)))
-            dir = dir.Parent;
-        return dir == null ? null : System.IO.Path.Combine(dir.FullName, relative);
-    }
+    private static string? FindRepoPath(string relative) => RepoPaths.Resolve(relative);
 
     // ---------- 支持字符串的捕获/重放序列化桩(与 TechnologyManagerTests 同款) ----------
 

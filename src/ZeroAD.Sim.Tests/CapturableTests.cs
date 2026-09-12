@@ -536,8 +536,8 @@ public sealed class CapturableTests
         // 真实模板(template_unit_infantry.xml):Attack/Capture 顶层类型 =
         // 强度 2.5、MaxRange 4、RepeatTime 1000、RestrictedClasses "Field Palisade Wall";
         // Melee PreferredClasses "Unit+!Ship"。
-        const string templatesRoot = "../../../binaries/data/mods/public/simulation/templates";
-        if (!System.IO.Directory.Exists(templatesRoot)) return;   // 数据树未拉取则跳过
+        var templatesRoot = RepoPaths.Resolve("binaries/data/mods/public/simulation/templates");
+        if (templatesRoot == null) return;   // 数据树未拉取则跳过
         var loader = new Content.TemplateLoader(templatesRoot);
 
         var stats = loader.ExtractStats("units/athen/infantry_spearman_b");
