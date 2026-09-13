@@ -298,8 +298,10 @@ namespace ZeroAD.Sim.Components
                         slope = Fixed.FromInt(2);
                     terrain[i, j] = new TerrainTileInfo(depth, slope, Fixed.Zero);
                 }
-            if (real)
-                ComputeShoreDistances(terrain, tiles, ts);
+            // 岸线距离变换对合成回退同样运行(合成水格深 5 → 正确的水陆 BFS;
+            // 无水合成图走 ComputeShoreDistances 的无水分支 = 陆格岸线极大——
+            // 此前合成陆格 shore 恒 0,building-land 的 MinShoreDistance=4 全图误判)。
+            ComputeShoreDistances(terrain, tiles, ts);
             return terrain;
         }
 
@@ -322,10 +324,13 @@ namespace ZeroAD.Sim.Components
                     else dist[i, j] = int.MaxValue;
             if (queue.Count == 0)
             {
+                // 无水纯陆图:岸线距离置"极大"(32767m = int.MaxValue>>16,
+                // Core.cs MaxShoreDistance 同款不溢出约定;1<<20 经 FromInt 左移
+                // 16 位会溢出 int32 归零 → building-land 全图误判不可建)。
                 for (int j = 0; j < tiles; j++)
                     for (int i = 0; i < tiles; i++)
                         terrain[i, j] = new TerrainTileInfo(terrain[i, j].WaterDepth,
-                            terrain[i, j].Slope, Fixed.FromInt(1 << 20));
+                            terrain[i, j].Slope, Fixed.FromInt(int.MaxValue >> 16));
                 return;
             }
             while (queue.Count > 0)

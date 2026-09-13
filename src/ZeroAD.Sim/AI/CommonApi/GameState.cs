@@ -405,6 +405,25 @@ public sealed class GameState
 
     public Accessibility? GetAccessibility() => Accessibility;
 
+    /// <summary>地图边长(米;原版 sharedScript.mapSize——TradeGain 归一化的输入;
+    /// 读世界 TerrainComponent,无 → 64,与 MarketComponent.GetMapSize 同规则)。</summary>
+    public double MapSize => MarketComponent.GetMapSize(Cm);
+
+    /// <summary>原版 gamestate.getTraderTemplatesGains:陆/海商队模板的增益倍率
+    /// (地图归一化 × 模板 Trader/GainMultiplier;模板缺失 → 该路 null,checkRoutes 跳过)。</summary>
+    public (float? Land, float? Naval) GetTraderTemplatesGains()
+    {
+        double norm = MarketComponent.TradeGainNormalization(MapSize);
+        float? land = null, naval = null;
+        var support = GetTemplate(ApplyCiv("units/{civ}/support_trader"));
+        if (support != null)
+            land = (float)(norm * support.GetFloat("Trader/GainMultiplier"));
+        var ship = GetTemplate(ApplyCiv("units/{civ}/ship_merchant"));
+        if (ship != null)
+            naval = (float)(norm * ship.GetFloat("Trader/GainMultiplier"));
+        return (land, naval);
+    }
+
     // ── 阶段推导（UnravelPhases）──
 
     private static List<string> DerivePhases(TechCatalog catalog)

@@ -338,7 +338,11 @@ public abstract partial class ModalPanelBase : CanvasLayer
         OnOpen();
     }
 
-    public void Close() => Visible = false;
+    public void Close()
+    {
+        Visible = false;
+        OnClose();
+    }
 
     /// <summary>Esc 关闭(原版面板行为;消费事件,不再穿透到游戏层清选择/开菜单)。</summary>
     public override void _UnhandledInput(InputEvent e)
@@ -353,4 +357,7 @@ public abstract partial class ModalPanelBase : CanvasLayer
 
     /// <summary>面板打开时刷新动态内容(子类重写:重读 sim 状态重建行/数值)。</summary>
     protected virtual void OnOpen() { }
+
+    /// <summary>面板关闭钩子(与 OnOpen 对称;子类重写:退订 sim 事件等,防悬垂引用)。</summary>
+    protected virtual void OnClose() { }
 }

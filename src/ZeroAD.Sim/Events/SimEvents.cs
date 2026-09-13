@@ -251,6 +251,16 @@ namespace ZeroAD.Sim.Events
         public int SourcePlayer;
         public int TargetPlayer;
     }
+
+    /// <summary>间谍请求答复(原版 spy-response 通知:无论成败都推送)。
+    /// BribedEntity = 被收买实体(0 = 无可贿赂单位,此时已扣失败成本并另有
+    /// spy-failed PlayerCommand 通知)。表现层据以刷新外交面板间谍按钮/弹提示。</summary>
+    public sealed class SpyResponseEvent
+    {
+        public int Requester;
+        public int Target;
+        public uint BribedEntity;
+    }
     /// <summary>攻击请求答复(原版 attackAnswer;accepted = 兵力够立即推)。</summary>
     public sealed class AttackAnsweredEvent
     {
@@ -308,6 +318,7 @@ namespace ZeroAD.Sim.Events
         public event Action<TributeRequestedEvent>? TributeRequested;
         public event Action<AttackRequestedEvent>? AttackRequested;
         public event Action<AttackAnsweredEvent>? AttackAnswered;
+        public event Action<SpyResponseEvent>? SpyResponse;
         public event Action<ConstructionStartedEvent>? ConstructionStarted;
         public event Action<EntityRenamedEvent>? EntityRenamed;
         public event Action<AttackLaunchedEvent>? AttackLaunched;
@@ -343,6 +354,7 @@ namespace ZeroAD.Sim.Events
         public void RaiseTributeRequested(TributeRequestedEvent e) => TributeRequested?.Invoke(e);
         public void RaiseAttackRequested(AttackRequestedEvent e) => AttackRequested?.Invoke(e);
         public void RaiseAttackAnswered(AttackAnsweredEvent e) => AttackAnswered?.Invoke(e);
+        public void RaiseSpyResponse(SpyResponseEvent e) => SpyResponse?.Invoke(e);
         public void RaiseConstructionStarted(ConstructionStartedEvent e) => ConstructionStarted?.Invoke(e);
         public void RaiseEntityRenamed(EntityRenamedEvent e) => EntityRenamed?.Invoke(e);
         public void RaiseAttackLaunched(AttackLaunchedEvent e) => AttackLaunched?.Invoke(e);

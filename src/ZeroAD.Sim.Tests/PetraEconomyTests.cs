@@ -387,4 +387,392 @@ public sealed class PetraEconomyTests
         ai.Tick(0.1f, w.Cm);
         Assert.Equal("INDIVIDUAL.WALKINGANDFIGHTING", ai.FsmStateName);
     }
+
+    // ── 贸易管理器(TradeManager checkRoutes/updateTrader 全量移植)──
+    // 全陆单陆区世界(陆区 id=2 处处同);收益 = round(0.75 × norm × d²/(1+0.25d/mapSize)),
+    // mapSize 默认 64(无 TerrainComponent)——距离 <100m 的对子增益 <minimalGain(5) 被滤。
+
+    private sealed class TradeWorld
+    {
+        public required ComponentManager Cm;
+        public required GameState Gs;
+        public required AIEventBuffer Events;
+        public required Headquarters Hq;
+    }
+
+    private static TradeWorld? NewTradeWorld()
+    {
+        var templatesRoot = FindRepoPath("binaries/data/mods/public/simulation/templates");
+        var techRoot = FindRepoPath("binaries/data/mods/public/simulation/data/technologies");
+        if (templatesRoot == null || techRoot == null) return null;
+
+        var templates = new TemplateLoader(templatesRoot);
+        templates.LoadAllTemplates();
+        var techCatalog = TechnologyLoader.LoadAll(techRoot);
+
+        var cm = new ComponentManager(rngSeed: 42, templates: templates);
+        SimSystem.Init(cm);
+        var events = new AIEventBuffer();
+        events.Attach(cm);
+
+        var playerEntity = cm.CreateEntity();
+        cm.AddComponent(playerEntity, new PlayerComponent { Civ = "gaul" });
+        cm.AddComponent(playerEntity, new OwnershipComponent { PlayerId = 2 });
+        cm.RegisterPlayer(2, playerEntity);
+
+        // 全陆可达性(单陆区;原版 getLandAccess 处处同区 → 陆线永可达)。
+        var grid = new ZeroAD.Sim.Pathfinding.Grid<ZeroAD.Sim.Pathfinding.NavcellData>(32, 32);
+        for (int y = 0; y < 32; y++)
+            for (int x = 0; x < 32; x++)
+                grid.Set(x, y, new ZeroAD.Sim.Pathfinding.NavcellData(0x2));   // 陆通/水阻
+        var acc = new Accessibility(grid, new ZeroAD.Sim.Pathfinding.PassClass(0x1),
+            new ZeroAD.Sim.Pathfinding.PassClass(0x2), 32, 1);
+
+        var net = new NetTurnManager(cm, commandDelay: 2, localPlayerId: 2,
+            NetRole.Standalone, expectedPlayers: new HashSet<uint> { 2 });
+        var gs = new GameState(cm, templates, techCatalog, 2, new EntityMetadata(), events, acc)
+        { Net = net };
+        var hq = new Headquarters(new PetraConfig(DifficultyLevel.Medium));
+        return new TradeWorld { Cm = cm, Gs = gs, Events = events, Hq = hq };
+    }
+
+    private static EntityId AddMarket(ComponentManager cm, int owner, float x, float z)
+    {
+        var e = cm.CreateEntity();
+        var pos = new PositionComponent();
+        cm.AddComponent(e, pos);
+        pos.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+            ZeroAD.Sim.Maths.Fixed.FromFloat(x), ZeroAD.Sim.Maths.Fixed.Zero,
+            ZeroAD.Sim.Maths.Fixed.FromFloat(z));
+        cm.AddComponent(e, new OwnershipComponent { PlayerId = owner });
+        cm.AddComponent(e, new IdentityComponent
+        {
+            TemplateName = "structures/gaul/market",
+            IsBuilding = true,
+            Classes = new List<string> { "Structure", "Market", "Trade" },
+        });
+        cm.NotifyEntityCreated(e);
+        cm.NotifyOwnerChanged(e, -1, owner);
+        var p = new ZeroAD.Sim.Maths.FixedVector2D(pos.Position.X, pos.Position.Z);
+        cm.NotifyPositionChanged(e, p, p);
+        // AI 事件缓冲的 Create 走 SimEventBus(SimCommandExecutor 同款;cm.Notify* 是
+        // 内核内部钩子,不到 AIEventBuffer)。
+        cm.Events.RaiseEntityCreated(new ZeroAD.Sim.Events.EntityCreatedEvent
+        { Entity = e, TemplateName = "structures/gaul/market", OwnerPlayerId = owner });
+        return e;
+    }
+
+    private static EntityId AddTraderUnit(ComponentManager cm, float x, float z)
+    {
+        var e = cm.CreateEntity();
+        var pos = new PositionComponent();
+        cm.AddComponent(e, pos);
+        pos.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+            ZeroAD.Sim.Maths.Fixed.FromFloat(x), ZeroAD.Sim.Maths.Fixed.Zero,
+            ZeroAD.Sim.Maths.Fixed.FromFloat(z));
+        cm.AddComponent(e, new OwnershipComponent { PlayerId = 2 });
+        cm.AddComponent(e, new IdentityComponent
+        {
+            TemplateName = "units/gaul/support_trader",
+            IsUnit = true,
+            Classes = new List<string> { "Unit", "Trader" },
+        });
+        cm.NotifyEntityCreated(e);
+        cm.NotifyOwnerChanged(e, -1, 2);
+        var p = new ZeroAD.Sim.Maths.FixedVector2D(pos.Position.X, pos.Position.Z);
+        cm.NotifyPositionChanged(e, p, p);
+        cm.Events.RaiseEntityCreated(new ZeroAD.Sim.Events.EntityCreatedEvent
+        { Entity = e, TemplateName = "units/gaul/support_trader", OwnerPlayerId = 2 });
+        return e;
+    }
+
+    [Fact]
+    public void TradeManager_CheckRoutes_GainDriven_PicksHighestGainPair()
+    {
+        // 原版 checkRoutes:收益 = 倍率 × TradeGain(距离²) —— 最远市场对胜出,
+        // 近端对(<minimalGain)被滤。A(10,10) B(30,10) C(400,10):
+        // AB d²=400 → gain 0(滤);AC d²=152100 → gain 25;BC → 23。Route = AC。
+        var w = NewTradeWorld();
+        if (w == null) return;
+        var a = AddMarket(w.Cm, 2, 10, 10);
+        var b = AddMarket(w.Cm, 2, 30, 10);
+        var c = AddMarket(w.Cm, 2, 400, 10);
+
+        w.Hq.TradeManager.Update(w.Gs, w.Events, w.Hq.Queues);
+
+        var route = w.Hq.TradeManager.Route;
+        Assert.NotNull(route);
+        Assert.Equal(a.Value, route!.Source);
+        Assert.Equal(c.Value, route.Target);
+        Assert.True(route.Gain >= 5, $"route gain {route.Gain} should clear minimalGain");
+        Assert.DoesNotContain(b.Value, new[] { route.Source, route.Target });
+    }
+
+    [Fact]
+    public void TradeManager_DynamicSwitch_BetterMarketSwitchesRoute()
+    {
+        // 动态换路线:初始 AC 线;更远市场 D(800,10) 建成后(Create 事件重启勘探),
+        // 下一轮 Update 重选 → AD(gain 更高)。原版"收益驱动换线"行为。
+        var w = NewTradeWorld();
+        if (w == null) return;
+        var a = AddMarket(w.Cm, 2, 10, 10);
+        AddMarket(w.Cm, 2, 30, 10);
+        var c = AddMarket(w.Cm, 2, 400, 10);
+        w.Hq.TradeManager.Update(w.Gs, w.Events, w.Hq.Queues);
+        Assert.Equal(c.Value, w.Hq.TradeManager.Route!.Target);
+
+        var d = AddMarket(w.Cm, 2, 800, 10);
+        w.Hq.TradeManager.Update(w.Gs, w.Events, w.Hq.Queues);
+
+        var route = w.Hq.TradeManager.Route;
+        Assert.NotNull(route);
+        Assert.Equal(a.Value, route!.Source);
+        Assert.Equal(d.Value, route.Target);
+    }
+
+    [Fact]
+    public void TradeManager_UpdateTrader_IdleTraderAssignedNearerSourceRoute()
+    {
+        // 原版 updateTrader:空闲商队按其可达区重查最佳线,近端为源——
+        // 商队 (15,10) 近 A(10,10) → SetupTradeRoute(target=C, source=A),
+        // 路线元数据 (route-source=A, route-target=C)。
+        var w = NewTradeWorld();
+        if (w == null) return;
+        var a = AddMarket(w.Cm, 2, 10, 10);
+        var c = AddMarket(w.Cm, 2, 400, 10);
+        var trader = AddTraderUnit(w.Cm, 15, 10);
+
+        w.Hq.TradeManager.Update(w.Gs, w.Events, w.Hq.Queues);
+
+        Assert.Equal(a.Value,
+            (uint)(int)w.Gs.Metadata.GetObject(trader.Value, "route-source")!);
+        Assert.Equal(c.Value,
+            (uint)(int)w.Gs.Metadata.GetObject(trader.Value, "route-target")!);
+    }
+
+    // ── PetraConfig(全文明建筑表 + Cheat 难度修正)──
+
+    [Fact]
+    public void PetraConfig_Buildings_PerCivTable_MatchesUpstream()
+    {
+        // 原版 config.js buildings 全键:default + 14 civ(pers 等无表文明回落 default)。
+        var cfg = new PetraConfig(DifficultyLevel.Medium);
+        var expectedKeys = new[]
+        {
+            "default", "achae", "athen", "brit", "cart", "gaul", "han", "iber",
+            "kush", "mace", "maur", "ptol", "rome", "sele", "spart",
+        };
+        Assert.Equal(expectedKeys.OrderBy(k => k), cfg.Buildings.Keys.OrderBy(k => k));
+        // 逐字抽查(原版键值)
+        Assert.Equal(new[] { "structures/{civ}/tachara" }, cfg.Buildings["achae"]);
+        Assert.Empty(cfg.Buildings["brit"]);
+        Assert.Equal(new[] { "structures/{civ}/assembly" }, cfg.Buildings["gaul"]);
+        Assert.Equal(5, cfg.Buildings["kush"].Count);
+        Assert.Contains("structures/{civ}/pyramid_large", cfg.Buildings["kush"]);
+        Assert.Equal(new[] { "structures/{civ}/army_camp", "structures/{civ}/temple_vesta" },
+            cfg.Buildings["rome"]);
+        Assert.Equal(new[] { "structures/{civ}/syssiton", "structures/{civ}/theater" },
+            cfg.Buildings["spart"]);
+    }
+
+    [Fact]
+    public void PetraConfig_Cheat_ScalesGatherTradeAndBuildTime_ByDifficulty()
+    {
+        // 原版 config.js Cheat:rate = 采集/贸易倍率,time = 建造时间倍率。
+        // VeryHard(5):rate 1.56 / time 1.00;Easy(2):rate 0.75 / time 1.10。
+        var w = NewAiWorld();
+        if (w == null) return;
+        var pe = w.Cm.GetPlayerEntityId(2)!.Value;
+        var affects = new List<string> { "Unit" };
+
+        new PetraConfig(DifficultyLevel.VeryHard).Cheat(w.Gs);
+        Assert.Equal(1.56f, w.Cm.Modifiers.ApplyTemplate(
+            "ResourceGatherer/BaseSpeed", 1f, affects, pe), 3);
+        Assert.Equal(1.56f, w.Cm.Modifiers.ApplyTemplate(
+            "Trader/GainMultiplier", 1f, affects, pe), 3);
+        Assert.Equal(1.00f, w.Cm.Modifiers.ApplyTemplate(
+            "Cost/BuildTime", 1f, affects, pe), 3);
+
+        // 另一世界(Modifier 表在 cm 上,不能复用):Easy → 0.75 / 1.10。
+        var w2 = NewAiWorld();
+        if (w2 == null) return;
+        var pe2 = w2.Cm.GetPlayerEntityId(2)!.Value;
+        new PetraConfig(DifficultyLevel.Easy).Cheat(w2.Gs);
+        Assert.Equal(0.75f, w2.Cm.Modifiers.ApplyTemplate(
+            "ResourceGatherer/BaseSpeed", 1f, affects, pe2), 3);
+        Assert.Equal(1.10f, w2.Cm.Modifiers.ApplyTemplate(
+            "Cost/BuildTime", 1f, affects, pe2), 3);
+    }
+
+    [Fact]
+    public void PetraConfig_SetConfig_InvokesCheat()
+    {
+        // 调用链确认(原版 setConfig 末段 → Cheat):SetConfig 后难度修正即生效。
+        var w = NewAiWorld();
+        if (w == null) return;
+        var pe = w.Cm.GetPlayerEntityId(2)!.Value;
+        new PetraConfig(DifficultyLevel.Hard).SetConfig(w.Gs, w.Cm.RNG);
+        Assert.Equal(1.25f, w.Cm.Modifiers.ApplyTemplate(
+            "ResourceGatherer/BaseSpeed", 1f, new List<string> { "Unit" }, pe), 3);
+    }
+
+    [Fact]
+    public void ResourceGatherer_EffectiveRate_AppliesBaseSpeedModifier()
+    {
+        // Cheat 的采集倍率落地确认:AI Bonus(BaseSpeed 路径)经 EffectiveRate 生效。
+        var w = NewAiWorld();
+        if (w == null) return;
+        new PetraConfig(DifficultyLevel.VeryHard).Cheat(w.Gs);
+        var gatherer = w.Cm.QueryInterface<ResourceGatherer>(w.Worker)!;
+        // GatherRate 默认 10 × rate[VeryHard]=1.56 → 16(四舍五入远离零)。
+        Assert.Equal(16, gatherer.EffectiveRate(w.Cm, ResourceType.Food));
+    }
+
+    // ── 贸易勘探全量世界(带寻路 + 领土:FindMarketLocation 的完整依赖)──
+    // 512m 全陆图;CC 在 (64,256) 带领土影响力(radius 400 → 覆盖几乎全部地图,
+    // 角点 gaia);mapSize 取默认 64(无 TerrainComponent 入 cm) → 远距离市场对
+    // 增益远超 minimalGain(5),断言余量大。
+
+    private sealed class TerritoryTradeWorld
+    {
+        public required ComponentManager Cm;
+        public required GameState Gs;
+        public required AIEventBuffer Events;
+        public required Headquarters Hq;
+        public required EntityId Cc;
+    }
+
+    private static TerritoryTradeWorld? NewTerritoryTradeWorld()
+    {
+        var templatesRoot = FindRepoPath("binaries/data/mods/public/simulation/templates");
+        var techRoot = FindRepoPath("binaries/data/mods/public/simulation/data/technologies");
+        if (templatesRoot == null || techRoot == null) return null;
+
+        var templates = new TemplateLoader(templatesRoot);
+        templates.LoadAllTemplates();
+        var techCatalog = TechnologyLoader.LoadAll(techRoot);
+
+        var cm = new ComponentManager(rngSeed: 42, templates: templates);
+        SimSystem.Init(cm);
+        var events = new AIEventBuffer();
+        events.Attach(cm);
+
+        // 寻路网格(128 地块 × 4m = 512m 全陆;ShipPassabilityTests 同款装配)。
+        SimSystem.SetObstructionManager(new ObstructionManager(512, 4f));
+        var terrain = new TerrainComponent();
+        terrain.Configure(128, 4f);
+        // 置零水位 → 走真实地形采样(否则合成回退的岸线距离恒 0,building-land 类
+        // MinShoreDistance=4 全图不可建——合成路径的已知近似,见 PathfinderComponent)。
+        terrain.SetWaterLevel(ZeroAD.Sim.Maths.Fixed.Zero);
+        var gridClasses = new TerrainClass[128, 128];
+        for (int i = 0; i < 128; i++)
+            for (int j = 0; j < 128; j++)
+                gridClasses[i, j] = TerrainClass.Land;
+        terrain.SetPassabilityGrid(gridClasses);
+        var pf = new PathfinderComponent(cm);
+        pf.SetTerrain(terrain);
+        pf.RebuildGrid();
+        SimSystem.SetPathfinder(pf);
+        SimSystem.SetTerritoryManager(new TerritoryManager(cm, 512));
+
+        var playerEntity = cm.CreateEntity();
+        cm.AddComponent(playerEntity, new PlayerComponent { Civ = "gaul" });
+        cm.AddComponent(playerEntity, new OwnershipComponent { PlayerId = 2 });
+        cm.RegisterPlayer(2, playerEntity);
+
+        // CC:基地锚 + 领土影响力(root;radius 400 ≈ 覆盖 256m 半径外全部,角点除外)。
+        var cc = cm.CreateEntity();
+        var ccPos = new PositionComponent();
+        cm.AddComponent(cc, ccPos);
+        ccPos.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+            ZeroAD.Sim.Maths.Fixed.FromFloat(64), ZeroAD.Sim.Maths.Fixed.Zero,
+            ZeroAD.Sim.Maths.Fixed.FromFloat(256));
+        cm.AddComponent(cc, new OwnershipComponent { PlayerId = 2 });
+        cm.AddComponent(cc, new IdentityComponent
+        {
+            TemplateName = "structures/gaul/civil_centre",
+            IsBuilding = true,
+            Classes = new List<string> { "CivCentre", "Structure" },
+        });
+        cm.AddComponent(cc, new TerritoryInfluenceComponent
+        {
+            Radius = ZeroAD.Sim.Maths.Fixed.FromFloat(400), Weight = 10000, Root = true,
+        });
+        cm.NotifyEntityCreated(cc);
+        cm.NotifyOwnerChanged(cc, -1, 2);
+        var ccP = new ZeroAD.Sim.Maths.FixedVector2D(ccPos.Position.X, ccPos.Position.Z);
+        cm.NotifyPositionChanged(cc, ccP, ccP);
+        cm.Events.RaiseEntityCreated(new ZeroAD.Sim.Events.EntityCreatedEvent
+        { Entity = cc, TemplateName = "structures/gaul/civil_centre", OwnerPlayerId = 2 });
+
+        // 工人(CanBuild("structures/{civ}/market") 的 FindBuilder 依赖)。
+        var worker = cm.CreateEntity();
+        var wpos = new PositionComponent();
+        cm.AddComponent(worker, wpos);
+        wpos.Position = new ZeroAD.Sim.Maths.FixedVector3D(
+            ZeroAD.Sim.Maths.Fixed.FromFloat(70), ZeroAD.Sim.Maths.Fixed.Zero,
+            ZeroAD.Sim.Maths.Fixed.FromFloat(256));
+        cm.AddComponent(worker, new OwnershipComponent { PlayerId = 2 });
+        cm.AddComponent(worker, new IdentityComponent
+        {
+            TemplateName = "units/gaul/support_civilian",
+            IsUnit = true,
+            Classes = new List<string> { "Citizen", "Unit" },
+        });
+        cm.NotifyEntityCreated(worker);
+        cm.NotifyOwnerChanged(worker, -1, 2);
+
+        var acc = new Accessibility(pf.PassabilityGrid!, pf.DefaultClass.Mask,
+            pf.ShipClass.Mask, pf.NavcellsPerSide, 1);
+        var net = new NetTurnManager(cm, commandDelay: 2, localPlayerId: 2,
+            NetRole.Standalone, expectedPlayers: new HashSet<uint> { 2 });
+        var gs = new GameState(cm, templates, techCatalog, 2, new EntityMetadata(), events, acc)
+        { Net = net };
+        var hq = new Headquarters(new PetraConfig(DifficultyLevel.Medium));
+        // 原版 startingStrategy.gameAnalysis:海图判定 + 运营陆区标注(LandRegions)。
+        StartingStrategy.GameAnalysis(hq, gs);
+        return new TerritoryTradeWorld { Cm = cm, Gs = gs, Events = events, Hq = hq, Cc = cc };
+    }
+
+    [Fact]
+    public void TradeManager_Prospect_QueuesMarketPlan_WhenGainWorth()
+    {
+        // 原版 prospectForNewMarket 全链:单一市场 → FindMarketLocation 找高收益位
+        // → 排队 economicBuilding 市场计划(首路线:优先级 ×2 + QueueToReset)。
+        var w = NewTerritoryTradeWorld();
+        if (w == null) return;
+        AddMarket(w.Cm, 2, 80, 256);
+
+        w.Hq.TradeManager.Update(w.Gs, w.Events, w.Hq.Queues);
+
+        var queue = w.Hq.Queues.GetQueue("economicBuilding");
+        Assert.NotNull(queue);
+        Assert.True(queue!.HasQueuedUnits, "expected a market construction plan queued");
+        Assert.Contains("market", queue.Plans[0].Type);
+        Assert.Equal("economicBuilding", queue.Plans[0].QueueToReset);
+        Assert.Equal(2 * w.Hq.Config.Priorities["economicBuilding"],
+            w.Hq.Queues.GetPriority("economicBuilding"));
+    }
+
+    [Fact]
+    public void TradeManager_RouteMarketDestroyed_ReprospectsAndQueuesRebuild()
+    {
+        // 路线市场被毁(原版 checkEvents Destroy 段):activateProspection → 同轮
+        // 重选(不足 2 市场 → 无线)+ 勘探重排新市场计划(世界有领土/寻路时)。
+        var w = NewTerritoryTradeWorld();
+        if (w == null) return;
+        AddMarket(w.Cm, 2, 80, 256);
+        var c = AddMarket(w.Cm, 2, 400, 256);
+        w.Hq.TradeManager.Update(w.Gs, w.Events, w.Hq.Queues);
+        Assert.NotNull(w.Hq.TradeManager.Route);
+
+        w.Cm.DestroyEntity(c);
+        w.Hq.TradeManager.Update(w.Gs, w.Events, w.Hq.Queues);
+
+        Assert.Null(w.Hq.TradeManager.Route);
+        var queue = w.Hq.Queues.GetQueue("economicBuilding");
+        Assert.True(queue != null && queue.HasQueuedUnits,
+            "destroyed route market should re-trigger prospection and queue a new market");
+        Assert.Contains("market", queue!.Plans[0].Type);
+    }
 }

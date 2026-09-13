@@ -330,6 +330,9 @@ public sealed partial class SimBridge : Node
 				{
 					pc.BarterMultiplierBuy = pstats.BarterMultiplierBuy;
 					pc.BarterMultiplierSell = pstats.BarterMultiplierSell;
+					// 间谍花费乘数基值(原版 Player.js spyCostMultiplier;
+					// spy_counter 等科技修正在查询时叠加,见 GetSpyCostMultiplier)。
+					pc.SpyCostMultiplierBase = pstats.SpyCostMultiplier;
 				}
 			}
 			catch { }
@@ -563,6 +566,8 @@ public sealed partial class SimBridge : Node
 					{
 						epc.BarterMultiplierBuy = estats.BarterMultiplierBuy;
 						epc.BarterMultiplierSell = estats.BarterMultiplierSell;
+						// 间谍花费乘数基值(同上 skirmish 路径)。
+						epc.SpyCostMultiplierBase = estats.SpyCostMultiplier;
 					}
 				}
 				catch { }
@@ -1453,6 +1458,9 @@ public sealed partial class SimBridge : Node
 		// push overlapping pairs apart so rallied/converging units spread into a visible cluster
 		// instead of stacking on one point (which made only one render). Pure sim, lockstep-safe.
 		T("separation", () => UnitSeparation.Separate(_sim, Fixed.FromFloat(dt)));
+		// 间谍/驻军视野共享(原版 VisionSharing 的 Timer/MT_VisionSharingChanged 的回合制
+		// 等价):倒计时到期 + 驻军/易主吸收,放 los1 前使共享变化本回合即被可见性重算吃到。
+		T("visionsharing", () => VisionSharingComponent.TickAll(_sim, _range));
 		// 视野重算在 TickUnitAI 之前:单位移动后立即可见性更新,扫描时看到最新结果。
 		// 此前 UpdateVisibilityData 在 tick 末尾跑 → 扫描用上一帧的可见性 → 攻击有 1 tick 延迟。
 		// 末尾保留第二次调用(拾取驻军/炮塔的位置变更)。
@@ -2789,6 +2797,11 @@ public sealed partial class SimBridge : Node
 	/// AI 评估筹备兵力 >12 即强推)。</summary>
 	public void CommandRequestAttack(int targetPlayer) =>
 		SubmitCommand(NetCommand.AttackRequest(LocalPlayerId, targetPlayer));
+
+	/// <summary>间谍请求(原版外交面板 spy-request:贿赂目标玩家名下随机可贿单位,
+	/// 限时共享其视野;执行后必回 SpyResponseEvent,无目标另有 spy-failed 通知)。</summary>
+	public void CommandSpyRequest(int targetPlayer) =>
+		SubmitCommand(NetCommand.SpyRequest(LocalPlayerId, targetPlayer));
 
 	public void CommandSetStance(int targetPlayer, int stance) =>
 		SubmitCommand(NetCommand.SetStance(LocalPlayerId, targetPlayer, stance));

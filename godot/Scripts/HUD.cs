@@ -1248,8 +1248,7 @@ public sealed partial class HUD : CanvasLayer
             EntityId? producer = caps.ProducerId;
             if (producer.HasValue)
             {
-                var queue = _sim.Sim.QueryInterface<ProductionQueue>(producer.Value)!;
-                foreach (var tmpl in queue.GetTrainableEntities(_sim.Sim))
+                foreach (var tmpl in _sim.Gui.GetTrainableEntities(producer.Value))
                     AddTrainButton(tmpl);
             }
         }
@@ -1263,18 +1262,12 @@ public sealed partial class HUD : CanvasLayer
             EntityId? builder = caps.BuilderId;
             if (builder.HasValue)
             {
-                var bIdentity = _sim.Sim.QueryInterface<IdentityComponent>(builder.Value);
-                var bstats = bIdentity != null
-                    ? _sim.Sim.Templates?.ExtractStats(bIdentity.TemplateName) : null;
+                var bInfo = _sim.Gui.GetBuilderPanelInfo(builder.Value);
+                var bstats = bInfo != null
+                    ? _sim.Sim.Templates?.ExtractStats(bInfo.TemplateName) : null;
                 if (bstats != null && bstats.BuildableEntities.Length > 0)
                 {
-                    string ownerCiv = "";
-                    var owner = _sim.Sim.QueryInterface<OwnershipComponent>(builder.Value);
-                    if (owner != null)
-                    {
-                        var player = _sim.Sim.GetPlayerEntity(owner.PlayerId);
-                        if (player != null) ownerCiv = player.Civ;
-                    }
+                    string ownerCiv = bInfo!.OwnerCiv;
                     foreach (var raw in bstats.BuildableEntities.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
                     {
                         string token = raw;
@@ -1293,25 +1286,15 @@ public sealed partial class HUD : CanvasLayer
             // 数据驱动研究列表(原版 research_panel,与训练/建造面板同款):首个选中研究者的
             // Researcher/Technologies,{civ}/{native} 实时解析;TechnologyManager 过滤
             // 已研究/不存在项,前置未满足的置灰(CanResearch 同款判定)。
-            EntityId? researcher = null;
-            foreach (var eid in _main.SelectedEntities)
-                if (_sim.Sim.QueryInterface<ResearcherComponent>(eid) != null) { researcher = eid; break; }
-            if (researcher.HasValue)
+            var rp = _sim.Gui.GetResearchPanelState(_main.SelectedEntities, (int)_sim.LocalPlayerId);
+            if (rp != null)
             {
-                var rIdentity = _sim.Sim.QueryInterface<IdentityComponent>(researcher.Value);
-                var rstats = rIdentity != null
-                    ? _sim.Sim.Templates?.ExtractStats(rIdentity.TemplateName) : null;
-                var tm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.TechnologyManager>(
-                    _sim.Sim.GetPlayerEntityId((int)_sim.LocalPlayerId) ?? default);
+                var rstats = rp.TemplateName.Length > 0
+                    ? _sim.Sim.Templates?.ExtractStats(rp.TemplateName) : null;
+                var tm = rp.TechManager;
                 if (rstats != null && rstats.ResearchableTechnologies.Length > 0 && tm != null)
                 {
-                    string ownerCiv = "";
-                    var owner = _sim.Sim.QueryInterface<OwnershipComponent>(researcher.Value);
-                    if (owner != null)
-                    {
-                        var player = _sim.Sim.GetPlayerEntity(owner.PlayerId);
-                        if (player != null) ownerCiv = player.Civ;
-                    }
+                    string ownerCiv = rp.OwnerCiv;
                     // 原版 Researcher.GetTechnologiesList 的 supersedes 折叠:supersedes 目标
                     // 同在列表的科技(如 phase_city→phase_town)不作独立图标,只登记进链;
                     // 顶层项已研究/进行中时沿链走到下一个未研究项(按钮原位"变形"为下一
@@ -1346,13 +1329,12 @@ public sealed partial class HUD : CanvasLayer
                         else
                             topLevel.Add(t);
                     }
-                    var researcherComp = _sim.Sim.QueryInterface<ResearcherComponent>(researcher.Value);
                     foreach (var head in topLevel)
                     {
                         string tech = head;
                         // 已研究/本建筑进行中 → 沿链取下一个(原版 IsTechnologyResearchedOrInProgress)。
                         while (tech.Length > 0
-                               && (tm.IsResearched(tech) || (researcherComp?.CurrentTech != null && researcherComp.CurrentTech == tech)))
+                               && (tm.IsResearched(tech) || (rp.CurrentTech.Length > 0 && rp.CurrentTech == tech)))
                             tech = superseded.TryGetValue(tech, out var next) ? next : "";
                         if (tech.Length == 0) continue;
                         AddResearchButton(tech, tm);
@@ -1403,8 +1385,7 @@ public sealed partial class HUD : CanvasLayer
     private bool RequirementsMet(ZeroAD.Sim.Content.TemplateStats? stats)
     {
         if (stats == null || stats.RequiredTechs.Length == 0) return true;
-        var tm = _sim.Sim.QueryInterface<ZeroAD.Sim.Components.TechnologyManager>(
-            _sim.Sim.GetPlayerEntityId((int)_sim.LocalPlayerId) ?? default);
+        var tm = _sim.Gui.GetTechnologyManager((int)_sim.LocalPlayerId);
         if (tm == null) return true;
         foreach (var tok in stats.RequiredTechs.Split((char[]?)null, System.StringSplitOptions.RemoveEmptyEntries))
         {

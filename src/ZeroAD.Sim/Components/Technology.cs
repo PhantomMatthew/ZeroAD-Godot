@@ -52,6 +52,22 @@ public sealed class TechnologyManager : ComponentBase, IComponentMessageHandler
 
     public bool IsResearched(string tech) => _researched.Contains(tech);
 
+    /// <summary>模板 Identity/Requirements/Techs token 串求值(原版 RequirementsHelper
+    /// .AreRequirementsMet 的 Techs 分支;TechnologyManager.CanProduce 的内核等价——
+    /// 间谍门的 "special/spy" 判定走这里)。空格分词;"!" 前缀 = 必须<b>未</b>研究,
+    /// 其余 token 必须全已研究;空串 = 恒真。</summary>
+    public bool MeetsRequirements(string requiredTechs)
+    {
+        if (string.IsNullOrWhiteSpace(requiredTechs)) return true;
+        foreach (var tok in requiredTechs.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            bool neg = tok.StartsWith('!');
+            string tech = neg ? tok[1..] : tok;
+            if (IsResearched(tech) == neg) return false;
+        }
+        return true;
+    }
+
     /// <summary>可否开始研究:定义存在 + 未研究 + 未被 pair 锁定 + requirements 全满足。</summary>
     public bool CanResearch(string tech)
     {

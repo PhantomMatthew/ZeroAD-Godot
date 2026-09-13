@@ -210,7 +210,7 @@
 - [x] 收敛 LobbyUI.cs 与 MainMenu.cs 两套主菜单(7769ad8:假主菜单删除,MainMenu.tscn 唯一;Mode=Lobby 弹回)
 - [x] GUI 尾巴(ec989d0:gamesetup/大厅 AI 难度+性格下拉、外交停火倒计时+盟友攻击请求
   (锁步命令+AI 评估)、大厅排行榜 UI、手册热键动态替换、加载页引言、易物漂移 1s 刷新);
-  间谍请求待逐对 LOS 共享基建
+  间谍请求已落:VisionSharing 组件逐字移植(trader 贿赂+驻军共视+时限)、SpyRequest 锁步命令、外交面板按钮
 - [x] 引擎级 mod 挂载(1050faf:VfsResolver 数据分层挂载,sim 数据下一局生效;美术重启重导)
 
 ### 音频(AudioManager.cs)

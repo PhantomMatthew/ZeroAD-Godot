@@ -110,4 +110,19 @@ public sealed class AccessibilityTests
         Assert.True(acc.LandRegionAt(2, 2) > 1);
         Assert.True(acc.WaterRegionAt(2, 2) > 1);
     }
+
+    [Fact]
+    public void InfoMap_GetNonObstructedTile_CoarseToFineRatio()
+    {
+        // 回归:粗图(8m 格)→ 细图(1m 格)的 ratio 应为 8(原版
+        // map-module.js:this.cellSize / fine.cellSize;此前写反成细/粗,
+        // territory→passability 跨分辨率查找全塌到原点附近)。
+        var coarse = new InfoMap(2, 2, 8);
+        var fine = new InfoMap(16, 16, 1, Enumerable.Repeat((byte)255, 256).ToArray());
+        // 粗格 (1,0)=索引 1 → 细格 x∈[8,16);radius=1 排除细图最外圈。
+        int idx = coarse.GetNonObstructedTile(1, 1, fine);
+        Assert.True(idx >= 0, "expected a non-obstructed fine tile inside coarse cell 1");
+        Assert.True(idx % 16 >= 8, $"fine tile x should be ≥8 (coarse cell 1), got {idx % 16}");
+        Assert.True(idx / 16 < 8, $"fine tile y should be <8 (coarse row 0), got {idx / 16}");
+    }
 }

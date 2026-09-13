@@ -69,12 +69,19 @@ public sealed class XmppLobbyClient : IDisposable
     public event Action? OnGameListChanged;
     /// <summary>排行榜到达(BoardList IQ 应答解析后)。</summary>
     public event Action? OnBoardListChanged;
+    /// <summary>资料应答到达(Profile IQ;Echelon 对在线/离线玩家都回)。</summary>
+    public event Action<LobbyProfile>? OnProfileReceived;
     public event Action? OnConnected;
     public event Action<string>? OnDisconnected;
 
     public bool IsConnected => _connected;
     public string Username => _username;
     public string Nick => _nick;
+    /// <summary>自己在 MUC 的角色(self-presence 的 muc#user item role;
+    /// participant/moderator/visitor)。原版依此显隐 kick/ban。</summary>
+    public string SelfRole { get; private set; } = "participant";
+    /// <summary>是否房间 moderator(XEP-0045 role=moderator → kick/ban 菜单可见)。</summary>
+    public bool IsModerator => SelfRole == "moderator";
 
     // ── 连接管理 ──
 
@@ -134,6 +141,7 @@ public sealed class XmppLobbyClient : IDisposable
             _client = null;
         }
         _connected = false;
+        SelfRole = "participant";
         _playerList.Clear();
         _gameList.Clear();
         _messageQueue.Clear();
@@ -184,10 +192,24 @@ public sealed class XmppLobbyClient : IDisposable
         string from = pres.Attribute("from")?.Value ?? "";
         if (!from.StartsWith(RoomJid + "/", StringComparison.Ordinal)) return;
         string nick = from[(RoomJid.Length + 1)..];
-        if (nick == _nick) return;   // 自己
+
+        // muc#user 扩展:item(role/affiliation) + status(301=banned/307=kicked,XEP-0045)。
+        var mucUser = pres.Element(XName.Get("x", "http://jabber.org/protocol/muc#user"));
+        var item = mucUser?.Element(XName.Get("item", "http://jabber.org/protocol/muc#user"));
+        string? role = item?.Attribute("role")?.Value;
+
+        if (nick == _nick)
+        {
+            // 自己的 presence:只跟踪自身 role(moderator 判定;原版 m_PlayerMap 同款)。
+            if (role != null) SelfRole = role;
+            if (pres.Attribute("type")?.Value == "unavailable")
+                ReportRemovedFromRoom(mucUser, nick);
+            return;
+        }
 
         if (pres.Attribute("type")?.Value == "unavailable")
         {
+            ReportRemovedFromRoom(mucUser, nick);
             _playerList.RemoveAll(p => p.Name == nick);
             OnPlayerListChanged?.Invoke();
             return;
@@ -199,16 +221,38 @@ public sealed class XmppLobbyClient : IDisposable
             _playerList.Add(player);
         }
         player.Presence = pres.Element(XName.Get("show", "jabber:client"))?.Value ?? "available";
-        var item = pres.Element(XName.Get("x", "http://jabber.org/protocol/muc#user"))
-            ?.Element(XName.Get("item", "http://jabber.org/protocol/muc#user"));
-        if (item?.Attribute("role") is { } role)
-            player.Role = role.Value;
+        if (role != null)
+            player.Role = role;
         OnPlayerListChanged?.Invoke();
+    }
+
+    /// <summary>unavailable presence 里的踢出/封禁系统消息(原版
+    /// handleMUCParticipantPresence 的 UserKicked/UserBanned 分支:status 307/301 + reason)。</summary>
+    private void ReportRemovedFromRoom(XElement? mucUser, string nick)
+    {
+        if (mucUser == null) return;
+        string? code = null;
+        foreach (var st in mucUser.Elements(XName.Get("status", "http://jabber.org/protocol/muc#user")))
+            if (st.Attribute("code")?.Value is { Length: > 0 } c) { code = c; break; }
+        if (code != "307" && code != "301") return;
+        string reason = mucUser.Element(XName.Get("item", "http://jabber.org/protocol/muc#user"))
+            ?.Element(XName.Get("reason", "http://jabber.org/protocol/muc#user"))?.Value ?? "";
+        EnqueueMessage(new LobbyMessage
+        {
+            Type = LobbyMessage.MsgType.System,
+            Level = code == "307" ? "kicked" : "banned",
+            Nick = nick,
+            Reason = reason,
+            Text = reason.Length > 0
+                ? $"{nick} was {(code == "307" ? "kicked" : "banned")}. Reason: {reason}"
+                : $"{nick} was {(code == "307" ? "kicked" : "banned")}.",
+            Time = DateTime.Now,
+        });
     }
 
     private void HandleIq(XElement iq)
     {
-        // 游戏/排行列表响应:query 子元素的命名空间区分。
+        // 游戏/排行/资料列表响应:query 子元素的命名空间区分。
         var query = iq.Elements().FirstOrDefault();
         if (query == null) return;
         if (query.Name.NamespaceName == LobbyNamespaces.GameList)
@@ -221,6 +265,10 @@ public sealed class XmppLobbyClient : IDisposable
         }
         else if (query.Name.NamespaceName == LobbyNamespaces.BoardList)
         {
+            // command 子元素区分应答种类(Echelon):"boardlist" = 全榜应答;
+            // "ratinglist" = 在线玩家评分广播(进大厅/评分变动时推送,刷花名册评分)。
+            string command = query.Elements()
+                .FirstOrDefault(e => e.Name.LocalName == "command")?.Value ?? "";
             var entries = new List<LobbyBoardEntry>();
             foreach (var item in query.Elements())
             {
@@ -232,15 +280,37 @@ public sealed class XmppLobbyClient : IDisposable
                     Rating = int.TryParse(item.Attribute("rating")?.Value, out var rt) ? rt : 0,
                 });
             }
+            if (command == "ratinglist")
+            {
+                // 评分按 nick 并入花名册(原版 ratinglist 语义;榜本身不动)。
+                bool changed = false;
+                foreach (var e in entries)
+                {
+                    var p = _playerList.Find(pl => pl.Name == e.Name);
+                    if (p != null && p.Rating != e.Rating) { p.Rating = e.Rating; changed = true; }
+                }
+                if (changed) OnPlayerListChanged?.Invoke();
+                return;
+            }
             _boardList.Clear();
             _boardList.AddRange(entries);
             OnBoardListChanged?.Invoke();
         }
+        else if (query.Name.NamespaceName == LobbyNamespaces.Profile)
+        {
+            var profileElem = query.Elements()
+                .FirstOrDefault(e => e.Name.LocalName == "profile");
+            if (profileElem != null)
+                OnProfileReceived?.Invoke(LobbyProfile.FromXml(profileElem));
+        }
     }
 
-    /// <summary>发自定义 IQ(原版 StanzaExtensions 的 Set/Get;XPartaMupp/Echelon bot 协议)。
+    /// <summary>发自定义 IQ(原版 StanzaExtensions 的 GameListQuery/BoardListQuery/
+    /// ProfileQuery::tag():query 内 command 子元素文本承载命令,负载元素
+    /// (game/board/profile)全部属性化;子元素一律带命名空间限定名,否则 LINQ-XML
+    /// 序列化补 xmlns="" 会把它们踢出默认命名空间,bot 端 find("{ns}game") 落空)。
     /// 裸元素构建——typed Iq 的 Query 强类型不适合自定义命名空间。</summary>
-    private Task SendLobbyIq(string to, string type, string ns, XElement? content)
+    private Task SendLobbyIq(string to, string type, string ns, XElement? content, string? command = null)
     {
         if (_client == null) return Task.CompletedTask;
         var iq = new XmppXElement(XName.Get("iq", "jabber:client"),
@@ -248,8 +318,23 @@ public sealed class XmppLobbyClient : IDisposable
             new XAttribute("to", to),
             new XAttribute("id", Guid.NewGuid().ToString("N")[..8]));
         var query = new XElement(XName.Get("query", ns));
+        if (command != null)
+            query.Add(new XElement(XName.Get("command", ns)) { Value = command });
         if (content != null) query.Add(content);
         iq.Add(query);
+        return _client.SendAsync(iq);
+    }
+
+    /// <summary>负载直挂 iq 的自定义 IQ(原版 GameReport::tag():report 元素是 iq 的
+    /// 直接子级,不包 query;Echelon 按 iq@type=set/gamereport 匹配)。</summary>
+    private Task SendRawIq(string to, string type, XElement payload)
+    {
+        if (_client == null) return Task.CompletedTask;
+        var iq = new XmppXElement(XName.Get("iq", "jabber:client"),
+            new XAttribute("type", type),
+            new XAttribute("to", to),
+            new XAttribute("id", Guid.NewGuid().ToString("N")[..8]));
+        iq.Add(payload);
         return _client.SendAsync(iq);
     }
 
@@ -286,38 +371,37 @@ public sealed class XmppLobbyClient : IDisposable
         _ = _client.SendAsync(pres);
     }
 
-    // ── 游戏列表 IQ ──
+    // ── 游戏列表 IQ(原版 SendIqRegisterGame/UnregisterGame/ChangeStateGame;
+    // command 为 query 的 command 子元素文本,bot 读 iq["gamelist"]["command"])──
 
     public void SendRegisterGame(GameRegisterData data)
     {
         if (!_connected) return;
         var content = data.ToGameXml($"{_username}@{ServerHost}");
-        content.SetAttributeValue("command", "register");
-        _ = SendLobbyIq(GameListBot, "set", LobbyNamespaces.GameList, content);
+        _ = SendLobbyIq(GameListBot, "set", LobbyNamespaces.GameList, content, "register");
     }
 
     public void SendUnregisterGame()
     {
         if (!_connected) return;
         _ = SendLobbyIq(GameListBot, "set", LobbyNamespaces.GameList,
-            new XElement("game", new XAttribute("command", "unregister")));
+            new XElement(XName.Get("game", LobbyNamespaces.GameList)), "unregister");
     }
 
     public void SendChangeStateGame(int nbp, string players)
     {
         if (!_connected) return;
         _ = SendLobbyIq(GameListBot, "set", LobbyNamespaces.GameList,
-            new XElement("game",
-                new XAttribute("command", "changestate"),
+            new XElement(XName.Get("game", LobbyNamespaces.GameList),
                 new XAttribute("nbp", nbp),
-                new XAttribute("players", players)));
+                new XAttribute("players", players)),
+            "changestate");
     }
 
     public void RequestGameList()
     {
         if (!_connected) return;
-        _ = SendLobbyIq(GameListBot, "get", LobbyNamespaces.GameList,
-            new XElement("game", new XAttribute("command", "gamelist")));
+        _ = SendLobbyIq(GameListBot, "get", LobbyNamespaces.GameList, null, "gamelist");
     }
 
     // ── 排行榜 + 资料 IQ ──
@@ -325,25 +409,50 @@ public sealed class XmppLobbyClient : IDisposable
     public void RequestBoardList()
     {
         if (!_connected) return;
-        _ = SendLobbyIq(BoardListBot, "get", LobbyNamespaces.BoardList,
-            new XElement("board", new XAttribute("command", "boardlist")));
+        // 原版 SendIqGetBoardList:command = "getleaderboard"(子元素文本,无 board 负载)。
+        _ = SendLobbyIq(BoardListBot, "get", LobbyNamespaces.BoardList, null, "getleaderboard");
     }
 
     public void RequestProfile(string playerName)
     {
         if (!_connected) return;
-        _ = SendLobbyIq(BoardListBot, "get", LobbyNamespaces.Profile,
-            new XElement("profile", new XAttribute("command", "profile"),
-                new XAttribute("player", playerName)));
+        // 原版 SendIqGetProfile:command 子元素文本 = 玩家 nick(无 profile 负载)。
+        _ = SendLobbyIq(BoardListBot, "get", LobbyNamespaces.Profile, null, playerName);
     }
 
+    /// <summary>对局报告(原版 SendIqGameReport + LobbyRatingReporter.js 字段):
+    /// iq/set → echelon,report 直挂 iq,内含单个 game 元素,报告键值全部属性化。</summary>
     public void SendGameReport(Dictionary<string, object> report)
     {
         if (!_connected) return;
-        var reportElem = new XElement("report", new XAttribute("command", "gamereport"));
+        var gameElem = new XElement(XName.Get("game", LobbyNamespaces.GameReport));
         foreach (var kv in report)
-            reportElem.SetAttributeValue(kv.Key, kv.Value?.ToString() ?? "");
-        _ = SendLobbyIq(BoardListBot, "set", LobbyNamespaces.GameReport, reportElem);
+            gameElem.SetAttributeValue(kv.Key, kv.Value?.ToString() ?? "");
+        _ = SendRawIq(BoardListBot, "set",
+            new XElement(XName.Get("report", LobbyNamespaces.GameReport), gameElem));
+    }
+
+    // ── MUC 管理(XEP-0045 §8.2 kick / §9.1 ban;原版 XmppClient::kick/ban →
+    // gloox MUCRoom::kick/ban 所发的就是这两条 muc#admin IQ)──
+
+    /// <summary>把 nick 踢出房间(role → none)。仅 moderator 发出才有效(服务端强校验)。</summary>
+    public void KickOccupant(string nick, string reason)
+        => SendMucAdminIq(nick, reason, role: "none");
+
+    /// <summary>把 nick 封禁(affiliation → outcast)。需 moderator/admin 权限。</summary>
+    public void BanOccupant(string nick, string reason)
+        => SendMucAdminIq(nick, reason, affiliation: "outcast");
+
+    private Task SendMucAdminIq(string nick, string reason, string? role = null, string? affiliation = null)
+    {
+        if (!_connected) return Task.CompletedTask;
+        const string adminNs = "http://jabber.org/protocol/muc#admin";
+        var item = new XElement(XName.Get("item", adminNs), new XAttribute("nick", nick));
+        if (role != null) item.SetAttributeValue("role", role);
+        if (affiliation != null) item.SetAttributeValue("affiliation", affiliation);
+        if (reason.Length > 0)
+            item.Add(new XElement(XName.Get("reason", adminNs)) { Value = reason });
+        return SendLobbyIq(RoomJid, "set", adminNs, item);
     }
 
     // ── 缓存访问（GUI 轮询用）──
@@ -364,6 +473,10 @@ public sealed class XmppLobbyClient : IDisposable
 
     internal void EnqueueMessage(LobbyMessage msg)
     {
+        // 无面板订阅时消息也会在队列里累积(大厅面板关闭但 LobbySession 保持连接)——
+        // 封顶防无限增长;事件仍照常分发。
+        if (_messageQueue.Count >= 500)
+            _messageQueue.RemoveAt(0);
         _messageQueue.Add(msg);
         OnMessage?.Invoke(msg);
     }

@@ -1,11 +1,15 @@
+using System.Collections.Generic;
 using Godot;
 
 namespace ZeroAD.Godot;
 
 // Match Settings 面板(对齐 session/MenuButtons.js 的 match-settings → getGameDescription 只读摘要)。
-// 玩家花名册(玩家色/文明/队/状态/人口)经 GuiInterface.GetPlayerRoster 桥读(收敛后无内核直查)。
-// 地图名/胜利条件/种子属 gamesetup 会话外数据(当前建图硬编码 seed=42、civ=athen 为已知缺口),
-// 本轮显示运行时实际设置并标注为待接线。面板只读,Close 关闭。不暂停 sim。
+// 玩家花名册(玩家色/文明/队/状态/人口)经 GuiInterface.GetPlayerRoster 桥读(无内核直查)。
+// 底部行显示真实开局配置:地图名取 SimBridge.MapPath(开局/冷加载/回放各路径都写此运行时
+// 字段),胜利条件经 GuiInterface.GetVictoryConditions 桥读(EndGameManager 运行时值,含地图
+// 脚本注入),种子取 GameLaunchConfig.Seed(SP 选图面板随机摇 / MP host 冻结经协议下发 /
+// 教程固定 42;Load/Replay 局状态整份恢复、构造种子不再具含义,显示 "—")。
+// 面板只读,Close 关闭。不暂停 sim。
 public sealed partial class MatchSettingsPanel : ModalPanelBase
 {
     private readonly SimBridge _sim;
@@ -58,7 +62,42 @@ public sealed partial class MatchSettingsPanel : ModalPanelBase
             _grid.AddChild(Left($"{row.PopUsed}/{row.PopulationLimit}"));
         }
 
-        _status.Text = "Map / victory condition / seed: not yet captured (gamesetup hard-coding is a known gap).";
+        _status.Text = $"Map: {MapDisplayName()}\nVictory: {VictoryDisplay()}\nSeed: {SeedDisplay()}";
+    }
+
+    /// <summary>地图显示名(同加载页口径 Main.MapTitleFromPath:文件名去扩展名、下划线
+    /// 换空格、首字母大写;random/x 取脚本名)。无路径(PMP 缺失的生成回退地形)→
+    /// "Generated terrain"。</summary>
+    private string MapDisplayName()
+    {
+        string? rel = _sim.MapPath;
+        if (string.IsNullOrEmpty(rel)) return "Generated terrain";
+        string name = System.IO.Path.GetFileNameWithoutExtension(rel).Replace('_', ' ').Trim();
+        return name.Length == 0 ? "Generated terrain" : char.ToUpperInvariant(name[0]) + name[1..];
+    }
+
+    /// <summary>胜利条件显示(桥读 EndGameManager 运行时值;空表 = 默认征服,与
+    /// EndGameManager.HasCondition 口径一致)。条件名转读法:下划线换空格、首字母大写。</summary>
+    private string VictoryDisplay()
+    {
+        var conditions = _sim.Gui.GetVictoryConditions();
+        if (conditions.Count == 0) return "Conquest";
+        var names = new List<string>(conditions.Count);
+        foreach (var c in conditions)
+        {
+            string pretty = c.Replace('_', ' ').Trim();
+            names.Add(pretty.Length == 0 ? c : char.ToUpperInvariant(pretty[0]) + pretty[1..]);
+        }
+        return string.Join(", ", names);
+    }
+
+    /// <summary>种子显示:Load/Replay 局世界状态自存档/录像整份恢复,构造种子不再具含义,
+    /// 标 "—";其余(SP/MP/教程)显示 GameLaunchConfig.Seed 实际下发值。</summary>
+    private string SeedDisplay()
+    {
+        var cfg = GetNode<GameLaunchConfig>("/root/GameLaunchConfig");
+        return cfg.Mode is GameLaunchConfig.LaunchMode.Load or GameLaunchConfig.LaunchMode.Replay
+            ? "—" : cfg.Seed.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static Label Left(string text)

@@ -22,6 +22,7 @@ public sealed class NetCommandCodecTests
             NetCommand.SetRallyPoint(2, 15, 77),
             NetCommand.FocusFire(1, 18, 99, queued: true, pushFront: false),   // IntParam2 载 queued/pushFront
             NetCommand.FocusFire(2, 19, 100, queued: false, pushFront: true),
+            NetCommand.SpyRequest(1, 2),   // IntParam1 载目标玩家
         };
 
         byte[] data = NetCommand.SerializeBatch(commands);

@@ -219,6 +219,20 @@ public sealed class Accessibility
     /// <summary>水域区域 id(0/1 = 非水域)。</summary>
     public ushort WaterRegionAt(float px, float pz) => _navalPassMap[ToIndex(px, pz)];
 
+    /// <summary>navcell 索引 → 陆地区域 id(原版 accessibility.landPassMap[i] 直读;
+    /// findMarketLocation/getFishSea 的逐格扫描用)。</summary>
+    public ushort LandRegionAtIndex(int idx)
+        => idx >= 0 && idx < Length ? _landPassMap[idx] : (ushort)0;
+    /// <summary>navcell 索引 → 水域区域 id(原版 navalPassMap[i] 直读)。</summary>
+    public ushort WaterRegionAtIndex(int idx)
+        => idx >= 0 && idx < Length ? _navalPassMap[idx] : (ushort)0;
+    /// <summary>区域 id → 区域格数(原版 regionSize[id];0 = 无此区)。</summary>
+    public int RegionSizeById(int regionId)
+        => regionId >= 0 && regionId < _regionSize.Count ? _regionSize[regionId] : 0;
+
+    /// <summary>区域 id 上界(有效区域 = 2..RegionCount-1;原版 regionSize.length)。</summary>
+    public int RegionCount => _regionType.Count;
+
     /// <summary>最大水域区域的格数(0 = 无水域;Petra navalMap 判定的输入:
     /// 原版按水域规模决定是否当海图运营)。</summary>
     public int LargestWaterRegionSize()

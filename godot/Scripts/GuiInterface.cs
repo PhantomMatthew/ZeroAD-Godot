@@ -272,6 +272,94 @@ public sealed class GuiInterface
         return (endGame.CeasefireActive, endGame.CeasefireRemaining);
     }
 
+    // ── 间谍请求(原版 SpyRequestButton.update 的 GUI 读侧;命令侧 SimBridge.CommandSpyRequest)──
+
+    /// <summary>四资源数量组(间谍费用/失败成本/缺口共用形状;0 = 该资源无涉)。</summary>
+    public record ResourceAmounts(int Wood, int Food, int Stone, int Metal)
+    {
+        /// <summary>非零项格式串("500 Metal",原版规范序 Food/Wood/Stone/Metal;
+        /// 全 0 → "")——tooltip 费用/缺口行用。资源名与面板按钮一致保持英文。</summary>
+        public string Describe()
+        {
+            var parts = new List<string>();
+            if (Food > 0) parts.Add($"{Food} Food");
+            if (Wood > 0) parts.Add($"{Wood} Wood");
+            if (Stone > 0) parts.Add($"{Stone} Stone");
+            if (Metal > 0) parts.Add($"{Metal} Metal");
+            return string.Join(", ", parts);
+        }
+    }
+
+    /// <summary>间谍请求钮一行状态(原版 SpyRequestButton.update 读侧聚合)。
+    /// Cost = floor(目标 spyCostMultiplier × special/spy 基础费)——预览简化:请求侧
+    /// ApplyTemplate 对 "Spy" 类模板费的修正(stock 数据无此修正)不计,与内核
+    /// IncurBribeCost 实扣至多差该修正项(记录在案)。FailureCost = floor(Cost ×
+    /// VisionSharing/FailureCostRatio)。NeededResources = 逐资源缺口(tooltip 缺口行)。
+    /// RequiredTechs = 模板前置 token 原文(面板需求提示取名用;"" = 无前置)。</summary>
+    public record SpyRequestState(
+        bool Visible,
+        bool Researched,
+        ResourceAmounts Cost,
+        ResourceAmounts FailureCost,
+        bool Affordable,
+        ResourceAmounts NeededResources,
+        string RequiredTechs);
+
+    public SpyRequestState GetSpyRequestState(int localPlayerId, int targetPlayerId)
+    {
+        var zero = new ResourceAmounts(0, 0, 0, 0);
+        var hiddenState = new SpyRequestState(false, false, zero, zero, false, zero, "");
+
+        // 原版:!template → hidden(模板缺失时 ExtractStats 抛,与既有调用点同款 try/catch)。
+        ZeroAD.Sim.Content.TemplateStats? spy = null;
+        try { spy = _cm.Templates?.ExtractStats("special/spy"); } catch { }
+        if (spy == null) return hiddenState;
+
+        var target = _cm.GetPlayerEntity(targetPlayerId);
+        if (target == null) return hiddenState;
+
+        // 原版 hidden:目标 inactive ||(互盟 && 本地 hasSharedLos==false)。
+        // 另:自贿(self 行)内核直接拒收(ApplySpyRequest target==requester → 不回
+        // SpyResponse,钮会卡 pending),GUI 侧隐藏;上游此行在共享 LOS 开时本可点
+        // 但必失败扣费。disabledTemplates["special/spy"] 上游另查——本端无
+        // disabled-templates 基建,跳过(记录在案)。
+        if (targetPlayerId == localPlayerId
+            || !target.IsActive()
+            || (!RangeManager.AlliedVisionEnabled
+                && _cm.Players.GetMutualAllies(localPlayerId).Contains(targetPlayerId)))
+            return hiddenState;
+
+        // 前置科技(模板 Identity/Requirements/Techs 全文,含 '!' 否定 token);
+        // 无 TM → 前置恒满足(GetTechnologyManager 文档口径)。
+        bool researched = GetTechnologyManager(localPlayerId)?.MeetsRequirements(spy.RequiredTechs) ?? true;
+
+        float mult = target.GetSpyCostMultiplier(_cm);
+        int ScaleFloor(float baseCost) => (int)System.Math.Floor(mult * baseCost);
+        var cost = new ResourceAmounts(ScaleFloor(spy.WoodCost), ScaleFloor(spy.FoodCost),
+            ScaleFloor(spy.StoneCost), ScaleFloor(spy.MetalCost));
+
+        float ratio = spy.VisionSharingFailureCostRatio;
+        int FailFloor(int c) => (int)System.Math.Floor(ratio * c);
+        var failure = new ResourceAmounts(FailFloor(cost.Wood), FailFloor(cost.Food),
+            FailFloor(cost.Stone), FailFloor(cost.Metal));
+
+        var local = _cm.GetPlayerEntity(localPlayerId);
+        bool affordable = local?.CanAfford(cost.Wood, cost.Food, cost.Stone, cost.Metal) ?? false;
+        int Shortfall(int have, int need) => need > have ? need - have : 0;
+        var needed = new ResourceAmounts(
+            Shortfall(local?.Wood ?? 0, cost.Wood), Shortfall(local?.Food ?? 0, cost.Food),
+            Shortfall(local?.Stone ?? 0, cost.Stone), Shortfall(local?.Metal ?? 0, cost.Metal));
+
+        return new SpyRequestState(true, researched, cost, failure, affordable, needed,
+            spy.RequiredTechs);
+    }
+
+    /// <summary>当前胜利条件(EndGameManager 运行时值——菜单选择经 ApplyMatchOptions
+    /// 注入、地图脚本可另注入;空表 = 默认征服,与 EndGameManager.HasCondition 口径一致)。
+    /// Match Settings 面板只读显示用。</summary>
+    public IReadOnlyList<string> GetVictoryConditions() =>
+        new List<string>(_cm.EndGame.VictoryConditions);
+
     // ── 玩家花名册(原版 GetSimulationState 的 players 段;Match Settings 页只读摘要)──
 
     /// <summary>玩家花名册一行(名字色由面板自取;人口/状态为运行时值)。</summary>
@@ -853,6 +941,69 @@ public sealed class GuiInterface
         return new GarrisonPanelState(holder.Entities.Count, holder.GetCapacity(_cm),
             _cm.QueryInterface<OwnershipComponent>(entity)?.PlayerId == localPlayerId,
             members);
+    }
+
+    // ── 桥扩面第四波:训练/建造/研究面板(HUD 生产面板段的残留内核直查收敛)──
+
+    /// <summary>训练面板:生产建筑当前可训练模板列表(转发 ProductionQueue.
+    /// GetTrainableEntities:{civ} 已按属主文明实时解析、不存在模板已过滤——
+    /// 原版 Trainer.CalculateEntitiesMap)。无队列件 → 空表。</summary>
+    public IReadOnlyList<string> GetTrainableEntities(EntityId producer)
+    {
+        var queue = _cm.QueryInterface<ProductionQueue>(producer);
+        return queue != null ? queue.GetTrainableEntities(_cm) : [];
+    }
+
+    /// <summary>建造面板行数据(原版 construction_panel 的查询侧):建造者模板名 +
+    /// 属主文明。{civ}/{native} 令牌解析与 TemplateExists 过滤留在 HUD
+    /// (模板目录是数据层,非 sim 态)。无 Identity 件 → null(调用方整段跳过)。</summary>
+    public record BuilderPanelInfo(string TemplateName, string OwnerCiv);
+
+    public BuilderPanelInfo? GetBuilderPanelInfo(EntityId builder)
+    {
+        var id = _cm.QueryInterface<IdentityComponent>(builder);
+        if (id == null) return null;
+        string ownerCiv = "";
+        var own = _cm.QueryInterface<OwnershipComponent>(builder);
+        if (own != null) ownerCiv = _cm.GetPlayerEntity(own.PlayerId)?.Civ ?? "";
+        return new BuilderPanelInfo(id.TemplateName, ownerCiv);
+    }
+
+    /// <summary>研究面板聚合(原版 research_panel 的查询侧):首个选中研究者实体 +
+    /// 其模板名/属主文明/当前在研科技("" = 无)+ 本地玩家 TechnologyManager
+    /// 只读句柄(supersedes 折叠/已研过滤/CanResearch 置灰在 HUD 消费——内核组件
+    /// 活引用,只读使用,与 _sim.Sim.GetPlayerEntity 的现例同级)。一趟扫描替代原
+    /// 5 趟 QueryInterface。无选中研究者 → null(整段跳过)。</summary>
+    public record ResearchPanelState(
+        EntityId Researcher, string TemplateName, string OwnerCiv, string CurrentTech,
+        TechnologyManager? TechManager);
+
+    public ResearchPanelState? GetResearchPanelState(
+        IReadOnlyCollection<EntityId> selected, int localPlayerId)
+    {
+        EntityId? researcher = null;
+        ResearcherComponent? rcomp = null;
+        foreach (var eid in selected)
+        {
+            var r = _cm.QueryInterface<ResearcherComponent>(eid);
+            if (r != null) { researcher = eid; rcomp = r; break; }
+        }
+        if (!researcher.HasValue) return null;
+
+        var id = _cm.QueryInterface<IdentityComponent>(researcher.Value);
+        string ownerCiv = "";
+        var own = _cm.QueryInterface<OwnershipComponent>(researcher.Value);
+        if (own != null) ownerCiv = _cm.GetPlayerEntity(own.PlayerId)?.Civ ?? "";
+        return new ResearchPanelState(researcher.Value, id?.TemplateName ?? "", ownerCiv,
+            rcomp?.CurrentTech ?? "", GetTechnologyManager(localPlayerId));
+    }
+
+    /// <summary>玩家 TechnologyManager 只读句柄(训练/建造前置过滤 RequirementsMet 用;
+    /// 内核组件活引用,调用方只读)。无玩家实体/无件 → null(调用方按"前置恒满足"处理)。</summary>
+    public TechnologyManager? GetTechnologyManager(int playerId)
+    {
+        var ent = _cm.GetPlayerEntityId(playerId);
+        return ent.HasValue ? _cm.QueryInterface<TechnologyManager>(ent.Value) : null;
     }
 
     /// <summary>实体世界位置(相机跟随用;无 Position/不在世界(驻军等)→ null)。

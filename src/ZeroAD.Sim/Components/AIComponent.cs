@@ -258,5 +258,9 @@ public sealed class AIComponent : ComponentBase
             playerId, Metadata, Events, null)
         { Net = _net };
         _hq.Deserialize(d, gs);
+        // 难度作弊修正重挂(ModifiersManager 是派生态不随档——与已研科技重放同理;
+        // AddModifiers 拒重幂等,新档首次 SetConfig 已挂过时此处无害)。
+        if (playerId > 0)
+            _petraConfig?.Cheat(gs);
     }
 }

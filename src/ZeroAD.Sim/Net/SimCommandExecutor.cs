@@ -104,6 +104,7 @@ namespace ZeroAD.Sim.Net
                     _cm.Events.RaiseAttackRequested(new Events.AttackRequestedEvent
                     { SourcePlayer = (int)cmd.Player, TargetPlayer = cmd.IntParam1 });
                     break;
+                case NetCommandType.SpyRequest: ApplySpyRequest(cmd); break;
                 case NetCommandType.Upgrade: ApplyUpgrade(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.Gate: ApplyGate(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.FocusFire: ApplyFocusFire(new EntityId(cmd.EntityId), cmd); break;
@@ -204,6 +205,11 @@ namespace ZeroAD.Sim.Net
             int metal = stats?.MetalCost ?? 0;
             int food = stats?.FoodCost ?? 0;
             float buildTime = stats != null && stats.BuildTime > 0f ? stats.BuildTime : 8.0f;
+            // 建造时间过修正值管线(原版 Cost.js GetBuildTime 经 Cost/BuildTime 修正;
+            // AI 难度作弊的时间缩放也走此路径——PetraConfig.Cheat 的 "AI Bonus")。
+            if (stats != null && _cm.GetPlayerEntityId((int)cmd.Player) is { } buildPlayerEid)
+                buildTime = _cm.Modifiers.ApplyTemplate(
+                    "Cost/BuildTime", buildTime, stats.GetClassList(), buildPlayerEid);
             if (!player.CanAfford(wood, food, stone, metal))
             {
                 RaiseBuildRejected(cmd, "cannot-afford");
@@ -568,6 +574,67 @@ namespace ZeroAD.Sim.Net
             var buy = (ResourceType)cmd.IntParam2;
             int amount = cmd.FixedParam1;
             BarterSystem.ExchangeResources(_cm, player, (int)cmd.Player, sell, buy, amount);
+        }
+
+        /// <summary>
+        /// 间谍请求(原版 Commands.js "spy-request"):从目标玩家名下随机挑一个可贿赂
+        /// 且尚未与请求者共享视野的单位,收买之(共享其视野圈)。无论成败都广播
+        /// SpyResponseEvent(原版 spy-response 通知);无目标时扣失败成本
+        /// (special/spy 的 FailureCostRatio)+ 失败计数 + spy-failed 通知
+        /// (原版 "There are no bribable units" 文本通知)。候选按实体 id 升序收集后
+        /// 以共享 RNG 取下标——跨端确定(原版 pickRandom 同款)。
+        /// </summary>
+        private void ApplySpyRequest(NetCommand cmd)
+        {
+            int requester = (int)cmd.Player;
+            int target = cmd.IntParam1;
+            if (target <= 0 || target == requester) return;
+            var requesterPc = _cm.GetPlayerEntity(requester);
+            if (requesterPc == null || !requesterPc.IsActive()) return;
+            if (_cm.GetPlayerEntity(target) == null) return;
+            var rm = _cm.Range;
+            if (rm == null) return;   // 无 LOS 索引的纯内核世界(不处理间谍语义)
+
+            var candidates = new List<EntityId>();
+            foreach (var eid in _cm.AllEntities)   // 插入序;materialize 后按 id 定序
+            {
+                if (_cm.QueryInterface<OwnershipComponent>(eid)?.PlayerId != target) continue;
+                var vs = _cm.QueryInterface<VisionSharingComponent>(eid);
+                if (vs == null || !vs.Bribable) continue;
+                if (vs.ShareVisionWith(_cm, requester)) continue;
+                candidates.Add(eid);
+            }
+            candidates.Sort((a, b) => a.Value.CompareTo(b.Value));
+
+            EntityId picked = default;
+            if (candidates.Count > 0)
+                picked = candidates[_cm.RNG.NextInt(0, candidates.Count)];
+
+            // 原版:成败都先回 spy-response(GUI 据以刷新)。
+            _cm.Events.RaiseSpyResponse(new Events.SpyResponseEvent
+            {
+                Requester = requester,
+                Target = target,
+                BribedEntity = candidates.Count > 0 ? picked.Value : 0,
+            });
+
+            if (candidates.Count > 0)
+            {
+                // AddSpy 内部复审科技门与扣费(原版同款;竞态下拒收 = 仅回了通知)。
+                _cm.QueryInterface<VisionSharingComponent>(picked)?.AddSpy(_cm, rm, requester);
+            }
+            else
+            {
+                // 无可贿赂单位:失败成本照扣(原版 IncurBribeCost(failedBribe:true);
+                // 扣不起也照计失败数并发通知——原版同序)。
+                VisionSharingComponent.IncurBribeCost(_cm, requester, target, failedBribe: true);
+                if (_cm.GetPlayerEntityId(requester) is { } requesterEntity)
+                    _cm.QueryInterface<StatisticsTrackerComponent>(requesterEntity)
+                        ?.IncreaseFailedBribesCounter();
+                var e = new PlayerCommandEvent { Type = "spy-failed" };
+                e.Data["player"] = requester;
+                _cm.Events.RaisePlayerCommand(e);
+            }
         }
 
         // ── Phase 4 缺口 Apply 方法 ──

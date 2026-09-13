@@ -32,13 +32,25 @@ public sealed class PetraConfig
     public readonly EconomyConfig Economy = new();
     public readonly DefenseConfig Defense = new();
 
-    // per-civ 额外建筑（phase 3 时建造）
+    // per-civ 额外建筑（phase 3 时建造;原版 config.js buildings 全量逐字,
+    // 键以原版实际为准——pers 等无表文明回落 default 空表）
     public readonly Dictionary<string, List<string>> Buildings = new()
     {
         ["default"] = new(),
+        ["achae"] = new() { "structures/{civ}/tachara" },
         ["athen"] = new() { "structures/{civ}/gymnasium", "structures/{civ}/prytaneion", "structures/{civ}/theater" },
+        ["brit"] = new(),
+        ["cart"] = new() { "structures/{civ}/embassy_celtic", "structures/{civ}/embassy_iberian", "structures/{civ}/embassy_italic" },
+        ["gaul"] = new() { "structures/{civ}/assembly" },
+        ["han"] = new() { "structures/{civ}/academy" },
+        ["iber"] = new() { "structures/{civ}/monument" },
+        ["kush"] = new() { "structures/{civ}/camp_blemmye", "structures/{civ}/camp_noba", "structures/{civ}/pyramid_large", "structures/{civ}/pyramid_small", "structures/{civ}/temple_amun" },
+        ["mace"] = new() { "structures/{civ}/theater" },
+        ["maur"] = new() { "structures/{civ}/palace", "structures/{civ}/pillar_ashoka" },
+        ["ptol"] = new() { "structures/{civ}/library", "structures/{civ}/theater" },
+        ["rome"] = new() { "structures/{civ}/army_camp", "structures/{civ}/temple_vesta" },
+        ["sele"] = new() { "structures/{civ}/theater" },
         ["spart"] = new() { "structures/{civ}/syssiton", "structures/{civ}/theater" },
-        // 其它 civ 的建筑列表（逐字移植，此处省略重复——运行时从 config 读）
     };
 
     public readonly Dictionary<string, int> Priorities = new()
@@ -170,6 +182,33 @@ public sealed class PetraConfig
             Structures = CriticalStructureFactors[Math.Min(Difficulty, CriticalStructureFactors.Count - 1)],
             Roots = CriticalRootFactors[Math.Min(Difficulty, CriticalRootFactors.Count - 1)],
         };
+
+        Cheat(gameState);
+    }
+
+    /// <summary>原版 config.js Cheat(325-338)逐字移植:按难度给 AI 玩家挂作弊修正——
+    /// 采集速率与贸易收益 × rate[difficulty],建造/训练/研究时间 × time[difficulty]
+    /// (难度 0-5 = Sandbox…VeryHard;越界钳到表尾)。
+    /// 经 ModifiersManager 落到 AI 玩家实体(原版 AddModifiers("AI Bonus", …, playerData.entity)
+    /// 同款;affects = Unit+Structure)。AddModifiers 同 modId+路径+目标拒重 → 幂等。
+    /// 调用链:SetConfig 末段(config.js:318);另由 AIComponent.DeserializeHq 在读档后
+    /// 重挂(ModifiersManager 是派生态不序列化,读档须重放,与科技重放同理由)。</summary>
+    public void Cheat(CommonApi.GameState gameState)
+    {
+        // Sandbox, Very Easy, Easy, Medium, Hard, Very Hard
+        // rate 作用于资源囤积(采集与贸易);time 作用于建造/升级/打包/训练/科技
+        double[] rate = { 0.42, 0.56, 0.75, 1.00, 1.25, 1.56 };
+        double[] time = { 1.40, 1.25, 1.10, 1.00, 1.00, 1.00 };
+        int aiDiff = Math.Min(Difficulty, rate.Length - 1);
+        var playerEntity = gameState.Cm.GetPlayerEntityId(gameState.PlayerId);
+        if (playerEntity == null) return;
+        var affects = new List<string> { "Unit", "Structure" };
+        gameState.Cm.Modifiers.AddModifiers("AI Bonus", new List<Components.Modification>
+        {
+            new("ResourceGatherer/BaseSpeed", null, (float)rate[aiDiff], null, affects),
+            new("Trader/GainMultiplier", null, (float)rate[aiDiff], null, affects),
+            new("Cost/BuildTime", null, (float)time[aiDiff], null, affects),
+        }, playerEntity.Value);
     }
 
     // ── 嵌套配置类型 ──

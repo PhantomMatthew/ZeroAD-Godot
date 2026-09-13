@@ -80,11 +80,14 @@ public sealed class ResourceGatherer : ComponentBase, IComponentMessageHandler
     public enum GatherState { Idle, MovingToResource, Gathering, MovingToDropsite, Dropping }
 
     /// <summary>经修正值管线的采集速率(科技如 "ResourceGatherer/Rates/wood.tree" ×1.15)。
-    /// 前缀匹配:按资源类型(wood/food/stone/metal)命中其全部子类型路径。</summary>
+    /// 前缀匹配:按资源类型(wood/food/stone/metal)命中其全部子类型路径。
+    /// 再乘 "ResourceGatherer/BaseSpeed" 路径修正(原版两路径并存:子类型比率 ×
+    /// 全局 BaseSpeed——AI 难度作弊 "AI Bonus" 走后者,见 PetraConfig.Cheat)。</summary>
     public int EffectiveRate(ComponentManager cm, ResourceType type)
     {
         float modified = cm.Modifiers.ApplyPrefix(
             "ResourceGatherer/Rates/" + type.ToString().ToLowerInvariant(), GatherRate, Entity);
+        modified = cm.Modifiers.Apply("ResourceGatherer/BaseSpeed", modified, Entity);
         return (int)System.MathF.Round(modified, System.MidpointRounding.AwayFromZero);
     }
 

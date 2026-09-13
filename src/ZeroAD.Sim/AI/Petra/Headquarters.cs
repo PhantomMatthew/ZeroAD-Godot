@@ -46,6 +46,11 @@ public sealed class Headquarters
     /// 一块像样的湖/海,小水洼不算)。</summary>
     private const int NavalMapMinWaterCells = 200;
 
+    /// <summary>AI 运营陆区集合(原版 HQ.landRegions:startingStrategy 的
+    /// assignStartingEntities/gameAnalysis 标注——本单位所在陆区 + 海图时经海路
+    /// 可达的大陆区)。FindMarketLocation 的选址门(陆区须运营中)。</summary>
+    public readonly HashSet<int> LandRegions = new();
+
     private bool _diplomacyAttached;
     public int Phasing;  // 0=无，>0=正在升级到 phase i
     public int CurrentPhase;
@@ -92,6 +97,8 @@ public sealed class Headquarters
         AttackManager = new AttackManager(config);
         AttackManager.Hq = this;   // 原版 attackManager 经 gameState.ai.HQ 回查(getEnemyPlayer 等)
         TradeManager = new TradeManager(config);
+        TradeManager.Hq = this;   // 原版 tradeManager 经 gameState.ai.HQ 回查
+                                   // (findMarketLocation/navalMap/requireTransport)
         EmergencyManager = new EmergencyManager(config);
         DefenseManager = new DefenseManager(config);
         DefenseManager.Hq = this;   // 原版 defenseManager 经 HQ 回查(switchToAttack/isDefendable)
@@ -189,11 +196,7 @@ public sealed class Headquarters
         long t10 = prof.ElapsedMilliseconds;
         // 海军(原版 navalManager.update 门控:navalMap):首 Update 从 Accessibility
         // 判定海图(有 ≥200 格水域区域),海图才运营码头/船。
-        if (!_navalMapComputed)
-        {
-            _navalMapComputed = true;
-            NavalMap = (gameState.Accessibility?.LargestWaterRegionSize() ?? 0) >= NavalMapMinWaterCells;
-        }
+        EnsureNavalMap(gameState);
         if (NavalMap && hasActive)
             NavalManager.Update(gameState, Queues, events);
         // 外交/胜利(原版顺序压轴:diplomacyManager → victoryManager):
@@ -233,6 +236,16 @@ public sealed class Headquarters
 
     public bool HasPotentialBase(GameState gameState)
         => BasesManager.HasPotentialBase(gameState);
+
+    /// <summary>海图判定(原版 navalMap 在 gameAnalysis 即定,tradeManager.init 读):
+    /// 首个 ≥200 格水域区域即海图。首次 Update/StartingStrategy.GameAnalysis 调用,
+    /// 幂等只算一次。</summary>
+    public void EnsureNavalMap(GameState gameState)
+    {
+        if (_navalMapComputed) return;
+        _navalMapComputed = true;
+        NavalMap = (gameState.Accessibility?.LargestWaterRegionSize() ?? 0) >= NavalMapMinWaterCells;
+    }
 
     // ── 事件处理（原版 checkEvents 简化版）──
 
@@ -704,6 +717,179 @@ public sealed class Headquarters
             if (dx * dx + dz * dz < radius * radius) return true;
         }
         return false;
+    }
+
+    /// <summary>FindMarketLocation 的结果(原版 [x, z, idx, gain] 四元组)。
+    /// Gain==0 = 任意选址哨兵(原版 [-1,-1,-1,0]:首市场/无约束);
+    /// 整体 null = 无合格位置(原版 false)。BaseIdx = 基地 id(原版 baseAtIndex;
+    /// -1 = 首市场保留哨兵——queueplanBuilding 据它留住首市场计划)。</summary>
+    public readonly struct MarketLocation
+    {
+        public readonly float X, Z;
+        public readonly int BaseIdx;
+        public readonly int Gain;
+        public MarketLocation(float x, float z, int baseIdx, int gain)
+        { X = x; Z = z; BaseIdx = baseIdx; Gain = gain; }
+    }
+
+    /// <summary>原版 headquarters.js findMarketLocation(1015-1130)移植:
+    /// 领土图逐格扫描——跳窄前线(borderMap)+ 非我方领土(原版 baseAtIndex(j)==0,
+    /// 我方领土格必属某基地 → 以 owner==PlayerId 等价);格内经障碍图找非阻挡
+    /// navcell,陆区须运营中(LandRegions);候选点对每个现有市场(盟友优先,
+    /// 否则我方)取增益最大配对——海贸市场须同海域、陆贸须同陆区且连线不穿
+    /// 敌领;配对估值 = 模板倍率 × 距离²。最优点期望收益 =
+    /// round(倍率 × TradeGain(距离², mapSize));低于 minimalGain 时仅首市场
+    /// 保留(原版 idx=-1 哨兵),否则返回 null。
+    /// 与原版差异:baseAtIndex 以"领土属主==我方"近似(无 basesManager.basesMap);
+    /// BaseIdx 返回最近基地 id 近似(仅 queueplanBuilding 等价物 ConstructionPlan
+    /// 的 base 元数据用)。</summary>
+    public MarketLocation? FindMarketLocation(GameState gameState, AITemplate template)
+    {
+        var markets = gameState.GetAllyEntities().Filter(e => e.HasClass("Trade")).ToList();
+        if (markets.Count == 0)
+            markets = gameState.GetOwnStructures().Filter(e => e.HasClass("Trade")).ToList();
+        if (markets.Count == 0)
+            // 首市场:暂由 ConstructionPlan 任意选址(原版 [-1,-1,-1,0] 哨兵)。
+            return new MarketLocation(-1, -1, -1, 0);
+
+        var territory = SimSystem.Territory;
+        if (territory == null || territory.GridWidth <= 0 || gameState.Accessibility == null)
+            return null;
+
+        // 障碍图(原版 createObstructionMap(gameState, 0, template):无陆区过滤)。
+        var obstructions = PetraMapModule.CreateObstructionMap(gameState, null, template);
+        float halfSize = 0;
+        if (template.Get("Footprint/Square") != null)
+            halfSize = System.Math.Max(template.GetFloat("Footprint/Square/@depth"),
+                template.GetFloat("Footprint/Square/@width")) / 2f;
+        else if (template.Get("Footprint/Circle") != null)
+            halfSize = template.GetFloat("Footprint/Circle/@radius");
+
+        int bestIdx = -1, bestJdx = -1;
+        float bestVal = -1;   // 原版 bestVal===undefined 哨兵 → -1
+        float bestDistSq = 0, bestGainMult = 0;
+        int radius = (int)System.Math.Ceiling(
+            ObstructionRadiusMax(template) / obstructions.CellSize);
+        bool isNavalMarket = template.HasClass("Naval") && template.HasClass("Trade");
+
+        int width = territory.GridWidth;
+        const int cellSize = TerritoryManager.CellSize;
+        var territoryMap = PetraMapModule.CreateTerritoryMap(gameState);
+        var borderMap = PetraMapModule.CreateBorderMap(gameState);
+        var gains = gameState.GetTraderTemplatesGains();
+        double mapSize = gameState.MapSize;
+
+        for (int j = 0; j < width * width; j++)
+        {
+            // 不在领土窄前线建(原版:borderMap narrowFrontier 位)。
+            if ((borderMap.Map[j] & MapMask.NarrowFrontier) != 0) continue;
+            // 只在我方领土(原版 baseAtIndex(j)==0 → 无基地认领的格子跳过)。
+            if (territory.GetOwnerByIndex(j) != gameState.PlayerId) continue;
+            // 格内有能放下的非阻挡 navcell。
+            int i = territoryMap.GetNonObstructedTile(j, radius, obstructions);
+            if (i < 0) continue;
+            // 陆区须运营中(原版 landRegions[index])。
+            ushort index = gameState.Accessibility.LandRegionAtIndex(i);
+            if (LandRegions.Count > 0 && !LandRegions.Contains(index)) continue;
+
+            float px = cellSize * (j % width + 0.5f);
+            float pz = cellSize * (j / width + 0.5f);
+            var pos2d = new FixedVector2D(Fixed.FromFloat(px), Fixed.FromFloat(pz));
+            // 对现有市场取增益最大的配对(原版内层 markets 循环)。
+            float maxVal = 0, maxDistSq = 0, maxGainMult = 0;
+            foreach (var market in markets)
+            {
+                if (market.Position2D == default) continue;
+                float gainMultiplier;
+                if (isNavalMarket)
+                {
+                    if (EntityExtend.GetSeaAccess(gameState, market)
+                        != gameState.Accessibility.GetAccessValue(px, pz, onWater: true))
+                        continue;
+                    if (gains.Naval == null) continue;
+                    gainMultiplier = gains.Naval.Value;
+                }
+                else
+                {
+                    if (EntityExtend.GetLandAccess(gameState, market) != index
+                        || EntityExtend.IsLineInsideEnemyTerritory(
+                            gameState, market.Position2D, pos2d))
+                        continue;
+                    if (gains.Land == null) continue;
+                    gainMultiplier = gains.Land.Value;
+                }
+                float distSq = AIUtils3.SquareDistanceMeters(market.Position2D, pos2d);
+                if (gainMultiplier * distSq > maxVal)
+                {
+                    maxVal = gainMultiplier * distSq;
+                    maxDistSq = distSq;
+                    maxGainMult = gainMultiplier;
+                }
+            }
+            if (maxVal == 0) continue;
+            if (bestVal >= 0 && maxVal < bestVal) continue;
+            if (IsDangerousLocation(gameState, pos2d, halfSize)) continue;
+            bestVal = maxVal;
+            bestDistSq = maxDistSq;
+            bestGainMult = maxGainMult;
+            bestIdx = i;
+            bestJdx = j;
+        }
+
+        if (bestVal < 0)
+            // 无约束合格点:任意选址(原版 [-1,-1,-1,0])。
+            return new MarketLocation(-1, -1, -1, 0);
+
+        // JS Math.round = 远离零(收益恒正)。
+        int expectedGain = (int)System.Math.Round(bestGainMult
+            * MarketComponent.TradeGain(bestDistSq, mapSize),
+            System.MidpointRounding.AwayFromZero);
+        int idx;
+        if (expectedGain < TradeManager.MinimalGain)
+        {
+            // 首市场保留哨兵(原版:template 是 Market 且我方无市场 → idx=-1)。
+            if (template.HasClass("Market")
+                && !gameState.GetOwnEntitiesByClass("Market").HasEntities())
+                idx = -1;
+            else
+                return null;
+        }
+        else
+            idx = NearestBaseId(gameState, cellSize * (bestJdx % width + 0.5f),
+                cellSize * (bestJdx / width + 0.5f));
+
+        float x = (bestIdx % obstructions.Width + 0.5f) * obstructions.CellSize;
+        float z = (bestIdx / obstructions.Width + 0.5f) * obstructions.CellSize;
+        return new MarketLocation(x, z, idx, expectedGain);
+    }
+
+    /// <summary>模板障碍半径最大值(原版 obstructionRadius().max:Square 取半宽深大值,
+    /// Circle 取半径;无 → 0)。</summary>
+    private static float ObstructionRadiusMax(AITemplate template)
+    {
+        float w = template.GetFloat("Obstruction/Static/@width");
+        float d = template.GetFloat("Obstruction/Static/@depth");
+        if (w > 0 || d > 0) return System.Math.Max(w, d) / 2f;
+        return template.GetFloat("Obstruction/Circle/@radius");
+    }
+
+    /// <summary>最近基地 id(baseAtIndex 的无 basesMap 近似:距 (px,pz) 最近的有活
+    /// anchor 基地;无基地 → 1)。FindMarketLocation 的 BaseIdx 用。</summary>
+    private int NearestBaseId(GameState gameState, float px, float pz)
+    {
+        int bestId = 1;
+        float bestDist = float.MaxValue;
+        foreach (var b in BasesManager.Bases)
+        {
+            if (b.AnchorId == null) continue;
+            var anchor = gameState.GetEntityById(b.AnchorId.Value);
+            if (anchor == null || anchor.Position2D == default) continue;
+            float dx = anchor.Position2D.X.ToFloat() - px;
+            float dz = anchor.Position2D.Y.ToFloat() - pz;
+            float d = dx * dx + dz * dz;
+            if (d < bestDist) { bestDist = d; bestId = b.ID; }
+        }
+        return bestId;
     }
 
     /// <summary>ccResourceMaps 等价物:静态 supply(剔除 Animal/Field/枯竭)按

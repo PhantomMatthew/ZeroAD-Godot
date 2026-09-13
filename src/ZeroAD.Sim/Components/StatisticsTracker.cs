@@ -46,6 +46,10 @@ public sealed class StatisticsTrackerComponent : ComponentBase
     public int TradeIncome;
     public int TreasuresCollected;   // 子系统未完整，恒 0（占位）
     public int LootCollected;        // 同上
+    /// <summary>贿赂成功/失败次数（原版 StatisticsTracker.js successfulBribes/failedBribes;
+    /// 由 VisionSharingComponent.AddSpy / spy-request 失败路径直调,与原版
+    /// IncreaseSuccessfulBribesCounter/IncreaseFailedBribesCounter 调用点同款）。</summary>
+    public int SuccessfulBribes, FailedBribes;
 
     // 地图百分比（0-100）
     public float PercentMapExplored, PercentMapControlled, PeakPercentMapControlled;
@@ -198,6 +202,11 @@ public sealed class StatisticsTrackerComponent : ComponentBase
 
     // ── 公开 API ──
 
+    /// <summary>原版 IncreaseSuccessfulBribesCounter(VisionSharing.AddSpy 成功时)。</summary>
+    public void IncreaseSuccessfulBribesCounter() => SuccessfulBribes++;
+    /// <summary>原版 IncreaseFailedBribesCounter(spy-request 无目标时,无论失败成本是否扣成)。</summary>
+    public void IncreaseFailedBribesCounter() => FailedBribes++;
+
     private int PlayerId => _cm?.QueryInterface<OwnershipComponent>(Entity)?.PlayerId ?? -1;
 
     /// <summary>当前所有计数器的深拷贝快照（UI / 时间序列用）。</summary>
@@ -226,6 +235,8 @@ public sealed class StatisticsTrackerComponent : ComponentBase
         TradeIncome = TradeIncome,
         TreasuresCollected = TreasuresCollected,
         LootCollected = LootCollected,
+        SuccessfulBribes = SuccessfulBribes,
+        FailedBribes = FailedBribes,
         PercentMapExplored = PercentMapExplored,
         PercentMapControlled = PercentMapControlled,
         PeakPercentMapControlled = PeakPercentMapControlled,
@@ -267,6 +278,9 @@ public sealed class StatisticsTrackerComponent : ComponentBase
         s.NumberFixed("pme", Fixed.FromFloat(PercentMapExplored));
         s.NumberFixed("pmc", Fixed.FromFloat(PercentMapControlled));
         s.NumberFixed("ppmc", Fixed.FromFloat(PeakPercentMapControlled));
+        // 存档 v22 尾段:贿赂计数(更早的档无此段,读 0;见 SaveFormat.LoadedVersion)。
+        s.NumberI32("sbrib", SuccessfulBribes);
+        s.NumberI32("fbrib", FailedBribes);
     }
 
     public override void Deserialize(IDeserializer d)
@@ -293,6 +307,12 @@ public sealed class StatisticsTrackerComponent : ComponentBase
         PercentMapExplored = d.NumberFixed("pme").ToFloat();
         PercentMapControlled = d.NumberFixed("pmc").ToFloat();
         PeakPercentMapControlled = d.NumberFixed("ppmc").ToFloat();
+        // 存档 v22 尾段(更早的档没有,按 0 读;见 SaveFormat.LoadedVersion)。
+        if (SaveFormat.LoadedVersion >= 22)
+        {
+            SuccessfulBribes = d.NumberI32("sbrib");
+            FailedBribes = d.NumberI32("fbrib");
+        }
     }
 
     // ── 辅助 ──
@@ -378,5 +398,7 @@ public sealed class StatisticsSnapshot
     public Dictionary<string, int> ResourcesSold = new();
     public Dictionary<string, int> ResourcesBought = new();
     public int TributesSent, TributesReceived, TradeIncome, TreasuresCollected, LootCollected;
+    /// <summary>贿赂成功/失败次数(原版 successfulBribes/failedBribes;结算面板可列)。</summary>
+    public int SuccessfulBribes, FailedBribes;
     public float PercentMapExplored, PercentMapControlled, PeakPercentMapControlled;
 }

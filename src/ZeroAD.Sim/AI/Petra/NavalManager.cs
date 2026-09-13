@@ -123,6 +123,81 @@ public sealed class NavalManager
             TransportPlans.Add(TransportPlan.Deserialize(d));
     }
 
+    // ── 渔业支持(原版 navalManager.js 的渔船段;worker.startFishing 的依赖)──
+
+    // 8 向单位偏移(原版 getFishSea/canFishSafely 的 around 表)。
+    private static readonly (double dx, double dz)[] Around8 =
+        { (-0.7, 0.7), (0, 1), (0.7, 0.7), (1, 0), (0.7, -0.7), (0, -1), (-0.7, -0.7), (-1, 0) };
+
+    /// <summary>JS Math.round 等价(朝 +∞ 取半;C# Math.Round 默认银行家舍入会偏)。</summary>
+    private static int JsRound(double v) => (int)Math.Floor(v + 0.5);
+
+    /// <summary>原版 getFishSea(navalManager.js:186-220):鱼的海域 id(metadata "sea"
+    /// 缓存;经 EntityExtend.GetSeaAccess 同键缓存)+ opensea 探测:8 向 × 4 环
+    /// (120m)采样格全是"同海域的陆不通格"或界外 → 标 opensea(浅海/近岸鱼不算,
+    /// 安全检不免)。</summary>
+    public static ushort GetFishSea(GameState gameState, AIEntity fish)
+    {
+        ushort sea = EntityExtend.GetSeaAccess(gameState, fish);
+        var acc = gameState.Accessibility;
+        if (sea <= 1 || acc == null) return sea;
+        if (gameState.Metadata.GetObject(fish.Id, "opensea") != null) return sea;
+
+        int width = acc.Width;
+        int cx = (int)(fish.Position2D.X.ToFloat() / acc.CellSize);
+        int cz = (int)(fish.Position2D.Y.ToFloat() / acc.CellSize);
+        const int ntry = 4;
+        double radius = 120.0 / acc.CellSize / ntry;
+        // 单方向:逐环采样——同海域陆不通格 → 立即 OK;界外/地图外 → 下一环;
+        // 可通行陆地(浅滩)或他海域 → 方向失败;全环空转 → OK(原版 every 语义)。
+        bool DirectionOk(double ax, double az)
+        {
+            for (int t = 0; t < ntry; t++)
+            {
+                int i = cx + JsRound(ax * radius * (ntry - t));
+                int j = cz + JsRound(az * radius * (ntry - t));
+                if (i < 0 || i >= width || j < 0 || j >= width) continue;
+                if (acc.LandRegionAtIndex(i + j * width) == 1)
+                {
+                    ushort navalPass = acc.WaterRegionAtIndex(i + j * width);
+                    if (navalPass == sea) return true;
+                    if (navalPass == 1) continue;   // 可能界外
+                }
+                return false;
+            }
+            return true;
+        }
+        if (Around8.All(a => DirectionOk(a.dx, a.dz)))
+            gameState.Metadata.Set(fish.Id, "opensea", true);
+        return sea;
+    }
+
+    /// <summary>原版 canFishSafely(navalManager.js:224-248):opensea 免查;否则
+    /// 8 向 × 2 环(120m,领土格)任一采样为敌领 → 不安全。无领土网格 → 安全(测试环境)。</summary>
+    public static bool CanFishSafely(GameState gameState, AIEntity fish)
+    {
+        if (gameState.Metadata.GetObject(fish.Id, "opensea") != null) return true;
+        var territory = SimSystem.Territory;
+        if (territory == null || territory.GridWidth <= 0) return true;
+        const int ntry = 2;
+        double radius = 120.0 / TerritoryManager.CellSize / ntry;
+        int width = territory.GridWidth;
+        int cx = (int)(fish.Position2D.X.ToFloat() / TerritoryManager.CellSize);
+        int cz = (int)(fish.Position2D.Y.ToFloat() / TerritoryManager.CellSize);
+        foreach (var a in Around8)
+        {
+            for (int t = 0; t < ntry; t++)
+            {
+                int i = cx + JsRound(a.dx * radius * (ntry - t));
+                int j = cz + JsRound(a.dz * radius * (ntry - t));
+                if (i < 0 || i >= width || j < 0 || j >= width) continue;
+                int owner = territory.GetOwnerByIndex(i + j * width);
+                if (owner != 0 && gameState.IsPlayerEnemy(owner)) return false;
+            }
+        }
+        return true;
+    }
+
     /// <summary>运输船缺口(原版 wantedTransportShips:各海域最低数 vs 实有)。</summary>
     public int TransportShipShortage(GameState gameState)
     {

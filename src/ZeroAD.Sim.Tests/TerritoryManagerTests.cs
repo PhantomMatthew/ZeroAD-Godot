@@ -135,6 +135,45 @@ public sealed class TerritoryManagerTests
             }
     }
 
+    // ---------- Petra 领土图封装(createTerritoryMap 真实现) ----------
+
+    [Fact]
+    public void PetraMapModule_CreateTerritoryMap_PacksOwnerAndBlinking()
+    {
+        var (cm, tm) = NewWorld(64);
+        SimSystem.Init(cm);
+        SimSystem.SetTerritoryManager(tm);
+        AddPlayerWithDiplomacy(cm, 1);
+        AddInfluencer(cm, 1, x: 16, z: 16, radius: 24, weight: 10000, root: true);
+
+        var gs = new ZeroAD.Sim.AI.CommonApi.GameState(cm, new Content.TemplateLoader(""),
+            Content.TechnologyLoader.LoadAll(""), 1,
+            new ZeroAD.Sim.AI.EntityMetadata(), new ZeroAD.Sim.AI.AIEventBuffer(), null);
+        var map = ZeroAD.Sim.AI.Petra.PetraMapModule.CreateTerritoryMap(gs);
+
+        // 位布局对齐上游 GetTerritoryGrid:owner 位0-4|connected 位5|blinking 位6;
+        // 格宽 = 领土格 8m,64m 图 → 8×8。
+        Assert.Equal(8, map.Width);
+        Assert.Equal(TerritoryManager.CellSize, map.CellSize);
+        Assert.Equal(1, ZeroAD.Sim.AI.Petra.PetraMapModule.GetOwnerAt(map, 16, 16));
+        Assert.Equal(1, ZeroAD.Sim.AI.Petra.PetraMapModule.GetOwnerAt(map, 40, 16));   // 半径内
+        Assert.Equal(0, ZeroAD.Sim.AI.Petra.PetraMapModule.GetOwnerAt(map, 60, 60));   // gaia
+        int idx = 2 + 2 * 8;   // cell (2,2) = 世界 (16,16)
+        Assert.Equal(1, ZeroAD.Sim.AI.Petra.PetraMapModule.GetOwnerAtIndex(map, idx));
+        Assert.False(ZeroAD.Sim.AI.Petra.PetraMapModule.IsBlinkingAtIndex(map, idx));
+
+        // blink 洪泛置位 → 重建快照 → blinking 位(0x40)进图(原版 isBlinking)。
+        tm.SetTerritoryBlinking(M(16), M(16), true);
+        var map2 = ZeroAD.Sim.AI.Petra.PetraMapModule.CreateTerritoryMap(gs);
+        Assert.True(ZeroAD.Sim.AI.Petra.PetraMapModule.IsBlinkingAtIndex(map2, idx));
+        Assert.Equal(1, ZeroAD.Sim.AI.Petra.PetraMapModule.GetOwnerAtIndex(map2, idx));   // 主不变
+
+        // 无领土管理器(网格未建) → 1×1 空图降级。
+        SimSystem.Init(new ComponentManager(43));
+        var empty = ZeroAD.Sim.AI.Petra.PetraMapModule.CreateTerritoryMap(gs);
+        Assert.Equal(1, empty.Length);
+    }
+
     // ---------- CanBuildHere ----------
 
     [Fact]

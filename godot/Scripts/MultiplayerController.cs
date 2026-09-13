@@ -45,6 +45,9 @@ public sealed partial class MultiplayerController : Node
     /// <summary>Host 选定的大厅地图("" = 默认 arcadia 回退链)。随 lobby 广播 + GameStart
     /// 冻结下发,双端 SetupTerrain 同图——选图已进协议,不再是 SP 独占。</summary>
     private string _mapPath = "";
+    /// <summary>大厅当前地图(rel pmp / "random/name";"" = 默认回退链)。
+    /// 大厅注册 stanza 的 mapName 用(OnMapChanged 的同步快照)。</summary>
+    public string LobbyMapPath => _mapPath;
 
     /// <summary>gamesetup_mp 的可配置选项（host 大厅可改并广播;Start 时冻结,
     /// 双端各自写进 GameLaunchConfig 后由 ApplyMatchOptions 落地,保证双端一致）。

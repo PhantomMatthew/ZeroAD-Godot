@@ -206,17 +206,40 @@ namespace ZeroAD.Sim.Content
             if (auras.IsOk)
                 stats.Auras = auras.ToString();
 
-            // Player/BarterMultiplier(special/players/* 模板;玩家易物价乘数基值)。
-            var barter = node.GetChild("BarterMultiplier");
-            if (barter.IsOk)
+            // Player 子树(template_player → special/players/*):易物价乘数基值 +
+            // 间谍花费乘数基值(原版 Player.js barterMultiplier/spyCostMultiplier)。
+            // 注意须取 <Player> 子节点——两者在 XML 里都嵌在 <Player> 内,此前读根级
+            // 恒空(静默回退 1.0)。
+            var playerNode = node.GetChild("Player");
+            if (playerNode.IsOk)
             {
-                foreach (string side in new[] { "Buy", "Sell" })
+                var barter = playerNode.GetChild("BarterMultiplier");
+                if (barter.IsOk)
                 {
-                    var dict = side == "Buy" ? stats.BarterMultiplierBuy : stats.BarterMultiplierSell;
-                    foreach (var (res, val) in barter.GetChild(side).Children)
-                        if (!res.StartsWith('@'))
-                            dict[res] = val.ToFloat();
+                    foreach (string side in new[] { "Buy", "Sell" })
+                    {
+                        var dict = side == "Buy" ? stats.BarterMultiplierBuy : stats.BarterMultiplierSell;
+                        foreach (var (res, val) in barter.GetChild(side).Children)
+                            if (!res.StartsWith('@'))
+                                dict[res] = val.ToFloat();
+                    }
                 }
+                var spyMul = playerNode.GetChild("SpyCostMultiplier");
+                if (spyMul.IsOk)
+                    stats.SpyCostMultiplier = spyMul.ToFloat();
+            }
+
+            // VisionSharing(原版 VisionSharing.js schema:Bribable 必填,
+            // Duration/FailureCostRatio 可选;special/spy 与 template_unit/structure 携带)。
+            var vshare = node.GetChild("VisionSharing");
+            if (vshare.IsOk)
+            {
+                stats.HasVisionSharing = true;
+                stats.VisionSharingBribable = vshare.GetChild("Bribable").ToBool();
+                var vsDur = vshare.GetChild("Duration");
+                if (vsDur.IsOk) stats.VisionSharingDuration = vsDur.ToFloat();
+                var vsFcr = vshare.GetChild("FailureCostRatio");
+                if (vsFcr.IsOk) stats.VisionSharingFailureCostRatio = vsFcr.ToFloat();
             }
 
             var identity = node.GetChild("Identity");
@@ -1348,6 +1371,18 @@ namespace ZeroAD.Sim.Content
         /// 模板;缺省 1)。键 = 资源码(food/wood/stone/metal)。</summary>
         public Dictionary<string, float> BarterMultiplierBuy = new();
         public Dictionary<string, float> BarterMultiplierSell = new();
+        /// <summary>Player/SpyCostMultiplier(原版 Player.js spyCostMultiplier 的模板基值;
+        /// template_player 默认 1.0,spy_counter 科技 ×1.5 经修正值管线叠加,查询时合成)。</summary>
+        public float SpyCostMultiplier = 1f;
+        /// <summary>模板含 &lt;VisionSharing&gt; 元件(原版 VisionSharing.js;Bribable=false 的
+        /// 基模板也挂组件——驻军视野共享与间谍共用同一组件)。</summary>
+        public bool HasVisionSharing;
+        /// <summary>VisionSharing/Bribable:可被贿赂(原版仅商人/商船 true)。</summary>
+        public bool VisionSharingBribable;
+        /// <summary>VisionSharing/Duration(秒;0 = 模板未给 → 永久间谍)。</summary>
+        public float VisionSharingDuration;
+        /// <summary>VisionSharing/FailureCostRatio(贿赂失败扣费比例;special/spy 为 0.25)。</summary>
+        public float VisionSharingFailureCostRatio;
         /// <summary>Pop capacity granted by buildings (House +10). Read from &lt;Cost&gt;&lt;PopulationBonus&gt;.</summary>
         public int PopulationBonus;
         public float BuildTime = 5f;

@@ -105,6 +105,11 @@ namespace ZeroAD.Sim
                 cm.QueryInterface<VisionComponent>(entity)!.Range = Fixed.FromInt(stats.VisionRange);
             }
 
+            // VisionSharing(原版 template_unit 基模板自带 <VisionSharing/>):间谍/驻军
+            // 视野共享。Bribable 来自模板(仅商人/商船 true)。
+            if (stats?.HasVisionSharing == true)
+                cm.AddComponent(entity, new VisionSharingComponent { Bribable = stats.VisionSharingBribable });
+
             // Fog-of-war: <Fogging/> templates (structures, gaia) spawn mirages in the fog;
             // <Visibility><RetainInFog> keeps them standing in explored fog. Fields are set
             // AFTER AddComponent — OnInit resets them.
@@ -509,6 +514,22 @@ namespace ZeroAD.Sim
             {
                 cm.AddComponent(entity, new VisibilityComponent());
                 cm.QueryInterface<VisibilityComponent>(entity)!.RetainInFog = true;
+            }
+
+            // VisionSharing(原版 template_unit/template_structure 默认件;间谍/驻军视野
+            // 共享)。pre-v22 存档的实体流里没有该组件——此处按模板补挂(stats 缺省时经
+            // 模板缓存现取;v22+ 档组件随流往返,QueryInterface 幂等跳过,Bribable 也由
+            // 流复原,不覆盖)。
+            if (cm.QueryInterface<VisionSharingComponent>(entity) == null)
+            {
+                TemplateStats? vsStats = stats;
+                if (vsStats == null && templateName.Length > 0 && cm.Templates != null)
+                {
+                    try { vsStats = cm.Templates.ExtractStats(templateName); } catch { }
+                }
+                if (vsStats?.HasVisionSharing == true)
+                    cm.AddComponent(entity, new VisionSharingComponent
+                    { Bribable = vsStats.VisionSharingBribable });
             }
 
             // Auras:建筑/foundation/legacy 路径补挂(这些不走 AssembleUnit)。AssembleUnit

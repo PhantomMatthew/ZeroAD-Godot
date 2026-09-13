@@ -84,8 +84,16 @@ namespace ZeroAD.Sim.AI.Petra;
 
     public int CountQueuedUnits() => Plans.Sum(p => p.Number);
 
-    public int CountQueuedUnitsWithClass(string cls)
-        => Plans.Where(p => p.Category == "unit").Sum(p => p.Number);
+    /// <summary>是否有计划的模板带该类(原版 queue.js hasQueuedUnitsWithClass:
+    /// plan.template.hasClass;Type 已 civ 解析,直接查模板)。</summary>
+    public bool HasQueuedUnitsWithClass(GameState gameState, string cls)
+        => Plans.Any(p => gameState.GetTemplate(p.Type)?.HasClass(cls) == true);
+
+    /// <summary>模板带该类的在排单位数(原版 countQueuedUnitsWithClass;
+    /// 此前 cls 参数被忽略的缺陷一并修正)。</summary>
+    public int CountQueuedUnitsWithClass(GameState gameState, string cls)
+        => Plans.Where(p => gameState.GetTemplate(p.Type)?.HasClass(cls) == true)
+            .Sum(p => p.Number);
 
     /// <summary>序列化(原版 queue.js;计划全量,顺序 = 队列序)。</summary>
     public void Serialize(Serialization.ISerializer s)

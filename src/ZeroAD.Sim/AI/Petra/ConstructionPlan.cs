@@ -112,6 +112,29 @@ public sealed class ConstructionPlan : QueuePlan
                 : "wood";
             pos = FindEconomicCCLocation(gameState, resource);
         }
+        // 市场选址(原版 queueplanBuilding.js:176-187 findGoodPosition 的 Market 段):
+        // 经 HQ.FindMarketLocation 按贸易增益选点——无合格位置(null)→ 计划不启动
+        // (原版 return false);首市场/无约束哨兵(Gain==0)→ 落通用选址(原版
+        // [-1,-1,-1,0] 的 fallthrough 语义)。
+        if (pos == null && gameState.GetTemplate(Type) is { } marketTmpl
+            && marketTmpl.HasClass("Market") && gameState.Hq != null)
+        {
+            var mp = gameState.Hq.FindMarketLocation(gameState, marketTmpl);
+            if (mp == null)
+                return;
+            if (mp.Value.BaseIdx > 0)
+            {
+                Metadata["expectedGain"] = mp.Value.Gain;
+                pos = new BuildPosition
+                {
+                    X = Maths.Fixed.FromFloat(mp.Value.X),
+                    Z = Maths.Fixed.FromFloat(mp.Value.Z),
+                    Angle = DefaultPlacementAngle,
+                    Base = mp.Value.BaseIdx,
+                    Access = 0,
+                };
+            }
+        }
         pos ??= FindGoodPosition(gameState);
         if (pos == null) return;
 

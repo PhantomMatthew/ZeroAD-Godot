@@ -113,4 +113,26 @@ public static class EntityExtend
         // 简化：返回 pos（精确版用 Accessibility 的 spiral search）
         return pos;
     }
+
+    /// <summary>原版 entityExtend.js isLineInsideEnemyTerritory(374-387):沿线段每 70m
+    /// 采样领土属主,任一采样点为敌领 → true(陆运路线回避敌领)。无领土网格 → false。</summary>
+    public static bool IsLineInsideEnemyTerritory(GameState gameState, FixedVector2D pos1,
+        FixedVector2D pos2, float step = 70f)
+    {
+        var territory = SimSystem.Territory;
+        if (territory == null || territory.GridWidth <= 0) return false;
+        float x1 = pos1.X.ToFloat(), z1 = pos1.Y.ToFloat();
+        float x2 = pos2.X.ToFloat(), z2 = pos2.Y.ToFloat();
+        float dx = x2 - x1, dz = z2 - z1;
+        int n = (int)MathF.Floor(MathF.Sqrt(dx * dx + dz * dz) / step) + 1;
+        float stepx = dx / n, stepz = dz / n;
+        for (int i = 1; i < n; i++)
+        {
+            int owner = territory.GetOwner(
+                Fixed.FromFloat(x1 + i * stepx), Fixed.FromFloat(z1 + i * stepz));
+            if (owner != 0 && gameState.IsPlayerEnemy(owner))
+                return true;
+        }
+        return false;
+    }
 }

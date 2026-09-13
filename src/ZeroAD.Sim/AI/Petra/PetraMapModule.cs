@@ -5,10 +5,9 @@ namespace ZeroAD.Sim.AI.Petra;
 
 /// <summary>Petra 地图辅助函数（原版 petra/mapModule.js，217 行）。
 /// createObstructionMap: 从 passability + territory 构建建造选址障碍图（过滤敌对领地+不可通行）。
-/// createTerritoryMap: 封装领土图为 InfoMap（加 getOwner/isBlinking）。
+/// createTerritoryMap: 领土图 → InfoMap（owner/connected/blinking 位打包,格宽 8m）——全量实现。
 /// createBorderMap: 地图边界 + 领土前线图。
 ///
-/// 简化版：算法框架移植，依赖 GameState 的完整 passability/territory 接口的部分标 TODO。
 /// createObstructionMap 用的命名通行类掩码已就绪:PassabilityGrid 是逐 navcell 16 位
 /// 位掩码,PathfinderConfig 9 类注册表(default/ship/building-land/building-shore/
 /// *-terrain-only 等,pathfinder.xml 数据驱动)经 GetPassabilityClassMask 按名查询。</summary>
@@ -125,17 +124,33 @@ public static class PetraMapModule
         return template.GetFloat("Obstruction/Circle/@radius");
     }
 
-    /// <summary>封装领土图为 InfoMap（原版 createTerritoryMap）。
-    /// getOwner/getOwnerIndex/isBlinking 从 byte 值解码（player mask + blinking bit）。</summary>
+    /// <summary>封装领土图为 InfoMap（原版 mapModule.js createTerritoryMap 全量移植）:
+    /// 数据源 = TerritoryManager 的位打包快照(位布局对齐上游 ICmpTerritoryManager
+    /// GetTerritoryGrid:owner 位0-4 | connected 位5(0x20) | blinking 位6(0x40)),
+    /// 格宽 = 领土格 8m。getOwner/getOwnerIndex/isBlinking 经下方静态解码
+    /// (<see cref="GetOwnerFromTerritory"/>/<see cref="IsBlinking"/>)。
+    /// 网格未建(纯内核测试环境)→ 1×1 空图(调用方按空图短路)。</summary>
     public static InfoMap CreateTerritoryMap(GameState gameState)
     {
-        // 完整版需要 TerritoryManager.OwnerGrid 的尺寸 + cellSize。
-        // 简化版：返回空 InfoMap（Phase 2 后续接入）。
-        return new InfoMap(1, 1, 4);
+        var territory = SimSystem.Territory;
+        if (territory == null || territory.GridWidth <= 0)
+            return new InfoMap(1, 1, TerritoryManager.CellSize);
+        return new InfoMap(territory.GridWidth, territory.GridWidth, TerritoryManager.CellSize,
+            territory.GetBoundaryGridSnapshot());
     }
 
     public static int GetOwnerFromTerritory(byte cellValue) => cellValue & TerritoryPlayerMask;
     public static bool IsBlinking(byte cellValue) => (cellValue & TerritoryBlinkingMask) != 0;
+
+    /// <summary>领土图世界坐标处的属主(原版 territoryMap.getOwner(pos))。</summary>
+    public static int GetOwnerAt(InfoMap map, float px, float pz)
+        => GetOwnerFromTerritory(map.Point(px, pz));
+    /// <summary>领土图格索引处的属主(原版 territoryMap.getOwnerIndex(i);越界 = gaia)。</summary>
+    public static int GetOwnerAtIndex(InfoMap map, int idx)
+        => idx >= 0 && idx < map.Length ? GetOwnerFromTerritory(map.Map[idx]) : 0;
+    /// <summary>领土图格索引处是否闪烁(原版 isBlinking;闪烁 ≈ 未连通/衰减中)。</summary>
+    public static bool IsBlinkingAtIndex(InfoMap map, int idx)
+        => idx >= 0 && idx < map.Length && IsBlinking(map.Map[idx]);
 
     /// <summary>地图边界/前线图(原版 mapModule.createBorderMap):
     /// - 地图外(outside)与内侧边界(border):圆形图按半径、方形图按边距

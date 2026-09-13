@@ -63,6 +63,10 @@ namespace ZeroAD.Sim.Net
         /// <summary>CancelSetupTradeRoute: 取消待定贸易路线(仅单市场可摘)。
         /// EntityId=trader, IntParam1=target market。原版 cmd {type:"cancel-setup-trade-route"}。</summary>
         CancelSetupTradeRoute = 32,
+        /// <summary>SpyRequest: 贿赂目标玩家名下随机一个可贿赂单位以共享其视野。
+        /// IntParam1 = 目标玩家。原版 cmd {type:"spy-request", player:target}
+        /// (gui/session/diplomacy/playercontrols/SpyRequestButton.js → Commands.js)。</summary>
+        SpyRequest = 33,
     }
 
     /// <summary>
@@ -334,6 +338,12 @@ namespace ZeroAD.Sim.Net
         /// <summary>AttackRequest: IntParam1 = 目标玩家(敌)。</summary>
         public static NetCommand AttackRequest(uint player, int targetPlayer) =>
             new(player, NetCommandType.AttackRequest, 0, targetPlayer);
+
+        /// <summary>SpyRequest: IntParam1 = 目标玩家(其名下随机可贿赂单位将被收买;
+        /// 原版 cmd {type:"spy-request", player})。执行端:有成 → AddSpy 扣全价,
+        /// 无目标 → 扣失败成本(FailureCostRatio)并发 spy-failed 通知。</summary>
+        public static NetCommand SpyRequest(uint player, int targetPlayer) =>
+            new(player, NetCommandType.SpyRequest, 0, targetPlayer);
 
         public static NetCommand Pack(uint player, uint unitId, bool unpack) =>
             new(player, NetCommandType.Pack, unitId, unpack ? 1 : 0);

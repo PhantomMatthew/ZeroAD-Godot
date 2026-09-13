@@ -263,3 +263,25 @@ msgstr "停战中——%(time)s 后方可开战"
 
 msgid "You can attack now!"
 msgstr "现在可以开战了!"
+
+# ── 外交面板:间谍请求 ──
+msgid "Spy"
+msgstr "间谍"
+
+msgid "Bribe a random unit from this player and share its vision during a limited period."
+msgstr "收买该玩家麾下的随机一个单位,在限定时间内共享其视野。"
+
+msgid "Requires: {0}"
+msgstr "需要:{0}"
+
+msgid "Cost: {0}"
+msgstr "费用:{0}"
+
+msgid "Need: {0}"
+msgstr "缺少:{0}"
+
+msgid "A failed bribe will cost you:"
+msgstr "贿赂失败将扣除:"
+
+msgid "There are no bribable units"
+msgstr "没有可收买的单位"

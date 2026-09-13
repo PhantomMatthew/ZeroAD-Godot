@@ -31,7 +31,8 @@ public static class WorkerRoles
     /// <summary>单个 worker 的行为控制器（原版 petra/worker.js，1153 行）。
     /// 由 BaseManager 每 think 为每个 worker 调 Update。
     /// 根据 metadata 的 subrole 分发到不同行为：gatherer/hunter/fisher/builder/completing。
-    /// 骨架版——核心分支结构移植，复杂依赖（transport/territory/dropsite）标 TODO。</summary>
+    /// fisher 段全量(StartFishing 派点/耗尽重派/敌领漂移回撤,交付由内核 UnitAI
+    /// 自动回港);运输船(transport)段未移植。</summary>
     public sealed class WorkerAI
     {
         private readonly BaseManager _base;
@@ -70,7 +71,7 @@ public static class WorkerRoles
                     UpdateGatherer(gameState, ent, subrole);
                     break;
                 case WorkerRoles.SubroleFisher:
-                    // TODO: 完整 fisher 逻辑（依赖 naval）
+                    UpdateFisher(gameState, ent);
                     break;
                 case WorkerRoles.SubroleBuilder:
                     UpdateBuilder(gameState, ent);
@@ -163,6 +164,36 @@ public static class WorkerRoles
         // 建筑接近完成时切到此 subrole → 继续采集直到建筑完成
         gameState.Metadata.Set(ent.Id, "subrole", WorkerRoles.SubroleGatherer);
         UpdateGatherer(gameState, ent, WorkerRoles.SubroleGatherer);
+    }
+
+    /// <summary>渔船行为(原版 worker.js update 的 SUBROLE_FISHER 段:431-440 逐字):
+    /// 空闲 → StartFishing 派鱼点;非空闲但漂入敌领 → StartFishing 重选(= 回家方向)。
+    /// 携货交付由内核 UnitAI 自动回最近投放站(Gather 满载/点竭即返,与原版一致,
+    /// AI 侧无需手动 ReturnResource)。COMBAT 态渔船重派(原版:179-184,UnitAI 追鲸
+    /// 漂移)由"漂入敌领"分支覆盖。</summary>
+    private void UpdateFisher(GameState gameState, AIEntity ent)
+    {
+        if (ent.IsIdle)
+        {
+            if (!_base.StartFishing(gameState, ent))
+            {
+                // 无鱼/无同海域码头 → 回退普通 worker 行为(任务要求;原版此处
+                // scuttle 自沉渔船,见 worker.js:886-889/956-958——我们不毁船,
+                // 回 idle 池等鱼情/码头变化后重派)。
+                gameState.Metadata.Remove(ent.Id, "supply");
+                gameState.Metadata.Set(ent.Id, "subrole", WorkerRoles.SubroleIdle);
+            }
+            return;
+        }
+        // 漂入敌领土 → 重选鱼点(原版 territoryMap.getOwner(pos) 敌/非盟判定;
+        // 0=gaia 与盟友领土安全——玩家自身视为盟友,IsPlayerAlly(self)=true)。
+        var territory = SimSystem.Territory;
+        if (territory != null && territory.GridWidth > 0)
+        {
+            int owner = territory.GetOwner(ent.Position2D.X, ent.Position2D.Y);
+            if (owner != 0 && !gameState.IsPlayerAlly(owner))
+                _base.StartFishing(gameState, ent);
+        }
     }
 }
 
@@ -419,7 +450,12 @@ public sealed class BaseManager
                 StartGathering(gameState, worker);
             }
             else if (worker.HasClass("FishingBoat"))
-                gameState.Metadata.Set(worker.Id, "subrole", WorkerRoles.SubroleFisher);
+            {
+                // 有鱼才派 fisher(无鱼时留在 idle 池=普通 worker 回退;
+                // StartFishing 失败同样回退 idle——任务规格,原版是无鱼即毁船)。
+                if (gameState.GetFishableSupplies().HasEntities())
+                    gameState.Metadata.Set(worker.Id, "subrole", WorkerRoles.SubroleFisher);
+            }
         }
     }
 
@@ -632,6 +668,84 @@ public sealed class BaseManager
             if (gatherer?.TargetSupply?.Value == supplyId) count++;
         }
         return count;
+    }
+
+    /// <summary>原版 worker.startFishing(worker.js:878-971)移植:
+    /// 鱼点选择 = 同海域(getFishSea == fisherSea)+ 距"同海域最近码头"最近者
+    /// (原版按鱼点→码头距离排序,不是离船距离);过滤:无位置/海域不符/采集速率表
+    /// 无此 subtype/拥塞(人均剩余 <30)/canFishSafely 敌领不安全。
+    /// 任务规格的两处刻意背离(原版是 scuttle 自沉渔船,worker.js:886/956):
+    ///   1) 全海域鱼耗尽(exhausted)→ 不毁船,返回 false 回退普通 worker;
+    ///   2) 同海域无交付码头 → 不派点(原版会以 distMin=1e6 硬选,货到码头才发现
+    ///      无法交付),返回 false 回退。
+    /// 另:原版 hasSharedDropsites 时可用盟友码头——内核无共享投放站机制,只用本方。
+    /// 鱼点耗尽重派由 UnitAI 订单完结(点竭→交付→空闲)驱动:下轮 think 空闲即重走本函数。</summary>
+    public bool StartFishing(GameState gameState, AIEntity boat)
+    {
+        if (boat.Position2D == default) return false;
+        var fishes = gameState.GetFishableSupplies();
+        if (!fishes.HasEntities()) return false;
+
+        ushort fisherSea = EntityExtend.GetSeaAccess(gameState, boat);
+        if (fisherSea <= 1) return false;   // 不在任何海域(陆上/未知)→ 无法捕鱼
+
+        // 交付码头:本方 food 投放站中的 Dock 类 + 同海域(原版 fishDropsites 过滤)。
+        var docks = gameState.GetOwnDropsites("food")
+            .Filter(e => e.HasClass("Dock") && e.Position2D != default)
+            .Values().ToList();
+        // 同海域无交付码头 → 回退普通 worker(任务规格;原版会以 distMin=1e6 硬选,
+        // 货物到交付时才卡死——我们提前拒派)。
+        if (!docks.Any(d => EntityExtend.GetSeaAccess(gameState, d) == fisherSea))
+            return false;
+
+        float NearestDropsiteDist(AIEntity supply)
+        {
+            float distMin = 1000000f;   // 原版 distMin 初值
+            foreach (var d in docks)
+            {
+                if (EntityExtend.GetSeaAccess(gameState, d) != fisherSea) continue;
+                float dist = AIUtils3.SquareDistanceMeters(supply.Position2D, d.Position2D);
+                if (dist < distMin) distMin = dist;
+            }
+            return distMin;
+        }
+
+        bool exhausted = true;   // 本海域一条鱼都没有(海域过滤后)
+        var gatherRates = boat.Template.ResourceGatherRates();
+        AIEntity? nearestSupply = null;
+        float nearestSupplyDist = float.MaxValue;   // 原版 Math.min() = Infinity
+        foreach (var supply in fishes.Values().OrderBy(s => s.Id))
+        {
+            if (supply.Position2D == default) continue;
+            if (NavalManager.GetFishSea(gameState, supply) != fisherSea) continue;
+            exhausted = false;
+
+            string supplyType = supply.Template.Get("ResourceSupply/Type") ?? "";
+            if (supplyType.Length == 0 || !gatherRates.ContainsKey(supplyType)) continue;
+
+            var comp = gameState.Cm.QueryInterface<ResourceSupply>(supply.Entity);
+            if (comp == null || comp.Amount <= 0) continue;
+            // 拥塞:人均剩余 <30 → 不加人(原版同款;农田 grain 豁免不适用渔船)。
+            int nbGatherers = CountGatherersAt(gameState, supply.Id) + GetTCGatherer(supply.Id);
+            if (nbGatherers > 0 && comp.Amount / (1 + nbGatherers) < 30) continue;
+
+            if (!NavalManager.CanFishSafely(gameState, supply)) continue;
+
+            float dist = NearestDropsiteDist(supply);
+            if (dist > nearestSupplyDist) continue;
+            nearestSupplyDist = dist;
+            nearestSupply = supply;
+        }
+
+        if (exhausted) return false;   // 全海无鱼 → 回退(原版毁船)
+        if (nearestSupply == null) return false;   // 无可派点(含无同海域码头兜不动时)
+
+        AddTCGatherer(nearestSupply.Id);
+        gameState.Metadata.Set(boat.Id, "supply", nearestSupply.Id);
+        gameState.Metadata.Remove(boat.Id, "target-foundation");
+        gameState.SubmitCommand(ZeroAD.Sim.Net.NetCommand.Gather(
+            (uint)gameState.PlayerId, boat.Id, nearestSupply.Id));
+        return true;
     }
 
     /// <summary>分配实体到此 base（原版 assignEntity）。</summary>

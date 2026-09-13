@@ -11,14 +11,47 @@ namespace ZeroAD.Sim.AI.Petra;
 /// 骨架版——核心结构移植，复杂依赖标 TODO。</summary>
 public static class StartingStrategy
 {
-    /// <summary>开局分析（原版 gameAnalysis，15-65 行）。
-    /// 在第一回合调用：分析地形可达性 + 结构 + 区域，为后续决策奠基。</summary>
+    /// <summary>开局分析（原版 gameAnalysis，15-65 行 + assignStartingEntities 的区域标注段）。
+    /// 在第一回合调用：海图判定(原版此处即定 navalMap,tradeManager.init 读)+
+    /// 运营陆区标注(本单位所在陆区;海图时经海可达的大陆区)——HQ.LandRegions
+    /// 是 FindMarketLocation/queueplanBuilding 的选址门。</summary>
     public static void GameAnalysis(Headquarters hq, GameState gameState)
     {
-        // 原版调 regionAnalysis（Accessibility 分析每个实体的区域 ID）+
-        // structureAnalysis（统计已有建筑）+ 设置 turnCache。
-        // 骨架版：仅标记 FirstBaseConfig=false
         hq.FirstBaseConfig = false;
+        hq.EnsureNavalMap(gameState);   // 原版 gameAnalysis 即定 navalMap
+
+        var acc = gameState.Accessibility;
+        if (acc == null) return;
+
+        // 原版 assignStartingEntities 的"小区纠偏"段:本单位所在陆区登记为运营区
+        // (land > 1 = 非不可通行/非未分区)。
+        foreach (var ent in gameState.GetOwnEntities().Values())
+        {
+            if (ent.Position2D == default) continue;
+            ushort land = acc.LandRegionAt(
+                ent.Position2D.X.ToFloat(), ent.Position2D.Y.ToFloat());
+            if (land > 1) hq.LandRegions.Add(land);
+        }
+
+        // 原版 gameAnalysis 的大陆区段(startingStrategy.js:150-170 近似):
+        // 海图时,主陆区经海可达且(陆区 >10% 全图 或 夹间海域 >20% 全图)的
+        // 陆区(>320 格)也属运营区(跨海扩张选址放行)。
+        if (hq.NavalMap && hq.LandRegions.Count > 0)
+        {
+            int total = acc.Width * acc.Height;
+            int main = hq.LandRegions.OrderBy(id => id).First();
+            for (int id = 2; id < acc.RegionCount; id++)
+            {
+                if (acc.GetRegionType(id) != "land" || hq.LandRegions.Contains(id)) continue;
+                int size = acc.RegionSizeById(id);
+                if (size <= 320) continue;   // 原版 cellArea(=1m²)×regionSize > 320
+                ushort sea = NavalManager.GetSeaBetweenIndices(
+                    gameState, (ushort)main, (ushort)id);
+                if (sea == 0) continue;
+                if (size > 0.1 * total || acc.RegionSizeById(sea) > 0.2 * total)
+                    hq.LandRegions.Add(id);
+            }
+        }
     }
 
     /// <summary>建第一个基地（原版 buildFirstBase，224-340 行）。

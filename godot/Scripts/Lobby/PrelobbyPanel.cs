@@ -28,6 +28,16 @@ public sealed partial class PrelobbyPanel : CanvasLayer
 
     public override void _Ready()
     {
+        // 已有存活大厅会话(打完一局/关过面板回来;原版 XmppClient 全局保活同款):
+        // 跳过登录分流直进大厅面板。
+        if (LobbySession.IsConnected)
+        {
+            var lobbyPanel = new XmppLobbyPanel();
+            GetParent()?.AddChild(lobbyPanel);
+            QueueFree();
+            return;
+        }
+
         var dim = new ColorRect
         {
             Color = new Color(0, 0, 0, 0.55f),

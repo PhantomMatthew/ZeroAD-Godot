@@ -183,7 +183,9 @@ public sealed class InfoMap
     /// <summary>在大 tile i 内找非阻挡的小 tile（用于跨分辨率：territory→passability）。</summary>
     public int GetNonObstructedTile(int i, int radius, InfoMap fineMap)
     {
-        double ratio = (double)fineMap.CellSize / CellSize;
+        // 原版 map-module.js getNonObstructedTile:ratio = this.cellSize / fine.cellSize
+        // (粗→细放大;此前写成细/粗反了,territory(8m)→passability(1m) 会塌缩到 0.125)。
+        double ratio = (double)CellSize / fineMap.CellSize;
         int ix = (int)((i % Width) * ratio);
         int iy = (int)((i / Width) * ratio);
         int w = fineMap.Width;

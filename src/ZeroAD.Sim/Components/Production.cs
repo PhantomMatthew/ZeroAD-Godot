@@ -439,6 +439,21 @@ public sealed class PlayerComponent : ComponentBase, IComponentMessageHandler
     public float GetBarterMultiplierSell(string res) =>
         BarterMultiplierSell.TryGetValue(res, out var v) ? v : 1f;
 
+    /// <summary>间谍花费乘数基值(原版 Player.js spyCostMultiplier;模板
+    /// Player/SpyCostMultiplier,SimBridge 建图时从 special/players/{civ} 注入)。</summary>
+    public float SpyCostMultiplierBase = 1f;
+
+    /// <summary>有效间谍花费乘数(原版 Player.js GetSpyCostMultiplier):基值经
+    /// "Player/SpyCostMultiplier" 修正值管线(spy_counter 科技 ×1.5),查询时合成——
+    /// 与 EffectiveVisionRange 同哲学,无需研究完成钩子,也不用序列化。
+    /// 玩家实体无 IdentityComponent,故走 ApplyTemplate(类表 = template_player 的
+    /// "Player" 类;Apply 的实体级短路会丢玩家级修正)。</summary>
+    public float GetSpyCostMultiplier(ComponentManager cm) =>
+        cm.Modifiers.ApplyTemplate("Player/SpyCostMultiplier", SpyCostMultiplierBase,
+            PlayerClassList, Entity);
+
+    private static readonly string[] PlayerClassList = { "Player" };
+
     public int PopUsed;
     /// <summary>Sum of PopulationComponent.Bonus across the player's buildings.</summary>
     public int PopBonuses;

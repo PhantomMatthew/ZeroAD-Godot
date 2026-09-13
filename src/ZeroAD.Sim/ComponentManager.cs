@@ -40,6 +40,11 @@ namespace ZeroAD.Sim
         public WaterManager Water { get; } = new();
         public DelayedDamage DelayedDamage { get; } = new();
 
+        /// <summary>本世界的 RangeManager(LOS/空间索引)。由 RangeManager 构造器自注册
+        /// (一世界一实例),内核命令路径(如 spy-request)经此到达——不走 SimSystem 静态
+        /// (多世界测试进程里静态只指向最后初始化的世界)。</summary>
+        public Components.RangeManager? Range { get; internal set; }
+
         /// <summary>
         /// Template loader used by <see cref="SpawnEntity"/> and training/spawn paths.
         /// Null in pure determinism tests that don't load XML. Setting this also (re)creates

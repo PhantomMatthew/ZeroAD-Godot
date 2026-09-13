@@ -87,6 +87,14 @@ public sealed partial class Main : Node3D
 	}
 	private string _buildTemplate = "";
 	private bool _gameStarted;
+	/// <summary>大厅注册生命周期(原版 LobbyGameRegistrationController):host 且
+	/// LobbySession 已连时,大厅期间注册/更新、开局 changestate、离局 unregister。
+	/// 本地直连局(未登录大厅)全程不走。_lastLobbyRegSig = 上次注册签名(去重,
+	/// 原版 lastStanza 逐属性比较同款)。</summary>
+	private bool _lobbyGameRegistered;
+	private string _lastLobbyRegSig = "";
+	/// <summary>对局报告一局一份(原版 LobbyRatingReporter:players finished 一次性)。</summary>
+	private bool _lobbyGameReportSent;
 	/// <summary>BeginGameplayInit 的生效槽位表(rmgen 玩家 civ 列表用;教程/冷加载为 null)。</summary>
 	private IReadOnlyList<ZeroAD.Sim.Net.PlayerSlotSetup>? _worldSlots;
 	private bool _isTutorial;
@@ -200,11 +208,13 @@ public sealed partial class Main : Node3D
 		AddChild(_lobby);
 
 		_lobby.OnHostStart += (port, seed) => StartMpHost(port, seed);
-		// STUN 探测完成 → 大厅状态行补公网地址(供好友直连;原版 host 注册同款)。
+		// STUN 探测完成 → 大厅状态行补公网地址(供好友直连;原版 host 注册同款);
+		// 大厅已连时重发注册(注册 stanza 带 address,迟到的 STUN 结果靠这次补进列表)。
 		_mp.OnStunResolved += () =>
 		{
 			if (_mp.ExternalAddress != null)
 				_lobby.SetStatus($"Hosting on port — public: {_mp.ExternalAddress} (share for direct join)");
+			TryRegisterLobbyGame();
 		};
 		_lobby.OnClientConnect += (addr, port, observer) => StartMpClient(addr, port, observer);
 		// Lobby slot editing (host only): each edit re-broadcasts the slot table to clients.
@@ -213,7 +223,12 @@ public sealed partial class Main : Node3D
 		_lobby.OnSlotEditFull += (id, kind, civ, team, diff, behavior) =>
 			_mp.HostSetSlot(id, kind, civ, team, diff, behavior);
 		_lobby.OnMapEdit += map => _mp.HostSetMap(map);
-		_mp.OnMapChanged += map => _lobby.SetMapDisplay(map);
+		_mp.OnMapChanged += map =>
+		{
+			_lobby.SetMapDisplay(map);
+			// 原版 LobbyGameRegistration:地图/类型变更 → 重发注册 stanza。
+			TryRegisterLobbyGame();
+		};
 		_lobby.OnStartGameRequested += () => _mp.HostStartGame();
 		// gamesetup 选项(host 编辑 → 广播;客户端收到广播 → 只读刷新)。
 		_lobby.OnOptionsEdit += o => _mp.HostSetOptions(o);
@@ -235,11 +250,14 @@ public sealed partial class Main : Node3D
 		// Lobby-state refresh: clients repaint their read-only slot list from the host's table.
 		// The host is the source of truth (its rows are editable) and never repaints from events.
 		_mp.OnLobbyStateChanged += slots => { if (!_mp.IsHost) _lobby.RefreshSlotDisplay(slots); };
+		// host 侧:认领/掉线改变已连接人数(nbp)→ 重发注册(原版 playerAssignments change 同款)。
+		_mp.OnLobbyStateChanged += _ => TryRegisterLobbyGame();
 		// Start 拒绝(有 Human 槽未被认领)——原因显示到大厅状态行,否则按钮看似没反应。
 		_mp.OnStartRefused += msg => _lobby.SetStatus(msg);
 		// MP 面板 Cancel/Close:关 peer + 回主菜单(原仅关面板,用户困在无菜单的 session 场景)。
 		_lobby.OnCancelRequested += () =>
 		{
+			UnregisterLobbyGame();   // 原版 onClosePage → SendUnregisterGame
 			_mp.Shutdown();
 			GetNode<GameLaunchConfig>("/root/GameLaunchConfig").Reset();
 			GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
@@ -494,9 +512,18 @@ public sealed partial class Main : Node3D
 	private void StartMpHost(int port, uint seed)
 	{
 		_mp.StartHost(port, seed);
-		_mp.OnGameStart += (s, pid, slots, map) => StartMpGameplay(s, pid, slots, isHost: true, map);
+		_mp.OnGameStart += (s, pid, slots, map) =>
+		{
+			// 原版 LobbyGameRegistrationController.onGameStart:开局即 changestate
+			// (bot 按 nbp 与注册时 nbp-init 比较置 running/waiting)。
+			SendLobbyGameChangeState();
+			StartMpGameplay(s, pid, slots, isHost: true, map);
+		};
 		_lobby.ShowSlotLobby(isHost: true, _mp.Slots, LobbyMapCatalog(), "");
 		_lobby.SetStatus($"Hosting on port {port} — configure slots, then Start.");
+		// 大厅已连 → 注册进游戏列表(原版进 gamesetup 即注册;STUN 地址可能迟到,
+		// OnStunResolved 里重发补齐)。本地直连局 LobbySession 未连,这里 no-op。
+		TryRegisterLobbyGame();
 	}
 
 	/// <summary>Client connects and waits in the lobby. Its slot is claimed by the host on
@@ -509,6 +536,121 @@ public sealed partial class Main : Node3D
 		_lobby.ShowSlotLobby(isHost: false, null, LobbyMapCatalog(), "");
 		_lobby.SetStatus($"Connecting to {addr}:{port} — waiting for host…");
 	}
+
+	// ── 大厅游戏注册生命周期(原版 gui/gamesetup/Controllers/LobbyGameRegistration.js)──
+	// 只在 LobbySession 已连(经大厅登录)且本端是 host 时走;本地直连局完全不触网。
+
+	/// <summary>注册/更新游戏到 XPartaMuPP(原版 sendImmediately:设置/人数/地址变化时
+	/// 重发;签名不变跳过,对齐原版 lastStanza 去重)。no-op:非 host / 大厅未连 / 已开局。</summary>
+	private void TryRegisterLobbyGame()
+	{
+		if (!_mp.IsHost || !_mp.IsConnected || _gameStarted) return;
+		if (!Lobby.LobbySession.IsConnected) return;
+
+		var cfg = GetNode<UserConfig>("/root/UserConfig");
+		string hostName = cfg.GetEffective("playername") is { Length: > 0 } n ? n : "Player";
+		string map = _mp.LobbyMapPath;
+		// 人数:已认领 Human 槽数(= 已连接玩家,含 host 自己;原版 nbp = connectedPlayers)。
+		int nbp = _mp.Slots.Count(s => s.Kind == PlayerSlotKind.Human
+			&& (s.PlayerId == 1 || _mp.IsSlotClaimedByPeer(s.PlayerId)));
+		int maxNbp = _mp.Slots.Count(s => s.Kind != PlayerSlotKind.Closed);
+		string players = string.Join(',', _mp.Slots
+			.Where(s => s.Kind == PlayerSlotKind.Human
+				&& (s.PlayerId == 1 || _mp.IsSlotClaimedByPeer(s.PlayerId)))
+			.Select(s => s.PlayerId == 1
+				? (Lobby.LobbySession.Client?.Nick ?? hostName)
+				: $"Player {s.PlayerId}"));
+		var data = new Lobby.GameRegisterData
+		{
+			// 原版 gamesetup_mp 默认房间名:"%(playername)s's game"。
+			Name = $"{hostName}'s game",
+			MapName = map,
+			NiceMapName = map.Length > 0 ? MapTitleFromPath(map) : "Default",
+			MapSize = IsRandomMap(map) ? _mp.LobbyOptions.MapSize.ToString() : "Default",
+			MapType = IsRandomMap(map) ? "random"
+				: map.Contains("skirmish", System.StringComparison.OrdinalIgnoreCase) ? "skirmish"
+				: "scenario",
+			VictoryConditions = string.Join(',', _mp.LobbyOptions.VictoryConditions),
+			Mods = "[]",
+			MaxNbp = maxNbp,
+			Nbp = nbp,
+			Players = players,
+			Address = _mp.ExternalAddress ?? "",
+		};
+		// 去重(原版:任一属性变化才重发;槽位编辑不改变 nbp/players 时不打扰 bot)。
+		string sig = $"{data.Name}|{data.MapName}|{data.MapSize}|{data.VictoryConditions}" +
+			$"|{data.Nbp}|{data.MaxNbp}|{data.Players}|{data.Address}";
+		if (sig == _lastLobbyRegSig) return;
+		_lastLobbyRegSig = sig;
+		_lobbyGameRegistered = true;
+		Lobby.LobbySession.Client!.SendRegisterGame(data);
+		ZeroAD.Sim.Diag.Log("Lobby", $"registered game '{data.Name}' ({nbp}/{maxNbp}, addr={data.Address})");
+	}
+
+	/// <summary>开局 → changestate(原版 onGameStateStart → SendChangeStateGame:
+	/// nbp + players 更新给 bot,bot 据 nbp ≥ nbp-init 置 running)。</summary>
+	private void SendLobbyGameChangeState()
+	{
+		if (!_mp.IsHost || !_lobbyGameRegistered) return;
+		if (!Lobby.LobbySession.IsConnected) return;
+		int nbp = _mp.Slots.Count(s => s.Kind == PlayerSlotKind.Human);
+		string players = string.Join(',', _mp.Slots
+			.Where(s => s.Kind == PlayerSlotKind.Human)
+			.Select(s => s.PlayerId == 1
+				? (Lobby.LobbySession.Client?.Nick ?? "host")
+				: $"Player {s.PlayerId}"));
+		Lobby.LobbySession.Client!.SendChangeStateGame(nbp, players);
+		ZeroAD.Sim.Diag.Log("Lobby", $"game state change: nbp={nbp}");
+	}
+
+	/// <summary>注销(原版 onClosePage → SendUnregisterGame):host 关大厅/离开 session 时。
+	/// 幂等——未注册过 / 大厅已断都是 no-op。</summary>
+	private void UnregisterLobbyGame()
+	{
+		if (!_lobbyGameRegistered) return;
+		_lobbyGameRegistered = false;
+		_lastLobbyRegSig = "";
+		if (Lobby.LobbySession.IsConnected)
+		{
+			Lobby.LobbySession.Client!.SendUnregisterGame();
+			ZeroAD.Sim.Diag.Log("Lobby", "unregistered game");
+		}
+	}
+
+	/// <summary>对局结束(本地玩家胜/负)→ 给 Echelon 发 gamereport(原版
+	/// gui/session/lobby/LobbyRatingReporter.js:players finished 含本地玩家时各端各发一份,
+	/// bot 按 matchID 收齐交叉校验)。一局一次;观战/本地直连/未登录大厅不发。</summary>
+	private void TrySendLobbyGameReport(int playerId)
+	{
+		if (_lobbyGameReportSent || playerId != _sessionPlayerId || playerId <= 0) return;
+		if (_mp.IsObserver || !_mp.IsConnected) return;   // 观战/SP(无 peer)不发
+		if (!Lobby.LobbySession.IsConnected) return;
+		if (_sim?.Sim == null) return;
+		_lobbyGameReportSent = true;
+
+		// 字段对齐原版 LobbyRatingReport:playerID/matchID/mapName/timeElapsed +
+		// playerStates/civs/teams(逗号分隔带尾逗号,Players.js 同款)+ teamsLocked。
+		var summary = MatchSummaryExporter.Collect(_sim);
+		string Join(IEnumerable<string> values) => string.Join(",", values) + ",";
+		var report = new Dictionary<string, object>
+		{
+			["playerID"] = playerId,
+			// 双端共享的确定性 matchID(seed+地图,GameStart 已同步;原版为 host 生成的 GUID)。
+			["matchID"] = $"{_mp.Seed}-{_sim.MapPath ?? ""}",
+			["mapName"] = _sim.MapPath ?? "",
+			// 回合 0.1s(SimBridge.SimTickRate)→ 秒。
+			["timeElapsed"] = (int)(_sim.NetTurn?.CurrentTurn ?? 0) / 10,
+			["playerStates"] = Join(summary.Players.Select(p => p.State.ToLowerInvariant())),
+			["civs"] = Join(summary.Players.Select(p => p.Civ)),
+			["teams"] = Join(summary.Players.Select(p => p.Team.ToString())),
+			["teamsLocked"] = _mp.LobbyOptions.LockedTeams ? "true" : "false",
+		};
+		Lobby.LobbySession.Client!.SendGameReport(report);
+		ZeroAD.Sim.Diag.Log("Lobby", $"sent game report (matchID={report["matchID"]})");
+	}
+
+	private void OnPlayerWonLobbyReport(PlayerWonEvent e) => TrySendLobbyGameReport(e.PlayerId);
+	private void OnPlayerDefeatedLobbyReport(PlayerDefeatedEvent e) => TrySendLobbyGameReport(e.PlayerId);
 
 	/// <summary>大厅选图目录(scenario/skirmish 走数据根;random 由 MapRegistry 提供,始终可用)。</summary>
 	private List<MapEntry> LobbyMapCatalog()
@@ -1110,6 +1252,10 @@ public sealed partial class Main : Node3D
 		_sim.Sim.Events.TrainingFinished += OnTrainingFinishedSound;
 		_sim.Sim.Events.PlayerWon += OnPlayerWonSound;
 		_sim.Sim.Events.PlayerDefeated += OnPlayerDefeatedSound;
+		// 大厅对局报告(原版 LobbyRatingReporter):本地玩家胜/负 → 一份 gamereport 给
+		// Echelon。门控在 TrySendLobbyGameReport 内(非大厅局/观战/SP 不发)。
+		_sim.Sim.Events.PlayerWon += OnPlayerWonLobbyReport;
+		_sim.Sim.Events.PlayerDefeated += OnPlayerDefeatedLobbyReport;
 		// 武器音效(发射时刻,近战/远程按事件分流)+ 战斗计时(切 BATTLE 音乐用)。
 		_sim.Sim.Events.AttackLaunched += OnAttackLaunchedSound;
 		// 遇袭警报(原版 alert_panel):己方实体被命中 → 警报图标闪烁,点击跳相机。
@@ -2222,6 +2368,8 @@ public sealed partial class Main : Node3D
 			_sim.Sim.Events.TrainingFinished -= OnTrainingFinishedSound;
 			_sim.Sim.Events.PlayerWon -= OnPlayerWonSound;
 			_sim.Sim.Events.PlayerDefeated -= OnPlayerDefeatedSound;
+			_sim.Sim.Events.PlayerWon -= OnPlayerWonLobbyReport;
+			_sim.Sim.Events.PlayerDefeated -= OnPlayerDefeatedLobbyReport;
 			_sim.Sim.Events.AttackLaunched -= OnAttackLaunchedSound;
 			_sim.Sim.Events.AttackLanded -= OnAttackAlert;
 			_sim.TriggerMessage -= OnTriggerMessage;
@@ -2233,6 +2381,10 @@ public sealed partial class Main : Node3D
 			_mp.OnChatReceived -= OnMpChatReceived;
 			_mp.OnFlareReceived -= OnMpFlareReceived;
 		}
+		// 离开 session 场景(暂停菜单 Leave / 加载失败回菜单):host 的大厅注册随房间
+		// 关闭注销(房主已不在,留着只会列出死房;原版靠 MUC 离线清,我们的 LobbySession
+		// 跨场景保活不断连,必须显式注销)。
+		UnregisterLobbyGame();
 	}
 
 	/// <summary>MP 收到聊天 → 转发到 SimEventBus（ChatPanel 统一订阅展示）。</summary>
@@ -2341,13 +2493,19 @@ public sealed partial class Main : Node3D
 		AudioManager.PlayUnitEvent(_sim.Templates, id.TemplateName, eventName);
 	}
 
-	/// <summary>建造拒绝 toast(执行端 PlayerCommandEvent "build-rejected" → 顶部红字;
-	/// 只显本地玩家的拒绝)。</summary>
+	/// <summary>建造/训练拒绝 + 间谍失败 toast(执行端 PlayerCommandEvent → 顶部红字;
+	/// 只显本地玩家的通知)。</summary>
 	private void OnPlayerCommandEvent(PlayerCommandEvent e)
 	{
-		if (e.Type != "build-rejected" && e.Type != "train-rejected") return;
+		if (e.Type != "build-rejected" && e.Type != "train-rejected" && e.Type != "spy-failed") return;
 		if (e.Data.TryGetValue("player", out var p) && p is int pid && pid != (int)_sim.LocalPlayerId)
 			return;
+		if (e.Type == "spy-failed")
+		{
+			// 贿赂无目标(原版 "There are no bribable units" 文本通知;失败成本已在内核扣)。
+			_hud?.ShowToast(Localization.Tr("There are no bribable units"));
+			return;
+		}
 		string reason = e.Data.TryGetValue("reason", out var r) ? r?.ToString() ?? "" : "";
 		if (e.Type == "train-rejected")
 		{

@@ -23,6 +23,11 @@ namespace ZeroAD.Sim.Components
         public uint Visibilities;   // per-player 2-bit LosVisibility cache (Task 3)
         public byte Flags;          // bit0 RetainInFog, bit1 IsMirage (Task 5)
         public bool LosAdded;       // vision circle currently counted in the LOS grid
+        /// <summary>属主+互盟之外的额外见证者位集(VisionSharing 组件推入:间谍/异主驻军
+        /// 乘员;原版 m_EntityData.visionSharing 的对应物——原版该掩码含属主位,此处只存
+        /// 额外位,属主/互盟由 <see cref="RangeManager.OwnerAllyMask"/> 动态求,二者在
+        /// SeerMask 求并)。</summary>
+        public uint ExtraSeerMask;
 
         public const byte FlagRetainInFog = 1;
         public const byte FlagIsMirage = 2;
@@ -158,6 +163,7 @@ namespace ZeroAD.Sim.Components
         public RangeManager(ComponentManager cm, Fixed maxX, Fixed maxZ)
         {
             _cm = cm;
+            cm.Range = this;   // 自注册:内核命令路径经 cm.Range 回本(见 ComponentManager.Range)
             _worldMeters = maxX;
             _subdivision = new FastSpatialSubdivision(maxX, maxZ);
             Los = new LosGrid(maxX.ToIntRoundToNearest(), _losCircular);
@@ -193,28 +199,55 @@ namespace ZeroAD.Sim.Components
 
         private static uint DirtyBit(int player) => 1u << (player - 1);
 
-        // VisionSharing (Pathway B): a seer's vision circle is mirrored into every mutual
-        // ally's LOS grid, so allies see what allies see. Mirrors Diplomacy.js
-        // SetSharedLos → m_SharedLosMask, which merges ally vision at the LOS-grid count
-        // level. Owner first, allies in ascending id order (deterministic). Empty (owner
-        // only) when diplomacy is unset or the player has no allies.
         /// <summary>gamesetup "Allied View" 开关——关闭时盟友不再共享视野
         /// （原版默认开;SP 1v1 无盟友无影响）。</summary>
         public static bool AlliedVisionEnabled = true;
 
-        private IEnumerable<int> SeerPlayers(int owner)
+        /// <summary>属主 + 互盟的见证者位集(owner≤0 → 0;盟友位升序或入,定序)。
+        /// 原版 m_SharedLosMasks 的逐实体等价:Allied View 开时盟友共享彼此视野圈。</summary>
+        private uint OwnerAllyMask(int owner)
         {
-            yield return owner;
-            if (AlliedVisionEnabled)
-                foreach (var ally in _cm.Players.GetMutualAllies(owner)) yield return ally;
-        }
-
-        private uint OwnerPlusAlliesDirty(int owner)
-        {
+            if (owner <= 0) return 0u;
             uint mask = DirtyBit(owner);
             if (AlliedVisionEnabled)
                 foreach (var ally in _cm.Players.GetMutualAllies(owner)) mask |= DirtyBit(ally);
             return mask;
+        }
+
+        /// <summary>该实体视野圈当前应计入的玩家位集 = 属主+互盟 ∪ 额外见证者
+        /// (VisionSharing 的间谍/驻军共享;原版 SharedVision 实体的 visionSharing 掩码语义)。</summary>
+        private uint SeerMask(in RangeEntityData d) => OwnerAllyMask(d.Owner) | d.ExtraSeerMask;
+
+        /// <summary>按位升序枚举掩码玩家(1..16;确定性顺序)。</summary>
+        private static IEnumerable<int> MaskPlayers(uint mask)
+        {
+            for (int p = 1; p <= LosGrid.MaxPlayers; p++)
+                if ((mask & DirtyBit(p)) != 0) yield return p;
+        }
+
+        /// <summary>VisionSharing 组件推入的额外见证者位集(间谍/异主驻军乘员)。
+        /// 与旧值求差后只对变化位 AddLos/RemoveLos(并对完整见证集求 before/after——
+        /// 间谍同时是互盟时,间谍到期不得摘掉盟友圈),再把玩家脏位并入本回合重算。
+        /// 未计数(LosAdded=false,如离世界/无视野)时只记账,下次 SyncLos 生效。
+        /// 原版 MT_VisionSharingChanged → LosAdd/LosRemove(msgData.player) 的合并等价。</summary>
+        public void SetExtraSeers(EntityId entity, uint extraMask)
+        {
+            if (!_data.TryGetValue(entity, out var d)) return;
+            if (d.ExtraSeerMask == extraMask) return;
+            if (d.LosAdded)
+            {
+                uint before = SeerMask(d);
+                uint after = OwnerAllyMask(d.Owner) | extraMask;
+                uint removed = before & ~after;
+                uint added = after & ~before;
+                foreach (var p in MaskPlayers(removed))
+                    Los.RemoveLos(p, d.X, d.Z, d.VisionRange);
+                foreach (var p in MaskPlayers(added))
+                    Los.AddLos(p, d.X, d.Z, d.VisionRange);
+                _playerLosDirtyMask |= removed | added;
+            }
+            d.ExtraSeerMask = extraMask;
+            _data[entity] = d;
         }
 
         /// <summary>After a full-state load (LosGrid.Deserialize restored the state words
@@ -247,17 +280,17 @@ namespace ZeroAD.Sim.Components
             bool want = d.InWorld && d.Owner > 0 && d.VisionRange > Fixed.Zero;
             if (want && !d.LosAdded)
             {
-                foreach (var p in SeerPlayers(d.Owner))
+                foreach (var p in MaskPlayers(SeerMask(d)))
                     Los.AddLos(p, d.X, d.Z, d.VisionRange);
                 d.LosAdded = true;
-                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
+                _playerLosDirtyMask |= SeerMask(d);
             }
             else if (!want && d.LosAdded)
             {
-                foreach (var p in SeerPlayers(d.Owner))
+                foreach (var p in MaskPlayers(SeerMask(d)))
                     Los.RemoveLos(p, d.X, d.Z, d.VisionRange);
                 d.LosAdded = false;
-                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
+                _playerLosDirtyMask |= SeerMask(d);
             }
             _data[entity] = d;
         }
@@ -271,9 +304,9 @@ namespace ZeroAD.Sim.Components
             if (d.VisionRange == newRange) return;
             if (d.LosAdded)
             {
-                foreach (var p in SeerPlayers(d.Owner))
+                foreach (var p in MaskPlayers(SeerMask(d)))
                     Los.RemoveLos(p, d.X, d.Z, d.VisionRange);
-                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
+                _playerLosDirtyMask |= SeerMask(d);
                 d.LosAdded = false;
             }
             d.VisionRange = newRange;
@@ -349,9 +382,9 @@ namespace ZeroAD.Sim.Components
             _cm.QueryInterface<FoggingComponent>(entity)?.OnOwnershipChanged(d.Owner, -1, _cm, this);
             if (d.LosAdded)
             {
-                foreach (var p in SeerPlayers(d.Owner))
+                foreach (var p in MaskPlayers(SeerMask(d)))
                     Los.RemoveLos(p, d.X, d.Z, d.VisionRange);
-                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
+                _playerLosDirtyMask |= SeerMask(d);
             }
             if (d.InWorld)
             {
@@ -385,9 +418,9 @@ namespace ZeroAD.Sim.Components
             _subdivision.Move(entity, d.X, d.Z, to.X, to.Y, size);
             if (d.LosAdded)
             {
-                foreach (var p in SeerPlayers(d.Owner))
+                foreach (var p in MaskPlayers(SeerMask(d)))
                     Los.MoveLos(p, d.X, d.Z, to.X, to.Y, d.VisionRange);
-                _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
+                _playerLosDirtyMask |= SeerMask(d);
             }
             d.X = to.X; d.Z = to.Y;
             _data[entity] = d;
@@ -403,13 +436,15 @@ namespace ZeroAD.Sim.Components
             // first (the new owner's circle is added by SyncLos below if still a valid
             // seer). Uses d.Owner — the owner the circle was actually counted under —
             // not `from`, so a Refresh that already updated the owner can't double-add.
+            // 掩码含额外见证者(间谍/驻军共享):圈按当初实际计入的完整位集摘除,
+            // 新属主位由 SyncLos 以新掩码重铺。
             if (d.LosAdded && d.Owner != to)
             {
-                if (d.Owner > 0)
+                if (SeerMask(d) != 0)
                 {
-                    foreach (var p in SeerPlayers(d.Owner))
+                    foreach (var p in MaskPlayers(SeerMask(d)))
                         Los.RemoveLos(p, d.X, d.Z, d.VisionRange);
-                    _playerLosDirtyMask |= OwnerPlusAlliesDirty(d.Owner);
+                    _playerLosDirtyMask |= SeerMask(d);
                 }
                 d.LosAdded = false;
             }
@@ -454,6 +489,13 @@ namespace ZeroAD.Sim.Components
             d.VisionRange = vis == null
                 ? Fixed.Zero
                 : ValueModificationApplier.EffectiveVisionRange(_cm, entity, vis);
+            // VisionSharing 冷加载回本:反序列化的组件带着 SharedMask(间谍/驻军共享),
+            // 额外见证者位由此进入 SeerMask,随后的 SyncLos 把视野圈铺回各共享玩家的
+            // LOS 网格(原版冷加载由 visionSharing 掩码随 EntityData 序列化,语义等价)。
+            var vshare = _cm.QueryInterface<VisionSharingComponent>(entity);
+            d.ExtraSeerMask = vshare != null && vshare.Activated
+                ? vshare.SharedMask & ~(d.Owner > 0 ? DirtyBit(d.Owner) : 0u)
+                : 0u;
             // Fog-of-war flags from components (mirrors m_EntityData flag fill in the
             // original, which reads them off ICmpVisibility / ICmpMirage).
             var visib = _cm.QueryInterface<VisibilityComponent>(entity);
