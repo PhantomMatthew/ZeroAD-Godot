@@ -197,6 +197,13 @@ namespace ZeroAD.Sim.Content
             return a.IsOk ? a : node.GetChild(name);
         }
 
+        /// <summary>Obstruction/Block* 布尔子元素;缺失按 true(原版 CCmpObstruction 全阻挡缺省)。</summary>
+        private static bool BlockFlag(ParamNode obstruction, string name)
+        {
+            var el = obstruction.GetChild(name);
+            return !el.IsOk || el.ToBool();
+        }
+
         public static TemplateStats ExtractStatsFromNode(ParamNode node)
         {            var stats = new TemplateStats();
 
@@ -943,11 +950,23 @@ namespace ZeroAD.Sim.Content
                 {
                     stats.ObstructionShape = "static";
                     stats.ObstructionSize0 = Attr(staticEl, "width").IsOk ? Attr(staticEl, "width").ToFixed() : stats.ObstructionSize0;
-                    // 原版 DeleteUponConstruction 元素(开工即消失标记)。
-                    var obstrRoot = node.GetChild("Obstruction");
-                    if (obstrRoot.GetChild("DeleteUponConstruction").IsOk)
-                        stats.ObstructionDeleteUponConstruction = obstrRoot.GetChild("DeleteUponConstruction").ToBool();
                     stats.ObstructionSize1 = Attr(staticEl, "depth").IsOk ? Attr(staticEl, "depth").ToFixed() : stats.ObstructionSize1;
+                }
+                // 原版 DeleteUponConstruction 元素(开工即消失标记;尸体/宝藏——Unit 形状也适用)。
+                if (obstruction.GetChild("DeleteUponConstruction").IsOk)
+                    stats.ObstructionDeleteUponConstruction = obstruction.GetChild("DeleteUponConstruction").ToBool();
+                // 原版 CCmpObstruction::Init 的四个 Block* 旗标(schema 必填;缺省保持全阻挡)。
+                // 单位模板是 Movement+Construction、不带 Pathfinding/Foundation——否则每步
+                // MoveUnitShape 都会打脏寻路网格,UpdateGrid 逐 tick 重烘焙。
+                if (obstruction.GetChild("BlockMovement").IsOk || obstruction.GetChild("BlockPathfinding").IsOk
+                    || obstruction.GetChild("BlockFoundation").IsOk || obstruction.GetChild("BlockConstruction").IsOk)
+                {
+                    var f = ObstructionFlags.None;
+                    if (BlockFlag(obstruction, "BlockMovement")) f |= ObstructionFlags.BlockMovement;
+                    if (BlockFlag(obstruction, "BlockPathfinding")) f |= ObstructionFlags.BlockPathfinding;
+                    if (BlockFlag(obstruction, "BlockFoundation")) f |= ObstructionFlags.BlockFoundation;
+                    if (BlockFlag(obstruction, "BlockConstruction")) f |= ObstructionFlags.BlockConstruction;
+                    stats.ObstructionFlags = f;
                 }
                 // 多形状(原版 <Obstructions><Name width depth x z/>...;城墙门的
                 // Left/Right/Door 分形)。子形状偏移为实体局部坐标(米)。
@@ -1636,6 +1655,9 @@ namespace ZeroAD.Sim.Content
         public string ObstructionShape = "";
         /// <summary>Obstruction/DeleteUponConstruction(开工即消失;尸体/宝藏)。</summary>
         public bool ObstructionDeleteUponConstruction;
+        /// <summary>Obstruction/Block{Movement,Pathfinding,Foundation,Construction} 合成旗标
+        /// (原版 CCmpObstruction m_Flags)。模板未声明时保持全阻挡。</summary>
+        public ObstructionFlags ObstructionFlags = ObstructionFlags.DefaultBlock;
         /// <summary>多形状子件(原版 Obstructions 元素):(名, 局部 x, z, 宽, 深)。
         /// 非空时优先于 ObstructionSize0/1 单形状。</summary>
         public System.Collections.Generic.List<(string Name, float X, float Z, float W, float D)> ObstructionSubShapes = new();

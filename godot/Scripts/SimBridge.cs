@@ -915,7 +915,8 @@ public sealed partial class SimBridge : Node
 			Type = ObstructionType.Static,
 			Size0 = Fixed.FromFloat(obSize0),
 			Size1 = Fixed.FromFloat(obSize1),
-			Flags = ObstructionFlags.DefaultBlock,
+			// 模板 Block* 旗标(template_structure 全阻挡;农田/部分 gaia 不挡移动/寻路)。
+			Flags = stats?.ObstructionFlags ?? ObstructionFlags.DefaultBlock,
 		};
 		// 多形状子件(原版 Obstructions 元素——城墙门 Left/Right/Door 分形)。
 		if (stats != null && stats.ObstructionSubShapes.Count > 0)

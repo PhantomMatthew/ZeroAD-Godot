@@ -455,13 +455,16 @@ namespace ZeroAD.Sim
             // Obstruction: unit circle so other units route around it and it can't be walked through.
             // Template may override the radius; default to ~1m clearance. Registered with the
             // ObstructionManager on EnsureRegistered (called by SimBridge after spawn completes).
+            // 旗标取模板 Block*(template_unit = Movement+Construction):单位不得带
+            // BlockFoundation/BlockPathfinding,否则每次移动都打脏寻路网格(逐 tick 重烘焙)。
             cm.AddComponent(entity, new ObstructionComponent
             {
                 Type = ObstructionType.Unit,
                 Size0 = (stats != null && stats.ObstructionSize0 > Fixed.Zero)
                     ? stats.ObstructionSize0
                     : Fixed.FromFloat(1.0f),
-                Flags = (ObstructionFlags.BlockMovement | ObstructionFlags.BlockFoundation)
+                Flags = (stats?.ObstructionFlags
+                        ?? (ObstructionFlags.BlockMovement | ObstructionFlags.BlockConstruction))
                     | (stats != null && stats.ObstructionDeleteUponConstruction
                         ? ObstructionFlags.DeleteUponConstruction : 0)
             });
