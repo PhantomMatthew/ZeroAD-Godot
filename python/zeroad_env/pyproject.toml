@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zeroad-env"
+version = "0.1.0"
+description = "Python mmap client for ZeroAD.RlHost (PyTorch/Gymnasium training)."
+requires-python = ">=3.12"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+gym = ["gymnasium>=0.29"]
+torch = ["torch>=2.0"]
+grpc = ["grpcio>=1.60"]
+
+[tool.setuptools]
+packages = ["zeroad_env"]
+
+[tool.setuptools.package-dir]
+zeroad_env = "."

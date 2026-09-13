@@ -8,6 +8,7 @@ using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Events;
 using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Net;
+using ZeroAD.Sim.Simulation;
 using ZeroAD.Sim.Tutorial;
 
 namespace ZeroAD.Godot;
@@ -25,6 +26,7 @@ public sealed partial class SimBridge : Node
 	private BattleDecals? _decals;           // 战场贴花（击杀血斑,原版 blood_*.xml 的 decal 语义）
 	private double _simAccumulator;
 	private const double SimTickRate = 0.1;
+	private readonly SimLoopState _simLoopState = new();
 
 	private readonly Dictionary<EntityId, Node3D> _entityNodes = new();
 	private readonly Dictionary<EntityId, SkeletalAnim.ManualAnimator> _animators = new();
@@ -1384,142 +1386,14 @@ public sealed partial class SimBridge : Node
 		}
 	}
 
-	/// <summary>推进所有光环(对齐 TickResearch)。遍历 AllEntities,对挂 AuraComponent 的
-	/// 实体调 Tick:range 型 ExecuteQuery+diff,global/player 型玩家实体+reqTech 门控。
-	/// 派生态每 tick 重建,无累积。</summary>
-	private void TickAuras(float dt)
-	{
-		var catalog = _sim.Auras;
-		if (catalog == null || catalog.Auras.Count == 0) return;
-		foreach (var entity in _sim.AllEntities)
-		{
-			var aura = _sim.QueryInterface<AuraComponent>(entity);
-			if (aura != null) aura.Tick(_sim, _range, catalog);
-		}
-	}
-
-	/// <summary>领土衰减闭环(原版 TerritoryDecay.js 事件驱动 → 本移植每回合刷新,回合边界
-	/// 取值一致):1) 每个 TerritoryDecayComponent 重算 decaying + 邻主表 + blink 覆盖;
-	/// 2) 每个 CapturableComponent TimerTick(decay 抽干分给邻主/gaia + regen 恢复)。
-	/// 原地主翻面在 Capturable 内走 NotifyOwnerChanged,与各端同序 → 确定性。</summary>
-	private void TickTerritoryDecay(float dt)
-	{
-		var fixedDt = Fixed.FromFloat(dt);
-		foreach (var entity in _sim.AllEntities)
-		{
-			var decay = _sim.QueryInterface<TerritoryDecayComponent>(entity);
-			if (decay != null) decay.Refresh(_sim, _territory);
-			var capturable = _sim.QueryInterface<CapturableComponent>(entity);
-			if (capturable != null) capturable.TimerTick(_sim, fixedDt);
-		}
-	}
-
-	private void TickGarrisonHolders(float dt)
-	{
-		foreach (var entity in _sim.AllEntities)
-		{
-			_sim.QueryInterface<GarrisonHolderComponent>(entity)?.Tick(dt, _sim);
-			// MotionBall(原版 type="test" 的滚坡测试组件;test 地图用)。
-			_sim.QueryInterface<MotionBallComponent>(entity)?.Tick(dt, _sim);
-		}
-	}
-
-	private float _gateTickAccum;
-
-	/// <summary>门 tick:0.5s 节拍逐门 OperateGate(原版 OnRangeUpdate 事件驱动的
-	/// 轮询等价;关门重试由节拍天然承担——门洞占用时保持开)。</summary>
-	private void TickGates(float dt)
-	{
-		_gateTickAccum += dt;
-		if (_gateTickAccum < 0.5f) return;
-		_gateTickAccum = 0f;
-		foreach (var entity in _sim.AllEntities)
-		{
-			var gate = _sim.QueryInterface<GateComponent>(entity);
-			if (gate != null)
-				gate.OperateGate(_sim);
-		}
-	}
-
-	private void TickTurrets(float dt)
-	{
-		foreach (var entity in _sim.AllEntities)
-			_sim.QueryInterface<TurretableComponent>(entity)?.UpdatePosition(_sim);
-	}
-
 	private void TickSimulation(float dt)
 	{
-		// 异步路径汇缴(次回合首相;上游 SendRequestedPaths 同款位置:join 后台任务,
-		// 按入队序投递给 UnitMotion.OnPathResult;未完则主线程补跑——内容与顺序确定)。
-		T("pathharvest", () => _pathfinder.HarvestPathResults());
-		T("dead", () => RemoveDeadEntities());
-		T("motions", () => TickUnitMotions(dt));
-		// Unit pushing (ports CCmpUnitMotionManager::Move/Push): after every unit has stepped,
-		// push overlapping pairs apart so rallied/converging units spread into a visible cluster
-		// instead of stacking on one point (which made only one render). Pure sim, lockstep-safe.
-		T("separation", () => UnitSeparation.Separate(_sim, Fixed.FromFloat(dt)));
-		// 间谍/驻军视野共享(原版 VisionSharing 的 Timer/MT_VisionSharingChanged 的回合制
-		// 等价):倒计时到期 + 驻军/易主吸收,放 los1 前使共享变化本回合即被可见性重算吃到。
-		T("visionsharing", () => VisionSharingComponent.TickAll(_sim, _range));
-		// 视野重算在 TickUnitAI 之前:单位移动后立即可见性更新,扫描时看到最新结果。
-		// 此前 UpdateVisibilityData 在 tick 末尾跑 → 扫描用上一帧的可见性 → 攻击有 1 tick 延迟。
-		// 末尾保留第二次调用(拾取驻军/炮塔的位置变更)。
-		T("los1", () => _range.UpdateVisibilityData());
-		T("unitai", () => TickUnitAI(dt));
-		// gather 旧驱动(TickGatherers)已退役:采集周期由 UnitAI 的 GATHER FSM 子树驱动
-		// (内核自洽、无头测试同路);双驱动曾对同一 supply 重复结算。
-		T("attack", () => TickAttackers(dt));
-		T("buildingai", () => TickBuildingAI(dt));
-		T("build", () => TickBuilders(dt));
-		T("prod", () => TickProductionQueues(dt));
-		T("found", () => TickFoundations(dt));
-		T("research", () => TickResearch(dt));
-		// 光环:每 tick 应用/移除(range diff + global/player reqTech 门控)。放 TickResearch 后、
-		// ReapplyVisionScopeAll 前,使 vision aura 的修正值本轮即被 LOS 重算吃到。
-		T("auras", () => TickAuras(dt));
-		// 领土衰减(对齐原版 TerritoryDecay/Capturable 的 1s 定时器,本处每回合 0.1s×rate):
-		// 先刷新 decaying/blink 状态(读本周期的领土网格),再让 Capturable 抽干/恢复 CP。
-		// 放 UpdateVisibilityData 前:翻面触发的 OwnerChanged 本周期即被 LOS 重算吃到。
-		T("territory", () => TickTerritoryDecay(dt));
-		// 驻军持有者:BuffHeal 每秒回血(原版 1s HealTimeout)+ EjectHealth 低血逐出。
-		// 放 UpdateVisibilityData 前:逐出回世界的单位本周期即被 LOS 重算吃到。
-		T("garrison", () => TickGarrisonHolders(dt));
-		// 炮塔跟拍(原版 Position.SetTurretParent 的引擎联动):在点单位锁到持有者
-		// 位置+旋转偏移。放 UpdateVisibilityData 前:随行位移本周期即被 LOS 重算吃到。
-		T("turrets", () => TickTurrets(dt));
-		// 城门自动开关(原版 Gate.js 的 active range query → 此处 0.5s 轮询;
-		// 门数极少,轮询比查询订阅基建便宜得多)。
-		T("gates", () => TickGates(dt));
-		// 资源涓流(原版 ResourceTrickle 定时器的回合制近似:奇观/牲口棚等按间隔发资源)。
-		T("trickle", () => TickResourceTrickles(dt));
-		T("closure", () => TickGameplayClosure(dt));
-		// 状态效果(原版 StatusEffectsReceiver 定时器):周期伤害/捕获经 DelayedDamage
-		// 本回合结算(排在其 TickPending 前),时限到撤修饰。
-		T("status", () => TickStatusEffects(dt));
-		// Vision range through the modifiers pipeline: tech/aura changes re-cover seer
-		// circles in the LOS grid. Runs every turn (after research completes) so all
-		// players' ranges stay fresh without a research-completion hook per player.
-		T("visionrange", () => ValueModificationApplier.ReapplyVisionRangeAll(_sim, _range));
-		// Settle any damage whose delay elapsed this turn, then advance the delay clock.
-		T("damage", () => { _sim.DelayedDamage.TickPending(_sim); _sim.DelayedDamage.AdvanceTurn(); });
-		// Conquest victory check — runs after dead entities are removed so the RangeManager
-		// index reflects the current survivors.
-		T("victory", () => _sim.TickVictory());
-		// goal Delay 计时器(原版 goal Delay 语义;SimBridge 每回合驱动)。
-		T("tutorial", () => Tutorial?.Tick(dt));
-		// Fog-of-war: recompute per-player visibility for whatever changed this turn
-		// (moved/placed/destroyed seers, ownership flips). Fires VisibilityChanged, which
-		// drives Fogging/Mirage bookkeeping and presentation-layer show/hide. Cheap no-op
-		// when nothing moved.
-		T("los2", () => _range.UpdateVisibilityData());
-		// 寻路网格增量更新(上游 Simulation2.cpp:613 同款回合末位置):
-		// 回合内 ObstructionManager 累计的脏区(建筑增删/门开关/地基)在此统一烘焙;
-		// 零脏区零开销。回合内网格对寻路只读,异步路径任务才可安全跨回合跑。
-		T("pathgrid", () =>
+		SimLoop.Tick(_sim, dt, _simLoopState, T, new SimLoopHooks
 		{
-			_pathfinder.UpdateGrid();               // 网格冻结
-			_pathfinder.StartAsyncPathComputation(); // 本回合入队请求后台求解(次回合首相投递)
+			OnCorpseConverted = OnCorpseConvertedVisual,
+			TutorialTick = () => Tutorial?.Tick(dt),
 		});
+		UpdateFoundationVisuals();
 	}
 
 	// TEMP-PROF:逐阶段计时(tick 内哪个阶段吃掉秒级时间)。
@@ -1634,76 +1508,12 @@ public sealed partial class SimBridge : Node
 		_interpolator.Remove(entity);
 	}
 
-	private void RemoveDeadEntities()
+	/// <summary>动物死亡 → 尸体的表现层(内核 SimLoop 已挂 CorpseComponent 并停 UnitAI)。</summary>
+	private void OnCorpseConvertedVisual(EntityId entity)
 	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var health = _sim.QueryInterface<HealthComponent>(entity);
-			if (health == null || !health.IsDead) continue;
-			// 升级中被毁:全额退还(原版 CancelUpgrade on destroy)。
-			_sim.QueryInterface<UpgradeComponent>(entity)?.CancelUpgrade(_sim);
-
-			// 尸体已转换的不再处理(每 tick 全表扫描,IsDead 恒真)。
-			if (_sim.QueryInterface<CorpseComponent>(entity) != null) continue;
-			// gaia 动物(killBeforeGather 无主资源):死亡不销毁,转尸体供采集(原版行为)。
-			var deadSupply = _sim.QueryInterface<ResourceSupply>(entity);
-			var deadOwner = _sim.QueryInterface<OwnershipComponent>(entity);
-			if (deadSupply != null && deadSupply.KillBeforeGather && deadOwner == null)
-			{
-				ConvertToCorpse(entity);
-				continue;
-			}
-			{                var owner = deadOwner;
-				int fromPlayer = owner?.PlayerId ?? -1;
-				Events.RaiseOwnershipChanged(new OwnershipChangedEvent
-				{
-					Entity = entity,
-					From = fromPlayer,
-					To = -1
-				});
-
-				// Node cleanup happens in OnSimEntityDestroyed (fired by DestroyEntity below).
-				// Pop accounting: dying means the entity leaves its owner. Mirrors how Player.js
-				// reacts to MT_OwnershipChanged (To = INVALID_PLAYER).
-				_sim.ApplyOwnershipPopChange(entity, fromPlayer, -1);
-				// 死亡自爆(DeathDamage.js:OnDied → CauseDeathDamage):销毁前结算,
-				// 否则位置/阻挡已拆,溅射找不到源。
-				_sim.QueryInterface<DeathDamageComponent>(entity)?.CauseDeathDamage(_sim);
-				// 驻军持有者被毁兜底:逐出可逐类别,其余随主同灭(原版 EjectOrKill;
-				// EjectHealth 阈值内的通常已被 Tick 提前逐出)。
-				_sim.QueryInterface<GarrisonHolderComponent>(entity)?.EjectOrKillAll(_sim);
-				// 炮塔持有者在点单位强制下塔(原版 TurretHolder OnOwnershipChanged →
-				// EjectOrKill);塔上单位死亡则让出点位(原版 Turretable.OnOwnershipChanged)。
-				_sim.QueryInterface<TurretHolderComponent>(entity)?.EjectOrKillAll(_sim);
-				var turretable = _sim.QueryInterface<TurretableComponent>(entity);
-				if (turretable is { Holder: not null })
-					turretable.LeaveTurret(_sim, forced: true);
-				// 编队成员死亡:从所属编队移除(低于 RequiredMemberCount 时编队解散,
-				// 原版同;成员位释放,Offsets 作废待下次重排)。
-				var memberAi = _sim.QueryInterface<UnitAIComponent>(entity);
-				if (memberAi?.FormationController is { } formationCtrl)
-					_sim.QueryInterface<FormationComponent>(formationCtrl)
-						?.RemoveMembers(_sim, new List<EntityId> { entity });
-				_sim.DestroyEntity(entity);
-				_entityCacheDirty = true;
-			}
-		}
-	}
-
-	/// <summary>动物死亡 → 尸体(原版:killBeforeGather 的 gaia 死亡不销毁,转尸体供采集)。
-	/// 挂 CorpseComponent(死亡清扫/tick 停摆标记),停 UnitAI 与动画;实体保留
-	/// Position/Identity/ResourceSupply——采完肉(Amount=0)由既有枯竭路径销毁。</summary>
-	private void ConvertToCorpse(EntityId entity)
-	{
-		_sim.AddComponent(entity, new CorpseComponent());
-		_sim.QueryInterface<UnitAIComponent>(entity)?.OnCorpseConverted(_sim);
-		var identity = _sim.QueryInterface<IdentityComponent>(entity);
-		if (identity != null) identity.IsUnit = false;
-		// 视觉:播 death 动画并定格(从 _animators 摘除,走位动画循环不再驱动它)。
 		if (_animators.Remove(entity, out var anim))
 		{
 			if (anim.HasState("death")) anim.Play("death");
-			// 播完定格(表现层计时器;循环播放会反复倒下)。节点销毁则跳过。
 			var animRef = anim;
 			GetTree().CreateTimer(1.2).Timeout += () =>
 			{
@@ -1715,251 +1525,59 @@ public sealed partial class SimBridge : Node
 		_interpolator.Remove(entity);
 	}
 
-	private void TickUnitMotions(float dt)
+	private void UpdateFoundationVisuals()
 	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var motion = _sim.QueryInterface<UnitMotion>(entity);
-			motion?.Tick(dt);
-		}
-	}
-
-	private void TickUnitAI(float dt)
-	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var ai = _sim.QueryInterface<UnitAIComponent>(entity);
-			ai?.Tick(dt, _sim);
-		}
-	}
-
-	private void TickAttackers(float dt)
-	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var attack = _sim.QueryInterface<AttackComponent>(entity);
-			attack?.Tick(dt, _sim);
-		}
-	}
-
-	/// <summary>建筑自动防御驱动(原版 BuildingAI 的 Timer 周期;1s 节流索敌在内)。</summary>
-	private void TickBuildingAI(float dt)
-	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var bai = _sim.QueryInterface<BuildingAIComponent>(entity);
-			bai?.Tick(dt, _sim);
-		}
-	}
-
-	private void TickBuilders(float dt)
-	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var builder = _sim.QueryInterface<BuilderComponent>(entity);
-			builder?.Tick(_sim);
-		}
-	}
-
-	private void TickResourceTrickles(float dt)
-	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var trickle = _sim.QueryInterface<ResourceTrickleComponent>(entity);
-			trickle?.Tick(_sim, dt);
-		}
-	}
-
-	/// <summary>P0 补齐件 tick:Upkeep 扣费 / AutoBuildable 自建 / AlertRaiser 时基 /
-	/// AttackDetection 抑制表过期 / BattleDetection 战区衰减。</summary>
-	private void TickGameplayClosure(float dt)
-	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			_sim.QueryInterface<UpkeepComponent>(entity)?.Tick(_sim, dt);
-			_sim.QueryInterface<AutoBuildableComponent>(entity)?.Tick(_sim, dt);
-			_sim.QueryInterface<AlertRaiserComponent>(entity)?.Tick(dt);
-			_sim.QueryInterface<AttackDetectionComponent>(entity)?.Tick(dt);
-			_sim.QueryInterface<BattleDetectionComponent>(entity)?.Tick(dt);
-			// Health 再生(原版 Health.js RegenTimer:建筑 5 HP/s 自愈等)。
-			_sim.QueryInterface<HealthComponent>(entity)?.TickRegen(_sim, dt);
-		}
-		// 易物价差回落(原版 Barter.ProgressTimeout:每 5s 向 0 收敛)。
-		BarterSystem.TickRestore(dt);
-	}
-
-	private void TickStatusEffects(float dt)
-	{
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var receiver = _sim.QueryInterface<StatusEffectsReceiverComponent>(entity);
-			receiver?.Tick(_sim, dt);
-		}
-	}
-
-	private void TickFoundations(float dt)
-	{
-		var completed = new List<EntityId>();
 		foreach (var entity in GetAllEntitiesSnapshot())
 		{
 			var foundation = _sim.QueryInterface<FoundationComponent>(entity);
-			if (foundation == null) continue;
+			if (foundation == null || foundation.IsBuilt) continue;
+			if (!_entityNodes.TryGetValue(entity, out var node)) continue;
 
-			if (!foundation.IsBuilt)
+			if (node.HasMeta("previewNode"))
 			{
-				if (_entityNodes.TryGetValue(entity, out var node))
+				var preview = (Node3D)node.GetMeta("previewNode");
+				float h = (float)node.GetMeta("previewHeight").AsDouble();
+				float f = Mathf.Clamp(foundation.BuildFraction, 0f, 1f);
+				preview.Position = new Vector3(0, -h * (1f - f), 0);
+
+				if (foundation.NumBuilders > 0 && node.HasMeta("scaffoldNode"))
 				{
-					if (node.HasMeta("previewNode"))
+					var scaffold = (Node3D)node.GetMeta("scaffoldNode");
+					if (!scaffold.Visible)
 					{
-						// 建造预览:真实建筑随进度从地下升起(原版
-						// GetConstructionProgressOffset = (progress-1)×模型高)。
-						var preview = (Node3D)node.GetMeta("previewNode");
-						float h = (float)node.GetMeta("previewHeight").AsDouble();
-						float f = Mathf.Clamp(foundation.BuildFraction, 0f, 1f);
-						preview.Position = new Vector3(0, -h * (1f - f), 0);
-
-						// 工人进场(原版 Commit)→ 显示脚手架。
-						if (foundation.NumBuilders > 0 && node.HasMeta("scaffoldNode"))
-						{
-							var scaffold = (Node3D)node.GetMeta("scaffoldNode");
-							if (!scaffold.Visible)
-							{
-								scaffold.Visible = true;
-								ZeroAD.Sim.Diag.Log("Fnd",
-									$"scaffold shown: entity={entity.Value} frac={foundation.BuildFraction:F2}");
-							}
-						}
-						// 建造扬尘:有工人才喷(construction_dust,原版地基 actor 常驻 prop)。
-						if (_foundationDust.TryGetValue(entity, out var dust)
-							&& GodotObject.IsInstanceValid(dust))
-							dust.Emitting = foundation.NumBuilders > 0;
-					}
-					else if (node is MeshInstance3D mi && mi.Mesh is BoxMesh bm)
-					{
-						// 幽灵盒兜底:透明度渐升(旧行为)。
-						var mat = new StandardMaterial3D();
-						float alpha = 0.3f + 0.7f * foundation.BuildFraction;
-						mat.AlbedoColor = new Color(0.6f, 0.5f, 0.4f, alpha);
-						mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-						bm.Material = mat;
-					}
-
-					// 建造进度条(原版地基血条随建造涨;整百分点变化才重建网格)。
-					if (_foundationBars.TryGetValue(entity, out var bar))
-					{
-						int pct = (int)(100f * foundation.BuildFraction);
-						if (!bar.HasMeta("pct") || bar.GetMeta("pct").AsInt32() != pct)
-						{
-							var parent = bar.GetParent();
-							var barPos = bar.Position;
-							bar.QueueFree();
-							var nb = SelectionRing.CreateHealthBar(pct / 100f);
-							nb.Position = barPos;
-							nb.SetMeta("pct", pct);
-							parent.AddChild(nb);
-							_foundationBars[entity] = nb;
-						}
+						scaffold.Visible = true;
+						ZeroAD.Sim.Diag.Log("Fnd",
+							$"scaffold shown: entity={entity.Value} frac={foundation.BuildFraction:F2}");
 					}
 				}
-				continue;
+				if (_foundationDust.TryGetValue(entity, out var dust)
+					&& GodotObject.IsInstanceValid(dust))
+					dust.Emitting = foundation.NumBuilders > 0;
+			}
+			else if (node is MeshInstance3D mi && mi.Mesh is BoxMesh bm)
+			{
+				var mat = new StandardMaterial3D();
+				float alpha = 0.3f + 0.7f * foundation.BuildFraction;
+				mat.AlbedoColor = new Color(0.6f, 0.5f, 0.4f, alpha);
+				mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
+				bm.Material = mat;
 			}
 
-			_foundationBars.Remove(entity);   // 完工:条目清除(条随节点释放)
-			_foundationDust.Remove(entity);   // 完工:扬尘条目摘除(节点随销毁释放)
-			completed.Add(entity);
-		}
-
-		foreach (var entity in completed)
-		{
-			var foundation = _sim.QueryInterface<FoundationComponent>(entity)!;
-			var pos = _sim.QueryInterface<PositionComponent>(entity);
-			var identity = _sim.QueryInterface<IdentityComponent>(entity);
-			// Prefer the full template name carried by IdentityComponent (the kernel
-			// SimCommandExecutor stores it there for player-placed foundations). Fall back to
-			// ResultTemplate mapped through the UI-name table for legacy/scenario foundations
-			// that still store a short display name.
-			string fullTemplate = !string.IsNullOrEmpty(identity?.TemplateName)
-				? identity!.TemplateName
-				: MapBuildNameToTemplate(foundation.ResultTemplate);
-			float x = pos?.Position.X.ToFloat() ?? 0;
-			float z = pos?.Position.Z.ToFloat() ?? 0;
-			// 完工继承 foundation 朝向(原版 Transform.js:57-58 把 rot.y 拷给新实体)。
-			// 此前 OrientationY 留默认 0,完工建筑总是朝北,丢失玩家放置角度。
-			float yaw = pos?.Rotation.Y.ToFloat() ?? 0f;
-			var owner = _sim.QueryInterface<OwnershipComponent>(entity);
-
-			if (_entityNodes.TryGetValue(entity, out var oldNode))
+			if (_foundationBars.TryGetValue(entity, out var bar))
 			{
-				oldNode.QueueFree();
-				_entityNodes.Remove(entity);
+				int pct = (int)(100f * foundation.BuildFraction);
+				if (!bar.HasMeta("pct") || bar.GetMeta("pct").AsInt32() != pct)
+				{
+					var parent = bar.GetParent();
+					var barPos = bar.Position;
+					bar.QueueFree();
+					var nb = SelectionRing.CreateHealthBar(pct / 100f);
+					nb.Position = barPos;
+					nb.SetMeta("pct", pct);
+					parent.AddChild(nb);
+					_foundationBars[entity] = nb;
+				}
 			}
-			_sim.DestroyEntity(entity);
-
-			TemplateStats? stats = null;
-			try { stats = Templates?.ExtractStats(fullTemplate); } catch { }
-			var built = SpawnScenarioBuilding(new ScenarioEntityDef
-			{
-				Template = fullTemplate,
-				X = x,
-				Z = z,
-				Player = owner?.PlayerId ?? 1,
-				OrientationY = yaw
-			}, stats);
-
-			Events.RaiseStructureBuilt(new StructureBuiltEvent
-			{
-				Building = built,
-				TemplateName = fullTemplate
-			});
-
-			// Pop bonus is data-driven now: PopulationComponent on the building (added in
-			// SpawnScenarioBuilding from template stats) feeds PlayerComponent.PopBonuses via
-			// RecomputePlayerPopBonus. This replaces the hardcoded "if house, +10" rule.
-			if (owner != null)
-				_sim.RecomputePlayerPopBonus(owner.PlayerId);
-
-			// 完工建筑的静态阻挡经 ObstructionComponent.EnsureRegistered → ObstructionManager
-			// 自动打脏;回合末 T("pathgrid") 的 UpdateGrid 统一增量重烘焙(此处零操作)。
-
-			AutoAssignIdleBuilders(x, z);
-		}
-	}
-
-	private void AutoAssignIdleBuilders(float bx, float bz)
-	{
-		EntityId? nearest = null;
-		float nearestDist = 30f * 30f;
-		foreach (var e in GetAllEntitiesSnapshot())
-		{
-			var supply = _sim.QueryInterface<ResourceSupply>(e);
-			if (supply == null || supply.Amount <= 0) continue;
-			var pos = _sim.QueryInterface<PositionComponent>(e);
-			if (pos == null) continue;
-			float dx = pos.Position.X.ToFloat() - bx;
-			float dz = pos.Position.Z.ToFloat() - bz;
-			float d2 = dx * dx + dz * dz;
-			if (d2 < nearestDist)
-			{
-				nearestDist = d2;
-				nearest = e;
-			}
-		}
-		if (nearest == null) return;
-
-		foreach (var e in GetAllEntitiesSnapshot())
-		{
-			var builder = _sim.QueryInterface<BuilderComponent>(e);
-			if (builder == null || builder.Target != null) continue;
-			var gatherer = _sim.QueryInterface<ResourceGatherer>(e);
-			if (gatherer == null) continue;
-			var motion = _sim.QueryInterface<UnitMotion>(e);
-			if (motion == null || motion.HasMoveTarget) continue;
-			// 队列里还有活(如墙链的下一段)不算空闲——别拽走(此前完工瞬间
-			// builder.Target 刚好为空,被自动派去采集,queued 修复单全被顶掉)。
-			var ai = _sim.QueryInterface<UnitAIComponent>(e);
-			if (ai?.CurrentOrder != null) continue;
-			// 走 UnitAI 订单(GATHER FSM 子树;旧直接设状态不经 FSM 已废弃)。
-			ai?.Gather(nearest.Value);
 		}
 	}
 
@@ -2018,54 +1636,6 @@ public sealed partial class SimBridge : Node
 		"Arsenal" => "structures/spart/arsenal",
 		_ => $"structures/spart/{name.ToLowerInvariant()}"
 	};
-
-	private void TickResearch(float dt)
-	{
-		var techMgr = _playerEntity.HasValue
-			? _sim.QueryInterface<TechnologyManager>(_playerEntity.Value)
-			: null;
-		if (techMgr == null) return;
-
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var researcher = _sim.QueryInterface<ResearcherComponent>(entity);
-			if (researcher == null) continue;
-			string? prev = researcher.CurrentTech;
-			var completed = researcher.Tick(dt, techMgr, _sim);
-			if (completed != null)
-			{
-				// 修改值已在 ApplyResearch 内落地;手动研究可能解锁新的 autoResearch 科技
-				techMgr.UpdateAutoResearch(_sim);
-				// 血量类科技改变 Health/Max → 该玩家全部实体按比例缩放(原版 Health.js 同款)
-				if (_playerEntity.HasValue)
-				{
-					ValueModificationApplier.RescaleHealth(_sim, _playerEntity.Value);
-					// 易物乘数随科技重算(原版 OnValueModification 的 BarterMultiplier 分支)。
-					_sim.QueryInterface<PlayerComponent>(_playerEntity.Value)
-						?.RecomputeBarterMultipliers(_sim);
-					// Capturable/CapturePoints 科技(如 ship_capture_resistance ×1.4)→ CP 数组按比例缩放
-					ValueModificationApplier.RescaleMaxCapturePoints(_sim, _playerEntity.Value);
-				}
-				Events.RaiseResearchFinished(new ResearchFinishedEvent
-				{
-					ResearcherEntity = entity,
-					Tech = completed
-				});
-			}
-		}
-	}
-
-	private void TickProductionQueues(float dt)
-	{
-		// Training spawn, cost charging, pop/entity-limit accounting, and rally-point assignment
-		// all live in the sim now (ProductionQueue.Tick + EnqueueTraining + ComponentManager).
-		// We just drive the tick; visuals are built when EntityCreated fires from SpawnEntity.
-		foreach (var entity in GetAllEntitiesSnapshot())
-		{
-			var queue = _sim.QueryInterface<ProductionQueue>(entity);
-			queue?.Tick(dt, _sim);
-		}
-	}
 
 	/// <summary>
 	/// Build a Godot visual for a sim-spawned entity (training output). Driven by the sim's

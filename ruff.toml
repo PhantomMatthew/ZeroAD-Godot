@@ -22,7 +22,7 @@ exclude = [
 
 line-length = 99
 
-target-version = "py311"
+target-version = "py312"
 
 [format]
 line-ending = "lf"
@@ -54,6 +54,11 @@ ignore = [
     "TRY003",
     "W505"
 ]
+
+[lint.per-file-ignores]
+"python/zeroad_env/*.py" = ["CPY001", "N812", "TC003", "INP001", "PLC0415", "S108", "RUF012"]
+"python/zeroad_env/zeroad_rl_pb2.py" = ["ALL"]
+"python/zeroad_env/zeroad_rl_pb2_grpc.py" = ["ALL"]
 
 [lint.isort]
 lines-after-imports = 2

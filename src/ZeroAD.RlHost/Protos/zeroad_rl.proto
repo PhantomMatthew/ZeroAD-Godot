@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package zeroad.rl;
+
+option csharp_namespace = "ZeroAD.RlHost.Proto";
+
+// Field layout matches ZeroAD.Sim.RL.RlObservation / RlAction (flat int32 tensors).
+
+message Observation {
+  repeated int32 entities = 1;
+  repeated int32 spatial = 2;
+  repeated int32 scalars = 3;
+  bytes function_mask = 4;
+  uint32 turn = 5;
+  int32 reward = 6;
+  bool done = 7;
+}
+
+message Action {
+  int32 function = 1;
+  int32 selected_index = 2;
+  int32 target_entity_index = 3;
+  int32 target_cell_x = 4;
+  int32 target_cell_z = 5;
+  int32 catalog_id = 6;
+}
+
+message ResetRequest {
+  uint32 seed = 1;
+  bool privileged = 2;
+  int32 step_mul = 3;
+  int32 command_delay = 4;
+}
+
+message ClientMessage {
+  oneof payload {
+    ResetRequest reset = 1;
+    Action step = 2;
+  }
+}
+
+service ZeroAdRl {
+  rpc Reset (ResetRequest) returns (Observation);
+  rpc Step (Action) returns (Observation);
+  rpc Session (stream ClientMessage) returns (stream Observation);
+}
