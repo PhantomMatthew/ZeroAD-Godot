@@ -3029,10 +3029,15 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     private static void StopMoving(UnitAIComponent u) =>
         SimSystem.GetComponent<UnitMotion>(u.Entity)?.Stop();
 
+    /// <summary>原版 UnitAI.FindNearestDropsite:只在**己方**投放点里找最近的
+    /// (原版另允许 hasSharedDropsites 的互盟共享投放点;内核尚无共享投放站机制,只用本方)。
+    /// 此前无属主过滤,采集者会把资源送到全图最近的投放点——包括敌方 CC。</summary>
     private static EntityId? FindNearestDropsite(EntityId gatherer, ComponentManager cm)
     {
         var gpos = cm.QueryInterface<PositionComponent>(gatherer);
         if (gpos == null) return null;
+        var own = cm.QueryInterface<OwnershipComponent>(gatherer);
+        if (own == null || own.PlayerId <= 0) return null;
         var gatherCmp = cm.QueryInterface<ResourceGatherer>(gatherer);
         ResourceType carryType = gatherCmp?.CarryType ?? ResourceType.Wood;
 
@@ -3043,6 +3048,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         {
             var ds = cm.QueryInterface<ResourceDropsite>(e);
             if (ds == null || !ds.Accepts(carryType)) continue;
+            if (cm.QueryInterface<OwnershipComponent>(e)?.PlayerId != own.PlayerId) continue;
             var pos = cm.QueryInterface<PositionComponent>(e);
             if (pos == null) continue;
             var dx = pos.Position.X - gpos.Position.X;
