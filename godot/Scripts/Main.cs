@@ -2762,7 +2762,6 @@ public sealed partial class Main : Node3D
 			if (node == null) continue;
 			// 选择圈/射程圈/占领条的 sim 态一趟聚合(桥 GetMarkerState)。
 			var st = _sim.Gui.GetMarkerState(eid);
-			bool isBuilding = st?.IsBuilding ?? false;
 			int ownerPlayerId = st?.OwnerPlayerId ?? -1;
 			int healthMax = st?.HealthMax ?? 0;
 			float healthFraction = st?.HealthFraction ?? 0f;
@@ -2771,31 +2770,10 @@ public sealed partial class Main : Node3D
 			Color friendlyColor = ownerPlayerId <= 0
 				? Colors.White
 				: SimBridge.GetPlayerColor(ownerPlayerId);
-			Color enemyColor = SimBridge.GetPlayerColor(ownerPlayerId);
 
-			// 建筑选择框 = footprint 精确形状/尺寸(原版 SelectionShape=<Footprint/>):
-			// 方形 → 半宽/半深矩形;圆形 → 半径圆环(如 tholos 圆形神庙)。
-			// 无 footprint 组件才回退 10。
-			MeshInstance3D ring;
-			if (isBuilding)
-			{
-				if (st is { FootprintCircle: true })
-				{
-					ring = SelectionRing.Create(st.FootprintHalfX * 2f, friendlyColor, enemyColor,
-						SelectionRing.Shape.Circle);
-				}
-				else
-				{
-					float halfX = st?.FootprintHalfX ?? 10f;
-					float halfZ = st?.FootprintHalfZ ?? 10f;
-					ring = SelectionRing.CreateRect(halfX, halfZ, friendlyColor);
-				}
-			}
-			else
-			{
-				ring = SelectionRing.Create(2f, friendlyColor, enemyColor,
-					SelectionRing.Shape.Circle);
-			}
+			// 选中标记对齐 CCmpSelectable:Texture overlay → 椭圆贴地圈(单位/gaia);
+			// Outline → footprint 描边(多数建筑方形,圆形 footprint 才画圆)。
+			var ring = CreateSelectionMark(st, friendlyColor);
 			ring.Position = new Vector3(0, 0.1f, 0);
 			node.AddChild(ring);
 			_selectionMarkers.Add(ring);
@@ -2863,6 +2841,34 @@ public sealed partial class Main : Node3D
 		UpdateHoverMarker();
 	}
 
+	/// <summary>选中/悬停贴地标记(原版 CCmpSelectable,悬停同 overlay 只改颜色)。
+	/// Texture → ellipse 贴地圈,尺寸 = footprint 半径(圆)或半宽深(方);
+	/// Outline → 方形 footprint 画矩形描边,圆形 footprint 画圆描边。</summary>
+	private static MeshInstance3D CreateSelectionMark(GuiInterface.MarkerState? st, Color color)
+	{
+		if (st == null)
+			return SelectionRing.CreateEllipse(1.5f, 1.5f, color);
+
+		// C++ UpdateDynamicOverlay:圆 footprint 的 halfSize = 半径 = Size0 = HalfX*2;
+		// 方 footprint 的 halfSize = 宽/2 = HalfX(GetMarkerState 已把 Size0 折半)。
+		if (st.OverlayIsTexture)
+		{
+			float hx = st.FootprintCircle ? st.FootprintHalfX * 2f : st.FootprintHalfX;
+			float hz = st.FootprintCircle ? st.FootprintHalfZ * 2f : st.FootprintHalfZ;
+			if (hx < 0.05f) hx = 1.5f;
+			if (hz < 0.05f) hz = hx;
+			return SelectionRing.CreateEllipse(hx, hz, color, st.OverlayTexturePath, st.OverlayTextureMask);
+		}
+
+		// Outline LineThickness 模板默认 0.4(template_structure / template_gaia)。
+		if (st.FootprintCircle)
+			return SelectionRing.Create(st.FootprintHalfX * 2f, color, color, SelectionRing.Shape.Circle, 0.4f);
+
+		float halfX = st.FootprintHalfX > 0.2f ? st.FootprintHalfX : 10f;
+		float halfZ = st.FootprintHalfZ > 0.2f ? st.FootprintHalfZ : halfX;
+		return SelectionRing.CreateRect(halfX, halfZ, color, 0.4f);
+	}
+
 	/// <summary>Hover 高亮(原版 selection.js onMouseMove:SetHighlight + SetStatusBars):
 	/// 鼠标指向的实体显示白色微光圈 + 状态条——有 Health 画血条(动物/建筑),
 	/// 否则有 ResourceSupply 画资源条(树木/矿石的剩余量,C++ 的 supply 条)。</summary>
@@ -2890,8 +2896,8 @@ public sealed partial class Main : Node3D
 		var st = _sim.Gui.GetMarkerState(ent);
 		if (node == null || st == null) return;
 
-		// 微光圈(gaia/敌方/己方都用原版高亮白 0.5 透明度,不区分敌我)
-		var ring = SelectionRing.Create(1.6f, new Color(1f, 1f, 1f, 0.5f), new Color(1f, 1f, 1f, 0.5f));
+		// 悬停与选中同一 overlay(原版 SetSelectionHighlight),白色半透明。
+		var ring = CreateSelectionMark(st, new Color(1f, 1f, 1f, 0.5f));
 		node.AddChild(ring);
 		_hoverMarker = ring;
 

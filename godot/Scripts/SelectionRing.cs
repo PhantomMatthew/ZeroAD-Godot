@@ -39,16 +39,16 @@ public static class SelectionRing
     /// 只有 1px 发丝线,且线宽不可控)。
     /// </summary>
     public static MeshInstance3D Create(float radius, Color friendlyColor, Color enemyColor,
-        Shape shape = Shape.Circle)
+        Shape shape = Shape.Circle, float lineWidth = -1f)
     {
         
 
         var points = shape == Shape.Square ? SquarePoints(radius) : CirclePoints(radius);
-        float lineWidth = shape == Shape.Square ? 0.5f : 0.35f;
+        float width = lineWidth > 0f ? lineWidth : (shape == Shape.Square ? 0.5f : 0.35f);
 
         var st = new SurfaceTool();
         st.Begin(Mesh.PrimitiveType.Triangles);
-        AppendOutlineBand(st, points, lineWidth);
+        AppendOutlineBand(st, points, width);
         var mesh = st.Commit();
         var instance = new MeshInstance3D { Mesh = mesh };
         mesh.SurfaceSetMaterial(0, MatFor(friendlyColor));
@@ -74,6 +74,88 @@ public static class SelectionRing
         var instance = new MeshInstance3D { Mesh = mesh };
         mesh.SurfaceSetMaterial(0, MatFor(color));
         return instance;
+    }
+
+    /// <summary>原版 CCmpSelectable DYNAMIC_QUAD:贴地 ellipse.png × mask 染玩家色。
+    /// 参数是 C++ halfSize(圆 footprint = 半径;方 footprint = 宽/深的一半)。
+    /// texRel/maskRel 相对 art/textures/selection/(单位 128x128,动物 128x256)。</summary>
+    private static Shader? _ellipseShader;
+    private static readonly Dictionary<string, ShaderMaterial> _ellipseMats = new();
+
+    public static MeshInstance3D CreateEllipse(float halfX, float halfZ, Color playerColor,
+        string? texRel = null, string? maskRel = null)
+    {
+        float hx = halfX > 0.05f ? halfX : 1.5f;
+        float hz = halfZ > 0.05f ? halfZ : hx;
+        var st = new SurfaceTool();
+        st.Begin(Mesh.PrimitiveType.Triangles);
+        st.SetColor(playerColor);
+        // UV: C++ overlay quad 四角;Y 略抬避免 z-fight。
+        void V(float x, float z, float u, float v)
+        {
+            st.SetColor(playerColor);
+            st.SetUV(new Vector2(u, v));
+            st.AddVertex(new Vector3(x, 0.08f, z));
+        }
+        V(-hx, -hz, 0f, 0f); V(hx, -hz, 1f, 0f); V(hx, hz, 1f, 1f);
+        V(-hx, -hz, 0f, 0f); V(hx, hz, 1f, 1f); V(-hx, hz, 0f, 1f);
+        var mesh = st.Commit();
+        mesh.SurfaceSetMaterial(0, EllipseMat(texRel, maskRel));
+        return new MeshInstance3D
+        {
+            Mesh = mesh,
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        };
+    }
+
+    private static ShaderMaterial EllipseMat(string? texRel, string? maskRel)
+    {
+        string tex = string.IsNullOrEmpty(texRel) ? "128x128/ellipse.png" : texRel;
+        string mask = string.IsNullOrEmpty(maskRel)
+            ? tex.Replace("ellipse.png", "ellipse_mask.png")
+            : maskRel;
+        string key = tex + "|" + mask;
+        if (_ellipseMats.TryGetValue(key, out var cached)) return cached;
+        _ellipseShader ??= new Shader
+        {
+            Code = "shader_type spatial;\n"
+                    + "render_mode unshaded, cull_disabled, depth_draw_never, fog_disabled, blend_mix;\n"
+                    + "uniform sampler2D base_tex : source_color, filter_linear, repeat_disable;\n"
+                    + "uniform sampler2D mask_tex : filter_linear, repeat_disable;\n"
+                    + "void fragment() {\n"
+                    + "  vec4 base = texture(base_tex, UV);\n"
+                    + "  float m = texture(mask_tex, UV).r;\n"
+                    + "  ALBEDO = mix(base.rgb, COLOR.rgb, m);\n"
+                    + "  ALPHA = COLOR.a * base.a;\n"
+                    + "}\n",
+        };
+        var mat = new ShaderMaterial { Shader = _ellipseShader };
+        mat.SetShaderParameter("base_tex", LoadSelectionTex(tex));
+        mat.SetShaderParameter("mask_tex", LoadSelectionTex(mask));
+        _ellipseMats[key] = mat;
+        return mat;
+    }
+
+    private static Texture2D LoadSelectionTex(string rel)
+    {
+        string norm = rel.Replace('\\', '/').Trim().TrimStart('/');
+        string[] segs = norm.Split('/');
+        var parts = new string[3 + segs.Length];
+        parts[0] = "art";
+        parts[1] = "textures";
+        parts[2] = "selection";
+        segs.CopyTo(parts, 3);
+        string? path = RuntimePaths.FindPublicPath(parts);
+        if (path == null && segs.Length == 1)
+            path = RuntimePaths.FindPublicPath("art", "textures", "selection", "128x128", segs[0]);
+        if (path != null)
+        {
+            var img = Image.LoadFromFile(path);
+            if (img != null) return ImageTexture.CreateFromImage(img);
+        }
+        var fallback = Image.CreateEmpty(1, 1, false, Image.Format.Rgba8);
+        fallback.Fill(Colors.White);
+        return ImageTexture.CreateFromImage(fallback);
     }
 
     /// <summary>攻击射程圈(原版 RangeOverlay:选中带 RangeOverlay 的实体时显示;

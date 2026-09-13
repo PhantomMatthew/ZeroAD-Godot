@@ -953,6 +953,26 @@ namespace ZeroAD.Sim.Content
                 if (height.IsOk) stats.FootprintHeight = height.ToFixed();
             }
 
+            // Selectable/Overlay:单位/gaia 是 Texture(椭圆贴地圈),建筑是 Outline(footprint 描边)。
+            // C++ 先看 Texture 再看 Outline;树用 <Outline disable=""/> 关掉描边只留椭圆。
+            var selectable = node.GetChild("Selectable");
+            if (selectable.IsOk)
+            {
+                var overlay = selectable.GetChild("Overlay");
+                if (overlay.IsOk)
+                {
+                    var texture = overlay.GetChild("Texture");
+                    if (texture.IsOk)
+                    {
+                        stats.SelectableOverlayTexture = true;
+                        var mt = texture.GetChild("MainTexture");
+                        if (mt.IsOk) stats.SelectableMainTexture = mt.ToString().Trim();
+                        var mm = texture.GetChild("MainTextureMask");
+                        if (mm.IsOk) stats.SelectableMainTextureMask = mm.ToString().Trim();
+                    }
+                }
+            }
+
             // Obstruction: what this entity blocks. Either <Static width depth/> (building) or <Unit/> (mobile).
             // Drives ObstructionComponent shape + flags at spawn time.
             var obstruction = node.GetChild("Obstruction");
@@ -1560,6 +1580,13 @@ namespace ZeroAD.Sim.Content
         public float BarHeight = 0.333f;
         /// <summary>StatusBars/HeightOffset(相对实体原点的世界 Y;单位 5,建筑 12)。</summary>
         public float HeightOffset = 5f;
+        /// <summary>Selectable/Overlay 含 Texture(原版 DYNAMIC_QUAD:单位/gaia 椭圆圈)。
+        /// false = Outline 描边(建筑 footprint)。</summary>
+        public bool SelectableOverlayTexture;
+        /// <summary>Texture/MainTexture 相对 art/textures/selection/(空=128x128/ellipse.png)。</summary>
+        public string SelectableMainTexture = "";
+        /// <summary>Texture/MainTextureMask(空=同目录 ellipse_mask.png)。</summary>
+        public string SelectableMainTextureMask = "";
         public string PromotionEntity = "";
         public int PromotionRequiredXp = 100;
         /// <summary>UnitMotion/PassabilityClass(注册表任意类名:default/large/ship/

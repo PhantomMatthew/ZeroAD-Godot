@@ -612,15 +612,18 @@ public sealed class GuiInterface
     }
 
     /// <summary>选择圈/状态条快照(原版 GetEntitiesWithStatusBars 段:Main 选择圈重建
-    /// 与 hover 条此前 EntityState 之外另查 4 组件,现一趟)。FootprintHalfX/Z 为
-    /// 建筑选择圈半宽深(圆形时 HalfX=半径);无 Footprint 件回退 10(调用方语义)。</summary>
+    /// 与 hover 条此前 EntityState 之外另查 4 组件,现一趟)。FootprintHalfX/Z =
+    /// Size0/1 的一半:方形是半宽/半深,圆形 Size0 是半径所以 HalfX=半径/2
+    /// (调用方 ×2 还原半径)。无 Footprint 件时用模板 Footprint(单位半径 1.5,
+    /// 树 2.5);切勿回退 10——那会让 gaia/单位椭圆变成 20m。</summary>
     public record MarkerState(
         bool IsBuilding, int OwnerPlayerId, int HealthMax, float HealthFraction,
         int ResourceAmount, int ResourceMaxAmount,
         bool FootprintCircle, float FootprintHalfX, float FootprintHalfZ,
         bool HasRangeOverlay, float Range,
         float MaxCapturePoints, float[] CapturePoints,
-        float BarWidth, float BarHeight, float HeightOffset);
+        float BarWidth, float BarHeight, float HeightOffset,
+        bool OverlayIsTexture, string OverlayTexturePath, string OverlayTextureMask);
 
     public MarkerState? GetMarkerState(EntityId entity)
     {
@@ -643,8 +646,16 @@ public sealed class GuiInterface
             for (int p = 0; p < n; p++) cps[p] = capturable.CapturePoints[p].ToFloat();
         }
 
-        // StatusBars 尺寸(原版 template_unit 2×0.333@5 / template_structure 6×0.6@12)。
+        // StatusBars 尺寸 + Selectable overlay 类型(原版 Texture=椭圆圈 / Outline=描边)。
+        // Footprint:单位/gaia 当前不装配 FootprintComponent,必须回落到模板 Size0
+        // (CCmpSelectable GetShape),否则半宽 10 → 椭圆直径 20m。
         float barW = 2f, barH = 0.333f, barOff = 5f;
+        bool overlayTex = id?.IsBuilding != true;
+        string overlayTexPath = "";
+        string overlayMaskPath = "";
+        bool fpCircle = fp?.Shape == FootprintShape.Circle;
+        float fpSize0 = fp != null ? fp.Size0.ToFloat() : 0f;
+        float fpSize1 = fp != null ? fp.Size1.ToFloat() : 0f;
         if (id != null && !string.IsNullOrEmpty(id.TemplateName))
         {
             try
@@ -655,20 +666,33 @@ public sealed class GuiInterface
                     barW = ts.BarWidth;
                     barH = ts.BarHeight;
                     barOff = ts.HeightOffset;
+                    overlayTex = ts.SelectableOverlayTexture;
+                    overlayTexPath = ts.SelectableMainTexture;
+                    overlayMaskPath = ts.SelectableMainTextureMask;
+                    if (fp == null)
+                    {
+                        fpCircle = ts.FootprintShape == "circle";
+                        fpSize0 = ts.FootprintSize0.ToFloat();
+                        fpSize1 = ts.FootprintSize1.ToFloat();
+                    }
                 }
             }
             catch { /* 缺模板时用单位缺省,条仍能画 */ }
         }
+        if (fpSize0 <= 0.01f)
+        {
+            if (overlayTex) { fpCircle = true; fpSize0 = fpSize1 = 1.5f; }
+            else { fpCircle = false; fpSize0 = fpSize1 = 12f; }
+        }
+        if (fpSize1 <= 0.01f) fpSize1 = fpSize0;
 
         return new MarkerState(
             id?.IsBuilding ?? false, own?.PlayerId ?? -1,
             hp?.Max ?? 0, hp != null && hp.Max > 0 ? (float)hp.Current / hp.Max : 0f,
             supply?.Amount ?? 0, supply?.MaxAmount ?? 0,
-            fp?.Shape == FootprintShape.Circle,
-            fp != null ? fp.Size0.ToFloat() * 0.5f : 10f,
-            fp != null ? fp.Size1.ToFloat() * 0.5f : 10f,
+            fpCircle, fpSize0 * 0.5f, fpSize1 * 0.5f,
             attack is { HasRangeOverlay: true }, attack?.Range ?? 0f,
-            maxCp, cps, barW, barH, barOff);
+            maxCp, cps, barW, barH, barOff, overlayTex, overlayTexPath, overlayMaskPath);
     }
 
     /// <summary>选中集动作能力(原版 actionCheck 的选中侧:攻击/采集/驻防三光标资格,
