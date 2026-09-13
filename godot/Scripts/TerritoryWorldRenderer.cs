@@ -43,18 +43,34 @@ public sealed class TerritoryWorldRenderer
         // 0.2+0.8|cos(t·π)| 动画,TerritoryManager 渲染段)。
         if (_borderMesh == null)
         {
+            // 原版 overlayline.fs:color = mix(base.rgb, playerColor, mask.r), alpha = playerAlpha·base.a。
+            // base = territory_border.png(横向剖面:内侧淡黄微光 → 深色细脊 → 玩家色带 → 深色外缘),
+            // mask = territory_border_mask.png(色带段 r=1)。玩家色走顶点 COLOR;blink 版乘
+            // 0.2+0.8|cos(t·π)|(CCmpTerritoryManager::Interpolate)。
+            var shader = new Shader
+            {
+                Code = "shader_type spatial; render_mode unshaded, cull_disabled, depth_draw_never;\n"
+                    + "uniform sampler2D base_tex : source_color, filter_linear, repeat_disable;\n"
+                    + "uniform sampler2D mask_tex : filter_linear, repeat_disable;\n"
+                    + "uniform bool blinking = false;\n"
+                    + "void fragment() {\n"
+                    + "  vec4 base = texture(base_tex, UV);\n"
+                    + "  float m = texture(mask_tex, UV).r;\n"
+                    + "  float a = blinking ? 0.2 + 0.8 * abs(cos(TIME * 3.14159265)) : 1.0;\n"
+                    + "  ALBEDO = mix(base.rgb, COLOR.rgb, m);\n"
+                    + "  ALPHA = COLOR.a * base.a * a; }",
+            };
+            var (baseTex, maskTex) = LoadBorderTextures();
+
             _borderMesh = new MeshInstance3D
             {
                 Name = "TerritoryBorders",
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             };
-            var mat = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                VertexColorUseAsAlbedo = true,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-            };
+            var mat = new ShaderMaterial { Shader = shader };
+            mat.SetShaderParameter("base_tex", baseTex);
+            mat.SetShaderParameter("mask_tex", maskTex);
+            mat.SetShaderParameter("blinking", false);
             _borderMesh.MaterialOverride = mat;
             terrain.GetParent()?.AddChild(_borderMesh);
 
@@ -63,14 +79,10 @@ public sealed class TerritoryWorldRenderer
                 Name = "TerritoryBordersBlink",
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             };
-            var blinkShader = new Shader
-            {
-                Code = "shader_type spatial; render_mode unshaded, cull_disabled;\n"
-                    + "uniform vec4 blink_color : source_color = vec4(1.0);\n"
-                    + "void fragment() { float a = 0.2 + 0.8 * abs(cos(TIME * 3.14159265));\n"
-                    + "  ALBEDO = blink_color.rgb; ALPHA = blink_color.a * a; }",
-            };
-            var blinkMat = new ShaderMaterial { Shader = blinkShader };
+            var blinkMat = new ShaderMaterial { Shader = shader };
+            blinkMat.SetShaderParameter("base_tex", baseTex);
+            blinkMat.SetShaderParameter("mask_tex", maskTex);
+            blinkMat.SetShaderParameter("blinking", true);
             _blinkMesh.MaterialOverride = blinkMat;
             terrain.GetParent()?.AddChild(_blinkMesh);
         }
@@ -170,15 +182,94 @@ public sealed class TerritoryWorldRenderer
         _mat?.SetShaderParameter("territory_cells", (float)n);
     }
 
-    /// <summary>领土描边(上游 CTerritoryBoundaryCalculator 轮廓追踪 + 环带):
-    /// 边界 = 追踪出的闭合环(角部连续,替代逐边 quad 的断角);环带沿环向两侧各
-    /// 扩半宽,内顶点加小方帽接角;blink 环进独立脉冲网格(TIME 动画 alpha)。
-    /// LOS 裁剪:两端格均未探索的段不画(战争迷雾不透敌方疆域线)。</summary>
+    /// <summary>原版 territorymanager.xml:BorderThickness 0.75(半宽,线全宽 1.5m)、
+    /// BorderSeparation 0.85(向领土内侧平移,相邻两家边线不重叠)。</summary>
+    private const float BorderThickness = 0.75f;
+    private const float BorderSeparation = 0.85f;
+    private const float OverlayVOffset = 0.2f;   // 原版 OverlayRenderer::OVERLAY_VOFFSET
+
+    /// <summary>加载原版边线贴图(data/mods/mod/art/textures/misc);缺失时退回 1×1 白/白
+    /// (纯玩家色实线)。</summary>
+    private static (Texture2D Base, Texture2D Mask) LoadBorderTextures()
+    {
+        Texture2D Fallback(Color c)
+        {
+            var img = Image.CreateEmpty(1, 1, false, Image.Format.Rgba8);
+            img.Fill(c);
+            return ImageTexture.CreateFromImage(img);
+        }
+        string? root = RuntimePaths.FindBinariesRoot();
+        if (root == null) return (Fallback(Colors.White), Fallback(Colors.White));
+        string dir = System.IO.Path.Combine(root, "data", "mods", "mod", "art", "textures", "misc");
+        Texture2D Load(string file, Color fallback)
+        {
+            string p = System.IO.Path.Combine(dir, file);
+            if (!System.IO.File.Exists(p)) return Fallback(fallback);
+            var img = Image.LoadFromFile(p);
+            return img == null ? Fallback(fallback) : ImageTexture.CreateFromImage(img);
+        }
+        return (Load("territory_border.png", Colors.White), Load("territory_border_mask.png", Colors.White));
+    }
+
+    /// <summary>原版 SimRender::SmoothPointsAverage(闭合):三点均值平滑。</summary>
+    private static (float X, float Z)[] SmoothPointsAverage(System.Collections.Generic.IReadOnlyList<(float X, float Z)> pts)
+    {
+        int n = pts.Count;
+        var outPts = new (float X, float Z)[n];
+        if (n < 2) { for (int i = 0; i < n; i++) outPts[i] = pts[i]; return outPts; }
+        for (int i = 0; i < n; i++)
+        {
+            var a = pts[(i - 1 + n) % n]; var b = pts[i]; var c = pts[(i + 1) % n];
+            outPts[i] = ((a.X + b.X + c.X) / 3f, (a.Z + b.Z + c.Z) / 3f);
+        }
+        return outPts;
+    }
+
+    /// <summary>原版 SimRender::InterpolatePointsRNS(闭合,segmentSamples=4):GPG4 非均匀
+    /// 三次样条重采样,并沿切向左法向(领土内侧)平移 offset。</summary>
+    private static System.Collections.Generic.List<(float X, float Z)> InterpolatePointsRNS(
+        (float X, float Z)[] pts, float offset, int segmentSamples = 4)
+    {
+        int n = pts.Length;
+        var result = new System.Collections.Generic.List<(float X, float Z)>(n * segmentSamples);
+        if (n < 1) return result;
+        static Vector2 Norm(Vector2 v) => v.LengthSquared() > 1e-12f ? v.Normalized() : Vector2.Zero;
+        for (int i = 0; i < n; i++)
+        {
+            var p0 = new Vector2(pts[(i - 1 + n) % n].X, pts[(i - 1 + n) % n].Z);
+            var p1 = new Vector2(pts[i].X, pts[i].Z);
+            var p2 = new Vector2(pts[(i + 1) % n].X, pts[(i + 1) % n].Z);
+            var p3 = new Vector2(pts[(i + 2) % n].X, pts[(i + 2) % n].Z);
+            float l1 = (p2 - p1).Length();
+            var s0 = Norm(p1 - p0); var s1 = Norm(p2 - p1); var s2 = Norm(p3 - p2);
+            var v1 = Norm(s0 + s1) * l1;
+            var v2 = Norm(s1 + s2) * l1;
+            var a0 = p1 * 2 + p2 * -2 + v1 + v2;
+            var a1 = p1 * -3 + p2 * 3 + v1 * -2 + v2 * -1;
+            var a2 = v1;
+            var a3 = p1;
+            for (int s = 0; s < segmentSamples; s++)
+            {
+                float t = s / (float)segmentSamples;
+                var p = a0 * (t * t * t) + a1 * (t * t) + a2 * t + a3;
+                var dp = Norm(a0 * (3 * t * t) + a1 * (2 * t) + a2);
+                p += new Vector2(dp.Y * -offset, dp.X * offset);
+                result.Add((p.X, p.Y));
+            }
+        }
+        return result;
+    }
+
+    /// <summary>领土描边(上游 CCmpTerritoryManager::UpdateBoundaryLines + CTexturedLineRData):
+    /// 轮廓环 → 三点平滑 → RNS 样条重采样并向内平移 BorderSeparation → 沿环带铺
+    /// 贴图线(半宽 BorderThickness,U 横跨 0..1,内侧 0 / 外侧 1;V 逐点 0/1 交替);
+    /// blink 环进独立脉冲网格。LOS 裁剪:两端格均未探索的段不画。</summary>
     private void RebuildBorderMesh(byte[] owners, int n)
     {
         if (_borderMesh == null) return;
         const int cell = TerritoryManager.CellSize;
-        const float halfW = 0.4f;
+        const float halfW = BorderThickness;
+        float waterY = _sim.Sim.Water.WaterHeight.ToFloat();
 
         var packed = _sim.Territory.GetBoundaryGridSnapshot();
         var boundaries = TerritoryBoundaryCalculator.ComputeBoundaries(packed, n, cell);
@@ -201,99 +292,95 @@ public sealed class TerritoryWorldRenderer
             return explored[cz * n + cx];
         }
 
-        var verts = new System.Collections.Generic.List<Vector3>();
-        var colors = new System.Collections.Generic.List<Color>();
-        var blinkVerts = new System.Collections.Generic.List<Vector3>();
-        int blinkOwner = -1;
+        var solid = new RibbonSink();
+        var blink = new RibbonSink();
 
         foreach (var b in boundaries)
         {
-            var sink = b.Blinking ? blinkVerts : verts;
+            if (b.Points.Count < 2) continue;
+            var sink = b.Blinking ? blink : solid;
+            // 原版 SBoundaryLine.color = cmpPlayer->GetDisplayedColor()(alpha 1;blink 由 shader 脉冲)。
             var col = SimBridge.GetPlayerColor(b.Owner);
-            if (b.Blinking)
-            {
-                // 脉冲网格整体一个 blink_color(每环一色 —— 多 blink 主时取末个;
-                // 闪烁区本来就稀有,实测无感;逐环分网格过碎)。
-                blinkOwner = b.Owner;
-            }
-            if (!b.Blinking) col.A = 0.92f;
-            int count = b.Points.Count;
+            col.A = 1f;
+
+            // 原版点处理:三点均值平滑 → RNS 样条重采样(每段 4 采样)+ 向内平移 BorderSeparation。
+            var pts = InterpolatePointsRNS(SmoothPointsAverage(b.Points), BorderSeparation);
+            int count = pts.Count;
             if (count < 2) continue;
 
-            // 每点算相邻两边的平均法向(miter),环带顶点 = 点 ± 法向×halfW。
+            // 逐点角平分线(CTexturedLineRData::Update):b = (s0+s1)×up,再缩放使其在
+            // 当前段法向上的投影 = 半宽(斜接,线宽恒定)。左(内侧)U=0,右(外侧)U=1。
             var left = new Vector3[count];
             var right = new Vector3[count];
             for (int i = 0; i < count; i++)
             {
-                var p = b.Points[i];
-                var prev = b.Points[(i - 1 + count) % count];
-                var next = b.Points[(i + 1) % count];
-                float dx1 = p.X - prev.X, dz1 = p.Z - prev.Z;
-                float dx2 = next.X - p.X, dz2 = next.Z - p.Z;
-                // 每边法向(垂直单位):(-dz, dx)/len。
-                float l1 = (float)System.Math.Sqrt(dx1 * dx1 + dz1 * dz1);
-                float l2 = (float)System.Math.Sqrt(dx2 * dx2 + dz2 * dz2);
-                float nx = 0, nz = 0;
-                if (l1 > 0.001f) { nx += -dz1 / l1; nz += dx1 / l1; }
-                if (l2 > 0.001f) { nx += -dz2 / l2; nz += dx2 / l2; }
-                float nl = (float)System.Math.Sqrt(nx * nx + nz * nz);
-                if (nl < 0.001f) { nx = 1; nz = 0; nl = 1; }
-                nx = nx / nl * halfW; nz = nz / nl * halfW;
+                var p = pts[i];
+                var prev = pts[(i - 1 + count) % count];
+                var next = pts[(i + 1) % count];
+                var s0 = new Vector2(p.X - prev.X, p.Z - prev.Z);
+                var s1 = new Vector2(next.X - p.X, next.Z - p.Z);
+                if (s0.LengthSquared() > 1e-10f) s0 = s0.Normalized();
+                if (s1.LengthSquared() > 1e-10f) s1 = s1.Normalized();
+                // 左法向 (-dz, dx)。
+                var n1 = new Vector2(-s1.Y, s1.X);
+                var bis = new Vector2(-(s0.Y + s1.Y), s0.X + s1.X);
+                float l = bis.Dot(n1);
+                bis = System.Math.Abs(l) > 1e-6f ? bis * (halfW / l) : n1 * halfW;
 
-                float y1 = TerrainHeightService.Sample(p.X + nx, p.Z + nz) + 0.07f;
-                float y2 = TerrainHeightService.Sample(p.X - nx, p.Z - nz) + 0.07f;
-                left[i] = new Vector3(p.X + nx, y1, _worldSize - (p.Z + nz));
-                right[i] = new Vector3(p.X - nx, y2, _worldSize - (p.Z - nz));
+                float lx = p.X + bis.X, lz = p.Z + bis.Y;
+                float rx = p.X - bis.X, rz = p.Z - bis.Y;
+                float ly = System.Math.Max(TerrainHeightService.Sample(lx, lz), waterY) + OverlayVOffset;
+                float ry = System.Math.Max(TerrainHeightService.Sample(rx, rz), waterY) + OverlayVOffset;
+                left[i] = new Vector3(lx, ly, _worldSize - lz);
+                right[i] = new Vector3(rx, ry, _worldSize - rz);
             }
 
-            // 环带三角条(闭合):每段两三角;LOS 裁剪按段两端格。
+            // 环带三角条(闭合):每段两三角;V 逐点 0/1 交替(原版 v = 1 - v);
+            // LOS 裁剪按段两端格。
             for (int i = 0; i < count; i++)
             {
                 int j = (i + 1) % count;
-                if (!ExploredAt(b.Points[i].X, b.Points[i].Z)
-                    && !ExploredAt(b.Points[j].X, b.Points[j].Z))
+                if (!ExploredAt(pts[i].X, pts[i].Z) && !ExploredAt(pts[j].X, pts[j].Z))
                     continue;
-                foreach (var v in new[] { left[i], right[i], right[j], left[i], right[j], left[j] })
-                    sink.Add(v);
-                if (!b.Blinking)
-                    for (int k = 0; k < 6; k++) colors.Add(col);
+                float vi = i & 1, vj = j & 1;
+                sink.Quad(left[i], right[i], right[j], left[j], vi, vj, col);
             }
         }
 
-        SetMesh(_borderMesh, verts, colors);
-        if (_blinkMesh != null)
-        {
-            if (blinkOwner >= 0 && blinkVerts.Count > 0)
-            {
-                var c = SimBridge.GetPlayerColor(blinkOwner);
-                c.A = 0.92f;
-                (_blinkMesh.MaterialOverride as ShaderMaterial)
-                    ?.SetShaderParameter("blink_color", c);
-                var arr = new global::Godot.Collections.Array();
-                arr.Resize((int)Mesh.ArrayType.Max);
-                arr[(int)Mesh.ArrayType.Vertex] = blinkVerts.ToArray();
-                var mesh = new ArrayMesh();
-                mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
-                _blinkMesh.Mesh = mesh;
-            }
-            else
-            {
-                _blinkMesh.Mesh = null;
-            }
-        }
+        solid.Apply(_borderMesh);
+        if (_blinkMesh != null) blink.Apply(_blinkMesh);
     }
 
-    private static void SetMesh(MeshInstance3D node, System.Collections.Generic.List<Vector3> verts,
-        System.Collections.Generic.List<Color> colors)
+    /// <summary>贴图线顶点缓冲:位置 + UV(U 横跨 0 内/1 外,V 沿线 0/1)+ 玩家色。</summary>
+    private sealed class RibbonSink
     {
-        var arrays = new global::Godot.Collections.Array();
-        arrays.Resize((int)Mesh.ArrayType.Max);
-        arrays[(int)Mesh.ArrayType.Vertex] = verts.ToArray();
-        arrays[(int)Mesh.ArrayType.Color] = colors.ToArray();
-        var mesh = new ArrayMesh();
-        if (verts.Count > 0)
+        private readonly System.Collections.Generic.List<Vector3> _verts = new();
+        private readonly System.Collections.Generic.List<Vector2> _uvs = new();
+        private readonly System.Collections.Generic.List<Color> _colors = new();
+
+        public void Quad(Vector3 li, Vector3 ri, Vector3 rj, Vector3 lj, float vi, float vj, Color col)
+        {
+            Add(li, 0f, vi, col); Add(ri, 1f, vi, col); Add(rj, 1f, vj, col);
+            Add(li, 0f, vi, col); Add(rj, 1f, vj, col); Add(lj, 0f, vj, col);
+        }
+
+        private void Add(Vector3 p, float u, float v, Color c)
+        {
+            _verts.Add(p); _uvs.Add(new Vector2(u, v)); _colors.Add(c);
+        }
+
+        public void Apply(MeshInstance3D node)
+        {
+            if (_verts.Count == 0) { node.Mesh = null; return; }
+            var arrays = new global::Godot.Collections.Array();
+            arrays.Resize((int)Mesh.ArrayType.Max);
+            arrays[(int)Mesh.ArrayType.Vertex] = _verts.ToArray();
+            arrays[(int)Mesh.ArrayType.TexUV] = _uvs.ToArray();
+            arrays[(int)Mesh.ArrayType.Color] = _colors.ToArray();
+            var mesh = new ArrayMesh();
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
-        node.Mesh = mesh;
+            node.Mesh = mesh;
+        }
     }
 
 
