@@ -56,14 +56,25 @@ public static class ShadowProxyManager
         return root;
     }
 
-    /// <summary>每帧对齐:proxy.Global = visual.Global·S,并同步可见性(迷雾隐藏的单位不漏影)。</summary>
-    public static void SyncFrom(Node3D proxyRoot, Node3D visualRoot)
+    /// <summary>每帧对齐:proxy.Global = visual.Global·S,并同步可见性(迷雾隐藏的单位不漏影)。
+    /// <paramref name="camera"/> 非空时,骨骼姿势只对"投影可能落在画面内"的单位同步
+    /// (位置在按 <paramref name="screenPad"/> 外扩的视口矩形内):方向光阴影贴图按相机
+    /// 视锥切分,画面外单位的影子不可见,逐骨 Get/SetBoneGlobalPose 的互操作是帧成本大头。
+    /// 根变换始终同步(2 次互操作,便宜),进入画面时姿势立即追上。</summary>
+    public static void SyncFrom(Node3D proxyRoot, Node3D visualRoot,
+        Camera3D? camera = null, Rect2 screenPad = default)
     {
         var g = visualRoot.GlobalTransform;
         proxyRoot.GlobalTransform = new Transform3D(g.Basis * S, g.Origin);
         proxyRoot.Visible = visualRoot.Visible;
+        if (!proxyRoot.Visible) return;
+        if (camera != null)
+        {
+            if (camera.IsPositionBehind(g.Origin)) return;
+            if (!screenPad.HasPoint(camera.UnprojectPosition(g.Origin))) return;
+        }
         // 蒙皮代理:逐骨骼共轭同步(P' = S·P·S)——投影随动画姿势(上游同款)。
-        if (proxyRoot.Visible && _skinnedPairs.TryGetValue(proxyRoot, out var pairs))
+        if (_skinnedPairs.TryGetValue(proxyRoot, out var pairs))
         {
             foreach (var (vis, proxy) in pairs)
             {
@@ -76,6 +87,10 @@ public static class ShadowProxyManager
 
     /// <summary>代理树析构时调用(实体视觉出树):骨架对登记摘除。</summary>
     public static void ReleaseProxyRoot(Node3D proxyRoot) => _skinnedPairs.Remove(proxyRoot);
+
+    /// <summary>该代理是否带蒙皮骨架(动画单位)。刚性代理(树/建筑/石头)只在生成时定位,
+    /// 之后仅可见性会变,调用方可低频轮询同步。</summary>
+    public static bool IsSkinned(Node3D proxyRoot) => _skinnedPairs.ContainsKey(proxyRoot);
 
     private static void BuildChildren(Node3D src, Node3D dst, Dictionary<Node, Node> map)
     {

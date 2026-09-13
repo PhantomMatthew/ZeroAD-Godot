@@ -1333,9 +1333,25 @@ public sealed partial class SimBridge : Node
 		_interpolator.ApplyRenderPositions();
 		tInterp = _prof.ElapsedMilliseconds - tSync;
 		// 阴影代理跟拍(插值之后,影子与平滑后的视觉同帧;迷雾隐藏单位经 SyncFrom 关 Visible 不漏影)。
+		// 骨骼姿势只对画面(外扩 35%,覆盖斜射长影)内的单位同步——见 ShadowProxyManager.SyncFrom。
+		var shadowCam = GetViewport()?.GetCamera3D();
+		Rect2 shadowPad = default;
+		if (shadowCam != null)
+		{
+			var vp = GetViewport()!.GetVisibleRect();
+			shadowPad = vp.Grow(Mathf.Max(vp.Size.X, vp.Size.Y) * 0.35f);
+		}
+		// 刚性代理(树/建筑/石头,占多数)不动,只有迷雾可见性会变:每帧只轮询 1/ShadowStaticStride,
+		// 可见性最多滞后 ~0.5s;蒙皮代理(单位)每帧同步。
+		int shadowIdx = 0;
+		_shadowFrame++;
 		foreach (var kvp in _shadowProxies)
+		{
+			bool skinned = ShadowProxyManager.IsSkinned(kvp.Value);
+			if (!skinned && (shadowIdx++ + _shadowFrame) % ShadowStaticStride != 0) continue;
 			if (kvp.Key.IsInsideTree())
-				ShadowProxyManager.SyncFrom(kvp.Value, kvp.Key);
+				ShadowProxyManager.SyncFrom(kvp.Value, kvp.Key, shadowCam, shadowPad);
+		}
 		tShadow = _prof.ElapsedMilliseconds - tSync - tInterp;
 		// TEMP-PROF:每秒聚合打印各段耗时,定位 4fps 大头。
 		_profSync += tSync; _profInterp += tInterp; _profShadow += tShadow; _profFrames++;
@@ -1369,6 +1385,8 @@ public sealed partial class SimBridge : Node
 	}
 
 	private bool _forceFirstSync = true;
+	private const int ShadowStaticStride = 8;
+	private int _shadowFrame;
 	private long _profSync, _profInterp, _profShadow;
 	private int _profFrames;
 	private long _profSimMs, _profAiMs;
@@ -1393,6 +1411,17 @@ public sealed partial class SimBridge : Node
 		{
 			OnCorpseConverted = OnCorpseConvertedVisual,
 			TutorialTick = () => Tutorial?.Tick(dt),
+			// 完工地基 → SpawnScenarioBuilding(建筑组件装配;抽 SimLoop 前的同一路径)。
+			SpawnBuilding = (template, x, z, player, yaw) =>
+			{
+				TemplateStats? stats = null;
+				try { stats = Templates?.ExtractStats(template); } catch { }
+				return SpawnScenarioBuilding(new ScenarioEntityDef
+				{
+					Template = template, X = x, Z = z, Player = player, OrientationY = yaw,
+				}, stats);
+			},
+			MapBuildTemplate = MapBuildNameToTemplate,
 		});
 		UpdateFoundationVisuals();
 	}

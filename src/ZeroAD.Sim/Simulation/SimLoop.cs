@@ -17,6 +17,13 @@ public sealed class SimLoopHooks
 {
     public Action<EntityId>? OnCorpseConverted;
     public Action? TutorialTick;
+    /// <summary>完工地基 → 建筑实体的装配器:(模板全名, x, z, 玩家, 朝向 yaw) → 实体。
+    /// Godot 侧提供 SimBridge.SpawnScenarioBuilding(Footprint/静态阻挡/生产队列/驻守等建筑组件);
+    /// 为空时回落 <see cref="ComponentManager.SpawnEntity"/>——注意那条路径按单位装配
+    /// (UnitMotion/UnitAI/单位圆阻挡),只适合尚无建筑装配器的无头 RL 夹具。</summary>
+    public Func<string, float, float, int, float, EntityId>? SpawnBuilding;
+    /// <summary>地基 ResultTemplate 为旧式短名(如 "House")时映射到模板全名;为空则原样使用。</summary>
+    public Func<string, string>? MapBuildTemplate;
 }
 
 /// <summary>Shared simulation tick order for Godot <c>SimBridge</c> and the headless RL host.
@@ -57,7 +64,7 @@ public static class SimLoop
         P("buildingai", () => ForEach(cm, e => cm.QueryInterface<BuildingAIComponent>(e)?.Tick(dt, cm)));
         P("build", () => ForEach(cm, e => cm.QueryInterface<BuilderComponent>(e)?.Tick(cm)));
         P("prod", () => ForEach(cm, e => cm.QueryInterface<ProductionQueue>(e)?.Tick(dt, cm)));
-        P("found", () => CompleteBuiltFoundations(cm));
+        P("found", () => CompleteBuiltFoundations(cm, hooks));
         P("research", () => TickResearch(cm, dt));
         P("auras", () => TickAuras(cm, range));
         P("territory", () => TickTerritoryDecay(cm, territory, dt));
@@ -158,7 +165,7 @@ public static class SimLoop
         hooks?.OnCorpseConverted?.Invoke(entity);
     }
 
-    private static void CompleteBuiltFoundations(ComponentManager cm)
+    private static void CompleteBuiltFoundations(ComponentManager cm, SimLoopHooks? hooks)
     {
         if (cm.Templates == null) return;
         var completed = new List<EntityId>();
@@ -174,21 +181,28 @@ public static class SimLoop
             if (foundation == null) continue;
             var pos = cm.QueryInterface<PositionComponent>(entity);
             var identity = cm.QueryInterface<IdentityComponent>(entity);
+            // 优先 IdentityComponent 里的模板全名(玩家放置地基由 SimCommandExecutor 写入);
+            // 旧式/剧情地基只有短显示名,经 MapBuildTemplate 映射。
             string fullTemplate = !string.IsNullOrEmpty(identity?.TemplateName)
                 ? identity!.TemplateName
-                : foundation.ResultTemplate;
+                : hooks?.MapBuildTemplate?.Invoke(foundation.ResultTemplate) ?? foundation.ResultTemplate;
             if (string.IsNullOrEmpty(fullTemplate)) continue;
 
             float x = pos?.Position.X.ToFloat() ?? 0f;
             float z = pos?.Position.Z.ToFloat() ?? 0f;
-            var yaw = pos?.Rotation ?? default;
+            // 完工继承地基朝向(原版 Transform.js 把 rot.y 拷给新实体)。
+            var rot = pos?.Rotation ?? default;
             var owner = cm.QueryInterface<OwnershipComponent>(entity);
             int ownerId = owner?.PlayerId ?? 1;
             cm.DestroyEntity(entity);
 
-            var built = cm.SpawnEntity(fullTemplate, x, z, ownerId);
+            // 建筑必须走建筑装配器:SpawnEntity 按单位装配会给房子挂 UnitMotion/UnitAI
+            // (选中可移动)和单位圆阻挡。
+            var built = hooks?.SpawnBuilding != null
+                ? hooks.SpawnBuilding(fullTemplate, x, z, ownerId, rot.Y.ToFloat())
+                : cm.SpawnEntity(fullTemplate, x, z, ownerId);
             var builtPos = cm.QueryInterface<PositionComponent>(built);
-            if (builtPos != null) builtPos.Rotation = yaw;
+            if (builtPos != null) builtPos.Rotation = rot;
             cm.Events.RaiseStructureBuilt(new StructureBuiltEvent
             {
                 Building = built,
