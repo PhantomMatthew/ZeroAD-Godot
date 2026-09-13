@@ -2,68 +2,49 @@ using Godot;
 
 namespace ZeroAD.Godot;
 
-/// <summary>地图天空盒(原版 art/environments 的 <SkySet>name</SkySet> →
-/// art/textures/skies/{name}/ 5 面贴图)。原版 C++ 用 SkyBox 六面体贴图;
-/// Godot 用 Sky + PanoramaSkyMaterial(单张全景)或 ProceduralSkyMaterial
-/// (程序化天空)——原版 5 面 DDS 以 cubemap 载入(5 张拼 PanoramaSkyMaterial
-/// 的简易全景近似,原版贴图本身即全景渲染)。SkySet 缺失走程序化天空兜底。
-/// 由 MapEnvironment.Apply 在加载环境后调用(背景模式换 Sky)。</summary>
+/// <summary>地图天空盒(原版 art/environments 的 &lt;SkySet&gt; →
+/// art/textures/skies/{name}/ 贴图)。C++ SkyManager 装 6 面立方体:
+/// front/back/left/right/top,底面复用 top——地平线以下仍是天空,
+/// 地图边缘不会露出虚空黑块。</summary>
 public static class SkyBox
 {
-    /// <summary>按 SkySet 名加载天空(art/textures/skies/{name}/)。
-    /// 返回 Sky(含材质),无贴图返回 null(调用方回落程序化天空)。</summary>
+    /// <summary>按 SkySet 名加载天空。优先 6 面 cubemap(底=top);
+    /// 缺面时用 front 全景。无贴图返回 null(调用方回落程序化天空)。</summary>
     public static Sky? Load(string skySet)
     {
-        string? dir = FindSkyDir(skySet);
-        if (dir == null) return null;
+        if (FindSkyDir(skySet) == null) return null;
 
-        // 原版 5 面(back/front/left/right/top)。拼 PanoramaSkyMaterial:Godot 接受单张
-        // 全景贴图;用 front(主视野)作全景近似(top 次选)。逐"文件"探测(经
-        // RuntimePaths):镜像里 DDS 已转 PNG(运行时解不了 DDS),文件级查询才会
-        // 命中镜像;junction 原目录仍可用(.dds 兜底)。
-        string? frontPath = null;
-        foreach (var name in new[] { "front.png", "front.dds", "top.png", "top.dds" })
-        {
-            frontPath = RuntimePaths.FindPublicPath(
-                "art", "textures", "skies", skySet, name);
-            if (frontPath != null) break;
-        }
-        if (frontPath == null) return null;
+        Sky? cube = TryLoadCubemap(skySet);
+        if (cube != null) return cube;
 
-        Texture2D? tex = LoadTexture(frontPath);
-        if (tex == null) return null;
+        Texture2D? front = LoadFaceTex(skySet, "front") ?? LoadFaceTex(skySet, "top");
+        if (front == null) return null;
 
-        // 自定义 sky shader(地平线以下纯黑,见 shader 注释);加载失败退回
-        // PanoramaSkyMaterial(地平线以下会裹贴图下半部,略亮,仅为兜底)。
         var shader = GD.Load<Shader>("res://Shaders/sky_panorama.gdshader");
         if (shader != null)
         {
-            var mat = new ShaderMaterial();
-            mat.SetShaderParameter("panorama", tex);
+            var mat = new ShaderMaterial { Shader = shader };
+            mat.SetShaderParameter("panorama", front);
             return new Sky { SkyMaterial = mat };
         }
 
         return new Sky
         {
-            SkyMaterial = new PanoramaSkyMaterial
-            {
-                Panorama = tex,
-            },
+            SkyMaterial = new PanoramaSkyMaterial { Panorama = front },
         };
     }
 
-    /// <summary>程序化天空兜底(原版无 SkySet 时的回退——比纯色背景生动;
-    /// 太阳角度/云量由 MapEnvironment 的 SunColor/Fog 段调色)。</summary>
+    /// <summary>程序化天空兜底。地面半球贴地平线色——C++ cubemap 底面是 top 贴图,
+    /// 图缘看到的是天空而不是黑。天顶/地面深处略暗即可。</summary>
     public static Sky CreateProcedural()
     {
+        var horizon = new Color(0.65f, 0.72f, 0.85f);
         var mat = new ProceduralSkyMaterial
         {
-            SkyHorizonColor = new Color(0.65f, 0.72f, 0.85f),
+            SkyHorizonColor = horizon,
             SkyTopColor = new Color(0.35f, 0.5f, 0.75f),
-            // 地面半球纯黑:C++ SkyBox 只装 5 面(无底面),地平线以下漏清屏黑;
-            // 图外虚空因此是黑的。此前地面半球近白,拖到地图边缘露出白色空白。
-            GroundHorizonColor = Colors.Black,
-            GroundBottomColor = Colors.Black,
+            GroundHorizonColor = horizon,
+            GroundBottomColor = new Color(0.45f, 0.55f, 0.70f),
             SunAngleMax = 25f,
             SunCurve = 0.15f,
         };
@@ -79,14 +60,64 @@ public static class SkyBox
         env.SkyRotation = Vector3.Zero;
     }
 
-    private static Texture2D? LoadTexture(string path)
+    /// <summary>C++ SkyManager:层序 front/back/top/top/right/left 上传成立方体。
+    /// Godot cubemap 层序是 X+ X- Y+ Y- Z+ Z-(Y+ 上,Z- 前)。</summary>
+    private static Sky? TryLoadCubemap(string skySet)
     {
-        try
+        Image? right = LoadFaceImage(skySet, "right");
+        Image? left = LoadFaceImage(skySet, "left");
+        Image? top = LoadFaceImage(skySet, "top");
+        Image? back = LoadFaceImage(skySet, "back");
+        Image? front = LoadFaceImage(skySet, "front");
+        if (right == null || left == null || top == null || back == null || front == null)
+            return null;
+
+        Image bottom = new Image();
+        bottom.CopyFrom(top);
+
+        var fmt = right.GetFormat();
+        foreach (var img in new[] { right, left, top, bottom, back, front })
         {
-            var img = Image.LoadFromFile(path);
-            return img == null ? null : ImageTexture.CreateFromImage(img);
+            if (img.GetWidth() != right.GetWidth() || img.GetHeight() != right.GetHeight())
+                return null;
+            if (img.GetFormat() != fmt)
+                img.Convert(fmt);
         }
-        catch { return null; }
+
+        var cube = new Cubemap();
+        var err = cube.CreateFromImages(new global::Godot.Collections.Array<Image>
+        {
+            right, left, top, bottom, back, front,
+        });
+        if (err != Error.Ok) return null;
+
+        var shader = GD.Load<Shader>("res://Shaders/sky_cubemap.gdshader");
+        if (shader == null) return null;
+        var mat = new ShaderMaterial { Shader = shader };
+        mat.SetShaderParameter("source_panorama", cube);
+        return new Sky { SkyMaterial = mat };
+    }
+
+    private static Texture2D? LoadFaceTex(string skySet, string stem)
+    {
+        var img = LoadFaceImage(skySet, stem);
+        return img == null ? null : ImageTexture.CreateFromImage(img);
+    }
+
+    private static Image? LoadFaceImage(string skySet, string stem)
+    {
+        foreach (var name in new[] { stem + ".png", stem + ".dds" })
+        {
+            string? path = RuntimePaths.FindPublicPath("art", "textures", "skies", skySet, name);
+            if (path == null) continue;
+            try
+            {
+                var img = Image.LoadFromFile(path);
+                if (img != null) return img;
+            }
+            catch { /* 下一扩展名 */ }
+        }
+        return null;
     }
 
     private static string? FindSkyDir(string skySet) =>

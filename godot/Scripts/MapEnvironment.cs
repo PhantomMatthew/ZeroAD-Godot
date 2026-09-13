@@ -138,8 +138,8 @@ public sealed record MapEnvironment(
         // (0.0025×0.44=0.0011:z=100 本色 90% vs C++ 95%,z=350 68% vs 54%)。
         // FogMax(远处最少本色)Godot 无对应字段,以密度主项近似。density=0(原版默认)即关雾。
         env.FogDensity = FogFactor > 0f ? FogFactor * 0.44f : 0.0001f;
-        // 雾不吃天空:C++ SkyManager 渲染无雾(源码零 fog 引用),地平线以下虚空
-        // 保持纯黑;默认 FogSkyAffect=1 会把远处天空/虚空刷成雾色(地图边缘露白)。
+        // 雾不吃天空:C++ SkyManager 渲染无雾(源码零 fog 引用)。
+        // 默认 FogSkyAffect=1 会把远处天空刷成雾色。
         env.FogSkyAffect = 0f;
 
         // hdr.fs: color += brightness; (color-0.5)*contrast+0.5; mix(luma, color, sat)。
