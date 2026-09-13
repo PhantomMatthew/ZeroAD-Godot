@@ -1600,10 +1600,15 @@ public sealed partial class SimBridge : Node
 				{
 					var parent = bar.GetParent();
 					var barPos = bar.Position;
+					float barW = bar.HasMeta("barW") ? (float)bar.GetMeta("barW").AsDouble() : 6f;
+					float barH = bar.HasMeta("barH") ? (float)bar.GetMeta("barH").AsDouble() : 0.6f;
 					bar.QueueFree();
-					var nb = SelectionRing.CreateHealthBar(pct / 100f);
+					if (parent == null) continue;
+					var nb = SelectionRing.CreateHealthBar(pct / 100f, barW, barH);
 					nb.Position = barPos;
 					nb.SetMeta("pct", pct);
+					nb.SetMeta("barW", barW);
+					nb.SetMeta("barH", barH);
 					parent.AddChild(nb);
 					_foundationBars[entity] = nb;
 				}
@@ -1787,10 +1792,25 @@ public sealed partial class SimBridge : Node
 			_foundationDust[entity] = dust;
 		}
 
-		// 头顶血条(原版地基建造中显示血量;TickFoundations 每 tick 刷新)。固定悬于
-		// 地基模型上方 3m(原版地基矮平,无需按模型高算)。
-		var bar = SelectionRing.CreateHealthBar(1f);
-		bar.Position = new Vector3(0, 3f, 0);
+		// 头顶血条(原版地基建造中显示血量;TickFoundations 每 tick 刷新)。
+		// 尺寸/高度走建筑模板 StatusBars(CC=6×0.6@12,不是单位缺省 2×0.333)。
+		float fndW = 6f, fndH = 0.6f, fndY = 3f;
+		try
+		{
+			var fndStats = Templates?.ExtractStats(template);
+			if (fndStats != null)
+			{
+				fndW = fndStats.BarWidth;
+				fndH = fndStats.BarHeight;
+				if (fndStats.HeightOffset > 0.01f) fndY = fndStats.HeightOffset;
+			}
+		}
+		catch { /* 缺模板时用建筑缺省 */ }
+		var bar = SelectionRing.CreateHealthBar(1f, fndW, fndH);
+		bar.Position = new Vector3(0, fndY, 0);
+		bar.SetMeta("pct", 100);
+		bar.SetMeta("barW", fndW);
+		bar.SetMeta("barH", fndH);
 		visual.AddChild(bar);
 		_foundationBars[entity] = bar;
 

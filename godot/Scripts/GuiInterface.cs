@@ -619,7 +619,8 @@ public sealed class GuiInterface
         int ResourceAmount, int ResourceMaxAmount,
         bool FootprintCircle, float FootprintHalfX, float FootprintHalfZ,
         bool HasRangeOverlay, float Range,
-        float MaxCapturePoints, float[] CapturePoints);
+        float MaxCapturePoints, float[] CapturePoints,
+        float BarWidth, float BarHeight, float HeightOffset);
 
     public MarkerState? GetMarkerState(EntityId entity)
     {
@@ -642,6 +643,23 @@ public sealed class GuiInterface
             for (int p = 0; p < n; p++) cps[p] = capturable.CapturePoints[p].ToFloat();
         }
 
+        // StatusBars 尺寸(原版 template_unit 2×0.333@5 / template_structure 6×0.6@12)。
+        float barW = 2f, barH = 0.333f, barOff = 5f;
+        if (id != null && !string.IsNullOrEmpty(id.TemplateName))
+        {
+            try
+            {
+                var ts = _cm.Templates?.ExtractStats(id.TemplateName);
+                if (ts != null)
+                {
+                    barW = ts.BarWidth;
+                    barH = ts.BarHeight;
+                    barOff = ts.HeightOffset;
+                }
+            }
+            catch { /* 缺模板时用单位缺省,条仍能画 */ }
+        }
+
         return new MarkerState(
             id?.IsBuilding ?? false, own?.PlayerId ?? -1,
             hp?.Max ?? 0, hp != null && hp.Max > 0 ? (float)hp.Current / hp.Max : 0f,
@@ -650,7 +668,7 @@ public sealed class GuiInterface
             fp != null ? fp.Size0.ToFloat() * 0.5f : 10f,
             fp != null ? fp.Size1.ToFloat() * 0.5f : 10f,
             attack is { HasRangeOverlay: true }, attack?.Range ?? 0f,
-            maxCp, cps);
+            maxCp, cps, barW, barH, barOff);
     }
 
     /// <summary>选中集动作能力(原版 actionCheck 的选中侧:攻击/采集/驻防三光标资格,

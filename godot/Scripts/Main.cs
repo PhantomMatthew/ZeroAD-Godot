@@ -2821,26 +2821,36 @@ public sealed partial class Main : Node3D
 
 			if (healthMax > 0)
 			{
-				// 头顶高度 = 模型 AABB 顶 + 0.3(原版状态条悬于实体顶;固定 2.5/6 对
-				// 高塔矮兵都不对)。缓存进 meta,重复选择不重算。
-				float topY = BarTopHeight(node);
-				var bar = SelectionRing.CreateHealthBar(healthFraction);
-				bar.Position = new Vector3(0, topY, 0);
+				// 头顶高度 = 模板 HeightOffset(原版 StatusBars offset.y,相对实体原点);
+				// AABB 兜底给没解析到模板的实体。
+				float barW = st?.BarWidth ?? SelectionRing.DefaultBarWidth;
+				float barH = st?.BarHeight ?? SelectionRing.DefaultBarHeight;
+				float barY = st is { HeightOffset: > 0.01f } ? st.HeightOffset : BarTopHeight(node);
+				bool hasCap = st is { MaxCapturePoints: > 0f };
+				// 原版 Sprites 序:Capture 先(yoffset=0)再 Health(yoffset=height*1.2)——
+				// 血条叠在占领条上方(相机 up)。
+				var bar = SelectionRing.CreateHealthBar(healthFraction, barW, barH);
+				bar.Position = new Vector3(0, hasCap ? barY + barH * 1.2f : barY, 0);
 				node.AddChild(bar);
 				_selectionMarkers.Add(bar);
 
-				// 占领条(蓝条,血条上方;原版可占领建筑的双条):各玩家 CP 占比分段。
-				if (st is { MaxCapturePoints: > 0f })
+				// 占领条:属主段靠左,其余玩家按 id(原版 AddCaptureBar setCaptureBarPart)。
+				if (hasCap)
 				{
 					var segs = new List<(float, Color)>();
-					for (int p = 0; p < st.CapturePoints.Length; p++)
+					int owner = st!.OwnerPlayerId;
+					void AddCap(int p)
 					{
+						if ((uint)p >= (uint)st.CapturePoints.Length) return;
 						float cp = st.CapturePoints[p];
 						if (cp > 0f)
 							segs.Add((cp / st.MaxCapturePoints, SimBridge.GetPlayerColor(p)));
 					}
-					var capBar = SelectionRing.CreateCaptureBar(segs);
-					capBar.Position = new Vector3(0, topY + 0.45f, 0);
+					AddCap(owner);
+					for (int p = 0; p < st.CapturePoints.Length; p++)
+						if (p != owner) AddCap(p);
+					var capBar = SelectionRing.CreateCaptureBar(segs, barW, barH);
+					capBar.Position = new Vector3(0, barY, 0);
 					node.AddChild(capBar);
 					_selectionMarkers.Add(capBar);
 				}
@@ -2891,10 +2901,11 @@ public sealed partial class Main : Node3D
 			float frac = st.HealthMax > 0
 				? st.HealthFraction
 				: st.ResourceAmount / (float)System.Math.Max(1, st.ResourceMaxAmount);
+			float barY = st.HeightOffset > 0.01f ? st.HeightOffset : BarTopHeight(node);
 			var bar = st.HealthMax > 0
-				? SelectionRing.CreateHealthBar(frac)
-				: SelectionRing.CreateCaptureBar(new List<(float, Color)> { (frac, new Color(0.2f, 0.75f, 0.25f)) });
-			bar.Position = new Vector3(0, BarTopHeight(node), 0);
+				? SelectionRing.CreateHealthBar(frac, st.BarWidth, st.BarHeight)
+				: SelectionRing.CreateStatusBar("supply", frac, st.BarWidth, st.BarHeight);
+			bar.Position = new Vector3(0, barY, 0);
 			node.AddChild(bar);
 			_hoverExtra = bar;
 		}

@@ -309,6 +309,19 @@ namespace ZeroAD.Sim.Content
                 if (idleRegen.IsOk) stats.HealthIdleRegenRate = idleRegen.ToFixed().ToFloat();
             }
 
+            // StatusBars(原版 StatusBars.js Schema):头顶条世界尺寸。缺省对齐
+            // template_unit(2.0×0.333@5);建筑 template_structure 覆盖为 6.0×0.6@12。
+            var statusBars = node.GetChild("StatusBars");
+            if (statusBars.IsOk)
+            {
+                var barWidth = statusBars.GetChild("BarWidth");
+                if (barWidth.IsOk) stats.BarWidth = barWidth.ToFloat();
+                var barHeight = statusBars.GetChild("BarHeight");
+                if (barHeight.IsOk) stats.BarHeight = barHeight.ToFloat();
+                var heightOffset = statusBars.GetChild("HeightOffset");
+                if (heightOffset.IsOk) stats.HeightOffset = heightOffset.ToFloat();
+            }
+
             var cost = node.GetChild("Cost");
             if (cost.IsOk)
             {
@@ -1541,6 +1554,12 @@ namespace ZeroAD.Sim.Content
         public float HealthRegenRate;
         /// <summary>Health/IdleRegenRate(空闲单位额外再生)。</summary>
         public float HealthIdleRegenRate;
+        /// <summary>StatusBars/BarWidth(世界单位;template_unit=2,template_structure=6)。</summary>
+        public float BarWidth = 2f;
+        /// <summary>StatusBars/BarHeight(世界单位;template_unit=0.333,template_structure=0.6)。</summary>
+        public float BarHeight = 0.333f;
+        /// <summary>StatusBars/HeightOffset(相对实体原点的世界 Y;单位 5,建筑 12)。</summary>
+        public float HeightOffset = 5f;
         public string PromotionEntity = "";
         public int PromotionRequiredXp = 100;
         /// <summary>UnitMotion/PassabilityClass(注册表任意类名:default/large/ship/

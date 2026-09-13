@@ -154,89 +154,127 @@ public static class SelectionRing
         return pts;
     }
 
-    public static MeshInstance3D CreateHealthBar(float healthFraction)
+    // 原版 template_unit StatusBars 缺省;建筑/船/树由模板覆盖。
+    public const float DefaultBarWidth = 2.0f;
+    public const float DefaultBarHeight = 0.333f;
+
+    /// <summary>原版 foreground_overlay.fs = <c>texture * colorMul</c> 无光照;
+    /// 斜面高光画在 health_fg/bg.png 的纵向渐变里(1px 宽拉满条宽)。公告板 + 禁雾 +
+    /// 无深度测试对齐 OverlayRenderer 前景 pass(C++ 血条不受距离雾冲洗成一片平色)。</summary>
+    private static readonly Dictionary<string, StandardMaterial3D> _overlayMats = new();
+
+    private static StandardMaterial3D OverlayMat(string file)
     {
-        float w = 2f;
-        float h = 0.3f;
-        float greenW = w * Mathf.Clamp(healthFraction, 0f, 1f);
-
-        var st = new SurfaceTool();
-        st.Begin(Mesh.PrimitiveType.Triangles);
-
-        st.SetColor(new Color(0.1f, 0.7f, 0.1f));
-        st.AddVertex(new Vector3(-w / 2, 0, 0));
-        st.AddVertex(new Vector3(-w / 2 + greenW, 0, 0));
-        st.AddVertex(new Vector3(-w / 2 + greenW, h, 0));
-        st.AddVertex(new Vector3(-w / 2, 0, 0));
-        st.AddVertex(new Vector3(-w / 2 + greenW, h, 0));
-        st.AddVertex(new Vector3(-w / 2, h, 0));
-
-        if (greenW < w)
+        if (_overlayMats.TryGetValue(file, out var cached)) return cached;
+        var mat = new StandardMaterial3D
         {
-            st.SetColor(new Color(0.7f, 0.1f, 0.1f));
-            st.AddVertex(new Vector3(-w / 2 + greenW, 0, 0));
-            st.AddVertex(new Vector3(w / 2, 0, 0));
-            st.AddVertex(new Vector3(w / 2, h, 0));
-            st.AddVertex(new Vector3(-w / 2 + greenW, 0, 0));
-            st.AddVertex(new Vector3(w / 2, h, 0));
-            st.AddVertex(new Vector3(-w / 2 + greenW, h, 0));
-        }
-
-        var mesh = st.Commit();
-        var instance = new MeshInstance3D { Mesh = mesh };
-        var mat = new StandardMaterial3D();
-        mat.VertexColorUseAsAlbedo = true;
-        mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
-        mat.NoDepthTest = true;
-        // 头顶条恒朝相机(原版 status bars 是公告板;平面四边形在斜视时只剩一条线)。
-        mat.BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled;
-        mesh.SurfaceSetMaterial(0, mat);
-        instance.Position = new Vector3(0, 4f, 0);
-        return instance;
+            AlbedoTexture = LoadStatusIcon(file),
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            NoDepthTest = true,
+            DepthDrawMode = BaseMaterial3D.DepthDrawModeEnum.Disabled,
+            DisableFog = true,
+            DisableReceiveShadows = true,
+            VertexColorUseAsAlbedo = true,
+            // 默认 LinearWithMipmaps 会把 1×N 斜面渐变平均成一块纯色(远距 RTS 镜头)。
+            TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,
+            // fg 叠在同平面 bg 上;提高优先级避免 gl_compatibility 深度冲突把绿条吞掉。
+            RenderPriority = file.EndsWith("_fg.png", System.StringComparison.Ordinal) ? 1 : 0,
+        };
+        _overlayMats[file] = mat;
+        return mat;
     }
 
-    /// <summary>占领条(原版建筑头顶的蓝条,在血条上方):分段=各玩家 CP 占比,
-    /// 段色=玩家色,升序(与 HUD CaptureBar 同规则,确定性)。</summary>
-    public static MeshInstance3D CreateCaptureBar(IReadOnlyList<(float Fraction, Color Color)> segments)
+    private static Texture2D LoadStatusIcon(string file)
     {
-        float w = 2f;
-        float h = 0.24f;
+        string? path = RuntimePaths.FindPublicPath(
+            "art", "textures", "ui", "session", "icons", file);
+        if (path != null)
+        {
+            var img = Image.LoadFromFile(path);
+            if (img != null) return ImageTexture.CreateFromImage(img);
+        }
+        var fallback = Image.CreateEmpty(1, 1, false, Image.Format.Rgba8);
+        fallback.Fill(Colors.White);
+        return ImageTexture.CreateFromImage(fallback);
+    }
+
+    /// <summary>原版 OverlayRenderer 公告板四边形:局部 X=相机右,Y=相机上;
+    /// UV 与 C++ 一致 ((x0,y0)→(0,1) … (x0,y1)→(0,0))。z 微偏让 fg 叠在 bg 前。</summary>
+    private static void AddOverlayQuad(SurfaceTool st, float x0, float y0, float x1, float y1, Color color, float z = 0f)
+    {
+        st.SetColor(color);
+        st.SetUV(new Vector2(0f, 1f)); st.AddVertex(new Vector3(x0, y0, z));
+        st.SetUV(new Vector2(1f, 1f)); st.AddVertex(new Vector3(x1, y0, z));
+        st.SetUV(new Vector2(1f, 0f)); st.AddVertex(new Vector3(x1, y1, z));
+        st.SetUV(new Vector2(0f, 1f)); st.AddVertex(new Vector3(x0, y0, z));
+        st.SetUV(new Vector2(1f, 0f)); st.AddVertex(new Vector3(x1, y1, z));
+        st.SetUV(new Vector2(0f, 0f)); st.AddVertex(new Vector3(x0, y1, z));
+    }
+
+    private static MeshInstance3D FinishOverlayMesh(ArrayMesh mesh)
+    {
+        return new MeshInstance3D
+        {
+            Mesh = mesh,
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        };
+    }
+
+    /// <summary>原版 StatusBars.AddBar:全宽 <c>{type}_bg.png</c> + 按 amount 裁切宽度的
+    /// <c>{type}_fg.png</c>(UV 仍铺满,随宽度压扁)。type ∈ health/supply/pack/upgrade。</summary>
+    public static MeshInstance3D CreateStatusBar(string type, float amount,
+        float width = DefaultBarWidth, float height = DefaultBarHeight)
+    {
+        amount = Mathf.Clamp(amount, 0f, 1f);
+        float w = width > 0f ? width : DefaultBarWidth;
+        float h = height > 0f ? height : DefaultBarHeight;
+        var mesh = new ArrayMesh();
+
+        var bg = new SurfaceTool();
+        bg.Begin(Mesh.PrimitiveType.Triangles);
+        AddOverlayQuad(bg, -w / 2f, 0f, w / 2f, h, Colors.White);
+        bg.Commit(mesh);
+        mesh.SurfaceSetMaterial(0, OverlayMat(type + "_bg.png"));
+
+        if (amount > 0.001f)
+        {
+            var fg = new SurfaceTool();
+            fg.Begin(Mesh.PrimitiveType.Triangles);
+            // 原版:x1 = width * (amount - 0.5) → 满血到 +w/2,空到 -w/2。
+            AddOverlayQuad(fg, -w / 2f, 0f, w * (amount - 0.5f), h, Colors.White, 0.05f);
+            fg.Commit(mesh);
+            mesh.SurfaceSetMaterial(1, OverlayMat(type + "_fg.png"));
+        }
+        return FinishOverlayMesh(mesh);
+    }
+
+    public static MeshInstance3D CreateHealthBar(float healthFraction,
+        float width = DefaultBarWidth, float height = DefaultBarHeight) =>
+        CreateStatusBar("health", healthFraction, width, height);
+
+    /// <summary>占领条(原版 StatusBars.AddCaptureBar):每段一张
+    /// <c>capture_bar.png</c>,<c>colorMul</c>=玩家色(灰度贴图染成玩家色的斜面)。</summary>
+    public static MeshInstance3D CreateCaptureBar(IReadOnlyList<(float Fraction, Color Color)> segments,
+        float width = DefaultBarWidth, float height = DefaultBarHeight)
+    {
+        float w = width > 0f ? width : DefaultBarWidth;
+        float h = height > 0f ? height : DefaultBarHeight;
         var st = new SurfaceTool();
         st.Begin(Mesh.PrimitiveType.Triangles);
-        float cursor = -w / 2;
+        float cursor = -w / 2f;
         foreach (var (frac, color) in segments)
         {
             if (frac <= 0f) continue;
             float segW = w * Mathf.Clamp(frac, 0f, 1f);
-            st.SetColor(color);
-            st.AddVertex(new Vector3(cursor, 0, 0));
-            st.AddVertex(new Vector3(cursor + segW, 0, 0));
-            st.AddVertex(new Vector3(cursor + segW, h, 0));
-            st.AddVertex(new Vector3(cursor, 0, 0));
-            st.AddVertex(new Vector3(cursor + segW, h, 0));
-            st.AddVertex(new Vector3(cursor, h, 0));
+            AddOverlayQuad(st, cursor, 0f, cursor + segW, h, color);
             cursor += segW;
         }
-        // 剩余未占段(灰黑底)。
-        if (cursor < w / 2)
-        {
-            st.SetColor(new Color(0.15f, 0.15f, 0.15f));
-            st.AddVertex(new Vector3(cursor, 0, 0));
-            st.AddVertex(new Vector3(w / 2, 0, 0));
-            st.AddVertex(new Vector3(w / 2, h, 0));
-            st.AddVertex(new Vector3(cursor, 0, 0));
-            st.AddVertex(new Vector3(w / 2, h, 0));
-            st.AddVertex(new Vector3(cursor, h, 0));
-        }
         var mesh = st.Commit();
-        var instance = new MeshInstance3D { Mesh = mesh };
-        var mat = new StandardMaterial3D();
-        mat.VertexColorUseAsAlbedo = true;
-        mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
-        mat.NoDepthTest = true;
-        mat.BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled;
-        mesh.SurfaceSetMaterial(0, mat);
-        return instance;
+        mesh.SurfaceSetMaterial(0, OverlayMat("capture_bar.png"));
+        return FinishOverlayMesh(mesh);
     }
 
     /// <summary>Procedural rally-point flag fallback: a thin dark pole with a player-coloured
