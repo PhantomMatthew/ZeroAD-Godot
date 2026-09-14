@@ -20,7 +20,6 @@ from zeroad_env.host import host_command
 
 _I32 = struct.Struct("<i")
 _U32 = struct.Struct("<I")
-_I16 = struct.Struct("<h")
 
 
 class ZeroADShmEnv:
@@ -103,7 +102,7 @@ class ZeroADShmEnv:
         if actions is None:
             actions = {
                 "function": np.zeros(self.n_slots, dtype=np.int32),
-                "selected": np.full(self.n_slots, -1, dtype=np.int32),
+                "selected": np.full((self.n_slots, L.MAX_SELECTED), -1, dtype=np.int32),
                 "target": np.full(self.n_slots, -1, dtype=np.int32),
                 "cell_x": np.zeros(self.n_slots, dtype=np.int32),
                 "cell_z": np.zeros(self.n_slots, dtype=np.int32),
@@ -111,27 +110,34 @@ class ZeroADShmEnv:
             }
         zeros = np.zeros(self.n_slots, dtype=np.int32)
         neg = np.full(self.n_slots, -1, dtype=np.int32)
+        sel = _selected_batch(actions.get("selected"), self.n_slots)
+        opp_sel = _selected_batch(actions.get("opp_selected"), self.n_slots)
         opp_fn = actions.get("opp_function", zeros)
-        opp_sel = actions.get("opp_selected", neg)
         opp_tgt = actions.get("opp_target", neg)
+        opp_cx = actions.get("opp_cell_x", zeros)
+        opp_cz = actions.get("opp_cell_z", zeros)
+        opp_cat = actions.get("opp_catalog", zeros)
         for s in range(self.n_slots):
             base = L.slot_offset(s) + L.OFF_ACTION
-            _I32.pack_into(self._mm, base + L.ACT_FUNCTION, int(actions["function"][s]))
-            _I32.pack_into(self._mm, base + L.ACT_SELECTED, int(actions["selected"][s]))
-            _I32.pack_into(self._mm, base + L.ACT_TARGET, int(actions["target"][s]))
-            _I32.pack_into(self._mm, base + L.ACT_CELL_X, int(actions["cell_x"][s]))
-            _I32.pack_into(self._mm, base + L.ACT_CELL_Z, int(actions["cell_z"][s]))
-            _I32.pack_into(self._mm, base + L.ACT_CATALOG, int(actions["catalog"][s]))
-            _I32.pack_into(self._mm, base + L.ACT_OPP_FUNCTION, int(opp_fn[s]))
-            _I16.pack_into(
+            _write_action_block(
                 self._mm,
-                base + L.ACT_OPP_SELECTED,
-                int(np.clip(int(opp_sel[s]), -32768, 32767)),
+                base,
+                int(actions["function"][s]),
+                sel[s],
+                int(actions["target"][s]),
+                int(actions["cell_x"][s]),
+                int(actions["cell_z"][s]),
+                int(actions["catalog"][s]),
             )
-            _I16.pack_into(
+            _write_action_block(
                 self._mm,
-                base + L.ACT_OPP_TARGET,
-                int(np.clip(int(opp_tgt[s]), -32768, 32767)),
+                base + L.ACT_OPP_BASE,
+                int(opp_fn[s]),
+                opp_sel[s],
+                int(opp_tgt[s]),
+                int(opp_cx[s]),
+                int(opp_cz[s]),
+                int(opp_cat[s]),
             )
         self._issue(L.CMD_STEP)
         obs = self._read_obs()
@@ -193,6 +199,7 @@ class ZeroADShmEnv:
         )
         scalars = np.empty((self.n_slots, L.SCALAR_COUNT), dtype=np.int32)
         mask = np.empty((self.n_slots, L.MASK_BYTES), dtype=np.uint8)
+        entity_mask = np.empty((self.n_slots, L.MAX_ENTITIES), dtype=np.uint32)
         for s in range(self.n_slots):
             off = L.slot_offset(s)
             entities[s] = np.frombuffer(
@@ -219,9 +226,54 @@ class ZeroADShmEnv:
                 count=L.MASK_BYTES,
                 offset=off + L.OFF_MASK,
             )
+            entity_mask[s] = np.frombuffer(
+                self._mm,
+                dtype="<u4",
+                count=L.MAX_ENTITIES,
+                offset=off + L.OFF_ENTITY_MASK,
+            )
         return {
             "entities": entities.copy(),
             "spatial": spatial.copy(),
             "scalars": scalars.copy(),
             "function_mask": mask.copy(),
+            "entity_mask": entity_mask.copy(),
         }
+
+
+def _selected_batch(value: object, n_slots: int) -> np.ndarray:
+    """Accept ``(n_slots,)`` or ``(n_slots, 8)`` selected indices; pad unused with -1."""
+    out = np.full((n_slots, L.MAX_SELECTED), -1, dtype=np.int32)
+    if value is None:
+        return out
+    arr = np.asarray(value, dtype=np.int32)
+    if arr.ndim == 0:
+        out[0, 0] = int(arr)
+        return out
+    if arr.ndim == 1:
+        n = min(n_slots, arr.shape[0])
+        out[:n, 0] = arr[:n]
+        return out
+    n = min(n_slots, arr.shape[0])
+    k = min(L.MAX_SELECTED, arr.shape[1])
+    out[:n, :k] = arr[:n, :k]
+    return out
+
+
+def _write_action_block(
+    mm: mmap.mmap,
+    base: int,
+    function: int,
+    selected: np.ndarray,
+    target: int,
+    cell_x: int,
+    cell_z: int,
+    catalog: int,
+) -> None:
+    _I32.pack_into(mm, base + L.ACT_FUNCTION, function)
+    _I32.pack_into(mm, base + L.ACT_TARGET, target)
+    _I32.pack_into(mm, base + L.ACT_CELL_X, cell_x)
+    _I32.pack_into(mm, base + L.ACT_CELL_Z, cell_z)
+    _I32.pack_into(mm, base + L.ACT_CATALOG, catalog)
+    for i in range(L.MAX_SELECTED):
+        _I32.pack_into(mm, base + L.ACT_SELECTED0 + i * 4, int(selected[i]))

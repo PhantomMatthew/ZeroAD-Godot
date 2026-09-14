@@ -219,6 +219,12 @@ def train(
                     action["opp_function"] = o_fn_i
                     action["opp_selected"] = int(o_sel_t.item())
                     action["opp_target"] = int(o_tgt_t.item())
+                    o_cx, o_cz = _cell_toward(
+                        opp_obs, int(o_sel_t.item()), int(o_tgt_t.item())
+                    )
+                    action["opp_cell_x"] = o_cx
+                    action["opp_cell_z"] = o_cz
+                    action["opp_catalog"] = _catalog(opp_obs, o_fn_i)
                     ep_obs.append(opp_obs)
                     fns.append(o_fn_i)
                     sels.append(int(o_sel_t.item()))

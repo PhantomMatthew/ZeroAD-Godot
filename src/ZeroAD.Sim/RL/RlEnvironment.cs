@@ -161,6 +161,21 @@ public sealed class RlEnvironment : IDisposable
     private void Submit(RlObservation obs, RlAction action, uint player)
     {
         var resolved = ActionTranslator.WithMapCells(obs, action);
+        if (ActionTranslator.FansOut(resolved.Function))
+        {
+            bool submitted = false;
+            for (int i = 0; i < RlSpec.MaxSelected; i++)
+            {
+                int row = resolved.SelectedAt(i);
+                if (ActionTranslator.EntityAt(obs, row) == 0) continue;
+                if (!ActionTranslator.TryTranslate(obs, resolved.WithSelected(row), player,
+                        _cfg.WorldMeters, _catalog, out var fan))
+                    continue;
+                _net!.SubmitAiCommand(fan);
+                submitted = true;
+            }
+            if (submitted) return;
+        }
         if (ActionTranslator.TryTranslate(obs, resolved, player, _cfg.WorldMeters, _catalog, out var cmd))
             _net!.SubmitAiCommand(cmd);
     }

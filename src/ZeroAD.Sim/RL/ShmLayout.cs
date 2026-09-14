@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 
 namespace ZeroAD.Sim.RL;
 
-/// <summary>File layout: 64-byte global header + N slots.
+/// <summary>File layout v2: 64-byte global header + N slots.
 /// Slot offsets are relative to the start of that slot.</summary>
 public static class ShmLayout
 {
@@ -28,8 +28,10 @@ public static class ShmLayout
     public const int EntitiesBytes = RlSpec.MaxEntities * RlSpec.EntityFeat * sizeof(int);
     public const int SpatialBytes = RlSpec.SpatialChannels * RlSpec.SpatialSize * RlSpec.SpatialSize * sizeof(int);
     public const int ScalarsBytes = RlSpec.ScalarCount * sizeof(int);
-    public const int MaskBytes = 16;
-    public const int ActionBytes = 32;
+    public const int MaskBytes = 32;
+    public const int EntityMaskBytes = RlSpec.MaxEntities * sizeof(uint);
+    public const int ActionBlockBytes = 64;
+    public const int ActionBytes = ActionBlockBytes * 2;
 
     public const int OffTurn = 0;
     public const int OffReward = 4;
@@ -38,21 +40,17 @@ public static class ShmLayout
     public const int OffSpatial = OffEntities + EntitiesBytes;
     public const int OffScalars = OffSpatial + SpatialBytes;
     public const int OffMask = OffScalars + ScalarsBytes;
-    public const int OffAction = OffMask + MaskBytes;
+    public const int OffEntityMask = OffMask + MaskBytes;
+    public const int OffAction = OffEntityMask + EntityMaskBytes;
     public const int SlotBytes = OffAction + ActionBytes;
 
     public const int ActFunction = 0;
-    public const int ActSelected = 4;
-    public const int ActTarget = 8;
-    public const int ActCellX = 12;
-    public const int ActCellZ = 16;
-    public const int ActCatalog = 20;
-    /// <summary>Packed opponent action in the unused tail of <see cref="ActionBytes"/>
-    /// (layout v1, no version bump). Function int32 + selected/target int16.
-    /// Cells are inferred from the entity table. Zero function = no opponent command.</summary>
-    public const int ActOppFunction = 24;
-    public const int ActOppSelected = 28;
-    public const int ActOppTarget = 30;
+    public const int ActTarget = 4;
+    public const int ActCellX = 8;
+    public const int ActCellZ = 12;
+    public const int ActCatalog = 16;
+    public const int ActSelected0 = 20;
+    public const int ActOppBase = ActionBlockBytes;
 
     public static int FileBytes(int slots) => HeaderBytes + Math.Max(1, slots) * SlotBytes;
     public static int SlotOffset(int slot) => HeaderBytes + slot * SlotBytes;
@@ -84,52 +82,55 @@ public static class ShmCodec
         mask.Clear();
         int n = Math.Min(obs.FunctionMask.Length, mask.Length);
         obs.FunctionMask.AsSpan(0, n).CopyTo(mask);
+        var em = slot.Slice(ShmLayout.OffEntityMask, ShmLayout.EntityMaskBytes);
+        for (int i = 0; i < obs.EntityMask.Length; i++)
+            BinaryPrimitives.WriteUInt32LittleEndian(em.Slice(i * 4), obs.EntityMask[i]);
     }
 
-    public static RlAction ReadAction(ReadOnlySpan<byte> slot)
+    public static RlAction ReadAction(ReadOnlySpan<byte> slot) =>
+        ReadActionBlock(slot.Slice(ShmLayout.OffAction, ShmLayout.ActionBlockBytes));
+
+    public static RlAction ReadOpponentAction(ReadOnlySpan<byte> slot) =>
+        ReadActionBlock(slot.Slice(ShmLayout.OffAction + ShmLayout.ActOppBase, ShmLayout.ActionBlockBytes));
+
+    public static void WriteAction(Span<byte> slot, RlAction action) =>
+        WriteActionBlock(slot.Slice(ShmLayout.OffAction, ShmLayout.ActionBlockBytes), action);
+
+    public static void WriteOpponentAction(Span<byte> slot, RlAction action) =>
+        WriteActionBlock(slot.Slice(ShmLayout.OffAction + ShmLayout.ActOppBase, ShmLayout.ActionBlockBytes), action);
+
+    private static RlAction ReadActionBlock(ReadOnlySpan<byte> a)
     {
-        var a = slot.Slice(ShmLayout.OffAction);
         int fn = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActFunction));
         if (fn < 0 || fn >= RlSpec.FunctionCount) fn = 0;
+        int s0 = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected0));
+        int s1 = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected0 + 4));
+        int s2 = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected0 + 8));
+        int s3 = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected0 + 12));
+        int s4 = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected0 + 16));
+        int s5 = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected0 + 20));
+        int s6 = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected0 + 24));
+        int s7 = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected0 + 28));
         return new RlAction(
             (RlFunction)fn,
-            BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected)),
+            s0,
             BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActTarget)),
             BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActCellX)),
             BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActCellZ)),
-            BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActCatalog)));
+            BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActCatalog)),
+            s1, s2, s3, s4, s5, s6, s7);
     }
 
-    /// <summary>Opponent command packed in action bytes 24–31. NoOp when function is 0.</summary>
-    public static RlAction ReadOpponentAction(ReadOnlySpan<byte> slot)
+    private static void WriteActionBlock(Span<byte> a, RlAction action)
     {
-        var a = slot.Slice(ShmLayout.OffAction);
-        int fn = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActOppFunction));
-        if (fn <= 0 || fn >= RlSpec.FunctionCount) return RlAction.NoOp();
-        short sel = BinaryPrimitives.ReadInt16LittleEndian(a.Slice(ShmLayout.ActOppSelected));
-        short tgt = BinaryPrimitives.ReadInt16LittleEndian(a.Slice(ShmLayout.ActOppTarget));
-        return new RlAction((RlFunction)fn, sel, tgt, -1, -1, 0);
-    }
-
-    public static void WriteAction(Span<byte> slot, RlAction action)
-    {
-        var a = slot.Slice(ShmLayout.OffAction);
+        a.Clear();
         BinaryPrimitives.WriteInt32LittleEndian(a.Slice(ShmLayout.ActFunction), (int)action.Function);
-        BinaryPrimitives.WriteInt32LittleEndian(a.Slice(ShmLayout.ActSelected), action.SelectedIndex);
         BinaryPrimitives.WriteInt32LittleEndian(a.Slice(ShmLayout.ActTarget), action.TargetEntityIndex);
         BinaryPrimitives.WriteInt32LittleEndian(a.Slice(ShmLayout.ActCellX), action.TargetCellX);
         BinaryPrimitives.WriteInt32LittleEndian(a.Slice(ShmLayout.ActCellZ), action.TargetCellZ);
         BinaryPrimitives.WriteInt32LittleEndian(a.Slice(ShmLayout.ActCatalog), action.CatalogId);
-    }
-
-    public static void WriteOpponentAction(Span<byte> slot, RlAction action)
-    {
-        var a = slot.Slice(ShmLayout.OffAction);
-        BinaryPrimitives.WriteInt32LittleEndian(a.Slice(ShmLayout.ActOppFunction), (int)action.Function);
-        BinaryPrimitives.WriteInt16LittleEndian(a.Slice(ShmLayout.ActOppSelected),
-            (short)Math.Clamp(action.SelectedIndex, short.MinValue, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(a.Slice(ShmLayout.ActOppTarget),
-            (short)Math.Clamp(action.TargetEntityIndex, short.MinValue, short.MaxValue));
+        for (int i = 0; i < RlSpec.MaxSelected; i++)
+            BinaryPrimitives.WriteInt32LittleEndian(a.Slice(ShmLayout.ActSelected0 + i * 4), action.SelectedAt(i));
     }
 
     private static void CopyInts(int[] src, Span<byte> dest)

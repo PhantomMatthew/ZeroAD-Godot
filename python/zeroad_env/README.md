@@ -36,9 +36,10 @@ import torch
 env = make_env(backend="shm", seed=1, privileged=False)
 obs, info = env.reset()
 # obs["entities"] int32 [512, 13]
-# obs["spatial"]  int32 [4, 64, 64]
+# obs["spatial"]  int32 [5, 64, 64]
 # obs["scalars"]  int32 [11]
-# obs["function_mask"] uint8
+# obs["function_mask"] uint8 [32]
+# obs["entity_mask"] uint32 [512]
 t = torch.from_numpy(obs["entities"])  # policy / pointer mask in PyTorch
 obs, reward, terminated, truncated, info = env.step({"function": 0})
 env.close()
@@ -68,9 +69,9 @@ Do not put rollout traffic on gRPC unless the learner is on another machine.
 ## First training loop
 
 Pointer PPO (function head + selected/target entity pointers, value baseline,
-clip 0.2). Function id space is 16 (10 originals plus Patrol / AttackWalk /
-ReturnResource / Ungarrison / Rally / Guard) and still fits `MASK_BYTES=16`
-without bumping `VERSION`. `n_slots>1` is sequential in one process; the host
+clip 0.2). Layout **v2** has 32 functions, 5 spatial channels (resource density),
+8 selected entity slots, a per-entity `uint32` mask, and a 128-byte action
+(agent 64 + opponent 64). `n_slots>1` is sequential in one process; the host
 rebinds each world's pathfinder before a tick.
 
 Requires a built host and `pip install torch`:
@@ -83,8 +84,8 @@ python -m zeroad_env.train --episodes 8 --steps 64
 `env.render()` returns a 64×64 RGB array from the visibility spatial channel
 (`render_mode="rgb_array"`).
 
-Self-play (same policy on both players, no Petra) packs the opponent action into
-the unused 8 bytes of the v1 action struct — no layout version bump. Owner-rel
+Self-play (same policy on both players, no Petra) writes a full opponent action
+into the second 64-byte block (cells, catalog, up to 8 selected). Owner-rel
 is swapped in Python so the pointer heads see "self" as player 2. Train actions
 copy the first own attacker template id into `catalog`.
 
@@ -99,4 +100,4 @@ API, and Python training stays on shm.
 ## Layout
 
 Constants in `layout.py` must match `src/ZeroAD.Sim/RL/ShmLayout.cs`
-(`MAGIC=0x5A414452`, `VERSION=1`). Mismatch aborts `reset`.
+(`MAGIC=0x5A414452`, `VERSION=2`). Mismatch aborts `reset`.

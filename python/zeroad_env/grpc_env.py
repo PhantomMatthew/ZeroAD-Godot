@@ -34,14 +34,24 @@ def _obs_to_numpy(obs: pb2.Observation) -> dict[str, np.ndarray]:
         "spatial": spatial,
         "scalars": scalars,
         "function_mask": mask[: L.MASK_BYTES],
+        "entity_mask": np.zeros(L.MAX_ENTITIES, dtype=np.uint32),
     }
 
 
-def _action_msg(action: dict[str, int] | None) -> pb2.Action:
+def _first_selected(value: object) -> int:
+    if isinstance(value, (list, tuple, np.ndarray)):
+        arr = np.asarray(value).ravel()
+        return int(arr[0]) if arr.size else -1
+    if value is None:
+        return -1
+    return int(value)
+
+
+def _action_msg(action: dict[str, Any] | None) -> pb2.Action:
     action = action or {}
     return pb2.Action(
         function=int(action.get("function", 0)),
-        selected_index=int(action.get("selected", -1)),
+        selected_index=_first_selected(action.get("selected", -1)),
         target_entity_index=int(action.get("target", -1)),
         target_cell_x=int(action.get("cell_x", 0)),
         target_cell_z=int(action.get("cell_z", 0)),

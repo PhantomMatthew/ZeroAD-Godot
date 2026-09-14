@@ -15,6 +15,8 @@ public static class ObservationEncoder
         Array.Clear(dest.Entities, 0, dest.Entities.Length);
         Array.Clear(dest.Spatial, 0, dest.Spatial.Length);
         Array.Clear(dest.Scalars, 0, dest.Scalars.Length);
+        Array.Clear(dest.FunctionMask, 0, dest.FunctionMask.Length);
+        Array.Clear(dest.EntityMask, 0, dest.EntityMask.Length);
 
         var ids = new List<EntityId>(cm.AllEntities.Count);
         foreach (var e in cm.AllEntities) ids.Add(e);
@@ -130,6 +132,17 @@ public static class ObservationEncoder
                 dest.Spatial[RlSpec.Spat.Territory * n * n + baseIdx] = terr;
             }
         }
+
+        foreach (var e in cm.AllEntities)
+        {
+            var supply = cm.QueryInterface<ResourceSupply>(e);
+            if (supply == null || supply.Amount <= 0) continue;
+            var pos = cm.QueryInterface<PositionComponent>(e);
+            if (pos == null || !pos.InWorld) continue;
+            int cx = WorldToCell(pos.Position.X, world);
+            int cz = WorldToCell(pos.Position.Z, world);
+            dest.Spatial[RlSpec.Spat.Resource * n * n + cz * n + cx] += supply.Amount;
+        }
     }
 
     private static void FillScalars(ComponentManager cm, int agent, bool privileged, uint turn,
@@ -152,52 +165,77 @@ public static class ObservationEncoder
     private static void FillFunctionMask(ComponentManager cm, RlObservation dest,
         Dictionary<uint, int> rowOf, int agentPlayerId)
     {
-        Array.Clear(dest.FunctionMask, 0, dest.FunctionMask.Length);
         dest.FunctionMask[(int)RlFunction.NoOp] = 1;
-        // Mask is "does the agent own at least one entity that could issue this"? P0: any own unit.
-        bool anyUnit = false, anyAttack = false, anyGather = false, anyBuild = false, anyTrain = false;
-        bool anyOccupiedHolder = false, anyRally = false;
         foreach (var e in cm.AllEntities)
         {
             var own = cm.QueryInterface<OwnershipComponent>(e);
             if (own == null || own.PlayerId != agentPlayerId) continue;
-            if (!rowOf.ContainsKey(e.Value)) continue;
-            if (cm.QueryInterface<UnitAIComponent>(e) != null) anyUnit = true;
-            if (cm.QueryInterface<AttackComponent>(e) != null) anyAttack = true;
-            if (cm.QueryInterface<ResourceGatherer>(e) != null) anyGather = true;
-            if (cm.QueryInterface<BuilderComponent>(e) != null) anyBuild = true;
-            if (cm.QueryInterface<ProductionQueue>(e) != null) anyTrain = true;
+            if (!rowOf.TryGetValue(e.Value, out int row)) continue;
+
+            Allow(dest, row, RlFunction.NoOp);
+            Allow(dest, row, RlFunction.Delete);
+            Allow(dest, row, RlFunction.SpyRequest);
+            Allow(dest, row, RlFunction.Tribute);
+            Allow(dest, row, RlFunction.Barter);
+            Allow(dest, row, RlFunction.AttackRequest);
+            Allow(dest, row, RlFunction.SetTradingGoods);
+
+            if (cm.QueryInterface<UnitAIComponent>(e) != null)
+            {
+                Allow(dest, row, RlFunction.Stop);
+                Allow(dest, row, RlFunction.Move);
+                Allow(dest, row, RlFunction.Patrol);
+                Allow(dest, row, RlFunction.AttackWalk);
+                Allow(dest, row, RlFunction.Guard);
+                Allow(dest, row, RlFunction.Garrison);
+                Allow(dest, row, RlFunction.Stance);
+                Allow(dest, row, RlFunction.Formation);
+                Allow(dest, row, RlFunction.CollectTreasure);
+            }
+            if (cm.QueryInterface<AttackComponent>(e) != null)
+            {
+                Allow(dest, row, RlFunction.Attack);
+                Allow(dest, row, RlFunction.WalkToRange);
+            }
+            if (cm.QueryInterface<ResourceGatherer>(e) != null)
+            {
+                Allow(dest, row, RlFunction.Gather);
+                Allow(dest, row, RlFunction.ReturnResource);
+            }
+            if (cm.QueryInterface<BuilderComponent>(e) != null)
+            {
+                Allow(dest, row, RlFunction.Repair);
+                Allow(dest, row, RlFunction.Build);
+            }
+            if (cm.QueryInterface<ProductionQueue>(e) != null)
+            {
+                Allow(dest, row, RlFunction.Train);
+                Allow(dest, row, RlFunction.Research);
+                Allow(dest, row, RlFunction.CancelProduction);
+            }
             var holder = cm.QueryInterface<GarrisonHolderComponent>(e);
-            if (holder != null && holder.Entities.Count > 0) anyOccupiedHolder = true;
-            if (cm.QueryInterface<RallyPointComponent>(e) != null) anyRally = true;
+            if (holder != null && holder.Entities.Count > 0)
+                Allow(dest, row, RlFunction.Ungarrison);
+            if (cm.QueryInterface<RallyPointComponent>(e) != null)
+                Allow(dest, row, RlFunction.Rally);
+            if (cm.QueryInterface<PackComponent>(e) != null)
+                Allow(dest, row, RlFunction.Pack);
+            if (cm.QueryInterface<GateComponent>(e) != null)
+                Allow(dest, row, RlFunction.Gate);
+            if (cm.QueryInterface<UpgradeComponent>(e) != null)
+                Allow(dest, row, RlFunction.Upgrade);
+            if (cm.QueryInterface<BuildingAIComponent>(e) != null)
+                Allow(dest, row, RlFunction.FocusFire);
+            if (cm.QueryInterface<TraderComponent>(e) != null)
+                Allow(dest, row, RlFunction.SetupTradeRoute);
         }
-        if (anyUnit)
-        {
-            dest.FunctionMask[(int)RlFunction.Stop] = 1;
-            dest.FunctionMask[(int)RlFunction.Move] = 1;
-            dest.FunctionMask[(int)RlFunction.Patrol] = 1;
-            dest.FunctionMask[(int)RlFunction.AttackWalk] = 1;
-            dest.FunctionMask[(int)RlFunction.Guard] = 1;
-        }
-        if (anyAttack) dest.FunctionMask[(int)RlFunction.Attack] = 1;
-        if (anyGather)
-        {
-            dest.FunctionMask[(int)RlFunction.Gather] = 1;
-            dest.FunctionMask[(int)RlFunction.ReturnResource] = 1;
-        }
-        if (anyBuild)
-        {
-            dest.FunctionMask[(int)RlFunction.Repair] = 1;
-            dest.FunctionMask[(int)RlFunction.Build] = 1;
-        }
-        if (anyTrain)
-        {
-            dest.FunctionMask[(int)RlFunction.Train] = 1;
-            dest.FunctionMask[(int)RlFunction.Research] = 1;
-        }
-        dest.FunctionMask[(int)RlFunction.Garrison] = anyUnit ? (byte)1 : (byte)0;
-        dest.FunctionMask[(int)RlFunction.Ungarrison] = anyOccupiedHolder ? (byte)1 : (byte)0;
-        dest.FunctionMask[(int)RlFunction.Rally] = anyRally ? (byte)1 : (byte)0;
+    }
+
+    private static void Allow(RlObservation dest, int row, RlFunction fn)
+    {
+        int i = (int)fn;
+        dest.FunctionMask[i] = 1;
+        dest.EntityMask[row] |= 1u << i;
     }
 
     private static int ReadPhase(ComponentManager cm, int agent)

@@ -190,6 +190,59 @@ public sealed class RlEnvironmentTests
         Assert.True(ActionTranslator.TryTranslate(obs,
             new RlAction(RlFunction.Ungarrison, 0, -1), 1, 256, new RlCatalog(), out var unload));
         Assert.Equal(NetCommandType.Ungarrison, unload.Type);
+        obs.FunctionMask[(int)RlFunction.Delete] = 1;
+        obs.FunctionMask[(int)RlFunction.Stance] = 1;
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Delete, 0), 1, 256, new RlCatalog(), out var delete));
+        Assert.Equal(NetCommandType.Delete, delete.Type);
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Stance, 0, catalogId: 2), 1, 256, new RlCatalog(), out var stance));
+        Assert.Equal(NetCommandType.SetUnitStance, stance.Type);
+        Assert.Equal("defensive", stance.TemplateName);
+    }
+
+    [Fact]
+    public void EntityMask_MarksAttackOnOwnSeer()
+    {
+        using var env = new RlEnvironment(new RlConfig
+        {
+            Seed = 1,
+            PrivilegedVision = true,
+            UseRealMatch = false
+        });
+        var obs = env.Reset();
+        int self = FirstSelf(obs);
+        Assert.True((obs.EntityMask[self] & (1u << (int)RlFunction.Attack)) != 0);
+        Assert.True((obs.EntityMask[self] & (1u << (int)RlFunction.Delete)) != 0);
+        Assert.Equal(1, obs.FunctionMask[(int)RlFunction.Delete]);
+    }
+
+    [Fact]
+    public void RealMatch_FillsResourceChannelAndEntityMask()
+    {
+        using var env = new RlEnvironment(new RlConfig { Seed = 1, PrivilegedVision = true });
+        var obs = env.Reset();
+        if (!env.LoadedRealMatch) return;
+
+        int n = RlSpec.SpatialSize;
+        int res = 0;
+        int baseIdx = RlSpec.Spat.Resource * n * n;
+        for (int i = 0; i < n * n; i++)
+            res += obs.Spatial[baseIdx + i];
+        Assert.True(res > 0, "trees/berries should paint the resource spatial channel");
+
+        bool sawSoldierAttack = false;
+        for (int i = 0; i < RlSpec.MaxEntities; i++)
+        {
+            if (obs.Entity(i, RlSpec.Ent.Valid) == 0) continue;
+            if (obs.Entity(i, RlSpec.Ent.OwnerRel) != RlSpec.OwnerRel.Self) continue;
+            bool canAttack = (obs.Entity(i, RlSpec.Ent.Flags) & RlSpec.Ent.FlagCanAttack) != 0;
+            bool attackBit = (obs.EntityMask[i] & (1u << (int)RlFunction.Attack)) != 0;
+            Assert.Equal(canAttack, attackBit);
+            if (canAttack && (obs.Entity(i, RlSpec.Ent.Flags) & RlSpec.Ent.FlagBuilding) == 0)
+                sawSoldierAttack = true;
+        }
+        Assert.True(sawSoldierAttack);
     }
 
     [Fact]

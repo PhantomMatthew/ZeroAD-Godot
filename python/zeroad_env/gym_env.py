@@ -17,19 +17,35 @@ except ImportError:
     spaces = None
 
 
-def _batch_from_action(action: dict[str, int] | None) -> dict[str, np.ndarray] | None:
+def _pad_selected(value: object) -> np.ndarray:
+    out = np.full(L.MAX_SELECTED, -1, dtype=np.int32)
+    if value is None:
+        return out
+    if isinstance(value, (list, tuple, np.ndarray)):
+        arr = np.asarray(value, dtype=np.int32).ravel()
+        n = min(L.MAX_SELECTED, arr.size)
+        out[:n] = arr[:n]
+        return out
+    out[0] = int(value)
+    return out
+
+
+def _batch_from_action(action: dict[str, Any] | None) -> dict[str, np.ndarray] | None:
     if action is None:
         return None
     return {
         "function": np.array([action.get("function", 0)], dtype=np.int32),
-        "selected": np.array([action.get("selected", -1)], dtype=np.int32),
+        "selected": _pad_selected(action.get("selected", -1))[np.newaxis, :],
         "target": np.array([action.get("target", -1)], dtype=np.int32),
         "cell_x": np.array([action.get("cell_x", 0)], dtype=np.int32),
         "cell_z": np.array([action.get("cell_z", 0)], dtype=np.int32),
         "catalog": np.array([action.get("catalog", 0)], dtype=np.int32),
         "opp_function": np.array([action.get("opp_function", 0)], dtype=np.int32),
-        "opp_selected": np.array([action.get("opp_selected", -1)], dtype=np.int32),
+        "opp_selected": _pad_selected(action.get("opp_selected", -1))[np.newaxis, :],
         "opp_target": np.array([action.get("opp_target", -1)], dtype=np.int32),
+        "opp_cell_x": np.array([action.get("opp_cell_x", 0)], dtype=np.int32),
+        "opp_cell_z": np.array([action.get("opp_cell_z", 0)], dtype=np.int32),
+        "opp_catalog": np.array([action.get("opp_catalog", 0)], dtype=np.int32),
     }
 
 
@@ -78,13 +94,24 @@ class ZeroADGymEnv(gym.Env if gym is not None else object):
                     "function_mask": spaces.Box(
                         low=0, high=1, shape=(L.MASK_BYTES,), dtype=np.uint8
                     ),
+                    "entity_mask": spaces.Box(
+                        low=0,
+                        high=np.iinfo(np.uint32).max,
+                        shape=(L.MAX_ENTITIES,),
+                        dtype=np.uint32,
+                    ),
                 }
             )
             idx = spaces.Box(low=-1, high=L.MAX_ENTITIES - 1, shape=(), dtype=np.int32)
             self.action_space = spaces.Dict(
                 {
                     "function": spaces.Discrete(L.N_FUNCTIONS),
-                    "selected": idx,
+                    "selected": spaces.Box(
+                        low=-1,
+                        high=L.MAX_ENTITIES - 1,
+                        shape=(L.MAX_SELECTED,),
+                        dtype=np.int32,
+                    ),
                     "target": idx,
                     "cell_x": spaces.Discrete(L.SPATIAL_SIZE),
                     "cell_z": spaces.Discrete(L.SPATIAL_SIZE),
@@ -102,6 +129,7 @@ class ZeroADGymEnv(gym.Env if gym is not None else object):
             "spatial": (L.SPATIAL_CHANNELS, L.SPATIAL_SIZE, L.SPATIAL_SIZE),
             "scalars": (L.SCALAR_COUNT,),
             "function_mask": (L.MASK_BYTES,),
+            "entity_mask": (L.MAX_ENTITIES,),
         }
 
     def reset(
@@ -120,7 +148,7 @@ class ZeroADGymEnv(gym.Env if gym is not None else object):
         return squeezed, {}
 
     def step(
-        self, action: dict[str, int] | None = None
+        self, action: dict[str, Any] | None = None
     ) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """Step one env turn-mul. Returns obs, reward, terminated, truncated, info."""
         if self._grpc is not None:

@@ -1,21 +1,21 @@
 namespace ZeroAD.Sim.RL;
 
-/// <summary>Frozen AlphaStar-style observation / action dimensions for the P0 C# environment.</summary>
+/// <summary>AlphaStar-style observation / action dimensions. LayoutVersion 2 grew
+/// spatial channels, per-entity masks, multi-select, and a full opponent action block.</summary>
 public static class RlSpec
 {
     public const int MaxEntities = 512;
     public const int EntityFeat = 13;
     public const int SpatialSize = 64;
-    public const int SpatialChannels = 4;
+    public const int SpatialChannels = 5;
     public const int ScalarCount = 11;
-    public const int MaxSelected = 1;
-    /// <summary>Must equal the <see cref="RlFunction"/> enum length and stay ≤
-    /// <c>ShmLayout.MaskBytes</c> (16). Extra verbs occupy leftover mask bytes without
-    /// bumping <see cref="LayoutVersion"/>.</summary>
-    public const int FunctionCount = 16;
+    public const int MaxSelected = 8;
+    /// <summary>Must equal the <see cref="RlFunction"/> enum length and stay ≤ 32
+    /// (packed into a uint32 per-entity mask).</summary>
+    public const int FunctionCount = 32;
     public const int WorldMetersDefault = 256;
     public const uint LayoutMagic = 0x5A414452; // "ZADR"
-    public const int LayoutVersion = 1;
+    public const int LayoutVersion = 2;
 
     public static class Ent
     {
@@ -54,6 +54,7 @@ public static class RlSpec
         public const int Explored = 1;
         public const int Passable = 2;
         public const int Territory = 3;
+        public const int Resource = 4;
     }
 
     public static class Scal
@@ -101,6 +102,8 @@ public sealed class RlObservation
     public readonly int[] Spatial;
     public readonly int[] Scalars;
     public readonly byte[] FunctionMask;
+    /// <summary>Bit i of row r means <see cref="RlFunction"/> i is legal for that entity.</summary>
+    public readonly uint[] EntityMask;
     public uint Turn;
     public bool Done;
     public int Reward;
@@ -111,6 +114,7 @@ public sealed class RlObservation
         Spatial = new int[RlSpec.SpatialChannels * RlSpec.SpatialSize * RlSpec.SpatialSize];
         Scalars = new int[RlSpec.ScalarCount];
         FunctionMask = new byte[RlSpec.FunctionCount];
+        EntityMask = new uint[RlSpec.MaxEntities];
     }
 
     public int Entity(int row, int feat) => Entities[row * RlSpec.EntityFeat + feat];
@@ -135,6 +139,22 @@ public enum RlFunction : byte
     Ungarrison = 13,
     Rally = 14,
     Guard = 15,
+    Delete = 16,
+    Stance = 17,
+    CancelProduction = 18,
+    Pack = 19,
+    Upgrade = 20,
+    Gate = 21,
+    CollectTreasure = 22,
+    WalkToRange = 23,
+    FocusFire = 24,
+    SpyRequest = 25,
+    Formation = 26,
+    Tribute = 27,
+    Barter = 28,
+    SetupTradeRoute = 29,
+    AttackRequest = 30,
+    SetTradingGoods = 31,
 }
 
 public readonly struct RlAction
@@ -145,9 +165,18 @@ public readonly struct RlAction
     public readonly int TargetCellX;
     public readonly int TargetCellZ;
     public readonly int CatalogId;
+    public readonly int Selected1;
+    public readonly int Selected2;
+    public readonly int Selected3;
+    public readonly int Selected4;
+    public readonly int Selected5;
+    public readonly int Selected6;
+    public readonly int Selected7;
 
     public RlAction(RlFunction function, int selectedIndex = -1, int targetEntityIndex = -1,
-        int targetCellX = 0, int targetCellZ = 0, int catalogId = 0)
+        int targetCellX = 0, int targetCellZ = 0, int catalogId = 0,
+        int selected1 = -1, int selected2 = -1, int selected3 = -1,
+        int selected4 = -1, int selected5 = -1, int selected6 = -1, int selected7 = -1)
     {
         Function = function;
         SelectedIndex = selectedIndex;
@@ -155,7 +184,30 @@ public readonly struct RlAction
         TargetCellX = targetCellX;
         TargetCellZ = targetCellZ;
         CatalogId = catalogId;
+        Selected1 = selected1;
+        Selected2 = selected2;
+        Selected3 = selected3;
+        Selected4 = selected4;
+        Selected5 = selected5;
+        Selected6 = selected6;
+        Selected7 = selected7;
     }
+
+    public int SelectedAt(int i) => i switch
+    {
+        0 => SelectedIndex,
+        1 => Selected1,
+        2 => Selected2,
+        3 => Selected3,
+        4 => Selected4,
+        5 => Selected5,
+        6 => Selected6,
+        7 => Selected7,
+        _ => -1
+    };
+
+    public RlAction WithSelected(int selectedIndex) =>
+        new(Function, selectedIndex, TargetEntityIndex, TargetCellX, TargetCellZ, CatalogId);
 
     public static RlAction NoOp() => new(RlFunction.NoOp);
 }
