@@ -27,6 +27,9 @@ def _batch_from_action(action: dict[str, int] | None) -> dict[str, np.ndarray] |
         "cell_x": np.array([action.get("cell_x", 0)], dtype=np.int32),
         "cell_z": np.array([action.get("cell_z", 0)], dtype=np.int32),
         "catalog": np.array([action.get("catalog", 0)], dtype=np.int32),
+        "opp_function": np.array([action.get("opp_function", 0)], dtype=np.int32),
+        "opp_selected": np.array([action.get("opp_selected", -1)], dtype=np.int32),
+        "opp_target": np.array([action.get("opp_target", -1)], dtype=np.int32),
     }
 
 

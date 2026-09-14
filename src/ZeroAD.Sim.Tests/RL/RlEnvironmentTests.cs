@@ -192,6 +192,36 @@ public sealed class RlEnvironmentTests
         Assert.Equal(NetCommandType.Ungarrison, unload.Type);
     }
 
+    [Fact]
+    public void OpponentMove_UsesEnemyRow_NotAgent()
+    {
+        using var a = new RlEnvironment(SandboxCfg(11));
+        using var b = new RlEnvironment(SandboxCfg(11));
+        a.Reset();
+        var obs = b.Reset();
+        int self = FirstSelf(obs);
+        int enemy = FirstOwner(obs, RlSpec.OwnerRel.Enemy);
+        Assert.True(enemy >= 0);
+        var opp = new RlAction(RlFunction.Move, enemy, self, -1, -1);
+        for (int i = 0; i < 8; i++)
+        {
+            a.Step(RlAction.NoOp());
+            b.Step(RlAction.NoOp(), opp);
+        }
+        Assert.NotEqual(Convert.ToHexString(a.Sim.ComputeStateHash()),
+            Convert.ToHexString(b.Sim.ComputeStateHash()));
+    }
+
+    private static int FirstOwner(RlObservation obs, int rel)
+    {
+        for (int i = 0; i < RlSpec.MaxEntities; i++)
+        {
+            if (obs.Entity(i, RlSpec.Ent.Valid) == 0) continue;
+            if (obs.Entity(i, RlSpec.Ent.OwnerRel) == rel) return i;
+        }
+        return -1;
+    }
+
     private static RlConfig SandboxCfg(uint seed) => new()
     {
         Seed = seed,

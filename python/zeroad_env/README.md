@@ -83,7 +83,18 @@ python -m zeroad_env.train --episodes 8 --steps 64
 `env.render()` returns a 64×64 RGB array from the visibility spatial channel
 (`render_mode="rgb_array"`).
 
-Barter prices remain process-global; the encounter does not use them.
+Self-play (same policy on both players, no Petra) packs the opponent action into
+the unused 8 bytes of the v1 action struct — no layout version bump. Owner-rel
+is swapped in Python so the pointer heads see "self" as player 2. Train actions
+copy the first own attacker template id into `catalog`.
+
+```bash
+python -m zeroad_env.train --episodes 8 --steps 64 --self-play
+```
+
+Barter drift is per-world (not process-global). pythonnet in-process loading is
+not wired; C# `RlEnvironment.Step(agent, opponent)` is the in-process dual-action
+API, and Python training stays on shm.
 
 ## Layout
 

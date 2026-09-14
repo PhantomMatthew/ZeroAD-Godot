@@ -86,6 +86,25 @@ public static class ActionTranslator
         }
     }
 
+    /// <summary>When cells are negative (packed opponent actions omit them), copy
+    /// the target entity's observation cell, else the selected unit's, else the map centre.</summary>
+    public static RlAction WithMapCells(RlObservation obs, RlAction action)
+    {
+        if (action.TargetCellX >= 0 && action.TargetCellZ >= 0) return action;
+        int row = action.TargetEntityIndex;
+        if (row < 0 || row >= RlSpec.MaxEntities || obs.Entity(row, RlSpec.Ent.Valid) == 0)
+            row = action.SelectedIndex;
+        int cx = RlSpec.SpatialSize / 2;
+        int cz = cx;
+        if (row >= 0 && row < RlSpec.MaxEntities && obs.Entity(row, RlSpec.Ent.Valid) != 0)
+        {
+            cx = obs.Entity(row, RlSpec.Ent.CellX);
+            cz = obs.Entity(row, RlSpec.Ent.CellZ);
+        }
+        return new RlAction(action.Function, action.SelectedIndex, action.TargetEntityIndex,
+            cx, cz, action.CatalogId);
+    }
+
     public static uint EntityAt(RlObservation obs, int row)
     {
         if (row < 0 || row >= RlSpec.MaxEntities) return 0;

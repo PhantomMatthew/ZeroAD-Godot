@@ -20,6 +20,7 @@ from zeroad_env.host import host_command
 
 _I32 = struct.Struct("<i")
 _U32 = struct.Struct("<I")
+_I16 = struct.Struct("<h")
 
 
 class ZeroADShmEnv:
@@ -108,6 +109,11 @@ class ZeroADShmEnv:
                 "cell_z": np.zeros(self.n_slots, dtype=np.int32),
                 "catalog": np.zeros(self.n_slots, dtype=np.int32),
             }
+        zeros = np.zeros(self.n_slots, dtype=np.int32)
+        neg = np.full(self.n_slots, -1, dtype=np.int32)
+        opp_fn = actions.get("opp_function", zeros)
+        opp_sel = actions.get("opp_selected", neg)
+        opp_tgt = actions.get("opp_target", neg)
         for s in range(self.n_slots):
             base = L.slot_offset(s) + L.OFF_ACTION
             _I32.pack_into(self._mm, base + L.ACT_FUNCTION, int(actions["function"][s]))
@@ -116,6 +122,17 @@ class ZeroADShmEnv:
             _I32.pack_into(self._mm, base + L.ACT_CELL_X, int(actions["cell_x"][s]))
             _I32.pack_into(self._mm, base + L.ACT_CELL_Z, int(actions["cell_z"][s]))
             _I32.pack_into(self._mm, base + L.ACT_CATALOG, int(actions["catalog"][s]))
+            _I32.pack_into(self._mm, base + L.ACT_OPP_FUNCTION, int(opp_fn[s]))
+            _I16.pack_into(
+                self._mm,
+                base + L.ACT_OPP_SELECTED,
+                int(np.clip(int(opp_sel[s]), -32768, 32767)),
+            )
+            _I16.pack_into(
+                self._mm,
+                base + L.ACT_OPP_TARGET,
+                int(np.clip(int(opp_tgt[s]), -32768, 32767)),
+            )
         self._issue(L.CMD_STEP)
         obs = self._read_obs()
         reward = np.empty(self.n_slots, dtype=np.int32)

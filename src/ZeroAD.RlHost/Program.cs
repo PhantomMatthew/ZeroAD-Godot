@@ -161,7 +161,8 @@ internal static class Program
                 {
                     var span = scratch.AsSpan(ShmLayout.SlotOffset(s), ShmLayout.SlotBytes);
                     var action = ShmCodec.ReadAction(span);
-                    var result = envs[s].Step(action);
+                    var opp = ShmCodec.ReadOpponentAction(span);
+                    var result = envs[s].Step(action, opp.Function == RlFunction.NoOp ? null : opp);
                     ShmCodec.WriteObservation(span, result.Observation);
                 }
             }

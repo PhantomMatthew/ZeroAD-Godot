@@ -47,6 +47,9 @@ ACT_TARGET = 8
 ACT_CELL_X = 12
 ACT_CELL_Z = 16
 ACT_CATALOG = 20
+ACT_OPP_FUNCTION = 24
+ACT_OPP_SELECTED = 28
+ACT_OPP_TARGET = 30
 
 
 def file_bytes(slots: int) -> int:

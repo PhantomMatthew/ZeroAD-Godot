@@ -68,6 +68,23 @@ public sealed class ShmCodecTests
     }
 
     [Fact]
+    public void OpponentAction_PacksIntoActionTail()
+    {
+        var slot = new byte[ShmLayout.SlotBytes];
+        ShmCodec.WriteAction(slot, new RlAction(RlFunction.Attack, 3, 4, 1, 2, 0));
+        ShmCodec.WriteOpponentAction(slot, new RlAction(RlFunction.Move, 10, 11));
+        var agent = ShmCodec.ReadAction(slot);
+        var opp = ShmCodec.ReadOpponentAction(slot);
+        Assert.Equal(RlFunction.Attack, agent.Function);
+        Assert.Equal(3, agent.SelectedIndex);
+        Assert.Equal(RlFunction.Move, opp.Function);
+        Assert.Equal(10, opp.SelectedIndex);
+        Assert.Equal(11, opp.TargetEntityIndex);
+        Assert.Equal(-1, opp.TargetCellX);
+        Assert.Equal(RlFunction.NoOp, ShmCodec.ReadOpponentAction(new byte[ShmLayout.SlotBytes]).Function);
+    }
+
+    [Fact]
     public void Header_WritesMagicAndSlotCount()
     {
         var file = new byte[ShmLayout.FileBytes(2)];

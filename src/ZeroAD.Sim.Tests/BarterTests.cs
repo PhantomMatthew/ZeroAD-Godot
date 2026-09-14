@@ -25,6 +25,7 @@ public sealed class BarterTests
     [Fact]
     public void StaticPrices_Are_TruePrice_PlusMinus_ConstantDifference()
     {
+        BarterSystem.Reset();
         Assert.Equal(110, BarterSystem.BuyPrice(ResourceType.Wood));
         // 乘数(本波接线):×1.2 买入 =110×1.2=132、卖出 ×0.8 =90×0.8=72。
         Assert.Equal(132, BarterSystem.BuyPrice(ResourceType.Wood, 1.2f));
@@ -43,6 +44,18 @@ public sealed class BarterTests
         BarterSystem.ExchangeResources(cm, p1, playerId: 1, ResourceType.Wood, ResourceType.Food, 100);
         Assert.Equal(900, p1.Wood);
         Assert.Equal(82, p1.Food);
+    }
+
+    [Fact]
+    public void Exchange_Drift_StaysOnThatWorld()
+    {
+        var (cm1, p1) = NewPlayerWithMarket();
+        p1.Wood = 1000; p1.Food = 0;
+        BarterSystem.ExchangeResources(cm1, p1, 1, ResourceType.Wood, ResourceType.Food, 100);
+        int drifted = BarterSystem.BuyPrice(cm1, ResourceType.Wood);
+        var (cm2, _) = NewPlayerWithMarket();
+        Assert.Equal(110, BarterSystem.BuyPrice(cm2, ResourceType.Wood));
+        Assert.NotEqual(110, drifted);
     }
 
     [Fact]

@@ -111,7 +111,7 @@ public sealed class RlEnvironment : IDisposable
         return _obs;
     }
 
-    public RlStepResult Step(RlAction action)
+    public RlStepResult Step(RlAction action, RlAction? opponentAction = null)
     {
         if (_cm == null || _range == null || _net == null)
             throw new InvalidOperationException("Reset() first.");
@@ -119,9 +119,9 @@ public sealed class RlEnvironment : IDisposable
             return new RlStepResult { Observation = _obs, Reward = 0, Done = true };
 
         SimSystem.Bind(_cm);
-        if (ActionTranslator.TryTranslate(_obs, action, (uint)_cfg.AgentPlayerId,
-                _cfg.WorldMeters, _catalog, out var cmd))
-            _net.SubmitAiCommand(cmd);
+        Submit(_obs, action, (uint)_cfg.AgentPlayerId);
+        if (opponentAction is { } opp && opp.Function != RlFunction.NoOp)
+            Submit(_obs, opp, (uint)_cfg.OpponentPlayerId);
 
         int mul = Math.Max(1, _cfg.StepMul);
         for (int i = 0; i < mul; i++)
@@ -157,6 +157,13 @@ public sealed class RlEnvironment : IDisposable
     }
 
     public void Dispose() => DisposeWorld();
+
+    private void Submit(RlObservation obs, RlAction action, uint player)
+    {
+        var resolved = ActionTranslator.WithMapCells(obs, action);
+        if (ActionTranslator.TryTranslate(obs, resolved, player, _cfg.WorldMeters, _catalog, out var cmd))
+            _net!.SubmitAiCommand(cmd);
+    }
 
     private void Encode()
     {

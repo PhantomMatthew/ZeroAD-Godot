@@ -318,6 +318,6 @@ public static class SimLoop
             cm.QueryInterface<BattleDetectionComponent>(entity)?.Tick(dt);
             cm.QueryInterface<HealthComponent>(entity)?.TickRegen(cm, dt);
         }
-        BarterSystem.TickRestore(dt);
+        BarterSystem.TickRestore(cm, dt);
     }
 }

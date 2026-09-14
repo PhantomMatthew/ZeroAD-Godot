@@ -12,6 +12,7 @@ from zeroad_env import layout as L
 
 OWN = 1
 ENEMY = 3
+FN_TRAIN = 7
 
 
 def _own_mask(ent: np.ndarray) -> np.ndarray:
@@ -41,6 +42,33 @@ def _cell_toward(obs: Mapping[str, np.ndarray], selected: int, target: int) -> t
     if 0 <= selected < L.MAX_ENTITIES and ent[selected, 0] > 0:
         return int(ent[selected, 3]), int(ent[selected, 4])
     return L.SPATIAL_SIZE // 2, L.SPATIAL_SIZE // 2
+
+
+def _catalog(obs: Mapping[str, np.ndarray], fn: int) -> int:
+    """Train copies the first own attacker template id; Build/Research stay 0."""
+    if fn != FN_TRAIN:
+        return 0
+    ent = obs["entities"]
+    for i in range(L.MAX_ENTITIES):
+        if ent[i, 0] == 0:
+            continue
+        if ent[i, 1] == OWN and (int(ent[i, 8]) & 2) != 0:
+            return int(ent[i, 2])
+    return 0
+
+
+def _invert_owner(obs: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Swap self/enemy owner-rel so the same policy can play player 2."""
+    ent = np.array(obs["entities"], copy=True)
+    rel = ent[:, 1]
+    own = rel == OWN
+    enemy = rel == ENEMY
+    rel[own] = ENEMY
+    rel[enemy] = OWN
+    ent[:, 1] = rel
+    out = dict(obs)
+    out["entities"] = ent
+    return out
 
 
 class Policy:
@@ -126,17 +154,20 @@ def train(
     privileged: bool,
     ppo_epochs: int,
     gamma: float,
+    self_play: bool,
 ) -> None:
     """Run a tiny pointer-policy trainer. Requires PyTorch."""
     import torch
     from torch import nn
 
+    if self_play:
+        privileged = True
     env = ZeroADGymEnv(
         backend="shm",
         seed=seed,
         privileged=privileged,
         step_mul=8,
-        petra=True,
+        petra=not self_play,
         max_turns=10_000,
         render_mode="rgb_array",
     )
@@ -163,25 +194,51 @@ def train(
                 sel_i = int(sel_t.item())
                 tgt_i = int(tgt_t.item())
                 cell_x, cell_z = _cell_toward(obs, sel_i, tgt_i)
-                ep_obs.append(obs)
-                fns.append(fn_i)
-                sels.append(sel_i)
-                tgts.append(tgt_i)
-                old_logps.append(logp)
-                values.append(v)
                 action = {
                     "function": fn_i,
                     "selected": sel_i,
                     "target": tgt_i,
                     "cell_x": cell_x,
                     "cell_z": cell_z,
-                    "catalog": 0,
+                    "catalog": _catalog(obs, fn_i),
+                    "opp_function": 0,
+                    "opp_selected": -1,
+                    "opp_target": -1,
                 }
+                if self_play:
+                    opp_obs = _invert_owner(obs)
+                    o_fn_d, o_sel_d, o_tgt_d, o_fn_t, o_v = policy.dist(opp_obs)
+                    o_fn_i = int(o_fn_t.item())
+                    o_sel_t = o_sel_d.sample()
+                    o_tgt_t = o_tgt_d.sample()
+                    o_logp = (
+                        o_fn_d.log_prob(o_fn_t)
+                        + o_sel_d.log_prob(o_sel_t)
+                        + o_tgt_d.log_prob(o_tgt_t)
+                    )
+                    action["opp_function"] = o_fn_i
+                    action["opp_selected"] = int(o_sel_t.item())
+                    action["opp_target"] = int(o_tgt_t.item())
+                    ep_obs.append(opp_obs)
+                    fns.append(o_fn_i)
+                    sels.append(int(o_sel_t.item()))
+                    tgts.append(int(o_tgt_t.item()))
+                    old_logps.append(o_logp)
+                    values.append(o_v)
+                ep_obs.append(obs)
+                fns.append(fn_i)
+                sels.append(sel_i)
+                tgts.append(tgt_i)
+                old_logps.append(logp)
+                values.append(v)
                 obs, reward, terminated, _trunc, _info = env.step(action)
-                rewards.append(float(reward))
+                r = float(reward)
+                if self_play:
+                    rewards.append(-r)
+                rewards.append(r)
                 if terminated:
                     break
-            ep_ret = float(sum(rewards))
+            ep_ret = float(sum(rewards[1::2] if self_play else rewards))
             if old_logps:
                 ret = torch.from_numpy(_discounted(rewards, gamma))
                 val = torch.stack(values)
@@ -216,6 +273,7 @@ def train(
             print(
                 f"episode {ep + 1}/{episodes} return={ep_ret:.1f} "
                 f"done={terminated} mean={float(np.mean(returns)):.3f}"
+                f"{' self-play' if self_play else ''}"
             )
     finally:
         env.close()
@@ -231,6 +289,11 @@ def main() -> None:
     parser.add_argument("--ppo-epochs", type=int, default=4)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--fog", action="store_true", help="disable privileged vision")
+    parser.add_argument(
+        "--self-play",
+        action="store_true",
+        help="same policy controls both players (privileged, no Petra)",
+    )
     args = parser.parse_args()
     train(
         args.episodes,
@@ -240,6 +303,7 @@ def main() -> None:
         privileged=not args.fog,
         ppo_epochs=args.ppo_epochs,
         gamma=args.gamma,
+        self_play=args.self_play,
     )
 
 

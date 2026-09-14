@@ -59,6 +59,10 @@ namespace ZeroAD.Sim
         /// entity ids collide across parallel RL worlds.</summary>
         internal Dictionary<uint, FixedVector2D> SeparationLastPos { get; } = new();
 
+        /// <summary>Per-world barter price drift. Not process-global so RL slots do not
+        /// share the last match's buy/sell offsets.</summary>
+        public Components.BarterBook Barter { get; } = new();
+
         /// <summary>
         /// Template loader used by <see cref="SpawnEntity"/> and training/spawn paths.
         /// Null in pure determinism tests that don't load XML. Setting this also (re)creates
