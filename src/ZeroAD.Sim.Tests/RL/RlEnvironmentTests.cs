@@ -199,6 +199,16 @@ public sealed class RlEnvironmentTests
             new RlAction(RlFunction.Stance, 0, catalogId: 2), 1, 256, new RlCatalog(), out var stance));
         Assert.Equal(NetCommandType.SetUnitStance, stance.Type);
         Assert.Equal("defensive", stance.TemplateName);
+        obs.FunctionMask[(int)RlFunction.Formation] = 1;
+        obs.FunctionMask[(int)RlFunction.Barter] = 1;
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Formation, 0, selected1: 1), 1, 256, new RlCatalog(),
+            out var form));
+        Assert.Equal(NetCommandType.Formation, form.Type);
+        Assert.StartsWith("box|", form.TemplateName);
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Barter, 0), 1, 256, new RlCatalog(), out var barter));
+        Assert.Equal(NetCommandType.Barter, barter.Type);
     }
 
     [Fact]
@@ -215,6 +225,10 @@ public sealed class RlEnvironmentTests
         Assert.True((obs.EntityMask[self] & (1u << (int)RlFunction.Attack)) != 0);
         Assert.True((obs.EntityMask[self] & (1u << (int)RlFunction.Delete)) != 0);
         Assert.Equal(1, obs.FunctionMask[(int)RlFunction.Delete]);
+        int enemy = FirstOwner(obs, RlSpec.OwnerRel.Enemy);
+        Assert.True(enemy >= 0);
+        Assert.True((obs.EntityMask[enemy] & (1u << (int)RlFunction.Attack)) != 0);
+        Assert.True((obs.EntityMask[enemy] & (1u << (int)RlFunction.Delete)) != 0);
     }
 
     [Fact]

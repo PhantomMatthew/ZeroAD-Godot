@@ -55,9 +55,32 @@ public static class ObservationEncoder
         dest.SetEntity(row, RlSpec.Ent.TemplateId, catalog.InternTemplate(ident?.TemplateName ?? ""));
         dest.SetEntity(row, RlSpec.Ent.CellX, WorldToCell(pos.Position.X, rangeWorld(cm)));
         dest.SetEntity(row, RlSpec.Ent.CellZ, WorldToCell(pos.Position.Z, rangeWorld(cm)));
-        dest.SetEntity(row, RlSpec.Ent.Hp, hp?.Current ?? 0);
-        dest.SetEntity(row, RlSpec.Ent.HpMax, hp?.Max ?? 0);
-        dest.SetEntity(row, RlSpec.Ent.UnitAi, catalog.InternUnitAi(ai?.FsmStateName ?? ""));
+        int hpCur = hp?.Current ?? 0;
+        int hpMax = hp?.Max ?? 0;
+        int unitAi = catalog.InternUnitAi(ai?.FsmStateName ?? "");
+        int posX = pos.Position.X.InternalValue;
+        int posZ = pos.Position.Z.InternalValue;
+        if (vis == LosVisibility.Fogged)
+        {
+            var mirage = cm.QueryInterface<MirageComponent>(e);
+            if (mirage != null)
+            {
+                hpCur = mirage.FrozenHealthCurrent;
+                hpMax = mirage.FrozenHealthMax;
+                unitAi = 0;
+            }
+            else
+            {
+                hpCur = 0;
+                hpMax = 0;
+                unitAi = 0;
+                posX = 0;
+                posZ = 0;
+            }
+        }
+        dest.SetEntity(row, RlSpec.Ent.Hp, hpCur);
+        dest.SetEntity(row, RlSpec.Ent.HpMax, hpMax);
+        dest.SetEntity(row, RlSpec.Ent.UnitAi, unitAi);
         int flags = 0;
         if (ident?.IsBuilding == true) flags |= RlSpec.Ent.FlagBuilding;
         if (cm.QueryInterface<AttackComponent>(e) != null) flags |= RlSpec.Ent.FlagCanAttack;
@@ -66,8 +89,8 @@ public static class ObservationEncoder
         dest.SetEntity(row, RlSpec.Ent.Flags, flags);
         dest.SetEntity(row, RlSpec.Ent.Visibility, (int)vis);
         dest.SetEntity(row, RlSpec.Ent.EntityId, (int)e.Value);
-        dest.SetEntity(row, RlSpec.Ent.PosXInternal, pos.Position.X.InternalValue);
-        dest.SetEntity(row, RlSpec.Ent.PosZInternal, pos.Position.Z.InternalValue);
+        dest.SetEntity(row, RlSpec.Ent.PosXInternal, posX);
+        dest.SetEntity(row, RlSpec.Ent.PosZInternal, posZ);
         return true;
     }
 
@@ -169,73 +192,79 @@ public static class ObservationEncoder
         foreach (var e in cm.AllEntities)
         {
             var own = cm.QueryInterface<OwnershipComponent>(e);
-            if (own == null || own.PlayerId != agentPlayerId) continue;
+            if (own == null) continue;
             if (!rowOf.TryGetValue(e.Value, out int row)) continue;
+            bool isOwn = own.PlayerId == agentPlayerId;
+            bool playerOwned = own.PlayerId > 0;
 
-            Allow(dest, row, RlFunction.NoOp);
-            Allow(dest, row, RlFunction.Delete);
-            Allow(dest, row, RlFunction.SpyRequest);
-            Allow(dest, row, RlFunction.Tribute);
-            Allow(dest, row, RlFunction.Barter);
-            Allow(dest, row, RlFunction.AttackRequest);
-            Allow(dest, row, RlFunction.SetTradingGoods);
+            Allow(dest, row, RlFunction.NoOp, isOwn);
+            if (playerOwned)
+            {
+                Allow(dest, row, RlFunction.Delete, isOwn);
+                Allow(dest, row, RlFunction.SpyRequest, isOwn);
+                Allow(dest, row, RlFunction.Tribute, isOwn);
+                Allow(dest, row, RlFunction.Barter, isOwn);
+                Allow(dest, row, RlFunction.AttackRequest, isOwn);
+                Allow(dest, row, RlFunction.SetTradingGoods, isOwn);
+            }
 
             if (cm.QueryInterface<UnitAIComponent>(e) != null)
             {
-                Allow(dest, row, RlFunction.Stop);
-                Allow(dest, row, RlFunction.Move);
-                Allow(dest, row, RlFunction.Patrol);
-                Allow(dest, row, RlFunction.AttackWalk);
-                Allow(dest, row, RlFunction.Guard);
-                Allow(dest, row, RlFunction.Garrison);
-                Allow(dest, row, RlFunction.Stance);
-                Allow(dest, row, RlFunction.Formation);
-                Allow(dest, row, RlFunction.CollectTreasure);
+                Allow(dest, row, RlFunction.Stop, isOwn);
+                Allow(dest, row, RlFunction.Move, isOwn);
+                Allow(dest, row, RlFunction.Patrol, isOwn);
+                Allow(dest, row, RlFunction.AttackWalk, isOwn);
+                Allow(dest, row, RlFunction.Guard, isOwn);
+                Allow(dest, row, RlFunction.Garrison, isOwn);
+                Allow(dest, row, RlFunction.Stance, isOwn);
+                Allow(dest, row, RlFunction.Formation, isOwn);
+                Allow(dest, row, RlFunction.CollectTreasure, isOwn);
             }
             if (cm.QueryInterface<AttackComponent>(e) != null)
             {
-                Allow(dest, row, RlFunction.Attack);
-                Allow(dest, row, RlFunction.WalkToRange);
+                Allow(dest, row, RlFunction.Attack, isOwn);
+                Allow(dest, row, RlFunction.WalkToRange, isOwn);
             }
             if (cm.QueryInterface<ResourceGatherer>(e) != null)
             {
-                Allow(dest, row, RlFunction.Gather);
-                Allow(dest, row, RlFunction.ReturnResource);
+                Allow(dest, row, RlFunction.Gather, isOwn);
+                Allow(dest, row, RlFunction.ReturnResource, isOwn);
             }
             if (cm.QueryInterface<BuilderComponent>(e) != null)
             {
-                Allow(dest, row, RlFunction.Repair);
-                Allow(dest, row, RlFunction.Build);
+                Allow(dest, row, RlFunction.Repair, isOwn);
+                Allow(dest, row, RlFunction.Build, isOwn);
             }
             if (cm.QueryInterface<ProductionQueue>(e) != null)
             {
-                Allow(dest, row, RlFunction.Train);
-                Allow(dest, row, RlFunction.Research);
-                Allow(dest, row, RlFunction.CancelProduction);
+                Allow(dest, row, RlFunction.Train, isOwn);
+                Allow(dest, row, RlFunction.Research, isOwn);
+                Allow(dest, row, RlFunction.CancelProduction, isOwn);
             }
             var holder = cm.QueryInterface<GarrisonHolderComponent>(e);
             if (holder != null && holder.Entities.Count > 0)
-                Allow(dest, row, RlFunction.Ungarrison);
+                Allow(dest, row, RlFunction.Ungarrison, isOwn);
             if (cm.QueryInterface<RallyPointComponent>(e) != null)
-                Allow(dest, row, RlFunction.Rally);
+                Allow(dest, row, RlFunction.Rally, isOwn);
             if (cm.QueryInterface<PackComponent>(e) != null)
-                Allow(dest, row, RlFunction.Pack);
+                Allow(dest, row, RlFunction.Pack, isOwn);
             if (cm.QueryInterface<GateComponent>(e) != null)
-                Allow(dest, row, RlFunction.Gate);
+                Allow(dest, row, RlFunction.Gate, isOwn);
             if (cm.QueryInterface<UpgradeComponent>(e) != null)
-                Allow(dest, row, RlFunction.Upgrade);
+                Allow(dest, row, RlFunction.Upgrade, isOwn);
             if (cm.QueryInterface<BuildingAIComponent>(e) != null)
-                Allow(dest, row, RlFunction.FocusFire);
+                Allow(dest, row, RlFunction.FocusFire, isOwn);
             if (cm.QueryInterface<TraderComponent>(e) != null)
-                Allow(dest, row, RlFunction.SetupTradeRoute);
+                Allow(dest, row, RlFunction.SetupTradeRoute, isOwn);
         }
     }
 
-    private static void Allow(RlObservation dest, int row, RlFunction fn)
+    private static void Allow(RlObservation dest, int row, RlFunction fn, bool contributeGlobal)
     {
         int i = (int)fn;
-        dest.FunctionMask[i] = 1;
         dest.EntityMask[row] |= 1u << i;
+        if (contributeGlobal)
+            dest.FunctionMask[i] = 1;
     }
 
     private static int ReadPhase(ComponentManager cm, int agent)

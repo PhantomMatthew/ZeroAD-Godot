@@ -25,7 +25,7 @@ internal sealed class RlGrpcService : ZeroAdRl.ZeroAdRlBase
         {
             if (_env == null)
                 throw new RpcException(new Status(StatusCode.FailedPrecondition, "Reset first"));
-            var result = _env.Step(ObsMapper.FromProto(request));
+            var result = _env.Step(ObsMapper.FromProto(request), ObsMapper.OpponentFromProto(request));
             return Task.FromResult(ObsMapper.ToProto(result.Observation));
         }
     }
@@ -46,7 +46,9 @@ internal sealed class RlGrpcService : ZeroAdRl.ZeroAdRlBase
                 {
                     if (_env == null)
                         throw new RpcException(new Status(StatusCode.FailedPrecondition, "Reset first"));
-                    obs = ObsMapper.ToProto(_env.Step(ObsMapper.FromProto(msg.Step)).Observation);
+                    obs = ObsMapper.ToProto(_env.Step(
+                        ObsMapper.FromProto(msg.Step),
+                        ObsMapper.OpponentFromProto(msg.Step)).Observation);
                 }
                 else
                     throw new RpcException(new Status(StatusCode.InvalidArgument, "empty client message"));

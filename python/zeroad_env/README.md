@@ -86,8 +86,10 @@ python -m zeroad_env.train --episodes 8 --steps 64
 
 Self-play (same policy on both players, no Petra) writes a full opponent action
 into the second 64-byte block (cells, catalog, up to 8 selected). Owner-rel
-is swapped in Python so the pointer heads see "self" as player 2. Train actions
-copy the first own attacker template id into `catalog`.
+and the global function mask are rebuilt from the opponent's entity rows so the
+pointer heads see "self" as player 2. Train actions copy the first own attacker
+template id into `catalog`. The policy uses `entity_mask` after sampling a
+function and fills extra selected slots from other legal own units.
 
 ```bash
 python -m zeroad_env.train --episodes 8 --steps 64 --self-play

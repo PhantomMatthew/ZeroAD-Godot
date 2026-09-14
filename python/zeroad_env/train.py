@@ -7,8 +7,9 @@ from collections.abc import Mapping
 
 import numpy as np
 
-from zeroad_env.gym_env import ZeroADGymEnv
 from zeroad_env import layout as L
+from zeroad_env.gym_env import ZeroADGymEnv
+
 
 OWN = 1
 ENEMY = 3
@@ -44,6 +45,50 @@ def _cell_toward(obs: Mapping[str, np.ndarray], selected: int, target: int) -> t
     return L.SPATIAL_SIZE // 2, L.SPATIAL_SIZE // 2
 
 
+def _fn_legal_own(obs: Mapping[str, np.ndarray], fn: int) -> np.ndarray:
+    own = _own_mask(obs["entities"])
+    em = obs.get("entity_mask")
+    if em is None:
+        return own
+    bits = ((em.astype(np.uint32) >> int(fn)) & 1) != 0
+    legal = own & bits
+    return legal if legal.any() else own
+
+
+def _pack_selected(
+    obs: Mapping[str, np.ndarray], fn: int, first: int, sel_logits: np.ndarray
+) -> np.ndarray:
+    out = np.full(L.MAX_SELECTED, -1, dtype=np.int32)
+    out[0] = first
+    legal = _fn_legal_own(obs, fn)
+    order = np.argsort(-sel_logits)
+    slot = 1
+    for idx in order:
+        i = int(idx)
+        if slot >= L.MAX_SELECTED:
+            break
+        if i == first or not legal[i]:
+            continue
+        out[slot] = i
+        slot += 1
+    return out
+
+
+def _function_mask_from_own(
+    ent: np.ndarray, entity_mask: np.ndarray
+) -> np.ndarray:
+    mask = np.zeros(L.N_FUNCTIONS, dtype=np.uint8)
+    mask[0] = 1
+    own = _own_mask(ent)
+    if not own.any():
+        return mask
+    ored = int(np.bitwise_or.reduce(entity_mask[own].astype(np.uint32)))
+    for f in range(L.N_FUNCTIONS):
+        if ored & (1 << f):
+            mask[f] = 1
+    return mask
+
+
 def _catalog(obs: Mapping[str, np.ndarray], fn: int) -> int:
     """Train copies the first own attacker template id; Build/Research stay 0."""
     if fn != FN_TRAIN:
@@ -68,6 +113,9 @@ def _invert_owner(obs: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
     ent[:, 1] = rel
     out = dict(obs)
     out["entities"] = ent
+    em = obs.get("entity_mask")
+    if em is not None:
+        out["function_mask"] = _function_mask_from_own(ent, np.asarray(em))
     return out
 
 
@@ -78,11 +126,14 @@ class Policy:
         self.torch = torch_mod
         nn = nn_mod
         self.ent = nn.Sequential(nn.Linear(L.ENTITY_FEAT, 32), nn.Tanh())
-        self.body = nn.Sequential(nn.Linear(32 + L.SCALAR_COUNT, 64), nn.Tanh())
+        self.body = nn.Sequential(
+            nn.Linear(32 + L.SCALAR_COUNT + L.SPATIAL_CHANNELS, 64), nn.Tanh()
+        )
         self.fn = nn.Linear(64, L.N_FUNCTIONS)
         self.sel = nn.Linear(32, 1)
         self.tgt = nn.Linear(32, 1)
         self.val = nn.Linear(64, 1)
+        self.last_sel_logits = np.zeros(L.MAX_ENTITIES, dtype=np.float32)
         self._params = (
             list(self.ent.parameters())
             + list(self.body.parameters())
@@ -103,7 +154,11 @@ class Policy:
         count = valid.sum().clamp(min=1.0)
         pooled = (enc * valid.unsqueeze(-1)).sum(0) / count
         scalars = torch.from_numpy(obs["scalars"].astype(np.float32))
-        h = self.body(torch.cat([pooled, scalars], 0))
+        spat = torch.from_numpy(
+            obs["spatial"].reshape(L.SPATIAL_CHANNELS, -1).astype(np.float32)
+        )
+        spat_h = spat.mean(dim=1)
+        h = self.body(torch.cat([pooled, scalars, spat_h], 0))
         fn_logits = self.fn(h)
         mask = torch.from_numpy(obs["function_mask"][: L.N_FUNCTIONS].astype(np.float32))
         fn_logits = fn_logits + (mask - 1.0) * 1e9
@@ -116,12 +171,11 @@ class Policy:
         torch = self.torch
         from torch.distributions import Categorical
 
-        fn_logits, sel_logits, tgt_logits, v, ent = self._forward(obs)
+        fn_logits, sel_logits, tgt_logits, v, _ent = self._forward(obs)
         ent_np = obs["entities"]
         own = torch.from_numpy(_own_mask(ent_np).astype(np.float32))
         if own.sum() <= 0:
-            own = (ent[:, 0] > 0).float()
-        sel_logits = sel_logits + (own - 1.0) * 1e9
+            own = torch.from_numpy((ent_np[:, 0] > 0).astype(np.float32))
         fn_dist = Categorical(logits=fn_logits)
         if fn is None:
             fn_t = fn_dist.sample()
@@ -129,11 +183,16 @@ class Policy:
         else:
             fn_i = fn
             fn_t = torch.tensor(fn_i)
+        legal = torch.from_numpy(_fn_legal_own(obs, fn_i).astype(np.float32))
+        if legal.sum() <= 0:
+            legal = own
+        sel_logits = sel_logits + (legal - 1.0) * 1e9
         tgt_np = _tgt_mask(ent_np, fn_i).astype(np.float32)
         tgt_m = torch.from_numpy(tgt_np)
         tgt_logits = tgt_logits + (tgt_m - 1.0) * 1e9
         sel_dist = Categorical(logits=sel_logits)
         tgt_dist = Categorical(logits=tgt_logits)
+        self.last_sel_logits = sel_logits.detach().cpu().numpy()
         return fn_dist, sel_dist, tgt_dist, fn_t, v
 
 
@@ -194,9 +253,10 @@ def train(
                 sel_i = int(sel_t.item())
                 tgt_i = int(tgt_t.item())
                 cell_x, cell_z = _cell_toward(obs, sel_i, tgt_i)
+                selected = _pack_selected(obs, fn_i, sel_i, policy.last_sel_logits)
                 action = {
                     "function": fn_i,
-                    "selected": sel_i,
+                    "selected": selected,
                     "target": tgt_i,
                     "cell_x": cell_x,
                     "cell_z": cell_z,
@@ -217,7 +277,10 @@ def train(
                         + o_tgt_d.log_prob(o_tgt_t)
                     )
                     action["opp_function"] = o_fn_i
-                    action["opp_selected"] = int(o_sel_t.item())
+                    o_sel_i = int(o_sel_t.item())
+                    action["opp_selected"] = _pack_selected(
+                        opp_obs, o_fn_i, o_sel_i, policy.last_sel_logits
+                    )
                     action["opp_target"] = int(o_tgt_t.item())
                     o_cx, o_cz = _cell_toward(
                         opp_obs, int(o_sel_t.item()), int(o_tgt_t.item())

@@ -4,7 +4,7 @@ package zeroad.rl;
 
 option csharp_namespace = "ZeroAD.RlHost.Proto";
 
-// Field layout matches ZeroAD.Sim.RL.RlObservation / RlAction (flat int32 tensors).
+// Field layout matches ZeroAD.Sim.RL.RlObservation / RlAction (shm v2).
 
 message Observation {
   repeated int32 entities = 1;
@@ -14,6 +14,7 @@ message Observation {
   uint32 turn = 5;
   int32 reward = 6;
   bool done = 7;
+  repeated uint32 entity_mask = 8;
 }
 
 message Action {
@@ -23,6 +24,8 @@ message Action {
   int32 target_cell_x = 4;
   int32 target_cell_z = 5;
   int32 catalog_id = 6;
+  repeated int32 selected = 7;
+  Action opponent = 8;
 }
 
 message ResetRequest {

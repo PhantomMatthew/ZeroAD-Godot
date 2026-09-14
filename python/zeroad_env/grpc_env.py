@@ -20,6 +20,19 @@ from zeroad_env import zeroad_rl_pb2_grpc as pb2_grpc
 from zeroad_env.host import host_command
 
 
+def _pad_selected(value: object) -> np.ndarray:
+    out = np.full(L.MAX_SELECTED, -1, dtype=np.int32)
+    if value is None:
+        return out
+    if isinstance(value, (list, tuple, np.ndarray)):
+        arr = np.asarray(value, dtype=np.int32).ravel()
+        n = min(L.MAX_SELECTED, arr.size)
+        out[:n] = arr[:n]
+        return out
+    out[0] = int(value)
+    return out
+
+
 def _obs_to_numpy(obs: pb2.Observation) -> dict[str, np.ndarray]:
     entities = np.array(obs.entities, dtype=np.int32).reshape(L.MAX_ENTITIES, L.ENTITY_FEAT)
     spatial = np.array(obs.spatial, dtype=np.int32).reshape(
@@ -29,34 +42,41 @@ def _obs_to_numpy(obs: pb2.Observation) -> dict[str, np.ndarray]:
     mask = np.frombuffer(obs.function_mask, dtype=np.uint8)
     if mask.size < L.MASK_BYTES:
         mask = np.pad(mask, (0, L.MASK_BYTES - mask.size))
+    em = np.array(obs.entity_mask, dtype=np.uint32)
+    if em.size < L.MAX_ENTITIES:
+        em = np.pad(em, (0, L.MAX_ENTITIES - em.size))
     return {
         "entities": entities,
         "spatial": spatial,
         "scalars": scalars,
         "function_mask": mask[: L.MASK_BYTES],
-        "entity_mask": np.zeros(L.MAX_ENTITIES, dtype=np.uint32),
+        "entity_mask": em[: L.MAX_ENTITIES],
     }
-
-
-def _first_selected(value: object) -> int:
-    if isinstance(value, (list, tuple, np.ndarray)):
-        arr = np.asarray(value).ravel()
-        return int(arr[0]) if arr.size else -1
-    if value is None:
-        return -1
-    return int(value)
 
 
 def _action_msg(action: dict[str, Any] | None) -> pb2.Action:
     action = action or {}
-    return pb2.Action(
+    sel = _pad_selected(action.get("selected", -1))
+    msg = pb2.Action(
         function=int(action.get("function", 0)),
-        selected_index=_first_selected(action.get("selected", -1)),
+        selected_index=int(sel[0]),
         target_entity_index=int(action.get("target", -1)),
         target_cell_x=int(action.get("cell_x", 0)),
         target_cell_z=int(action.get("cell_z", 0)),
         catalog_id=int(action.get("catalog", 0)),
+        selected=[int(x) for x in sel],
     )
+    opp_fn = int(action.get("opp_function", 0))
+    if opp_fn:
+        opp_sel = _pad_selected(action.get("opp_selected", -1))
+        msg.opponent.function = opp_fn
+        msg.opponent.selected_index = int(opp_sel[0])
+        msg.opponent.target_entity_index = int(action.get("opp_target", -1))
+        msg.opponent.target_cell_x = int(action.get("opp_cell_x", 0))
+        msg.opponent.target_cell_z = int(action.get("opp_cell_z", 0))
+        msg.opponent.catalog_id = int(action.get("opp_catalog", 0))
+        msg.opponent.selected.extend(int(x) for x in opp_sel)
+    return msg
 
 
 class ZeroADGrpcEnv:
