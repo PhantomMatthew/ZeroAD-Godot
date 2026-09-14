@@ -2,6 +2,7 @@ using System;
 using Xunit;
 using ZeroAD.Sim;
 using ZeroAD.Sim.Components;
+using ZeroAD.Sim.Net;
 using ZeroAD.Sim.RL;
 
 namespace ZeroAD.Sim.Tests.RL;
@@ -97,6 +98,12 @@ public sealed class RlEnvironmentTests
         Assert.Equal(1, obs.FunctionMask[(int)RlFunction.Train]);
         Assert.Equal(1, obs.FunctionMask[(int)RlFunction.Research]);
         Assert.Equal(1, obs.FunctionMask[(int)RlFunction.Gather]);
+        Assert.Equal(1, obs.FunctionMask[(int)RlFunction.Patrol]);
+        Assert.Equal(1, obs.FunctionMask[(int)RlFunction.AttackWalk]);
+        Assert.Equal(1, obs.FunctionMask[(int)RlFunction.ReturnResource]);
+        Assert.Equal(1, obs.FunctionMask[(int)RlFunction.Guard]);
+        Assert.Equal(1, obs.FunctionMask[(int)RlFunction.Rally]);
+        Assert.Equal(0, obs.FunctionMask[(int)RlFunction.Ungarrison]);
         Assert.Equal(0, obs.Scalars[RlSpec.Scal.Phase]);
         Assert.True(HasOwnerRel(obs, RlSpec.OwnerRel.Enemy));
         Assert.True(HasFlag(obs, RlSpec.Ent.FlagBuilding));
@@ -141,6 +148,67 @@ public sealed class RlEnvironmentTests
         if (!env.LoadedRealMatch) return;
         var result = env.Step(RlAction.NoOp());
         Assert.False(result.Done);
+    }
+
+    [Fact]
+    public void InterleavedWorlds_MoveHash_MatchesSolo()
+    {
+        var soloCfg = SandboxCfg(11);
+        using var solo = new RlEnvironment(soloCfg);
+        var obs = solo.Reset();
+        int sel = FirstSelf(obs);
+        var move = new RlAction(RlFunction.Move, sel, -1, 40, 40);
+        solo.Step(move);
+        string hSolo = Convert.ToHexString(solo.Sim.ComputeStateHash());
+
+        using var a = new RlEnvironment(soloCfg);
+        using var b = new RlEnvironment(SandboxCfg(22));
+        var obsA = a.Reset();
+        b.Reset();
+        b.Step(new RlAction(RlFunction.Move, FirstSelf(b.Observation), -1, 20, 20));
+        a.Step(new RlAction(RlFunction.Move, FirstSelf(obsA), -1, 40, 40));
+        Assert.Equal(hSolo, Convert.ToHexString(a.Sim.ComputeStateHash()));
+    }
+
+    [Fact]
+    public void Translate_NewFunctions_EmitCommands()
+    {
+        var obs = new RlObservation();
+        obs.SetEntity(0, RlSpec.Ent.Valid, 1);
+        obs.SetEntity(0, RlSpec.Ent.EntityId, 7);
+        obs.SetEntity(1, RlSpec.Ent.Valid, 1);
+        obs.SetEntity(1, RlSpec.Ent.EntityId, 9);
+        obs.FunctionMask[(int)RlFunction.Patrol] = 1;
+        obs.FunctionMask[(int)RlFunction.Guard] = 1;
+        obs.FunctionMask[(int)RlFunction.Ungarrison] = 1;
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Patrol, 0, -1, 8, 9), 1, 256, new RlCatalog(), out var patrol));
+        Assert.Equal(NetCommandType.Patrol, patrol.Type);
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Guard, 0, 1), 1, 256, new RlCatalog(), out var guard));
+        Assert.Equal(NetCommandType.Guard, guard.Type);
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Ungarrison, 0, -1), 1, 256, new RlCatalog(), out var unload));
+        Assert.Equal(NetCommandType.Ungarrison, unload.Type);
+    }
+
+    private static RlConfig SandboxCfg(uint seed) => new()
+    {
+        Seed = seed,
+        CommandDelay = 1,
+        StepMul = 1,
+        PrivilegedVision = true,
+        UseRealMatch = false
+    };
+
+    private static int FirstSelf(RlObservation obs)
+    {
+        for (int i = 0; i < RlSpec.MaxEntities; i++)
+        {
+            if (obs.Entity(i, RlSpec.Ent.Valid) == 0) continue;
+            if (obs.Entity(i, RlSpec.Ent.OwnerRel) == RlSpec.OwnerRel.Self) return i;
+        }
+        return 0;
     }
 
     private static void KillPlayerUnits(ComponentManager cm, int playerId)

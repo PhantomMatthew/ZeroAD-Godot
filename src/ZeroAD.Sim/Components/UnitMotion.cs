@@ -628,9 +628,26 @@ public static class SimSystem
         _terrain = null;
         // 易物价差归零(全局静态经济状态;同上——新世界不带旧账)。
         BarterSystem.Reset();
-        // 推挤 initialPos 驻留表归零(跨世界的实体 id 可能复用,旧位置会污染首回合)。
+        // 推挤表在 ComponentManager 上；新世界字典本就空。旧世界的表留在旧 cm 上。
         UnitSeparation.Reset();
     }
+
+    /// <summary>Point process-global services at <paramref name="cm"/> without
+    /// <see cref="Init"/> (Init clears Barter). Call before ticking or encoding a world
+    /// that is not the last one constructed in this process.</summary>
+    public static void Bind(ComponentManager cm)
+    {
+        ArgumentNullException.ThrowIfNull(cm);
+        _cm = cm;
+        _range = cm.Range;
+        _pathfinder = cm.Pathfinder;
+        _territory = cm.Territory;
+        _obstructions = cm.Obstructions;
+        _terrain = cm.Terrain;
+        _net = cm.Net;
+        _water = cm.Water;
+    }
+
     public static ComponentManager? Sim => _cm;
     public static ObstructionManager? Obstructions => _obstructions;
     public static RangeManager? Range => _range;
@@ -643,13 +660,37 @@ public static class SimSystem
     public static TerrainComponent? Terrain => _terrain;
     /// <summary>地形高度查询的静态便捷口(无地形组件 → 0)。</summary>
     public static Fixed TerrainHeight(Fixed x, Fixed z) => _terrain?.GetHeight(x, z) ?? Fixed.Zero;
-    public static void SetObstructionManager(ObstructionManager mgr) => _obstructions = mgr;
-    public static void SetRangeManager(RangeManager mgr) => _range = mgr;
-    public static void SetPathfinder(PathfinderComponent mgr) => _pathfinder = mgr;
+    public static void SetObstructionManager(ObstructionManager mgr)
+    {
+        _obstructions = mgr;
+        if (_cm != null) _cm.Obstructions = mgr;
+    }
+    public static void SetRangeManager(RangeManager mgr)
+    {
+        _range = mgr;
+        if (_cm != null) _cm.Range = mgr;
+    }
+    public static void SetPathfinder(PathfinderComponent mgr)
+    {
+        _pathfinder = mgr;
+        if (_cm != null) _cm.Pathfinder = mgr;
+    }
     public static void SetWaterManager(WaterManager mgr) => _water = mgr;
-    public static void SetTerritoryManager(TerritoryManager mgr) => _territory = mgr;
-    public static void SetNet(Net.NetTurnManager net) => _net = net;
-    public static void SetTerrainComponent(TerrainComponent terrain) => _terrain = terrain;
+    public static void SetTerritoryManager(TerritoryManager mgr)
+    {
+        _territory = mgr;
+        if (_cm != null) _cm.Territory = mgr;
+    }
+    public static void SetNet(Net.NetTurnManager net)
+    {
+        _net = net;
+        if (_cm != null) _cm.Net = net;
+    }
+    public static void SetTerrainComponent(TerrainComponent terrain)
+    {
+        _terrain = terrain;
+        if (_cm != null) _cm.Terrain = terrain;
+    }
     public static T? GetComponent<T>(EntityId entity) where T : class, IComponent =>
         _cm?.QueryInterface<T>(entity);
 

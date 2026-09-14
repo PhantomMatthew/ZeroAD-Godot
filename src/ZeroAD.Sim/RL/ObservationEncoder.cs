@@ -156,6 +156,7 @@ public static class ObservationEncoder
         dest.FunctionMask[(int)RlFunction.NoOp] = 1;
         // Mask is "does the agent own at least one entity that could issue this"? P0: any own unit.
         bool anyUnit = false, anyAttack = false, anyGather = false, anyBuild = false, anyTrain = false;
+        bool anyOccupiedHolder = false, anyRally = false;
         foreach (var e in cm.AllEntities)
         {
             var own = cm.QueryInterface<OwnershipComponent>(e);
@@ -166,14 +167,24 @@ public static class ObservationEncoder
             if (cm.QueryInterface<ResourceGatherer>(e) != null) anyGather = true;
             if (cm.QueryInterface<BuilderComponent>(e) != null) anyBuild = true;
             if (cm.QueryInterface<ProductionQueue>(e) != null) anyTrain = true;
+            var holder = cm.QueryInterface<GarrisonHolderComponent>(e);
+            if (holder != null && holder.Entities.Count > 0) anyOccupiedHolder = true;
+            if (cm.QueryInterface<RallyPointComponent>(e) != null) anyRally = true;
         }
         if (anyUnit)
         {
             dest.FunctionMask[(int)RlFunction.Stop] = 1;
             dest.FunctionMask[(int)RlFunction.Move] = 1;
+            dest.FunctionMask[(int)RlFunction.Patrol] = 1;
+            dest.FunctionMask[(int)RlFunction.AttackWalk] = 1;
+            dest.FunctionMask[(int)RlFunction.Guard] = 1;
         }
         if (anyAttack) dest.FunctionMask[(int)RlFunction.Attack] = 1;
-        if (anyGather) dest.FunctionMask[(int)RlFunction.Gather] = 1;
+        if (anyGather)
+        {
+            dest.FunctionMask[(int)RlFunction.Gather] = 1;
+            dest.FunctionMask[(int)RlFunction.ReturnResource] = 1;
+        }
         if (anyBuild)
         {
             dest.FunctionMask[(int)RlFunction.Repair] = 1;
@@ -185,6 +196,8 @@ public static class ObservationEncoder
             dest.FunctionMask[(int)RlFunction.Research] = 1;
         }
         dest.FunctionMask[(int)RlFunction.Garrison] = anyUnit ? (byte)1 : (byte)0;
+        dest.FunctionMask[(int)RlFunction.Ungarrison] = anyOccupiedHolder ? (byte)1 : (byte)0;
+        dest.FunctionMask[(int)RlFunction.Rally] = anyRally ? (byte)1 : (byte)0;
     }
 
     private static int ReadPhase(ComponentManager cm, int agent)

@@ -76,14 +76,15 @@ public static class ShmCodec
         CopyInts(obs.Scalars, slot.Slice(ShmLayout.OffScalars, ShmLayout.ScalarsBytes));
         var mask = slot.Slice(ShmLayout.OffMask, ShmLayout.MaskBytes);
         mask.Clear();
-        obs.FunctionMask.AsSpan().CopyTo(mask);
+        int n = Math.Min(obs.FunctionMask.Length, mask.Length);
+        obs.FunctionMask.AsSpan(0, n).CopyTo(mask);
     }
 
     public static RlAction ReadAction(ReadOnlySpan<byte> slot)
     {
         var a = slot.Slice(ShmLayout.OffAction);
         int fn = BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActFunction));
-        if (fn < 0 || fn > (int)RlFunction.Garrison) fn = 0;
+        if (fn < 0 || fn >= RlSpec.FunctionCount) fn = 0;
         return new RlAction(
             (RlFunction)fn,
             BinaryPrimitives.ReadInt32LittleEndian(a.Slice(ShmLayout.ActSelected)),

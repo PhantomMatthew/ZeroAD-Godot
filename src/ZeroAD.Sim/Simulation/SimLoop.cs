@@ -45,9 +45,10 @@ public static class SimLoop
             catch (Exception ex) { Diag.Err("Sim", $"tick phase {name} failed: {ex.Message}"); }
         }
 
-        var pathfinder = SimSystem.Pathfinder;
+        SimSystem.Bind(cm);
+        var pathfinder = cm.Pathfinder ?? SimSystem.Pathfinder;
         var range = cm.Range ?? SimSystem.Range;
-        var territory = SimSystem.Territory;
+        var territory = cm.Territory ?? SimSystem.Territory;
 
         P("pathharvest", () => pathfinder?.HarvestPathResults());
         P("dead", () => RemoveDeadEntities(cm, hooks));
@@ -101,6 +102,7 @@ public static class SimLoop
 
     public static void TickAiBrains(ComponentManager cm)
     {
+        SimSystem.Bind(cm);
         foreach (var entity in Snapshot(cm))
             cm.QueryInterface<AIComponent>(entity)?.Tick();
     }

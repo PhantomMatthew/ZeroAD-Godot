@@ -1,5 +1,3 @@
-using System;
-
 namespace ZeroAD.Sim.RL;
 
 /// <summary>Frozen AlphaStar-style observation / action dimensions for the P0 C# environment.</summary>
@@ -11,6 +9,10 @@ public static class RlSpec
     public const int SpatialChannels = 4;
     public const int ScalarCount = 11;
     public const int MaxSelected = 1;
+    /// <summary>Must equal the <see cref="RlFunction"/> enum length and stay ≤
+    /// <c>ShmLayout.MaskBytes</c> (16). Extra verbs occupy leftover mask bytes without
+    /// bumping <see cref="LayoutVersion"/>.</summary>
+    public const int FunctionCount = 16;
     public const int WorldMetersDefault = 256;
     public const uint LayoutMagic = 0x5A414452; // "ZADR"
     public const int LayoutVersion = 1;
@@ -108,7 +110,7 @@ public sealed class RlObservation
         Entities = new int[RlSpec.MaxEntities * RlSpec.EntityFeat];
         Spatial = new int[RlSpec.SpatialChannels * RlSpec.SpatialSize * RlSpec.SpatialSize];
         Scalars = new int[RlSpec.ScalarCount];
-        FunctionMask = new byte[Enum.GetValues<RlFunction>().Length];
+        FunctionMask = new byte[RlSpec.FunctionCount];
     }
 
     public int Entity(int row, int feat) => Entities[row * RlSpec.EntityFeat + feat];
@@ -127,6 +129,12 @@ public enum RlFunction : byte
     Train = 7,
     Research = 8,
     Garrison = 9,
+    Patrol = 10,
+    AttackWalk = 11,
+    ReturnResource = 12,
+    Ungarrison = 13,
+    Rally = 14,
+    Guard = 15,
 }
 
 public readonly struct RlAction

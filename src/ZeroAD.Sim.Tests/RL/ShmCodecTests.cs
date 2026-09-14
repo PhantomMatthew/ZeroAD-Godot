@@ -16,6 +16,8 @@ public sealed class ShmCodecTests
         Assert.Equal(4 * 64 * 64 * 4, ShmLayout.SpatialBytes);
         Assert.Equal(11 * 4, ShmLayout.ScalarsBytes);
         Assert.Equal(ShmLayout.OffAction + 32, ShmLayout.SlotBytes);
+        Assert.Equal(RlSpec.FunctionCount, Enum.GetValues<RlFunction>().Length);
+        Assert.True(RlSpec.FunctionCount <= ShmLayout.MaskBytes);
     }
 
     [Fact]
@@ -52,6 +54,17 @@ public sealed class ShmCodecTests
         Assert.Equal(4, act.TargetCellX);
         Assert.Equal(5, act.TargetCellZ);
         Assert.Equal(1, slot[ShmLayout.OffMask + (int)RlFunction.Move]);
+    }
+
+    [Fact]
+    public void ReadAction_AcceptsGuard()
+    {
+        var slot = new byte[ShmLayout.SlotBytes];
+        ShmCodec.WriteAction(slot, new RlAction(RlFunction.Guard, 1, 2, 3, 4, 5));
+        var act = ShmCodec.ReadAction(slot);
+        Assert.Equal(RlFunction.Guard, act.Function);
+        Assert.Equal(1, act.SelectedIndex);
+        Assert.Equal(2, act.TargetEntityIndex);
     }
 
     [Fact]

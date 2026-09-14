@@ -25,7 +25,7 @@ internal static class ObsMapper
     public static RlAction FromProto(ProtoAction action)
     {
         int fn = action.Function;
-        if (fn < 0 || fn > (int)RlFunction.Garrison) fn = 0;
+        if (fn < 0 || fn >= RlSpec.FunctionCount) fn = 0;
         return new RlAction(
             (RlFunction)fn,
             action.SelectedIndex,

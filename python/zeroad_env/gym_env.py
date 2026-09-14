@@ -39,10 +39,17 @@ def _i32_box(shape: tuple[int, ...]) -> Any:
 class ZeroADGymEnv(gym.Env if gym is not None else object):
     """Single-slot env. ``backend='shm'`` for training, ``backend='grpc'`` for remote/debug."""
 
-    metadata: ClassVar[dict[str, list[str]]] = {"render_modes": []}
+    metadata: ClassVar[dict[str, Any]] = {
+        "render_modes": ["rgb_array"],
+        "render_fps": 10,
+    }
 
-    def __init__(self, backend: str = "shm", **kwargs: Any) -> None:
+    def __init__(
+        self, backend: str = "shm", render_mode: str | None = None, **kwargs: Any
+    ) -> None:
         self._backend = backend
+        self.render_mode = render_mode
+        self._last_obs: dict[str, np.ndarray] | None = None
         if backend == "grpc":
             from zeroad_env.grpc_env import ZeroADGrpcEnv
 
@@ -73,7 +80,7 @@ class ZeroADGymEnv(gym.Env if gym is not None else object):
             idx = spaces.Box(low=-1, high=L.MAX_ENTITIES - 1, shape=(), dtype=np.int32)
             self.action_space = spaces.Dict(
                 {
-                    "function": spaces.Discrete(10),
+                    "function": spaces.Discrete(L.N_FUNCTIONS),
                     "selected": idx,
                     "target": idx,
                     "cell_x": spaces.Discrete(L.SPATIAL_SIZE),
@@ -101,10 +108,12 @@ class ZeroADGymEnv(gym.Env if gym is not None else object):
         del kwargs
         if self._grpc is not None:
             obs = self._grpc.reset(seed=seed)
+            self._last_obs = obs
             return obs, {}
         assert self._vec is not None
         obs = self._vec.reset()
         squeezed = {k: v[0] for k, v in obs.items()}
+        self._last_obs = squeezed
         return squeezed, {}
 
     def step(
@@ -113,11 +122,26 @@ class ZeroADGymEnv(gym.Env if gym is not None else object):
         """Step one env turn-mul. Returns obs, reward, terminated, truncated, info."""
         if self._grpc is not None:
             obs, reward, done, info = self._grpc.step(action)
+            self._last_obs = obs
             return obs, reward, done, False, info
         assert self._vec is not None
         obs, reward, done, infos = self._vec.step(_batch_from_action(action))
         squeezed = {k: v[0] for k, v in obs.items()}
+        self._last_obs = squeezed
         return squeezed, float(reward[0]), bool(done[0]), False, infos[0]
+
+    def render(self) -> np.ndarray | None:
+        """Return a 64×64 RGB view of the visibility spatial channel."""
+        if self._last_obs is None:
+            return None
+        vis = self._last_obs["spatial"][0]
+        rgb = np.zeros((L.SPATIAL_SIZE, L.SPATIAL_SIZE, 3), dtype=np.uint8)
+        visible = vis == 2
+        fog = vis == 1
+        rgb[visible] = (220, 200, 140)
+        rgb[fog] = (90, 90, 110)
+        rgb[~visible & ~fog] = (20, 22, 28)
+        return rgb
 
     def close(self) -> None:
         """Shut down the backend."""

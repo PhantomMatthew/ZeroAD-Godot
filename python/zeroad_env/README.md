@@ -67,13 +67,23 @@ Do not put rollout traffic on gRPC unless the learner is on another machine.
 
 ## First training loop
 
-Masked REINFORCE over the 10-function head (Attack vs NoOp once enemies are in the table).
+Pointer PPO (function head + selected/target entity pointers, value baseline,
+clip 0.2). Function id space is 16 (10 originals plus Patrol / AttackWalk /
+ReturnResource / Ungarrison / Rally / Guard) and still fits `MASK_BYTES=16`
+without bumping `VERSION`. `n_slots>1` is sequential in one process; the host
+rebinds each world's pathfinder before a tick.
+
 Requires a built host and `pip install torch`:
 
 ```bash
 export PYTHONPATH=python
 python -m zeroad_env.train --episodes 8 --steps 64
 ```
+
+`env.render()` returns a 64×64 RGB array from the visibility spatial channel
+(`render_mode="rgb_array"`).
+
+Barter prices remain process-global; the encounter does not use them.
 
 ## Layout
 

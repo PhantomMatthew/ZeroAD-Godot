@@ -5,6 +5,7 @@ using System.Linq;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Events;
+using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Sim
@@ -44,6 +45,19 @@ namespace ZeroAD.Sim
         /// (一世界一实例),内核命令路径(如 spy-request)经此到达——不走 SimSystem 静态
         /// (多世界测试进程里静态只指向最后初始化的世界)。</summary>
         public Components.RangeManager? Range { get; internal set; }
+
+        /// <summary>World-local sim services. <see cref="Components.SimSystem.Bind"/> copies
+        /// these onto the process-global statics before a tick so RL <c>n_slots</c> worlds
+        /// do not share the last Reset()'s pathfinder / obstructions.</summary>
+        public Components.PathfinderComponent? Pathfinder { get; set; }
+        public Components.TerritoryManager? Territory { get; set; }
+        public ObstructionManager? Obstructions { get; set; }
+        public Components.TerrainComponent? Terrain { get; set; }
+        public Net.NetTurnManager? Net { get; set; }
+
+        /// <summary>Unit-pushing initial-position table. Lives here (not on a static) because
+        /// entity ids collide across parallel RL worlds.</summary>
+        internal Dictionary<uint, FixedVector2D> SeparationLastPos { get; } = new();
 
         /// <summary>
         /// Template loader used by <see cref="SpawnEntity"/> and training/spawn paths.

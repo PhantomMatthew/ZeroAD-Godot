@@ -58,6 +58,29 @@ public static class ActionTranslator
                 if (target == 0) return false;
                 command = NetCommand.Garrison(player, selected, target);
                 return true;
+            case RlFunction.Patrol:
+                command = NetCommand.Patrol(player, selected, wx, wz);
+                return true;
+            case RlFunction.AttackWalk:
+                command = NetCommand.AttackWalk(player, selected, wx, wz);
+                return true;
+            case RlFunction.ReturnResource:
+                if (target == 0) return false;
+                command = NetCommand.ReturnResource(player, selected, target);
+                return true;
+            case RlFunction.Ungarrison:
+                command = NetCommand.Ungarrison(player, selected, target == 0 ? -1 : (int)target);
+                return true;
+            case RlFunction.Rally:
+                if (target != 0)
+                    command = NetCommand.SetRallyPoint(player, selected, target);
+                else
+                    command = NetCommand.SetRallyPointPosition(player, selected, wx, wz);
+                return true;
+            case RlFunction.Guard:
+                if (target == 0) return false;
+                command = NetCommand.Guard(player, selected, target);
+                return true;
             default:
                 return false;
         }

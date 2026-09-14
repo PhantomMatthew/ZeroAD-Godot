@@ -24,6 +24,8 @@ public sealed class RlEnvironment : IDisposable
     private RlCatalog _catalog = new();
     private RlObservation _obs = new();
     private bool _done;
+    private int _prevEnemyHp;
+    private int _prevStock;
 
     public ComponentManager Sim => _cm ?? throw new ObjectDisposedException(nameof(RlEnvironment));
     public RangeManager Range => _range ?? throw new ObjectDisposedException(nameof(RlEnvironment));
@@ -103,7 +105,9 @@ public sealed class RlEnvironment : IDisposable
         _cm = cm;
         _range = range;
         _net = net;
+        SimSystem.Bind(cm);
         Encode();
+        SnapshotShaping();
         return _obs;
     }
 
@@ -114,6 +118,7 @@ public sealed class RlEnvironment : IDisposable
         if (_done)
             return new RlStepResult { Observation = _obs, Reward = 0, Done = true };
 
+        SimSystem.Bind(_cm);
         if (ActionTranslator.TryTranslate(_obs, action, (uint)_cfg.AgentPlayerId,
                 _cfg.WorldMeters, _catalog, out var cmd))
             _net.SubmitAiCommand(cmd);
@@ -128,6 +133,13 @@ public sealed class RlEnvironment : IDisposable
         }
 
         Encode();
+        int enemyHp = SumUnitHp(_cfg.OpponentPlayerId);
+        int stock = Stockpile();
+        int shape = 0;
+        if (enemyHp < _prevEnemyHp)
+            shape += Math.Min(5, (_prevEnemyHp - enemyHp) / 20);
+        if (stock > _prevStock) shape += 1;
+
         int reward = 0;
         var player = _cm.GetPlayerEntity(_cfg.AgentPlayerId);
         bool won = player?.HasWon() == true;
@@ -136,6 +148,9 @@ public sealed class RlEnvironment : IDisposable
         if (won) { reward = 1; _done = true; }
         else if (lost) { reward = -1; _done = true; }
         else if (timeout) _done = true;
+        else reward = shape;
+        _prevEnemyHp = enemyHp;
+        _prevStock = stock;
         _obs.Done = _done;
         _obs.Reward = reward;
         return new RlStepResult { Observation = _obs, Reward = reward, Done = _done };
@@ -147,7 +162,37 @@ public sealed class RlEnvironment : IDisposable
     {
         ObservationEncoder.Encode(_cm!, _range!, _catalog, _cfg.AgentPlayerId,
             _cfg.PrivilegedVision, _net!.CurrentTurn, _obs,
-            SimSystem.Pathfinder, SimSystem.Territory);
+            _cm!.Pathfinder ?? SimSystem.Pathfinder,
+            _cm.Territory ?? SimSystem.Territory);
+    }
+
+    private void SnapshotShaping()
+    {
+        _prevEnemyHp = SumUnitHp(_cfg.OpponentPlayerId);
+        _prevStock = Stockpile();
+    }
+
+    private int SumUnitHp(int playerId)
+    {
+        if (_cm == null) return 0;
+        int sum = 0;
+        foreach (var e in _cm.AllEntities)
+        {
+            var own = _cm.QueryInterface<OwnershipComponent>(e);
+            if (own == null || own.PlayerId != playerId) continue;
+            var id = _cm.QueryInterface<IdentityComponent>(e);
+            if (id == null || !id.IsUnit) continue;
+            var hp = _cm.QueryInterface<HealthComponent>(e);
+            if (hp != null) sum += hp.Current;
+        }
+        return sum;
+    }
+
+    private int Stockpile()
+    {
+        var p = _cm?.GetPlayerEntity(_cfg.AgentPlayerId);
+        if (p == null) return 0;
+        return p.Wood + p.Food + p.Stone + p.Metal;
     }
 
     private void SetupFlatWorld(ComponentManager cm)
