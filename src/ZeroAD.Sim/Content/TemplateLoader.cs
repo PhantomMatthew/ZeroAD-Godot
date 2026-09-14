@@ -84,6 +84,34 @@ namespace ZeroAD.Sim.Content
             finally { _suppressValidation = false; }
         }
 
+        /// <summary>List template names from disk/VFS without parsing XML.
+        /// RL intern maps use this so Build/Train/Research catalog ids are stable
+        /// without paying <see cref="LoadAllTemplates"/> on every episode.</summary>
+        public List<string> EnumerateTemplateNames()
+        {
+            var names = new List<string>();
+            if (_vfs != null)
+            {
+                foreach (var (rel, _) in _vfs.EnumerateLayered(_relRoot, "*.xml"))
+                {
+                    string relPath = rel.Replace(".xml", "");
+                    if (relPath.Length > 0) names.Add(relPath);
+                }
+            }
+            else if (Directory.Exists(_templatesRoot))
+            {
+                foreach (var file in Directory.GetFiles(_templatesRoot, "*.xml", SearchOption.AllDirectories))
+                {
+                    string relPath = Path.GetRelativePath(_templatesRoot, file)
+                        .Replace('\\', '/')
+                        .Replace(".xml", "");
+                    if (relPath.Length > 0) names.Add(relPath);
+                }
+            }
+            names.Sort(StringComparer.Ordinal);
+            return names;
+        }
+
         private Dictionary<string, ParamNode> LoadAllTemplatesCore()
         {
             if (_vfs != null)

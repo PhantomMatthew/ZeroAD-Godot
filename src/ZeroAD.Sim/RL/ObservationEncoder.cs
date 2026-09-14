@@ -122,14 +122,7 @@ public static class ObservationEncoder
                     int gj = Math.Clamp((wz * grid.H) / Math.Max(1, world), 0, grid.H - 1);
                     passable = (grid.Get(gi, gj).Value & landMask) == 0 ? 1 : 0;
                 }
-                int terr = 0;
-                if (territory != null && territory.GridWidth > 0)
-                {
-                    int tw = territory.GridWidth;
-                    int ti = Math.Clamp((wx * tw) / Math.Max(1, world), 0, tw - 1);
-                    int tj = Math.Clamp((wz * tw) / Math.Max(1, world), 0, tw - 1);
-                    terr = territory.OwnerGrid[tj * tw + ti];
-                }
+                int terr = territory != null ? territory.GetOwner(wv, zv) : 0;
                 int baseIdx = (cz * n + cx);
                 dest.Spatial[RlSpec.Spat.Visibility * n * n + baseIdx] = visCh;
                 dest.Spatial[RlSpec.Spat.Explored * n * n + baseIdx] = explored;
@@ -150,7 +143,7 @@ public static class ObservationEncoder
         dest.Scalars[RlSpec.Scal.Pop] = p?.PopUsed ?? 0;
         dest.Scalars[RlSpec.Scal.PopCap] = p?.PopulationLimit ?? 0;
         dest.Scalars[RlSpec.Scal.Turn] = (int)turn;
-        dest.Scalars[RlSpec.Scal.Phase] = 0;
+        dest.Scalars[RlSpec.Scal.Phase] = ReadPhase(cm, agent);
         dest.Scalars[RlSpec.Scal.Won] = p != null && p.HasWon() ? 1 : 0;
         dest.Scalars[RlSpec.Scal.Defeated] = p != null && p.IsDefeated() ? 1 : 0;
         dest.Scalars[RlSpec.Scal.Privileged] = privileged ? 1 : 0;
@@ -192,5 +185,16 @@ public static class ObservationEncoder
             dest.FunctionMask[(int)RlFunction.Research] = 1;
         }
         dest.FunctionMask[(int)RlFunction.Garrison] = anyUnit ? (byte)1 : (byte)0;
+    }
+
+    private static int ReadPhase(ComponentManager cm, int agent)
+    {
+        var pe = cm.GetPlayerEntityId(agent);
+        if (pe == null) return 0;
+        var tm = cm.QueryInterface<TechnologyManager>(pe.Value);
+        if (tm == null) return 0;
+        if (tm.IsResearched("phase_city") || tm.IsResearched("phase_city_generic")) return 2;
+        if (tm.IsResearched("phase_town") || tm.IsResearched("phase_town_generic")) return 1;
+        return 0;
     }
 }

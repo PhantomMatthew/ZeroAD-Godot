@@ -35,12 +35,15 @@ internal static class ObsMapper
             action.CatalogId);
     }
 
-    public static RlEnvironment CreateEnv(uint seed, bool privileged, int stepMul, int delay) =>
+    public static RlEnvironment CreateEnv(uint seed, bool privileged, int stepMul, int delay,
+        bool tickOpponentAi = true, int maxEpisodeTurns = 10_000) =>
         new(new RlConfig
         {
             Seed = seed,
             PrivilegedVision = privileged,
             StepMul = Math.Max(1, stepMul <= 0 ? 1 : stepMul),
-            CommandDelay = Math.Max(1, delay <= 0 ? 2 : delay)
+            CommandDelay = Math.Max(1, delay <= 0 ? 2 : delay),
+            TickOpponentAi = tickOpponentAi,
+            MaxEpisodeTurns = Math.Max(1, maxEpisodeTurns)
         });
 }

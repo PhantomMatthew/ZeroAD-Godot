@@ -28,6 +28,8 @@ internal static class Program
         bool privileged = false;
         int stepMul = 1;
         int commandDelay = 2;
+        bool petra = true;
+        int maxTurns = 10_000;
         for (int i = 0; i < args.Length; i++)
         {
             string a = args[i];
@@ -41,6 +43,9 @@ internal static class Program
                 case "--privileged": privileged = true; break;
                 case "--step-mul": stepMul = Math.Max(1, int.Parse(Next())); break;
                 case "--command-delay": commandDelay = Math.Max(1, int.Parse(Next())); break;
+                case "--petra": petra = true; break;
+                case "--no-petra": petra = false; break;
+                case "--max-turns": maxTurns = Math.Max(1, int.Parse(Next())); break;
                 default:
                     Console.Error.WriteLine("unknown arg: " + a);
                     return 2;
@@ -53,11 +58,11 @@ internal static class Program
         if (string.IsNullOrEmpty(shmPath))
         {
             Console.Error.WriteLine(
-                "usage: ZeroAD.RlHost --shm PATH | --grpc PORT [--slots N] [--seed S] [--privileged]");
+                "usage: ZeroAD.RlHost --shm PATH | --grpc PORT [--slots N] [--seed S] [--privileged] [--petra|--no-petra] [--max-turns N]");
             return 2;
         }
 
-        return RunShm(shmPath, slots, seed, privileged, stepMul, commandDelay);
+        return RunShm(shmPath, slots, seed, privileged, stepMul, commandDelay, petra, maxTurns);
     }
 
     private static async Task<int> RunGrpc(int port)
@@ -86,7 +91,7 @@ internal static class Program
     }
 
     private static int RunShm(string shmPath, int slots, int seed, bool privileged,
-        int stepMul, int commandDelay)
+        int stepMul, int commandDelay, bool petra, int maxTurns)
     {
         int fileBytes = ShmLayout.FileBytes(slots);
         string? dir = Path.GetDirectoryName(Path.GetFullPath(shmPath));
@@ -103,14 +108,15 @@ internal static class Program
 
         var envs = new RlEnvironment[slots];
         for (int s = 0; s < slots; s++)
-            envs[s] = ObsMapper.CreateEnv(unchecked((uint)(seed + s)), privileged, stepMul, commandDelay);
+            envs[s] = ObsMapper.CreateEnv(unchecked((uint)(seed + s)), privileged, stepMul,
+                commandDelay, petra, maxTurns);
 
         Console.WriteLine("READY slots=" + slots + " bytes=" + fileBytes);
         Console.Out.Flush();
 
         try
         {
-            RunLoop(acc, scratch, envs, slots, seed, privileged, stepMul, commandDelay);
+            RunLoop(acc, scratch, envs, slots, seed, privileged, stepMul, commandDelay, petra, maxTurns);
             return 0;
         }
         finally
@@ -120,7 +126,8 @@ internal static class Program
     }
 
     private static void RunLoop(MemoryMappedViewAccessor acc, byte[] scratch,
-        RlEnvironment[] envs, int slots, int seed, bool privileged, int stepMul, int delay)
+        RlEnvironment[] envs, int slots, int seed, bool privileged, int stepMul, int delay,
+        bool petra, int maxTurns)
     {
         while (true)
         {
@@ -142,7 +149,8 @@ internal static class Program
                 for (int s = 0; s < slots; s++)
                 {
                     envs[s].Dispose();
-                    envs[s] = ObsMapper.CreateEnv(unchecked((uint)(seed + s)), privileged, stepMul, delay);
+                    envs[s] = ObsMapper.CreateEnv(unchecked((uint)(seed + s)), privileged, stepMul,
+                        delay, petra, maxTurns);
                     var obs = envs[s].Reset();
                     ShmCodec.WriteObservation(scratch.AsSpan(ShmLayout.SlotOffset(s), ShmLayout.SlotBytes), obs);
                 }

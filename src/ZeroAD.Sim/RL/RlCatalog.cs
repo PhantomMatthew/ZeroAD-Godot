@@ -18,12 +18,15 @@ public sealed class RlCatalog
     public int UnitAiCount => _unitAiById.Count;
     public int TechCount => _techById.Count;
 
-    public static RlCatalog FromLoader(TemplateLoader? templates, TechCatalog? techs)
+    public static RlCatalog FromLoader(TemplateLoader? templates, TechCatalog? techs) =>
+        FromNames(templates?.EnumerateTemplateNames(), techs);
+
+    public static RlCatalog FromNames(IEnumerable<string>? templateNames, TechCatalog? techs)
     {
         var c = new RlCatalog();
-        if (templates != null)
+        if (templateNames != null)
         {
-            var names = new List<string>(templates.Cache.Keys);
+            var names = new List<string>(templateNames);
             names.Sort(StringComparer.Ordinal);
             foreach (var n in names) c.InternTemplate(n);
         }

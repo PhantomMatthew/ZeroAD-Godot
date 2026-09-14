@@ -33,6 +33,8 @@ class ZeroADShmEnv:
         privileged: bool = False,
         step_mul: int = 1,
         shm_path: str | None = None,
+        petra: bool = True,
+        max_turns: int = 10_000,
     ) -> None:
         self.n_slots = max(1, n_slots)
         self._seed = seed
@@ -50,9 +52,12 @@ class ZeroADShmEnv:
             str(seed),
             "--step-mul",
             str(step_mul),
+            "--max-turns",
+            str(max(1, max_turns)),
         ]
         if privileged:
             cmd.append("--privileged")
+        cmd.append("--petra" if petra else "--no-petra")
         self._proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

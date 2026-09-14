@@ -18,9 +18,8 @@ public sealed class SimLoopHooks
     public Action<EntityId>? OnCorpseConverted;
     public Action? TutorialTick;
     /// <summary>完工地基 → 建筑实体的装配器:(模板全名, x, z, 玩家, 朝向 yaw) → 实体。
-    /// Godot 侧提供 SimBridge.SpawnScenarioBuilding(Footprint/静态阻挡/生产队列/驻守等建筑组件);
-    /// 为空时回落 <see cref="ComponentManager.SpawnEntity"/>——注意那条路径按单位装配
-    /// (UnitMotion/UnitAI/单位圆阻挡),只适合尚无建筑装配器的无头 RL 夹具。</summary>
+    /// Godot 侧提供 SimBridge.SpawnScenarioBuilding; 无头 RL 设为
+    /// <see cref="ComponentManager.SpawnEntity"/> (structures/ 走 AssembleStructure)。</summary>
     public Func<string, float, float, int, float, EntityId>? SpawnBuilding;
     /// <summary>地基 ResultTemplate 为旧式短名(如 "House")时映射到模板全名;为空则原样使用。</summary>
     public Func<string, string>? MapBuildTemplate;

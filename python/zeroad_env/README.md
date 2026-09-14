@@ -15,6 +15,8 @@ pip install numpy
 export PYTHONPATH=python
 ```
 
+The host loads a 1v1 encounter when staged data exists (`godot/export/data/mods/public`): civic centres, spearman, villagers, trees, `conquest_units` victory, and Petra on player 2 (`--petra`, default on). Catalog ids intern every public template and technology so Build/Train/Research actions resolve. Dummy seers are used only when that data tree is missing.
+
 Regenerate the gRPC stubs after editing `src/ZeroAD.RlHost/Protos/zeroad_rl.proto`
 (then change the `import zeroad_rl_pb2` line in `zeroad_rl_pb2_grpc.py` to
 `from zeroad_env import zeroad_rl_pb2`):
@@ -59,8 +61,19 @@ obs, r, done, trunc, info = env.step({"function": 0})
 env.close()
 ```
 
-Host flags: `--shm PATH` (default training) or `--grpc PORT` (`0` = ephemeral).
+Host flags: `--shm PATH` (default training) or `--grpc PORT` (`0` = ephemeral),
+`--petra` / `--no-petra`, `--max-turns N`, `--step-mul N`.
 Do not put rollout traffic on gRPC unless the learner is on another machine.
+
+## First training loop
+
+Masked REINFORCE over the 10-function head (Attack vs NoOp once enemies are in the table).
+Requires a built host and `pip install torch`:
+
+```bash
+export PYTHONPATH=python
+python -m zeroad_env.train --episodes 8 --steps 64
+```
 
 ## Layout
 

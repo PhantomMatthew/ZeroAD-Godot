@@ -132,93 +132,7 @@ namespace ZeroAD.Sim
 
             if (isSoldier || (stats != null && (stats.AttackDamage > 0
                 || stats.AttackCaptureStrength > Maths.Fixed.Zero)))
-            {
-                var attack = new AttackComponent
-                {
-                    HasRangeOverlay = stats?.HasRangeOverlay ?? false,
-                };
-                if (stats != null && stats.AttackTypes.Count > 0)
-                {
-                    // 逐型装配(原版 Attack 组件的 Melee/Ranged slot;Capture 走独立字段)。
-                    foreach (var t in stats.AttackTypes)
-                    {
-                        if (t.TypeName == "Capture") continue;   // Capture 走组件字段
-                        var spec = new AttackComponent.AttackTypeSpec
-                        {
-                            Name = t.TypeName,
-                            MaxRange = t.MaxRange > 0 ? t.MaxRange : 3f,
-                            Rate = t.RepeatTimeMs > 0 ? 1000f / t.RepeatTimeMs : 1f,
-                            RestrictedClasses = t.RestrictedClasses,
-                            PreferredClasses = t.PreferredClasses,
-                            StatusEffectName = t.StatusEffectName,
-                            StatusEffectDurationMs = t.StatusEffectDurationMs,
-                            StatusEffectIntervalMs = t.StatusEffectIntervalMs,
-                            StatusEffectStackability = t.StatusEffectStackability,
-                            StatusEffectDmgHack = t.StatusEffectDmgHack,
-                            StatusEffectDmgPierce = t.StatusEffectDmgPierce,
-                            StatusEffectDmgCrush = t.StatusEffectDmgCrush,
-                            StatusEffectDmgFire = t.StatusEffectDmgFire,
-                            SplashRange = t.SplashRange,
-                            SplashFriendlyFire = t.SplashFriendlyFire,
-                        };
-                        if (t.SplashHack > 0) spec.SplashDamage.Amounts[Components.DamageType.Hack] = (int)t.SplashHack;
-                        if (t.SplashPierce > 0) spec.SplashDamage.Amounts[Components.DamageType.Pierce] = (int)t.SplashPierce;
-                        if (t.SplashCrush > 0) spec.SplashDamage.Amounts[Components.DamageType.Crush] = (int)t.SplashCrush;
-                        if (t.SplashFire > 0) spec.SplashDamage.Amounts[Components.DamageType.Fire] = (int)t.SplashFire;
-                        if (t.Hack > 0) spec.Damage.Amounts[Components.DamageType.Hack] = (int)t.Hack;
-                        if (t.Pierce > 0) spec.Damage.Amounts[Components.DamageType.Pierce] = (int)t.Pierce;
-                        if (t.Crush > 0) spec.Damage.Amounts[Components.DamageType.Crush] = (int)t.Crush;
-                        if (t.Fire > 0) spec.Damage.Amounts[Components.DamageType.Fire] = (int)t.Fire;
-                        if (spec.HasDamage) attack.Types.Add(spec);
-                    }
-                }
-                else
-                {
-                    // 无逐型数据(默认路径/测试):单近战型兜底。
-                    var spec = new AttackComponent.AttackTypeSpec
-                    {
-                        Name = stats?.AttackIsRanged == true ? "Ranged" : "Melee",
-                        MaxRange = stats?.AttackRange ?? 3.0f,
-                        Rate = stats?.AttackRate ?? 1.0f,
-                    };
-                    if (stats != null)
-                    {
-                        if (stats.AttackHack > 0) spec.Damage.Amounts[Components.DamageType.Hack] = stats.AttackHack;
-                        if (stats.AttackPierce > 0) spec.Damage.Amounts[Components.DamageType.Pierce] = stats.AttackPierce;
-                        if (stats.AttackCrush > 0) spec.Damage.Amounts[Components.DamageType.Crush] = stats.AttackCrush;
-                        if (stats.AttackFire > 0) spec.Damage.Amounts[Components.DamageType.Fire] = stats.AttackFire;
-                    }
-                    else
-                    {
-                        spec.Damage.Amounts[Components.DamageType.Hack] = 20; // default melee damage
-                    }
-                    if (spec.HasDamage) attack.Types.Add(spec);
-                }
-                cm.AddComponent(entity, attack);
-                if (stats != null)
-                {
-                    var atk = cm.QueryInterface<AttackComponent>(entity)!;
-                    atk.CaptureStrength = stats.AttackCaptureStrength;
-                    atk.CaptureRange = stats.AttackCaptureRange;
-                    atk.CaptureRate = stats.AttackCaptureRate;
-                    atk.CaptureRestrictedClasses = stats.AttackCaptureRestrictedClasses;
-                    // 组件级偏好/限制 = 首个物理型的(兼容面;逐型在 Types 里各有一份)。
-                    if (atk.Types.Count > 0)
-                    {
-                        atk.PreferredClasses = atk.Types[0].PreferredClasses;
-                        atk.PhysicalRestrictedClasses = atk.Types[0].RestrictedClasses;
-                    }
-                    // ApplyStatus(攻击附带状态效果;火攻船 Burning 等)。
-                    atk.StatusEffectName = stats.StatusEffectName;
-                    atk.StatusEffectDurationMs = stats.StatusEffectDurationMs;
-                    atk.StatusEffectIntervalMs = stats.StatusEffectIntervalMs;
-                    atk.StatusEffectStackability = stats.StatusEffectStackability;
-                    atk.StatusEffectDmgHack = stats.StatusEffectDamageHack;
-                    atk.StatusEffectDmgPierce = stats.StatusEffectDamagePierce;
-                    atk.StatusEffectDmgCrush = stats.StatusEffectDamageCrush;
-                    atk.StatusEffectDmgFire = stats.StatusEffectDamageFire;
-                }
-            }
+                AttachAttack(cm, entity, stats);
 
             // Heal(治疗者;template_unit_support_healer 系):Heal.js 行为件,UnitAI HEAL 状态驱动。
             if (stats != null && stats.HasHeal && cm.QueryInterface<HealComponent>(entity) == null)
@@ -486,6 +400,252 @@ namespace ZeroAD.Sim
 
             // TriggerPoint(trigger/trigger_point_* 模板):挂组件并注册进触发系统。
             AttachTriggerPoint(cm, entity, stats?.TriggerPointReference);
+        }
+
+        /// <summary>Assemble a structure (CC, house, barracks, …). Kernel counterpart of
+        /// SimBridge.SpawnScenarioBuilding — ProductionQueue/Researcher/RallyPoint, static
+        /// obstruction, optional attack + BuildingAI. Ownership is applied by the caller.
+        /// Vision/territory/garrison extras are filled by <see cref="RegisterForLos"/>.</summary>
+        public static void AssembleStructure(ComponentManager cm, EntityId entity,
+            string templateName, TemplateStats? stats, float x, float z)
+        {
+            cm.AddComponent(entity, new PositionComponent());
+            if (stats?.IsDropsite == true)
+                cm.AddComponent(entity, new ResourceDropsite());
+            cm.AddComponent(entity, new ProductionQueue
+            {
+                TrainableTokens = stats?.TrainableEntities ?? "",
+                NativeCiv = stats?.Civ ?? "",
+            });
+            cm.AddComponent(entity, new ResearcherComponent());
+            cm.AddComponent(entity, new RallyPointComponent());
+
+            if (templateName.Contains("field", StringComparison.OrdinalIgnoreCase))
+            {
+                var fieldSupply = new ResourceSupply();
+                fieldSupply.SetTypeString("food.grain");
+                fieldSupply.Amount = 100;
+                fieldSupply.MaxAmount = 100;
+                cm.AddComponent(entity, fieldSupply);
+            }
+
+            cm.AddComponent(entity, new IdentityComponent
+            {
+                Name = stats?.Name ?? templateName,
+                TemplateName = templateName,
+                IsUnit = false,
+                IsBuilding = true,
+                Undeletable = stats?.Undeletable == true,
+                Classes = stats?.GetClassList() ?? new List<string> { "Building" }
+            });
+            int maxHp = stats?.MaxHealth ?? 500;
+            cm.AddComponent(entity, new HealthComponent
+            {
+                Current = maxHp,
+                Max = maxHp,
+                RegenRate = stats?.HealthRegenRate ?? 0f,
+                IdleRegenRate = stats?.HealthIdleRegenRate ?? 0f,
+            });
+            if (stats != null && stats.PopulationBonus > 0)
+                cm.AddComponent(entity, new PopulationComponent { Bonus = stats.PopulationBonus });
+
+            float fpSize = stats?.FootprintSize0.ToFloat() is { } fp && fp > 0 ? fp : 12f;
+            float obSize0 = stats?.ObstructionSize0.ToFloat() is { } ob0 && ob0 > 0 ? ob0 : fpSize;
+            float obSize1 = stats?.ObstructionSize1.ToFloat() is { } ob1 && ob1 > 0 ? ob1 : fpSize;
+            cm.AddComponent(entity, new FootprintComponent
+            {
+                Shape = stats?.FootprintShape == "circle" ? FootprintShape.Circle : FootprintShape.Square,
+                Size0 = Fixed.FromFloat(fpSize),
+                Size1 = Fixed.FromFloat(stats?.FootprintSize1.ToFloat() is { } fp1 && fp1 > 0 ? fp1 : fpSize),
+            });
+            var obstruction = new ObstructionComponent
+            {
+                Type = ObstructionType.Static,
+                Size0 = Fixed.FromFloat(obSize0),
+                Size1 = Fixed.FromFloat(obSize1),
+                Flags = stats?.ObstructionFlags ?? ObstructionFlags.DefaultBlock,
+            };
+            if (stats != null && stats.ObstructionSubShapes.Count > 0)
+                foreach (var (_, sx, sz, sw, sd) in stats.ObstructionSubShapes)
+                    obstruction.SubShapes.Add((Fixed.FromFloat(sx), Fixed.FromFloat(sz),
+                        Fixed.FromFloat(sw), Fixed.FromFloat(sd)));
+            cm.AddComponent(entity, obstruction);
+            cm.AddComponent(entity, new BuildRestrictionsComponent
+            {
+                PlacementType = BuildPlacementType.Land,
+                Category = stats?.Category ?? "Building",
+                Territory = stats?.BuildRestrictionsTerritory ?? "",
+            });
+
+            if (stats != null && (stats.AttackDamage > 0 || stats.AttackCaptureStrength > Fixed.Zero))
+                AttachAttack(cm, entity, stats);
+            if (stats != null && stats.HasBuildingAI
+                && cm.QueryInterface<AttackComponent>(entity) != null)
+            {
+                cm.AddComponent(entity, new BuildingAIComponent
+                {
+                    DefaultArrowCount = stats.DefaultArrowCount,
+                    MaxArrowCount = stats.MaxArrowCount,
+                    GarrisonArrowMultiplier = stats.GarrisonArrowMultiplier,
+                    GarrisonArrowClasses = stats.GarrisonArrowClasses,
+                });
+            }
+
+            if (stats != null && stats.HasGate)
+            {
+                cm.AddComponent(entity, new GateComponent { PassRange = stats.GatePassRange });
+                obstruction.SetDisableBlockMovementPathfinding(false, true);
+            }
+
+            var pos = cm.QueryInterface<PositionComponent>(entity);
+            if (pos != null)
+            {
+                var p = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+                pos.Position = p;
+                cm.NotifyPositionChanged(entity,
+                    new Maths.FixedVector2D(Maths.Fixed.Zero, Maths.Fixed.Zero),
+                    new Maths.FixedVector2D(p.X, p.Z));
+            }
+            obstruction.EnsureRegistered();
+        }
+
+        /// <summary>Assemble a static gaia resource (tree/berry/mine). Fauna still go through
+        /// <see cref="AssembleUnit"/>. Ownership is applied by the caller (usually none).</summary>
+        public static void AssembleGaia(ComponentManager cm, EntityId entity,
+            string templateName, TemplateStats? stats, float x, float z)
+        {
+            cm.AddComponent(entity, new PositionComponent());
+            if (stats != null && stats.ResourceAmount > 0)
+            {
+                var supply = new ResourceSupply
+                {
+                    Amount = stats.ResourceAmount,
+                    MaxAmount = stats.ResourceAmount,
+                    Type = stats.ResourceType,
+                    KillBeforeGather = stats.KillBeforeGather,
+                };
+                cm.AddComponent(entity, supply);
+                if (!string.IsNullOrEmpty(stats.ResourceTypeString))
+                    supply.SetTypeString(stats.ResourceTypeString);
+                else if (templateName.Contains("fruit", StringComparison.OrdinalIgnoreCase)
+                    || templateName.Contains("berry", StringComparison.OrdinalIgnoreCase))
+                    supply.SetTypeString("food.fruit");
+                else if (templateName.Contains("tree", StringComparison.OrdinalIgnoreCase))
+                    supply.SetTypeString("wood.tree");
+            }
+
+            cm.AddComponent(entity, new IdentityComponent
+            {
+                Name = stats?.Name ?? templateName,
+                TemplateName = templateName,
+                IsUnit = false,
+                IsBuilding = false,
+                Undeletable = stats?.Undeletable == true,
+                Classes = stats?.GetClassList() ?? new List<string>()
+            });
+            if (stats != null && stats.HasHealth)
+            {
+                cm.AddComponent(entity, new HealthComponent
+                {
+                    Current = stats.MaxHealth,
+                    Max = stats.MaxHealth,
+                    RegenRate = stats.HealthRegenRate,
+                    IdleRegenRate = stats.HealthIdleRegenRate,
+                });
+            }
+
+            var pos = cm.QueryInterface<PositionComponent>(entity);
+            if (pos != null)
+            {
+                var p = new FixedVector3D(Fixed.FromFloat(x), Fixed.Zero, Fixed.FromFloat(z));
+                pos.Position = p;
+                cm.NotifyPositionChanged(entity,
+                    new Maths.FixedVector2D(Maths.Fixed.Zero, Maths.Fixed.Zero),
+                    new Maths.FixedVector2D(p.X, p.Z));
+            }
+        }
+
+        private static void AttachAttack(ComponentManager cm, EntityId entity, TemplateStats? stats)
+        {
+            var attack = new AttackComponent
+            {
+                HasRangeOverlay = stats?.HasRangeOverlay ?? false,
+            };
+            if (stats != null && stats.AttackTypes.Count > 0)
+            {
+                foreach (var t in stats.AttackTypes)
+                {
+                    if (t.TypeName == "Capture") continue;
+                    var spec = new AttackComponent.AttackTypeSpec
+                    {
+                        Name = t.TypeName,
+                        MaxRange = t.MaxRange > 0 ? t.MaxRange : 3f,
+                        Rate = t.RepeatTimeMs > 0 ? 1000f / t.RepeatTimeMs : 1f,
+                        RestrictedClasses = t.RestrictedClasses,
+                        PreferredClasses = t.PreferredClasses,
+                        StatusEffectName = t.StatusEffectName,
+                        StatusEffectDurationMs = t.StatusEffectDurationMs,
+                        StatusEffectIntervalMs = t.StatusEffectIntervalMs,
+                        StatusEffectStackability = t.StatusEffectStackability,
+                        StatusEffectDmgHack = t.StatusEffectDmgHack,
+                        StatusEffectDmgPierce = t.StatusEffectDmgPierce,
+                        StatusEffectDmgCrush = t.StatusEffectDmgCrush,
+                        StatusEffectDmgFire = t.StatusEffectDmgFire,
+                        SplashRange = t.SplashRange,
+                        SplashFriendlyFire = t.SplashFriendlyFire,
+                    };
+                    if (t.SplashHack > 0) spec.SplashDamage.Amounts[Components.DamageType.Hack] = (int)t.SplashHack;
+                    if (t.SplashPierce > 0) spec.SplashDamage.Amounts[Components.DamageType.Pierce] = (int)t.SplashPierce;
+                    if (t.SplashCrush > 0) spec.SplashDamage.Amounts[Components.DamageType.Crush] = (int)t.SplashCrush;
+                    if (t.SplashFire > 0) spec.SplashDamage.Amounts[Components.DamageType.Fire] = (int)t.SplashFire;
+                    if (t.Hack > 0) spec.Damage.Amounts[Components.DamageType.Hack] = (int)t.Hack;
+                    if (t.Pierce > 0) spec.Damage.Amounts[Components.DamageType.Pierce] = (int)t.Pierce;
+                    if (t.Crush > 0) spec.Damage.Amounts[Components.DamageType.Crush] = (int)t.Crush;
+                    if (t.Fire > 0) spec.Damage.Amounts[Components.DamageType.Fire] = (int)t.Fire;
+                    if (spec.HasDamage) attack.Types.Add(spec);
+                }
+            }
+            else
+            {
+                var spec = new AttackComponent.AttackTypeSpec
+                {
+                    Name = stats?.AttackIsRanged == true ? "Ranged" : "Melee",
+                    MaxRange = stats?.AttackRange ?? 3.0f,
+                    Rate = stats?.AttackRate ?? 1.0f,
+                };
+                if (stats != null)
+                {
+                    if (stats.AttackHack > 0) spec.Damage.Amounts[Components.DamageType.Hack] = stats.AttackHack;
+                    if (stats.AttackPierce > 0) spec.Damage.Amounts[Components.DamageType.Pierce] = stats.AttackPierce;
+                    if (stats.AttackCrush > 0) spec.Damage.Amounts[Components.DamageType.Crush] = stats.AttackCrush;
+                    if (stats.AttackFire > 0) spec.Damage.Amounts[Components.DamageType.Fire] = stats.AttackFire;
+                }
+                else
+                {
+                    spec.Damage.Amounts[Components.DamageType.Hack] = 20;
+                }
+                if (spec.HasDamage) attack.Types.Add(spec);
+            }
+            cm.AddComponent(entity, attack);
+            if (stats == null) return;
+            var atk = cm.QueryInterface<AttackComponent>(entity)!;
+            atk.CaptureStrength = stats.AttackCaptureStrength;
+            atk.CaptureRange = stats.AttackCaptureRange;
+            atk.CaptureRate = stats.AttackCaptureRate;
+            atk.CaptureRestrictedClasses = stats.AttackCaptureRestrictedClasses;
+            if (atk.Types.Count > 0)
+            {
+                atk.PreferredClasses = atk.Types[0].PreferredClasses;
+                atk.PhysicalRestrictedClasses = atk.Types[0].RestrictedClasses;
+            }
+            atk.StatusEffectName = stats.StatusEffectName;
+            atk.StatusEffectDurationMs = stats.StatusEffectDurationMs;
+            atk.StatusEffectIntervalMs = stats.StatusEffectIntervalMs;
+            atk.StatusEffectStackability = stats.StatusEffectStackability;
+            atk.StatusEffectDmgHack = stats.StatusEffectDamageHack;
+            atk.StatusEffectDmgPierce = stats.StatusEffectDamagePierce;
+            atk.StatusEffectDmgCrush = stats.StatusEffectDamageCrush;
+            atk.StatusEffectDmgFire = stats.StatusEffectDamageFire;
         }
 
         /// <summary>

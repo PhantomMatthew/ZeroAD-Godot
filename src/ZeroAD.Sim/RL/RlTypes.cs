@@ -81,6 +81,16 @@ public sealed class RlConfig
     public int MaxEpisodeTurns { get; init; } = 10_000;
     public int WorldMeters { get; init; } = RlSpec.WorldMetersDefault;
     public bool TickOpponentAi { get; init; }
+    /// <summary>Staged mods/public (or a parent that contains it). Null = walk-up from the process.</summary>
+    public string? DataRoot { get; init; }
+    /// <summary>When templates are found, spawn a 1v1 encounter (CC + soldiers + villagers + trees)
+    /// instead of the dummy seer pair. Disable to force the sandbox even if data is present.</summary>
+    public bool UseRealMatch { get; init; } = true;
+    public string AgentCiv { get; init; } = "athen";
+    public string OpponentCiv { get; init; } = "athen";
+    public int SoldiersPerSide { get; init; } = 3;
+    public int VillagersPerSide { get; init; } = 2;
+    public int PetraDifficulty { get; init; }
 }
 
 public sealed class RlObservation
