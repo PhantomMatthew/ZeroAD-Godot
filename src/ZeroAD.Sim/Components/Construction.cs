@@ -72,11 +72,12 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
 
     /// <summary>一次建造推进(原版 Foundation.Build;由 BuilderComponent 每 tick 驱动,
     /// dt=回合秒数)。work = rate × buildMultiplier × dt;同步该工人最新 rate 进
-    /// TotalBuilderRate。返回 true = 本次建成(调用方通知工人收工)。</summary>
+    /// TotalBuilderRate。返回 true = 本次建成(调用方通知工人收工)。
+    /// 未提交且挤出未完成 → 本拍不推进进度(原版 Commit 失败则 Build 直接 return)。</summary>
     public bool Build(EntityId builderEnt, float rate, float dt)
     {
         if (IsBuilt) return true;
-        if (!Committed) Commit(SimSystem.Sim);   // 首个开工 tick 提交(清场+挤出)
+        if (!Committed && !Commit(SimSystem.Sim)) return false;
         AddProgress(rate * BuildMultiplier * dt);
         if (_builders.TryGetValue(builderEnt, out float old))
         {
@@ -97,24 +98,34 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
         }
     }
 
-    /// <summary>原版 Foundation.Commit:清场 + 挤出。</summary>
-    public void Commit(ComponentManager? cm)
+    /// <summary>原版 Foundation.Commit:清场 + 挤出。重叠未清完 → false(本拍不提交,
+    /// 下拍 Build 重试);成功则恢复 Movement/Pathfinding 阻挡并 committed=true。</summary>
+    public bool Commit(ComponentManager? cm)
     {
-        if (Committed) return;
-        Committed = true;
-        if (cm == null) return;
-        var obs = cm.QueryInterface<ObstructionComponent>(Entity);
-        if (obs == null || SimSystem.Obstructions == null) return;
-        foreach (var ent in SimSystem.Obstructions.GetEntitiesBlockingConstruction(obs.Tag))
+        if (Committed) return true;
+        if (cm == null)
         {
-            var o = cm.QueryInterface<ObstructionComponent>(ent);
-            if (o != null && (o.Flags & ObstructionFlags.DeleteUponConstruction) != 0)
-            {
-                cm.DestroyEntity(ent);
-                continue;
-            }
-            cm.QueryInterface<UnitAIComponent>(ent)?.LeaveFoundation(cm, Entity);
+            Committed = true;
+            return true;
         }
+        var obs = cm.QueryInterface<ObstructionComponent>(Entity);
+        var mgr = SimSystem.Obstructions;
+        if (obs != null && mgr != null
+            && (obs.Flags & ObstructionFlags.BlockMovement) != 0)
+        {
+            foreach (var ent in mgr.GetEntitiesDeletedUponConstruction(obs.Tag))
+                cm.DestroyEntity(ent);
+            var collisions = mgr.GetEntitiesBlockingConstruction(obs.Tag);
+            if (collisions.Count > 0)
+            {
+                foreach (var ent in collisions)
+                    cm.QueryInterface<UnitAIComponent>(ent)?.LeaveFoundation(cm, Entity);
+                return false;
+            }
+        }
+        obs?.SetDisableBlockMovementPathfinding(false, false);
+        Committed = true;
+        return true;
     }
 
     public override void Serialize(ISerializer s)

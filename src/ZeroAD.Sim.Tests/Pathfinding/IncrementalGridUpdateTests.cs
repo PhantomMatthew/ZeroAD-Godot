@@ -52,6 +52,20 @@ public sealed class IncrementalGridUpdateTests
     }
 
     [Fact]
+    public void Build_FoundationOnly_DoesNotStampDefaultClass()
+    {
+        // 农田:BlockFoundation 真、BlockPathfinding 假 → default 类可走,building-land 不可盖。
+        var builder = new PassabilityGridBuilder();
+        builder.Build(FlatTerrain(16), 16,
+            new[] { Box(32f, 32f, 11f, 11f, ObstructionFlags.BlockFoundation) });
+        var grid = builder.Grid!;
+        Assert.True(PathfindingCore.IsPassable(grid.Get(32, 32), builder.Default.Mask));
+        var buildingLand = builder.GetClassByName("building-land");
+        Assert.NotNull(buildingLand);
+        Assert.False(PathfindingCore.IsPassable(grid.Get(32, 32), buildingLand!.Mask));
+    }
+
+    [Fact]
     public void PatchRect_RestoresThenRestamps_EqualsFullRebuild()
     {
         // 同一场景:全量 Build(A) vs Build(无新建筑) + PatchRect(脏区, 含新建筑)(B)。

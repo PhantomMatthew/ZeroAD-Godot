@@ -30,10 +30,11 @@ namespace ZeroAD.Sim.Components
         public uint ControlGroup;       // 0 = self (default assigned in OnInit)
         public uint ControlGroup2;      // 0 = none
         public bool Active = true;
-        /// <summary>多形状子件(原版 Obstructions 元素):(局部 x, z, 宽, 深) 全尺寸。
-        /// 非空时 EnsureRegistered 注册 N 个静态形状(每子件独立 tag——脏区/查询/
-        /// 阻挡判定按件走;门翼与门洞分别成形状,门开只让门洞)。</summary>
-        public System.Collections.Generic.List<(Fixed X, Fixed Z, Fixed W, Fixed D)> SubShapes = new();
+        /// <summary>多形状子件(原版 CLUSTER / Obstructions):名 + 局部 (x, z, 宽, 深) 全尺寸。
+        /// 非空时按 CCmpObstruction::AddClusterShapes:外壳 AABB 去掉 BlockMovement/
+        /// BlockPathfinding,Left/Right/Door 各成形状;Gate 的 disable 只作用在 Door
+        /// (原版 ChildrenMap 字典序下 shape 0 = Door)。</summary>
+        public System.Collections.Generic.List<(string Name, Fixed X, Fixed Z, Fixed W, Fixed D)> SubShapes = new();
 
         /// <summary>原版 DisableBlockMovement/DisableBlockPathfinding(门自动开关的核心):
         /// 覆盖式禁用——注册形状用 EffectiveFlags(基旗减去禁用项);模板可预置
@@ -106,20 +107,34 @@ namespace ZeroAD.Sim.Components
             if (pos == null) return false;
 
             _lastPos = new FixedVector2D(pos.Position.X, pos.Position.Z);
-            FixedVector2D u = new(Fixed.FromInt(1), Fixed.Zero);
-            FixedVector2D v = new(Fixed.Zero, Fixed.FromInt(1));
+            AxesFromYaw(pos.Rotation.Y, out var u, out var v);
 
             if (Type == ObstructionType.Static)
             {
                 Fixed hw = Size0 / Fixed.FromInt(2);
                 Fixed hh = Size1 / Fixed.FromInt(2);
-                _tag = mgr.AddStaticShape(Entity, _lastPos.X, _lastPos.Y, u, v, hw, hh, EffectiveFlags(), ControlGroup, ControlGroup2);
-                // 多形状子件(偏移为实体局部坐标;旋转近似同单形状——轴对齐 + 偏移)。
+                bool cluster = SubShapes.Count > 0;
+                // CLUSTER 外壳(原版 AddClusterShapes m_Tag):只挡地基/施工,不挡走/寻路,
+                // 否则整扇门的 AABB 会把门洞一并印成墙。
+                var hullFlags = cluster
+                    ? Flags & ~(ObstructionFlags.BlockMovement | ObstructionFlags.BlockPathfinding)
+                    : EffectiveFlags();
+                _tag = mgr.AddStaticShape(Entity, _lastPos.X, _lastPos.Y, u, v, hw, hh,
+                    hullFlags, ControlGroup, ControlGroup2);
                 _subTags.Clear();
-                foreach (var sub in SubShapes)
-                    _subTags.Add(mgr.AddStaticShape(Entity, _lastPos.X + sub.X, _lastPos.Y + sub.Z,
-                        u, v, sub.W / Fixed.FromInt(2), sub.D / Fixed.FromInt(2),
-                        EffectiveFlags(), ControlGroup, ControlGroup2));
+                int door = DoorShapeIndex();
+                Trig.SinCosApprox(pos.Rotation.Y, out Fixed sin, out Fixed cos);
+                for (int i = 0; i < SubShapes.Count; i++)
+                {
+                    var sub = SubShapes[i];
+                    // 原版: x + dx*c + dz*s, z + dz*c - dx*s
+                    Fixed wx = _lastPos.X + sub.X.Multiply(cos) + sub.Z.Multiply(sin);
+                    Fixed wz = _lastPos.Y + sub.Z.Multiply(cos) - sub.X.Multiply(sin);
+                    var subFlags = i == door ? EffectiveFlags() : Flags;
+                    _subTags.Add(mgr.AddStaticShape(Entity, wx, wz, u, v,
+                        sub.W / Fixed.FromInt(2), sub.D / Fixed.FromInt(2),
+                        subFlags, ControlGroup, ControlGroup2));
+                }
             }
             else
             {
@@ -139,7 +154,11 @@ namespace ZeroAD.Sim.Components
             if (ControlGroup == group) return;
             ControlGroup = group;
             if (_registered)
+            {
                 SimSystem.Obstructions?.SetControlGroup(_tag, group);
+                foreach (var t in _subTags)
+                    SimSystem.Obstructions?.SetControlGroup(t, group);
+            }
         }
 
         /// <summary>Port of CCmpObstruction::SetActive: deactivate drops the registered shape
@@ -195,8 +214,7 @@ namespace ZeroAD.Sim.Components
                 group == ControlGroup || group2 == ControlGroup ||
                 (flags & ObstructionFlags.BlockFoundation) == 0;
 
-            FixedVector2D u = new(Fixed.FromInt(1), Fixed.Zero);
-            FixedVector2D v = new(Fixed.Zero, Fixed.FromInt(1));
+            AxesFromYaw(pos.Rotation.Y, out var u, out var v);
             if (Type == ObstructionType.Static)
             {
                 Fixed hw = Size0 / Fixed.FromInt(2);
@@ -281,8 +299,25 @@ namespace ZeroAD.Sim.Components
             SubShapes.Clear();
             int subs = d.NumberI32("subs");
             for (int i = 0; i < subs; i++)
-                SubShapes.Add((d.NumberFixed("sx"), d.NumberFixed("sz"),
+                SubShapes.Add(("", d.NumberFixed("sx"), d.NumberFixed("sz"),
                     d.NumberFixed("sw"), d.NumberFixed("sd")));
+        }
+
+        /// <summary>原版 AddStaticShape 角: u=(c,-s) v=(s,c)。</summary>
+        private static void AxesFromYaw(Fixed yaw, out FixedVector2D u, out FixedVector2D v)
+        {
+            Trig.SinCosApprox(yaw, out Fixed s, out Fixed c);
+            u = new FixedVector2D(c, -s);
+            v = new FixedVector2D(s, c);
+        }
+
+        /// <summary>Door 子件下标。有名用 Door;读档无名时回退 0(原版 std::map 序)。</summary>
+        private int DoorShapeIndex()
+        {
+            for (int i = 0; i < SubShapes.Count; i++)
+                if (string.Equals(SubShapes[i].Name, "Door", StringComparison.Ordinal))
+                    return i;
+            return SubShapes.Count > 0 ? 0 : -1;
         }
 
         public void HandleMessage(IMessage message) { }

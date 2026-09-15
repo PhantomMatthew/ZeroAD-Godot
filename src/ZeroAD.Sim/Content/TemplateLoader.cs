@@ -1043,6 +1043,22 @@ namespace ZeroAD.Sim.Content
                             Attr(subEl, "x").ToFloat(), Attr(subEl, "z").ToFloat(),
                             Attr(subEl, "width").ToFloat(), Attr(subEl, "depth").ToFloat()));
                     }
+                    // 原版 CLUSTER:无 Static 时外壳尺寸 = 子件包围盒(含原点)。
+                    // 否则装配器会回退 Footprint,整扇门印成实心墙。
+                    if (!staticEl.IsOk && stats.ObstructionSubShapes.Count > 0)
+                    {
+                        float minX = 0f, maxX = 0f, minZ = 0f, maxZ = 0f;
+                        foreach (var (_, sx, sz, sw, sd) in stats.ObstructionSubShapes)
+                        {
+                            float hw = sw * 0.5f, hd = sd * 0.5f;
+                            minX = Math.Min(minX, sx - hw);
+                            maxX = Math.Max(maxX, sx + hw);
+                            minZ = Math.Min(minZ, sz - hd);
+                            maxZ = Math.Max(maxZ, sz + hd);
+                        }
+                        stats.ObstructionSize0 = Maths.Fixed.FromFloat(2f * Math.Max(maxX, -minX));
+                        stats.ObstructionSize1 = Maths.Fixed.FromFloat(2f * Math.Max(maxZ, -minZ));
+                    }
                 }
                 else if (obstruction.GetChild("Unit").IsOk)
                 {

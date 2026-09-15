@@ -206,6 +206,12 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         if (pack != null && (pack.Packed || pack.Packing)) return;
         var motion = cm.QueryInterface<UnitMotion>(Entity);
         if (motion == null || IsGarrisoned || IsTurret) return;
+        // 已在挤出(原版已有 LeaveFoundation/Flee 该地基则忽略,免得左右横跳)。
+        var cur = CurrentOrder;
+        if (cur != null && (cur.Type == "LeaveFoundation"
+            || (cur.Type == "Walk" && cur.Target == foundation)
+            || (cur.Type == "Flee" && cur.Target == foundation)))
+            return;
 
         var pos = cm.QueryInterface<PositionComponent>(Entity);
         var fpos = cm.QueryInterface<PositionComponent>(foundation);
@@ -220,9 +226,15 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         if (d >= halfDiag + 4f) return;
         if (d < 0.01f) { dx = 1f; dz = 0f; d = 1f; }   // 正中重合:向 +X 撤
         float esc = halfDiag + 4f;
-        Walk(new FixedVector2D(
-            Fixed.FromFloat(fpos.Position.X.ToFloat() + dx / d * esc),
-            Fixed.FromFloat(fpos.Position.Z.ToFloat() + dz / d * esc)), queued: false);
+        PushOrderFront(new UnitOrder
+        {
+            Type = "Walk",
+            Target = foundation,
+            Position = new FixedVector2D(
+                Fixed.FromFloat(fpos.Position.X.ToFloat() + dx / d * esc),
+                Fixed.FromFloat(fpos.Position.Z.ToFloat() + dz / d * esc)),
+            Force = true,
+        });
     }
 
     // --- Pickup 接送(运输侧;原版 UnitAI.js OnPickupRequested/OnPickupCanceled/

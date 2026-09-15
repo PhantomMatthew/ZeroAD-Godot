@@ -921,7 +921,7 @@ public sealed partial class SimBridge : Node
 		// 多形状子件(原版 Obstructions 元素——城墙门 Left/Right/Door 分形)。
 		if (stats != null && stats.ObstructionSubShapes.Count > 0)
 			foreach (var (name, sx, sz, sw, sd) in stats.ObstructionSubShapes)
-				obstruction.SubShapes.Add((Fixed.FromFloat(sx), Fixed.FromFloat(sz),
+				obstruction.SubShapes.Add((name, Fixed.FromFloat(sx), Fixed.FromFloat(sz),
 					Fixed.FromFloat(sw), Fixed.FromFloat(sd)));
 		// 墙体(Wall 类):控制组 = 玩家墙组——同玩家墙件互不阻挡(拼链段搭进塔楼;
 		// 对齐原版 control group 语义),Placement 校验同组豁免(执行端同款)。

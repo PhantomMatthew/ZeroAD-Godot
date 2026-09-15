@@ -140,6 +140,16 @@ public class ObstructionTests
     }
 
     [Fact]
+    public void LegacyGrid_DoesNotRasterizeNonPathfindingStatics()
+    {
+        // 农田旗标:挡地基但不挡寻路。遗留 A* 网格不得把它们印成墙。
+        var mgr = NewMgr(gridSize: 16, cellSize: 4f);
+        mgr.AddStaticShape(new EntityId(1), Fixed.FromInt(20), Fixed.FromInt(20), U, V,
+            Fixed.FromInt(8), Fixed.FromInt(8), ObstructionFlags.BlockFoundation, 0, 0);
+        Assert.False(mgr.IsBlocked(mgr.WorldToGrid(20f), mgr.WorldToGrid(20f)));
+    }
+
+    [Fact]
     public void LegacyGrid_BlockCircleStillWorks()
     {
         // The bool[,] + FindPath compatibility layer must still route around blocked cells.

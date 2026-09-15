@@ -346,6 +346,7 @@ namespace ZeroAD.Sim.Net
                 // (原版 Transform.js:57-58)。Rotation.X/Z 留 0(建筑不俯仰/侧倾)。
                 pos.Rotation = new FixedVector3D(Fixed.Zero, angle, Fixed.Zero);
             }
+            EntityAssembler.AttachFoundationObstruction(_cm, entity, stats, ownerPlayerId);
             _cm.Events.RaiseEntityCreated(new EntityCreatedEvent
             {
                 Entity = entity,

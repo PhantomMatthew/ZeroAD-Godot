@@ -466,8 +466,8 @@ namespace ZeroAD.Sim
                 Flags = stats?.ObstructionFlags ?? ObstructionFlags.DefaultBlock,
             };
             if (stats != null && stats.ObstructionSubShapes.Count > 0)
-                foreach (var (_, sx, sz, sw, sd) in stats.ObstructionSubShapes)
-                    obstruction.SubShapes.Add((Fixed.FromFloat(sx), Fixed.FromFloat(sz),
+                foreach (var (name, sx, sz, sw, sd) in stats.ObstructionSubShapes)
+                    obstruction.SubShapes.Add((name, Fixed.FromFloat(sx), Fixed.FromFloat(sz),
                         Fixed.FromFloat(sw), Fixed.FromFloat(sd)));
             cm.AddComponent(entity, obstruction);
             cm.AddComponent(entity, new BuildRestrictionsComponent
@@ -506,6 +506,34 @@ namespace ZeroAD.Sim
                     new Maths.FixedVector2D(Maths.Fixed.Zero, Maths.Fixed.Zero),
                     new Maths.FixedVector2D(p.X, p.Z));
             }
+            obstruction.EnsureRegistered();
+        }
+
+        /// <summary>地基阻挡(原版 foundation| 滤镜:DisableBlockMovement/Pathfinding,
+        /// 直至 Foundation.Commit 恢复)。无 Obstruction 则 Commit 挤出是空操作。</summary>
+        public static void AttachFoundationObstruction(ComponentManager cm, EntityId entity,
+            TemplateStats? stats, int ownerPlayerId)
+        {
+            if (cm.QueryInterface<ObstructionComponent>(entity) != null) return;
+            float fpSize = stats?.FootprintSize0.ToFloat() is { } fp && fp > 0 ? fp : 12f;
+            float obSize0 = stats?.ObstructionSize0.ToFloat() is { } ob0 && ob0 > 0 ? ob0 : fpSize;
+            float obSize1 = stats?.ObstructionSize1.ToFloat() is { } ob1 && ob1 > 0 ? ob1 : fpSize;
+            var obstruction = new ObstructionComponent
+            {
+                Type = ObstructionType.Static,
+                Size0 = Fixed.FromFloat(obSize0),
+                Size1 = Fixed.FromFloat(obSize1),
+                Flags = stats?.ObstructionFlags ?? ObstructionFlags.DefaultBlock,
+                DisableBlockMovement = true,
+                DisableBlockPathfinding = true,
+            };
+            if (stats != null && stats.ObstructionSubShapes.Count > 0)
+                foreach (var (name, sx, sz, sw, sd) in stats.ObstructionSubShapes)
+                    obstruction.SubShapes.Add((name, Fixed.FromFloat(sx), Fixed.FromFloat(sz),
+                        Fixed.FromFloat(sw), Fixed.FromFloat(sd)));
+            if (stats != null && stats.GetClassList().Contains("Wall") && ownerPlayerId > 0)
+                obstruction.ControlGroup = ObstructionComponent.PlayerWallGroup(ownerPlayerId);
+            cm.AddComponent(entity, obstruction);
             obstruction.EnsureRegistered();
         }
 
