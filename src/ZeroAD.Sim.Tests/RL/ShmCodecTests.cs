@@ -10,12 +10,19 @@ public sealed class ShmCodecTests
     public void LayoutSizes_AreStable()
     {
         Assert.Equal(0x5A414452u, ShmLayout.Magic);
-        Assert.Equal(1, ShmLayout.Version);
+        Assert.Equal(2, ShmLayout.Version);
         Assert.Equal(64, ShmLayout.HeaderBytes);
         Assert.Equal(512 * 13 * 4, ShmLayout.EntitiesBytes);
-        Assert.Equal(4 * 64 * 64 * 4, ShmLayout.SpatialBytes);
+        Assert.Equal(5 * 64 * 64 * 4, ShmLayout.SpatialBytes);
         Assert.Equal(11 * 4, ShmLayout.ScalarsBytes);
-        Assert.Equal(ShmLayout.OffAction + 32, ShmLayout.SlotBytes);
+        Assert.Equal(32, ShmLayout.MaskBytes);
+        Assert.Equal(512 * 4, ShmLayout.EntityMaskBytes);
+        Assert.Equal(128, ShmLayout.ActionBytes);
+        Assert.Equal(8, RlSpec.MaxSelected);
+        Assert.Equal(ShmLayout.OffAction + 128, ShmLayout.SlotBytes);
+        Assert.Equal(RlSpec.FunctionCount, Enum.GetValues<RlFunction>().Length);
+        Assert.True(RlSpec.FunctionCount <= ShmLayout.MaskBytes);
+        Assert.Equal(32, RlSpec.FunctionCount);
     }
 
     [Fact]
@@ -30,10 +37,12 @@ public sealed class ShmCodecTests
         obs.Spatial[3] = 7;
         obs.Scalars[RlSpec.Scal.Wood] = 99;
         obs.FunctionMask[(int)RlFunction.Move] = 1;
+        obs.EntityMask[0] = 1u << (int)RlFunction.Move;
+        obs.Spatial[RlSpec.Spat.Resource * RlSpec.SpatialSize * RlSpec.SpatialSize] = 50;
 
         var slot = new byte[ShmLayout.SlotBytes];
         ShmCodec.WriteObservation(slot, obs);
-        ShmCodec.WriteAction(slot, new RlAction(RlFunction.Move, 0, -1, 4, 5, 0));
+        ShmCodec.WriteAction(slot, new RlAction(RlFunction.Move, 0, -1, 4, 5, 0, 1, 2));
 
         int turn = BitConverter.ToInt32(slot, ShmLayout.OffTurn);
         int reward = BitConverter.ToInt32(slot, ShmLayout.OffReward);
@@ -45,13 +54,48 @@ public sealed class ShmCodecTests
         Assert.Equal(42, BitConverter.ToInt32(slot, ShmLayout.OffEntities + RlSpec.Ent.EntityId * 4));
         Assert.Equal(7, BitConverter.ToInt32(slot, ShmLayout.OffSpatial + 3 * 4));
         Assert.Equal(99, BitConverter.ToInt32(slot, ShmLayout.OffScalars + RlSpec.Scal.Wood * 4));
+        Assert.Equal(1u << (int)RlFunction.Move, BitConverter.ToUInt32(slot, ShmLayout.OffEntityMask));
+        Assert.Equal(50, BitConverter.ToInt32(slot, ShmLayout.OffSpatial
+            + RlSpec.Spat.Resource * RlSpec.SpatialSize * RlSpec.SpatialSize * 4));
 
         var act = ShmCodec.ReadAction(slot);
         Assert.Equal(RlFunction.Move, act.Function);
         Assert.Equal(0, act.SelectedIndex);
+        Assert.Equal(1, act.Selected1);
+        Assert.Equal(2, act.Selected2);
         Assert.Equal(4, act.TargetCellX);
         Assert.Equal(5, act.TargetCellZ);
         Assert.Equal(1, slot[ShmLayout.OffMask + (int)RlFunction.Move]);
+    }
+
+    [Fact]
+    public void ReadAction_AcceptsGuard()
+    {
+        var slot = new byte[ShmLayout.SlotBytes];
+        ShmCodec.WriteAction(slot, new RlAction(RlFunction.Guard, 1, 2, 3, 4, 5));
+        var act = ShmCodec.ReadAction(slot);
+        Assert.Equal(RlFunction.Guard, act.Function);
+        Assert.Equal(1, act.SelectedIndex);
+        Assert.Equal(2, act.TargetEntityIndex);
+    }
+
+    [Fact]
+    public void OpponentAction_UsesSecondBlock()
+    {
+        var slot = new byte[ShmLayout.SlotBytes];
+        ShmCodec.WriteAction(slot, new RlAction(RlFunction.Attack, 3, 4, 1, 2, 0));
+        ShmCodec.WriteOpponentAction(slot, new RlAction(RlFunction.Move, 10, 11, 6, 7, 8));
+        var agent = ShmCodec.ReadAction(slot);
+        var opp = ShmCodec.ReadOpponentAction(slot);
+        Assert.Equal(RlFunction.Attack, agent.Function);
+        Assert.Equal(3, agent.SelectedIndex);
+        Assert.Equal(RlFunction.Move, opp.Function);
+        Assert.Equal(10, opp.SelectedIndex);
+        Assert.Equal(11, opp.TargetEntityIndex);
+        Assert.Equal(6, opp.TargetCellX);
+        Assert.Equal(7, opp.TargetCellZ);
+        Assert.Equal(8, opp.CatalogId);
+        Assert.Equal(RlFunction.NoOp, ShmCodec.ReadOpponentAction(new byte[ShmLayout.SlotBytes]).Function);
     }
 
     [Fact]
@@ -61,6 +105,7 @@ public sealed class ShmCodecTests
         ShmCodec.WriteHeader(file, 2, seed: 9, privileged: true);
         Assert.Equal(ShmLayout.Magic, BitConverter.ToUInt32(file, ShmLayout.OffMagic));
         Assert.Equal(2, BitConverter.ToInt32(file, ShmLayout.OffSlots));
+        Assert.Equal(2, BitConverter.ToInt32(file, ShmLayout.OffVersion));
         Assert.Equal(1, BitConverter.ToInt32(file, ShmLayout.OffPrivileged));
         Assert.Equal(9, BitConverter.ToInt32(file, ShmLayout.OffSeed));
     }

@@ -19,9 +19,27 @@ namespace ZeroAD.Sim.Components;
 //   CONSTANT_DIFFERENCE = 10   买/卖围绕 truePrice 的固定价差
 //   truePrice = 100            4 资源均 100(resources/*.json)
 
+/// <summary>Per-world barter drift. Lives on <see cref="ComponentManager.Barter"/> so
+/// parallel RL slots do not share buy/sell offsets.</summary>
+public sealed class BarterBook
+{
+    internal readonly Dictionary<ResourceType, float> Diff = new()
+    {
+        [ResourceType.Food] = 0f, [ResourceType.Wood] = 0f,
+        [ResourceType.Stone] = 0f, [ResourceType.Metal] = 0f,
+    };
+    internal float RestoreElapsed;
+
+    internal void Reset()
+    {
+        foreach (var res in Diff.Keys.ToArray()) Diff[res] = 0f;
+        RestoreElapsed = 0f;
+    }
+}
+
 /// <summary>System-level barter with price drift (Barter.js 全量:每笔推涨价差、
-/// 每 5s 回落、truePrice ± CONSTANT_DIFFERENCE ± priceDifferences)。价差状态是全局
-/// 单份(所有玩家共享);存档经 BarterStateComponent(挂系统实体)骑缝序列化。</summary>
+/// 每 5s 回落、truePrice ± CONSTANT_DIFFERENCE ± priceDifferences)。价差状态按世界
+/// 一份(所有玩家共享该世界的表);存档经 BarterStateComponent(挂系统实体)骑缝序列化。</summary>
 public static class BarterSystem
 {
     public const int DealAmount = 100;
@@ -36,60 +54,65 @@ public static class BarterSystem
     /// <summary>恢复周期毫秒(原版 RESTORE_TIMER_INTERVAL)。</summary>
     public const float RestoreIntervalMs = 5000f;
 
-    // 全局价差(drift)状态:resource → 相对 truePrice 的偏移(正 = 更贵)。
-    private static readonly Dictionary<ResourceType, float> _diff = new()
-    {
-        [ResourceType.Food] = 0f, [ResourceType.Wood] = 0f,
-        [ResourceType.Stone] = 0f, [ResourceType.Metal] = 0f,
-    };
-    private static float _restoreElapsed;
+    private static BarterBook Book(ComponentManager? cm) =>
+        cm?.Barter ?? SimSystem.Sim?.Barter ?? _unbound;
+    private static readonly BarterBook _unbound = new();
 
     /// <summary>价差快照(BarterStateComponent 存档用)。</summary>
-    public static IReadOnlyDictionary<ResourceType, float> PriceDifferences => _diff;
+    public static IReadOnlyDictionary<ResourceType, float> PriceDifferences => Book(null).Diff;
 
-    /// <summary>重置价差(SimSystem.Init 新世界语义;防跨局/跨测试静态泄漏)。</summary>
+    /// <summary>重置当前世界价差(SimSystem.Init 新世界语义)。</summary>
     public static void Reset()
     {
-        foreach (var res in _diff.Keys.ToArray()) _diff[res] = 0f;
-        _restoreElapsed = 0f;
+        SimSystem.Sim?.Barter.Reset();
+        _unbound.Reset();
     }
 
     /// <summary>存档恢复(整表覆写)。</summary>
     public static void RestoreDifferences(IReadOnlyDictionary<ResourceType, float> snap, float elapsed)
     {
-        foreach (var kv in snap) _diff[kv.Key] = kv.Value;
-        _restoreElapsed = elapsed;
+        var book = Book(null);
+        foreach (var kv in snap) book.Diff[kv.Key] = kv.Value;
+        book.RestoreElapsed = elapsed;
     }
 
     /// <summary>买入价(truePrice + 固定差 + 漂移,× 玩家乘数;原版 GetPrices buy 公式)。
     /// multiplier = 玩家模板/科技修正(Player/BarterMultiplier/Buy/{res};缺省 1)。</summary>
     public static int BuyPrice(ResourceType res, float multiplier = 1f)
-        => (int)MathF.Round(TruePrice * (DealAmount + ConstantDifference
-            + (int)MathF.Round(_diff.GetValueOrDefault(res))) * multiplier / DealAmount);
+        => BuyPrice(SimSystem.Sim, res, multiplier);
 
     /// <summary>卖出价(truePrice − 固定差 + 漂移,× 玩家乘数;原版 GetPrices sell 公式)。</summary>
     public static int SellPrice(ResourceType res, float multiplier = 1f)
+        => SellPrice(SimSystem.Sim, res, multiplier);
+
+    public static int BuyPrice(ComponentManager? cm, ResourceType res, float multiplier = 1f)
+        => (int)MathF.Round(TruePrice * (DealAmount + ConstantDifference
+            + (int)MathF.Round(Book(cm).Diff.GetValueOrDefault(res))) * multiplier / DealAmount);
+
+    public static int SellPrice(ComponentManager? cm, ResourceType res, float multiplier = 1f)
         => (int)MathF.Round(TruePrice * (DealAmount - ConstantDifference
-            + (int)MathF.Round(_diff.GetValueOrDefault(res))) * multiplier / DealAmount);
+            + (int)MathF.Round(Book(cm).Diff.GetValueOrDefault(res))) * multiplier / DealAmount);
 
     /// <summary>每笔推涨(原版 ExchangeResources 尾部:sell 侧 +、buy 侧 −)。</summary>
-    private static void ApplyDealDrift(ResourceType sell, ResourceType buy, int amount)
+    private static void ApplyDealDrift(BarterBook book, ResourceType sell, ResourceType buy, int amount)
     {
         float per = DifferencePerDeal * amount / DealAmount;
-        _diff[sell] = Math.Min(ConstantDifference, _diff[sell] + per);
-        _diff[buy] = Math.Max(-ConstantDifference, _diff[buy] - per);
+        book.Diff[sell] = Math.Min(ConstantDifference, book.Diff[sell] + per);
+        book.Diff[buy] = Math.Max(-ConstantDifference, book.Diff[buy] - per);
     }
 
-    /// <summary>价差回落(原版 ProgressTimeout:每 5s 向 0 收敛,步长 ±RESTORE)。
-    /// 由 SimBridge 每 tick 驱动(锁步时基)。</summary>
-    public static void TickRestore(float dt)
+    /// <summary>价差回落(原版 ProgressTimeout:每 5s 向 0 收敛,步长 ±RESTORE)。</summary>
+    public static void TickRestore(float dt) => TickRestore(SimSystem.Sim, dt);
+
+    public static void TickRestore(ComponentManager? cm, float dt)
     {
-        _restoreElapsed += dt * 1000f;
-        while (_restoreElapsed >= RestoreIntervalMs)
+        var book = Book(cm);
+        book.RestoreElapsed += dt * 1000f;
+        while (book.RestoreElapsed >= RestoreIntervalMs)
         {
-            _restoreElapsed -= RestoreIntervalMs;
-            foreach (var res in _diff.Keys.ToArray())
-                _diff[res] -= Math.Clamp(_diff[res], -DifferenceRestore, DifferenceRestore);
+            book.RestoreElapsed -= RestoreIntervalMs;
+            foreach (var res in book.Diff.Keys.ToArray())
+                book.Diff[res] -= Math.Clamp(book.Diff[res], -DifferenceRestore, DifferenceRestore);
         }
     }
 
@@ -105,12 +128,11 @@ public static class BarterSystem
         if (!player.TrySpend(sell, amount)) return;
         // 原版:价格 × 玩家乘数(模板/科技),换算比例 = sell×mult.sell / buy×mult.buy。
         int gained = (int)Math.Round(
-            (double)SellPrice(sell, player.GetBarterMultiplierSell(sell.ToString().ToLowerInvariant()))
-            / BuyPrice(buy, player.GetBarterMultiplierBuy(buy.ToString().ToLowerInvariant()))
+            (double)SellPrice(cm, sell, player.GetBarterMultiplierSell(sell.ToString().ToLowerInvariant()))
+            / BuyPrice(cm, buy, player.GetBarterMultiplierBuy(buy.ToString().ToLowerInvariant()))
             * amount, MidpointRounding.AwayFromZero);
         player.AddResource(buy, gained);
-        // 价漂移:卖出资源涨、买入资源跌(原版 ExchangeResources 尾部)。
-        ApplyDealDrift(sell, buy, amount);
+        ApplyDealDrift(cm.Barter, sell, buy, amount);
     }
 }
 

@@ -113,8 +113,8 @@ public static class TemplateStatsRefresher
             obs.Size0 = newSize0;
             obs.Size1 = newSize1;
             obs.SubShapes.Clear();
-            foreach (var (_, sx, sz, sw, sd) in stats.ObstructionSubShapes)
-                obs.SubShapes.Add((Fixed.FromFloat(sx), Fixed.FromFloat(sz),
+            foreach (var (name, sx, sz, sw, sd) in stats.ObstructionSubShapes)
+                obs.SubShapes.Add((name, Fixed.FromFloat(sx), Fixed.FromFloat(sz),
                     Fixed.FromFloat(sw), Fixed.FromFloat(sd)));
             if (shapeChanged)
             {

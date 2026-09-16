@@ -9,7 +9,9 @@ def test_grpc_session_reset_and_step() -> None:
     try:
         obs, _info = env.reset()
         assert obs["entities"].shape == (512, 13)
-        assert obs["spatial"].shape == (4, 64, 64)
+        assert obs["spatial"].shape == (5, 64, 64)
+        assert obs["function_mask"].shape == (32,)
+        assert obs["entity_mask"].shape == (512,)
         obs2, reward, terminated, truncated, info = env.step({"function": 0})
         assert obs2["entities"].shape == (512, 13)
         assert reward == 0.0

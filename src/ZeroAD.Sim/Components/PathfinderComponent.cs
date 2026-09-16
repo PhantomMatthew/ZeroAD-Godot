@@ -559,11 +559,17 @@ namespace ZeroAD.Sim.Components
         public WaypointPath ComputeShortPath(FixedVector2D start, in PathGoal goal,
             Fixed clearance, Fixed range, PassClass passClass, bool avoidMovingUnits = false)
         {
-            // P0: gather all static obstructions (range-filtering is a refinement; at P0 map
-            // sizes the vertex graph stays small). Moving-unit avoidance is a P1 add.
-            System.Collections.Generic.List<ObstructionSquare> obstructions =
-                Obstructions?.GetAllStaticObstructions()
-                ?? new System.Collections.Generic.List<ObstructionSquare>();
+            // 原版 ControlGroupMovementObstructionFilter:短程绕障只认 BlockMovement。
+            // 农田 BlockMovement=false,必须能直线穿过,不能当墙绕开。
+            var obstructions = new System.Collections.Generic.List<ObstructionSquare>();
+            if (Obstructions != null)
+            {
+                foreach (var square in Obstructions.GetAllStaticObstructions())
+                {
+                    if ((square.Flags & ObstructionFlags.BlockMovement) != 0)
+                        obstructions.Add(square);
+                }
+            }
             return _vertex.ComputeShortPath(start, goal, clearance, range, obstructions);
         }
 

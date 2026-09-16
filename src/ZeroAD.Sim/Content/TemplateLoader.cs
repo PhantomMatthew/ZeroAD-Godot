@@ -84,6 +84,34 @@ namespace ZeroAD.Sim.Content
             finally { _suppressValidation = false; }
         }
 
+        /// <summary>List template names from disk/VFS without parsing XML.
+        /// RL intern maps use this so Build/Train/Research catalog ids are stable
+        /// without paying <see cref="LoadAllTemplates"/> on every episode.</summary>
+        public List<string> EnumerateTemplateNames()
+        {
+            var names = new List<string>();
+            if (_vfs != null)
+            {
+                foreach (var (rel, _) in _vfs.EnumerateLayered(_relRoot, "*.xml"))
+                {
+                    string relPath = rel.Replace(".xml", "");
+                    if (relPath.Length > 0) names.Add(relPath);
+                }
+            }
+            else if (Directory.Exists(_templatesRoot))
+            {
+                foreach (var file in Directory.GetFiles(_templatesRoot, "*.xml", SearchOption.AllDirectories))
+                {
+                    string relPath = Path.GetRelativePath(_templatesRoot, file)
+                        .Replace('\\', '/')
+                        .Replace(".xml", "");
+                    if (relPath.Length > 0) names.Add(relPath);
+                }
+            }
+            names.Sort(StringComparer.Ordinal);
+            return names;
+        }
+
         private Dictionary<string, ParamNode> LoadAllTemplatesCore()
         {
             if (_vfs != null)
@@ -202,6 +230,16 @@ namespace ZeroAD.Sim.Content
         {
             var el = obstruction.GetChild(name);
             return !el.IsOk || el.ToBool();
+        }
+
+        /// <summary>ResourceSupply Amount/Max/Initial:原版 +"Infinity" → Infinity。
+        /// 定点 ToInt 会把 Infinity 读成 0,农田就会被当成空供应、永不采集。</summary>
+        private static int ParseResourceCount(ParamNode node)
+        {
+            string raw = node.ToString().Trim();
+            if (raw.Equals("Infinity", StringComparison.OrdinalIgnoreCase))
+                return int.MaxValue;
+            return node.ToInt();
         }
 
         public static TemplateStats ExtractStatsFromNode(ParamNode node)
@@ -682,10 +720,13 @@ namespace ZeroAD.Sim.Content
             if (resourceSupply.IsOk)
             {
                 var amount = resourceSupply.GetChild("Amount");
-                if (amount.IsOk) stats.ResourceAmount = amount.ToInt();
+                if (amount.IsOk) stats.ResourceAmount = ParseResourceCount(amount);
                 var max = resourceSupply.GetChild("Max");
                 if (max.IsOk && stats.ResourceAmount == 0)
-                    stats.ResourceAmount = max.ToInt();
+                    stats.ResourceAmount = ParseResourceCount(max);
+                var initial = resourceSupply.GetChild("Initial");
+                if (initial.IsOk)
+                    stats.ResourceAmount = ParseResourceCount(initial);
                 // KillBeforeGather(原版 ResourceSupply.js):动物须先猎杀才能采肉——
                 // 原版 isUndeletable 的豁免理由之一(删除命令跳过)。
                 var killFirst = resourceSupply.GetChild("KillBeforeGather");
@@ -1014,6 +1055,22 @@ namespace ZeroAD.Sim.Content
                             subName,
                             Attr(subEl, "x").ToFloat(), Attr(subEl, "z").ToFloat(),
                             Attr(subEl, "width").ToFloat(), Attr(subEl, "depth").ToFloat()));
+                    }
+                    // 原版 CLUSTER:无 Static 时外壳尺寸 = 子件包围盒(含原点)。
+                    // 否则装配器会回退 Footprint,整扇门印成实心墙。
+                    if (!staticEl.IsOk && stats.ObstructionSubShapes.Count > 0)
+                    {
+                        float minX = 0f, maxX = 0f, minZ = 0f, maxZ = 0f;
+                        foreach (var (_, sx, sz, sw, sd) in stats.ObstructionSubShapes)
+                        {
+                            float hw = sw * 0.5f, hd = sd * 0.5f;
+                            minX = Math.Min(minX, sx - hw);
+                            maxX = Math.Max(maxX, sx + hw);
+                            minZ = Math.Min(minZ, sz - hd);
+                            maxZ = Math.Max(maxZ, sz + hd);
+                        }
+                        stats.ObstructionSize0 = Maths.Fixed.FromFloat(2f * Math.Max(maxX, -minX));
+                        stats.ObstructionSize1 = Maths.Fixed.FromFloat(2f * Math.Max(maxZ, -minZ));
                     }
                 }
                 else if (obstruction.GetChild("Unit").IsOk)

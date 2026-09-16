@@ -376,6 +376,14 @@ namespace ZeroAD.Sim
         /// 且 BlockConstruction 的实体(自身控制组豁免——墙件不挡门,原版注释同款)。
         /// 注意:形状注册时已按 EffectiveFlags 折算(disable 覆盖天然生效)。</summary>
         public List<EntityId> GetEntitiesBlockingConstruction(ObstructionTag tag)
+            => GetEntitiesOnShape(tag, ObstructionFlags.BlockConstruction);
+
+        /// <summary>原版 GetEntitiesDeletedUponConstruction:与自身形状重叠且
+        /// DeleteUponConstruction 的实体(尸体/宝藏等)。</summary>
+        public List<EntityId> GetEntitiesDeletedUponConstruction(ObstructionTag tag)
+            => GetEntitiesOnShape(tag, ObstructionFlags.DeleteUponConstruction);
+
+        private List<EntityId> GetEntitiesOnShape(ObstructionTag tag, ObstructionFlags require)
         {
             var result = new List<EntityId>();
             if (tag.IsStatic && _staticShapes.TryGetValue(tag.N, out var self))
@@ -388,7 +396,7 @@ namespace ZeroAD.Sim
                 {
                     if (raw == tag.N) continue;
                     var other = _staticShapes[raw];
-                    if ((other.Flags & ObstructionFlags.BlockConstruction) == 0) continue;
+                    if ((other.Flags & require) == 0) continue;
                     if (other.Group == self.Group || other.Group2 == self.Group) continue;
                     if (!Geometry.TestSquareSquare(
                             new FixedVector2D(self.X, self.Z), self.U, self.V,
@@ -398,13 +406,12 @@ namespace ZeroAD.Sim
                         continue;
                     result.Add(other.Entity);
                 }
-                // 移动中的单位也挡关门(原版:GetEntitiesBlockingConstruction 含单位形状)。
                 _scratch.Clear();
                 _unitSubdivision.GetInRange(_scratch, self.X - r, self.Z - r, self.X + r, self.Z + r);
                 foreach (uint raw in _scratch)
                 {
                     var other = _unitShapes[raw];
-                    if ((other.Flags & ObstructionFlags.BlockConstruction) == 0) continue;
+                    if ((other.Flags & require) == 0) continue;
                     if (other.Group == self.Group) continue;
                     if (!Geometry.TestSquareSquare(
                             new FixedVector2D(self.X, self.Z), self.U, self.V,
@@ -675,6 +682,10 @@ namespace ZeroAD.Sim
 
         private void RasterizeStaticToLegacyGrid(StaticShape s)
         {
+            // UnitMotion 回退 A* 对齐分层寻路:只印 BlockPathfinding。
+            // 农田等 BlockPathfinding=false 的静态体不得进遗留网格,否则无 Pathfinder 时也会绕田。
+            if ((s.Flags & ObstructionFlags.BlockPathfinding) == 0)
+                return;
             // Approximate the OBB by its AABB on the legacy grid (good enough for A* routing).
             var bb = Geometry.GetHalfBoundingBox(s.U, s.V, new FixedVector2D(s.Hw, s.Hh));
             BlockCircle(s.X.ToFloat(), s.Z.ToFloat(), Math.Max(bb.X.ToFloat(), bb.Y.ToFloat()));
@@ -682,6 +693,8 @@ namespace ZeroAD.Sim
 
         private void UnrasterizeStaticFromLegacyGrid(StaticShape s)
         {
+            if ((s.Flags & ObstructionFlags.BlockPathfinding) == 0)
+                return;
             var bb = Geometry.GetHalfBoundingBox(s.U, s.V, new FixedVector2D(s.Hw, s.Hh));
             UnblockCircle(s.X.ToFloat(), s.Z.ToFloat(), Math.Max(bb.X.ToFloat(), bb.Y.ToFloat()));
         }

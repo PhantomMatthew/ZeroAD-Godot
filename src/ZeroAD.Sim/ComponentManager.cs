@@ -5,6 +5,7 @@ using System.Linq;
 using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Events;
+using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Sim
@@ -44,6 +45,23 @@ namespace ZeroAD.Sim
         /// (一世界一实例),内核命令路径(如 spy-request)经此到达——不走 SimSystem 静态
         /// (多世界测试进程里静态只指向最后初始化的世界)。</summary>
         public Components.RangeManager? Range { get; internal set; }
+
+        /// <summary>World-local sim services. <see cref="Components.SimSystem.Bind"/> copies
+        /// these onto the process-global statics before a tick so RL <c>n_slots</c> worlds
+        /// do not share the last Reset()'s pathfinder / obstructions.</summary>
+        public Components.PathfinderComponent? Pathfinder { get; set; }
+        public Components.TerritoryManager? Territory { get; set; }
+        public ObstructionManager? Obstructions { get; set; }
+        public Components.TerrainComponent? Terrain { get; set; }
+        public Net.NetTurnManager? Net { get; set; }
+
+        /// <summary>Unit-pushing initial-position table. Lives here (not on a static) because
+        /// entity ids collide across parallel RL worlds.</summary>
+        internal Dictionary<uint, FixedVector2D> SeparationLastPos { get; } = new();
+
+        /// <summary>Per-world barter price drift. Not process-global so RL slots do not
+        /// share the last match's buy/sell offsets.</summary>
+        public Components.BarterBook Barter { get; } = new();
 
         /// <summary>
         /// Template loader used by <see cref="SpawnEntity"/> and training/spawn paths.
@@ -98,12 +116,11 @@ namespace ZeroAD.Sim
         public int EntitySetVersion { get; private set; }
 
         /// <summary>
-        /// Spawn a unit entity from a template name at a world position. The sim owns the full
+        /// Spawn an entity from a template name at a world position. The sim owns the full
         /// pipeline: create entity, assemble components from the template stats, apply ownership,
         /// and raise <see cref="SimEventBus.EntityCreated"/> so the presentation layer builds visuals.
-        /// This is the deterministic, Godot-free counterpart to the legacy SimBridge.Spawn* paths
-        /// and is what training/production uses. Building/gaia spawn stays on the SimBridge side
-        /// for now (their component assembly is not yet ported to <see cref="EntityAssembler"/>).
+        /// Structures (<c>structures/</c>) and static gaia (<c>gaia/</c> except fauna) use the
+        /// matching assembler; everything else is a unit (including <c>gaia/fauna</c>).
         /// </summary>
         public EntityId SpawnEntity(string templateName, float x, float z, int ownerPlayerId = -1)
         {
@@ -111,7 +128,18 @@ namespace ZeroAD.Sim
             TemplateStats? stats = null;
             try { stats = Templates?.ExtractStats(templateName); }
             catch { /* missing/bad template: assemble with defaults */ }
-            EntityAssembler.AssembleUnit(this, entity, templateName, stats, x, z);
+
+            bool isStructure = templateName.StartsWith("structures/", StringComparison.Ordinal);
+            bool isGaiaFauna = templateName.StartsWith("gaia/fauna", StringComparison.OrdinalIgnoreCase)
+                && stats is { HasHealth: true, ResourceAmount: > 0 };
+            bool isGaiaStatic = templateName.StartsWith("gaia/", StringComparison.Ordinal) && !isGaiaFauna;
+
+            if (isStructure)
+                EntityAssembler.AssembleStructure(this, entity, templateName, stats, x, z);
+            else if (isGaiaStatic)
+                EntityAssembler.AssembleGaia(this, entity, templateName, stats, x, z);
+            else
+                EntityAssembler.AssembleUnit(this, entity, templateName, stats, x, z);
 
             if (ownerPlayerId > 0)
                 AddComponent(entity, new OwnershipComponent { PlayerId = ownerPlayerId });
@@ -129,6 +157,8 @@ namespace ZeroAD.Sim
             // activates Fogging for player-owned entities.
             if (ownerPlayerId > 0)
                 NotifyOwnerChanged(entity, -1, ownerPlayerId);
+            if (isStructure || isGaiaStatic)
+                EntityAssembler.RegisterForLos(this, entity, templateName, stats);
             return entity;
         }
 

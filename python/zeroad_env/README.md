@@ -15,6 +15,8 @@ pip install numpy
 export PYTHONPATH=python
 ```
 
+The host loads a 1v1 encounter when staged data exists (`godot/export/data/mods/public`): civic centres, spearman, villagers, trees, `conquest_units` victory, and Petra on player 2 (`--petra`, default on). Catalog ids intern every public template and technology so Build/Train/Research actions resolve. Dummy seers are used only when that data tree is missing.
+
 Regenerate the gRPC stubs after editing `src/ZeroAD.RlHost/Protos/zeroad_rl.proto`
 (then change the `import zeroad_rl_pb2` line in `zeroad_rl_pb2_grpc.py` to
 `from zeroad_env import zeroad_rl_pb2`):
@@ -34,9 +36,10 @@ import torch
 env = make_env(backend="shm", seed=1, privileged=False)
 obs, info = env.reset()
 # obs["entities"] int32 [512, 13]
-# obs["spatial"]  int32 [4, 64, 64]
+# obs["spatial"]  int32 [5, 64, 64]
 # obs["scalars"]  int32 [11]
-# obs["function_mask"] uint8
+# obs["function_mask"] uint8 [32]
+# obs["entity_mask"] uint32 [512]
 t = torch.from_numpy(obs["entities"])  # policy / pointer mask in PyTorch
 obs, reward, terminated, truncated, info = env.step({"function": 0})
 env.close()
@@ -59,10 +62,44 @@ obs, r, done, trunc, info = env.step({"function": 0})
 env.close()
 ```
 
-Host flags: `--shm PATH` (default training) or `--grpc PORT` (`0` = ephemeral).
+Host flags: `--shm PATH` (default training) or `--grpc PORT` (`0` = ephemeral),
+`--petra` / `--no-petra`, `--max-turns N`, `--step-mul N`.
 Do not put rollout traffic on gRPC unless the learner is on another machine.
+
+## First training loop
+
+Pointer PPO (function head + selected/target entity pointers, value baseline,
+clip 0.2). Layout **v2** has 32 functions, 5 spatial channels (resource density),
+8 selected entity slots, a per-entity `uint32` mask, and a 128-byte action
+(agent 64 + opponent 64). `n_slots>1` is sequential in one process; the host
+rebinds each world's pathfinder before a tick.
+
+Requires a built host and `pip install torch`:
+
+```bash
+export PYTHONPATH=python
+python -m zeroad_env.train --episodes 8 --steps 64
+```
+
+`env.render()` returns a 64×64 RGB array from the visibility spatial channel
+(`render_mode="rgb_array"`).
+
+Self-play (same policy on both players, no Petra) writes a full opponent action
+into the second 64-byte block (cells, catalog, up to 8 selected). Owner-rel
+and the global function mask are rebuilt from the opponent's entity rows so the
+pointer heads see "self" as player 2. Train actions copy the first own attacker
+template id into `catalog`. The policy uses `entity_mask` after sampling a
+function and fills extra selected slots from other legal own units.
+
+```bash
+python -m zeroad_env.train --episodes 8 --steps 64 --self-play
+```
+
+Barter drift is per-world (not process-global). pythonnet in-process loading is
+not wired; C# `RlEnvironment.Step(agent, opponent)` is the in-process dual-action
+API, and Python training stays on shm.
 
 ## Layout
 
 Constants in `layout.py` must match `src/ZeroAD.Sim/RL/ShmLayout.cs`
-(`MAGIC=0x5A414452`, `VERSION=1`). Mismatch aborts `reset`.
+(`MAGIC=0x5A414452`, `VERSION=2`). Mismatch aborts `reset`.

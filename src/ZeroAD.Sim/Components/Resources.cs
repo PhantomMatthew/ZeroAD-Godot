@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Serialization;
 
 namespace ZeroAD.Sim.Components;
@@ -39,10 +41,22 @@ public sealed class ResourceSupply : ComponentBase, IComponentMessageHandler
         };
     }
 
-    public int Take(int requested)
+    /// <summary>模板 Max=Infinity(农田)。原版 IsInfinite: !isFinite(+template.Max)。</summary>
+    public bool IsInfinite => MaxAmount == int.MaxValue;
+
+    /// <summary>原版 TakeResources + Change:有限供应扣到 0 则 DestroyEntity;
+    /// 无限供应原样返回请求量、不改 Amount。</summary>
+    public int Take(int requested, ComponentManager cm)
     {
+        if (requested <= 0)
+            return 0;
+        if (IsInfinite)
+            return requested;
+
         int taken = Math.Min(requested, Amount);
         Amount -= taken;
+        if (Amount == 0)
+            cm.DestroyEntity(Entity);
         return taken;
     }
 
@@ -76,6 +90,10 @@ public sealed class ResourceGatherer : ComponentBase, IComponentMessageHandler
     public EntityId? TargetSupply;
     public EntityId? TargetDropsite;
     public GatherState State;
+    /// <summary>模板 Rates×BaseSpeed(键 "food.grain")。空 = 测试夹具,回退 <see cref="GatherRate"/>。</summary>
+    public Dictionary<string, float> Rates = new(StringComparer.Ordinal);
+    /// <summary>不足 1 的采集累计(原版 1000/rate 毫秒取 1;0.5×0.1 截成 int 会永远 0)。</summary>
+    public float GatherAcc;
 
     public enum GatherState { Idle, MovingToResource, Gathering, MovingToDropsite, Dropping }
 
@@ -91,12 +109,48 @@ public sealed class ResourceGatherer : ComponentBase, IComponentMessageHandler
         return (int)System.MathF.Round(modified, System.MidpointRounding.AwayFromZero);
     }
 
+    /// <summary>对具体供应的每秒采集量(原版 GetTargetGatherRate)。无该 subtype 的 Rates
+    /// 则不能采(原版 StartGathering rate=0)。</summary>
+    public float GatherSpeed(ComponentManager cm, ResourceSupply supply)
+    {
+        EnsureRates(cm);
+        string key = supply.GenericType + "." + supply.SpecificType;
+        float baseRate = GatherRate;
+        if (Rates.Count > 0)
+        {
+            if (!Rates.TryGetValue(key, out baseRate))
+                return 0f;
+        }
+        float modified = cm.Modifiers.Apply("ResourceGatherer/Rates/" + key, baseRate, Entity);
+        modified = cm.Modifiers.Apply("ResourceGatherer/BaseSpeed", modified, Entity);
+        return modified;
+    }
+
+    private void EnsureRates(ComponentManager cm)
+    {
+        if (Rates.Count > 0 || cm.Templates == null) return;
+        var id = cm.QueryInterface<IdentityComponent>(Entity);
+        if (string.IsNullOrEmpty(id?.TemplateName)) return;
+        try
+        {
+            var stats = cm.Templates.ExtractStats(id.TemplateName);
+            if (stats == null) return;
+            foreach (var kv in stats.GatherRates)
+                Rates[kv.Key] = kv.Value;
+        }
+        catch (Exception)
+        {
+            // 缺模板时保持空表,回退 GatherRate。
+        }
+    }
+
     protected override void OnInit()
     {
         GatherRate = 10;
         CarryAmount = 0;
         CarryType = ResourceType.Wood;
         State = GatherState.Idle;
+        GatherAcc = 0f;
     }
 
     public override void Serialize(ISerializer s)
@@ -106,6 +160,7 @@ public sealed class ResourceGatherer : ComponentBase, IComponentMessageHandler
         s.NumberI32("carryType", (int)CarryType);
         s.NumberI32("state", (int)State);
         s.NumberU32("target", TargetSupply?.Value ?? 0);
+        s.NumberFixed("gacc", Fixed.FromFloat(GatherAcc));
     }
 
     public override void Deserialize(IDeserializer d)
@@ -116,6 +171,8 @@ public sealed class ResourceGatherer : ComponentBase, IComponentMessageHandler
         State = (GatherState)d.NumberI32("state");
         uint tid = d.NumberU32("target");
         TargetSupply = tid != 0 ? new EntityId(tid) : null;
+        GatherAcc = SaveFormat.LoadedVersion >= 23
+            ? d.NumberFixed("gacc").ToFloat() : 0f;
     }
 
     public void HandleMessage(IMessage message) { }
@@ -163,6 +220,42 @@ public sealed class ResourceDropsite : ComponentBase, IComponentMessageHandler
     }
 
     public void HandleMessage(IMessage message) { }
+}
+
+/// <summary>采集目标判定:未完工地基不可采(原版 foundation| 滤镜剥掉 ResourceSupply);
+/// 另拒敌方属主农田与敌方领土上的 gaia 浆果。</summary>
+public static class GatherTargetFilter
+{
+    public static bool IsIncompleteFoundation(ComponentManager cm, EntityId entity)
+    {
+        var foundation = cm.QueryInterface<FoundationComponent>(entity);
+        return foundation != null && !foundation.IsBuilt;
+    }
+
+    public static bool IsGatherable(ComponentManager cm, int gathererPlayer, EntityId supply)
+    {
+        var s = cm.QueryInterface<ResourceSupply>(supply);
+        if (s == null || s.IsEmpty) return false;
+        if (IsIncompleteFoundation(cm, supply)) return false;
+        return !IsHostile(cm, gathererPlayer, supply);
+    }
+
+    public static bool IsHostile(ComponentManager cm, int gathererPlayer, EntityId supply)
+    {
+        if (gathererPlayer <= 0) return false;
+        int supplyOwner = cm.QueryInterface<OwnershipComponent>(supply)?.PlayerId ?? 0;
+        if (supplyOwner > 0 && cm.Players.IsEnemy(gathererPlayer, supplyOwner))
+            return true;
+        var pos = cm.QueryInterface<PositionComponent>(supply);
+        var terr = SimSystem.Territory;
+        if (pos != null && terr != null)
+        {
+            int tile = terr.GetOwner(pos.Position.X, pos.Position.Z);
+            if (tile > 0 && cm.Players.IsEnemy(gathererPlayer, tile))
+                return true;
+        }
+        return false;
+    }
 }
 
 /// <summary>尸体标记(原版:killBeforeGather 的 gaia 动物死亡不销毁,转尸体继续供采集)。

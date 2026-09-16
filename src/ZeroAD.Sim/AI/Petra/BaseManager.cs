@@ -585,6 +585,8 @@ public sealed class BaseManager
             if (ent == null) { tier.RemoveAt(i--); continue; }   // 枯竭/死亡剔除(原版同款)
             var supply = gameState.Cm.QueryInterface<ZeroAD.Sim.Components.ResourceSupply>(ent.Entity);
             if (supply == null || supply.Amount <= 0) continue;
+            if (GatherTargetFilter.IsIncompleteFoundation(gameState.Cm, ent.Entity)) continue;
+            if (ent.Owner > 0 && gameState.IsPlayerEnemy(ent.Owner)) continue;
             string supplyType = supply.GenericType + "." + supply.SpecificType;
             if (!gatherRates.ContainsKey(supplyType)) continue;   // 这工人不会采这 subtype
 

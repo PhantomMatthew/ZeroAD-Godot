@@ -120,6 +120,22 @@ public sealed class GarrisonTests
     }
 
     [Fact]
+    public void CanGarrison_RejectsIncompleteFoundation()
+    {
+        var cm = new ComponentManager(rngSeed: 1);
+        AddPlayer(cm, 1);
+        var holder = MakeHolder(cm, list: "Infantry Support");
+        var fd = new FoundationComponent();
+        cm.AddComponent(holder, fd);
+        fd.Configure("structures/athen/house", 30f);
+        var unit = MakeUnit(cm, classes: "Support Infantry");
+        var g = cm.QueryInterface<GarrisonableComponent>(unit)!;
+        Assert.False(g.CanGarrison(cm, holder));
+        Assert.False(g.Garrison(cm, holder));
+        Assert.True(cm.QueryInterface<PositionComponent>(unit)!.InWorld);
+    }
+
+    [Fact]
     public void OccupiedSlots_SumsGarrisonableTotalSize()
     {
         var cm = new ComponentManager(rngSeed: 1);

@@ -50,6 +50,13 @@ public sealed record UnitOrder
     public List<FixedVector2D>? Route;
     /// <summary>Route 消费游标(原版 this.waypoints 的弹出进度)。</summary>
     public int RouteIndex;
+    /// <summary>Gather 单负载(原版 order.data.type / template / initPos)。下单时抄下,
+    /// 目标 DestroyEntity 后 FINDINGNEWTARGET 仍能找同类。会话态,不入档。</summary>
+    public string? GatherSpecific;
+    public string? GatherGeneric;
+    public string? GatherTemplate;
+    public FixedVector2D GatherInitPos;
+    public bool HasGatherInitPos;
 }
 
 [Component("UnitAI", "UnitAI")]
@@ -206,6 +213,12 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         if (pack != null && (pack.Packed || pack.Packing)) return;
         var motion = cm.QueryInterface<UnitMotion>(Entity);
         if (motion == null || IsGarrisoned || IsTurret) return;
+        // 已在挤出(原版已有 LeaveFoundation/Flee 该地基则忽略,免得左右横跳)。
+        var cur = CurrentOrder;
+        if (cur != null && (cur.Type == "LeaveFoundation"
+            || (cur.Type == "Walk" && cur.Target == foundation)
+            || (cur.Type == "Flee" && cur.Target == foundation)))
+            return;
 
         var pos = cm.QueryInterface<PositionComponent>(Entity);
         var fpos = cm.QueryInterface<PositionComponent>(foundation);
@@ -220,9 +233,15 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         if (d >= halfDiag + 4f) return;
         if (d < 0.01f) { dx = 1f; dz = 0f; d = 1f; }   // 正中重合:向 +X 撤
         float esc = halfDiag + 4f;
-        Walk(new FixedVector2D(
-            Fixed.FromFloat(fpos.Position.X.ToFloat() + dx / d * esc),
-            Fixed.FromFloat(fpos.Position.Z.ToFloat() + dz / d * esc)), queued: false);
+        PushOrderFront(new UnitOrder
+        {
+            Type = "Walk",
+            Target = foundation,
+            Position = new FixedVector2D(
+                Fixed.FromFloat(fpos.Position.X.ToFloat() + dx / d * esc),
+                Fixed.FromFloat(fpos.Position.Z.ToFloat() + dz / d * esc)),
+            Force = true,
+        });
     }
 
     // --- Pickup 接送(运输侧;原版 UnitAI.js OnPickupRequested/OnPickupCanceled/
@@ -1030,10 +1049,16 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             if (gatherer == null) { u.FinishOrder(); return; }
             if (m.Order!.Target is { } target)
             {
+                // 未完工地基不可采(原版 foundation| 剥掉 ResourceSupply;误下 Gather
+                // 会卡在 APPROACHING,工地阻挡走不出)。
+                if (GatherTargetFilter.IsIncompleteFoundation(m.Cm, target))
+                { u.FinishOrder(); return; }
+                var supply = m.Cm.QueryInterface<ResourceSupply>(target);
+                if (supply == null)
+                { u.FinishOrder(); return; }
                 // 狩猎重定向(原版 killBeforeGather):活体动物先猎杀,死后采尸体——
                 // 队列改为 [Attack, Gather]:Attack 在目标死亡后完成,接着 Gather 采尸体。
-                var supply = m.Cm.QueryInterface<ResourceSupply>(target);
-                if (supply != null && supply.KillBeforeGather
+                if (supply.KillBeforeGather
                     && m.Cm.QueryInterface<HealthComponent>(target) is { IsDead: false })
                 {
                     // 目标不在属主视野(动物游走进雾):攻击单会被追击门取消,采集也无处
@@ -1053,6 +1078,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                     return;
                 }
                 gatherer.TargetSupply = target;
+                StampGatherOrder(m.Order, m.Cm, target);
                 MoveToTargetEdge(u, target, m.Cm!, Fixed.FromInt(1));
             }
             u.FsmNextState = "GATHER.APPROACHING";
@@ -1067,6 +1093,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             var supply = FindSupplyNear(u, m.Cm, m.Order!.Position, specific: null, template: null);
             if (supply == null) { u.FinishOrder(); return; }
             gatherer.TargetSupply = supply;
+            StampGatherOrder(m.Order, m.Cm, supply.Value);
             MoveToTargetEdge(u, supply.Value, m.Cm, Fixed.FromInt(1));
             gatherer.State = ResourceGatherer.GatherState.MovingToResource;
             u.FsmNextState = "GATHER.APPROACHING";
@@ -1104,7 +1131,19 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 && m.Cm.QueryInterface<HealthComponent>(target) is { IsInjured: true };
             if (!validFoundation && !validRepair) { u.FinishOrder(); return; }
             builder.Build(target);
-            MoveToTarget(u, target, m.Cm!);
+            var gatherer = m.Cm.QueryInterface<ResourceGatherer>(u.Entity);
+            if (gatherer != null)
+            {
+                gatherer.State = ResourceGatherer.GatherState.Idle;
+                gatherer.TargetSupply = null;
+            }
+            // 走到矩形外壳工位(原版 IsInTargetRange),不要走外接圆——并排第二座
+            // 房子时半对角点落在第一座壳内,寻路失败原地转圈。
+            if (BuilderComponent.TryWorkGoal(m.Cm, u.Entity, target, out var workGoal))
+                m.Cm.QueryInterface<UnitMotion>(u.Entity)?.MoveToPoint(workGoal);
+            else
+                MoveToTargetEdge(u, target, m.Cm!,
+                    Fixed.FromFloat(BuilderComponent.WorkRange(m.Cm, u.Entity)));
             u.FsmNextState = "REPAIR.APPROACHING";
         });
 
@@ -2006,6 +2045,13 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             {
                 var gatherer = m.Cm!.QueryInterface<ResourceGatherer>(u.Entity);
                 if (gatherer == null || gatherer.TargetSupply == null) { u.FinishOrder(); return; }
+                var live = m.Cm!.QueryInterface<ResourceSupply>(gatherer.TargetSupply.Value);
+                if (live == null || live.IsEmpty)
+                {
+                    RememberDepletedSupply(u, m.Cm!, gatherer.TargetSupply);
+                    u.FsmNextState = "GATHER.FINDINGNEWTARGET";
+                    return;
+                }
                 var motion = m.Cm!.QueryInterface<UnitMotion>(u.Entity);
                 bool arrived = motion != null && !motion.HasMoveTarget;
                 if (!arrived)
@@ -2029,16 +2075,34 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 if (supply == null || supply.IsEmpty)
                 {
                     // 采空 → FINDINGNEWTARGET 自动续目标(原版同;此前直接 FinishOrder 停工)。
-                    u._depletedSupply = gatherer.TargetSupply;
+                    RememberDepletedSupply(u, m.Cm!, gatherer.TargetSupply);
                     u.FsmNextState = "GATHER.FINDINGNEWTARGET";
                     return;
                 }
 
-                int gathered = supply.Take((int)(gatherer.EffectiveRate(m.Cm!, supply.Type) * m.Dt));
+                float speed = gatherer.GatherSpeed(m.Cm!, supply);
+                if (speed <= 0f)
+                {
+                    RememberDepletedSupply(u, m.Cm!, gatherer.TargetSupply);
+                    u.FsmNextState = "GATHER.FINDINGNEWTARGET";
+                    return;
+                }
+                gatherer.GatherAcc += speed * m.Dt;
+                int units = (int)gatherer.GatherAcc;
+                if (units <= 0) return;
+                gatherer.GatherAcc -= units;
+                // 原版 TakeResources 会 DestroyEntity;须在销毁前记下 type/位置,
+                // 否则 FINDINGNEWTARGET 查不到同类(原版 PerformGather 把 type 存在订单上)。
+                bool last = !supply.IsInfinite && supply.Amount <= units;
+                if (last)
+                    RememberDepletedSupply(u, m.Cm!, gatherer.TargetSupply);
+                var carryType = supply.Type;
+                int gathered = supply.Take(units, m.Cm!);
                 gatherer.CarryAmount += gathered;
-                gatherer.CarryType = supply.Type;
+                gatherer.CarryType = carryType;
 
-                if (gatherer.CarryAmount >= 10 || supply.IsEmpty)
+                // 原版:背包满 → InventoryFilled 回投放点;未满但 exhausted → TargetInvalidated 续采。
+                if (gatherer.CarryAmount >= 10)
                 {
                     gatherer.CarryAmount = System.Math.Clamp(gatherer.CarryAmount, 0, 10);
                     var dropsite = FindNearestDropsite(u.Entity, m.Cm!);
@@ -2049,6 +2113,10 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                         gatherer.State = ResourceGatherer.GatherState.MovingToDropsite;
                         u.FsmNextState = "GATHER.RETURNINGRESOURCE";
                     }
+                }
+                else if (last)
+                {
+                    u.FsmNextState = "GATHER.FINDINGNEWTARGET";
                 }
             });
 
@@ -2064,15 +2132,19 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                     // Deposit carried resources at the dropsite.
                     DepositResources(u.Entity, gatherer, m.Cm!);
                     // Return to the original supply (if still valid) for another load.
-                    if (gatherer.TargetSupply is { } supply && MoveToTargetEdge(u, supply, m.Cm!, Fixed.FromInt(1)))
+                    // 敌方领土/敌方属主的供应不走回(否则交完己方 CC 又杀去 P1 浆果)。
+                    var own = m.Cm.QueryInterface<OwnershipComponent>(u.Entity);
+                    if (gatherer.TargetSupply is { } supply
+                        && (own == null || !GatherTargetFilter.IsHostile(m.Cm, own.PlayerId, supply))
+                        && MoveToTargetEdge(u, supply, m.Cm!, Fixed.FromInt(1)))
                     {
                         gatherer.State = ResourceGatherer.GatherState.MovingToResource;
                         u.FsmNextState = "GATHER.APPROACHING";
                     }
                     else
                     {
-                        // 原供应失效 → FINDINGNEWTARGET 自动续目标(原版同)。
-                        u._depletedSupply = gatherer.TargetSupply;
+                        // 原供应失效或在敌方领土 → FINDINGNEWTARGET 自动续目标。
+                        RememberDepletedSupply(u, m.Cm!, gatherer.TargetSupply);
                         u.FsmNextState = "GATHER.FINDINGNEWTARGET";
                     }
                 }
@@ -2086,10 +2158,33 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             .On("Timer", (u, m) =>
             {
                 var next = FindNearbySupply(u, m.Cm!);
-                if (next == null) { u.FinishOrder(); return; }
                 var gatherer = m.Cm!.QueryInterface<ResourceGatherer>(u.Entity);
                 if (gatherer == null) { u.FinishOrder(); return; }
+                if (next == null)
+                {
+                    // 原版:附近没了仍去投放点(有携带则交货,无携带也去集合)。
+                    // 有携带才回投放,避免空手往返死循环。
+                    if (gatherer.CarryAmount > 0)
+                    {
+                        var dropsite = FindNearestDropsite(u.Entity, m.Cm!);
+                        if (dropsite.HasValue)
+                        {
+                            gatherer.TargetDropsite = dropsite;
+                            MoveToTargetEdge(u, dropsite.Value, m.Cm!, Fixed.FromInt(1));
+                            gatherer.State = ResourceGatherer.GatherState.MovingToDropsite;
+                            u.FsmNextState = "GATHER.RETURNINGRESOURCE";
+                            return;
+                        }
+                    }
+                    gatherer.TargetSupply = null;
+                    u.FinishOrder();
+                    return;
+                }
                 gatherer.TargetSupply = next;
+                StampGatherOrder(u.CurrentOrder, m.Cm!, next.Value);
+                // 原版 PerformGather(nearby, false, false):续采不再强制,改从当前位置搜。
+                if (u.CurrentOrder != null)
+                    u.CurrentOrder.Force = false;
                 MoveToTargetEdge(u, next.Value, m.Cm!, Fixed.FromInt(1));
                 gatherer.State = ResourceGatherer.GatherState.MovingToResource;
                 u.FsmNextState = "GATHER.APPROACHING";
@@ -3048,6 +3143,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         {
             var ds = cm.QueryInterface<ResourceDropsite>(e);
             if (ds == null || !ds.Accepts(carryType)) continue;
+            if (GatherTargetFilter.IsIncompleteFoundation(cm, e)) continue;
             if (cm.QueryInterface<OwnershipComponent>(e)?.PlayerId != own.PlayerId) continue;
             var pos = cm.QueryInterface<PositionComponent>(e);
             if (pos == null) continue;
@@ -3065,26 +3161,95 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
     /// 返回最近者。强制单搜原目标位置,非强制搜当前位置(原版 previousForced 语义:
     /// 强制采集远赴资源点是有意的,回该区域续采)。</summary>
     private EntityId? _depletedSupply;
+    private string? _depletedSpecific;
+    private string? _depletedTemplate;
+    private FixedVector2D? _depletedPos;
+
+    /// <summary>下单时把 type/initPos 抄到订单(原版 PerformGather),目标销毁后仍能续采。
+    /// initPos 只写一次,续采不改搜索原点。</summary>
+    private static void StampGatherOrder(UnitOrder? order, ComponentManager cm, EntityId target)
+    {
+        if (order == null) return;
+        var supply = cm.QueryInterface<ResourceSupply>(target);
+        if (supply != null)
+        {
+            order.GatherSpecific = supply.SpecificType;
+            order.GatherGeneric = supply.GenericType;
+            order.GatherTemplate = supply.SpecificType == "meat"
+                ? cm.QueryInterface<IdentityComponent>(target)?.TemplateName ?? ""
+                : null;
+        }
+        var pos = cm.QueryInterface<PositionComponent>(target);
+        if (pos != null && !order.HasGatherInitPos)
+        {
+            order.GatherInitPos = new FixedVector2D(pos.Position.X, pos.Position.Z);
+            order.HasGatherInitPos = true;
+        }
+    }
+
+    /// <summary>采空/失效时记下 type 与位置。DestroyEntity 之后 QueryInterface 已空,
+    /// 原版把这些存在 order.data.type / initPos。</summary>
+    private static void RememberDepletedSupply(UnitAIComponent u, ComponentManager cm, EntityId? target)
+    {
+        u._depletedSupply = target;
+        if (u.CurrentOrder is { HasGatherInitPos: true } stamped)
+        {
+            if (!string.IsNullOrEmpty(stamped.GatherSpecific))
+                u._depletedSpecific = stamped.GatherSpecific;
+            u._depletedTemplate = stamped.GatherTemplate;
+            u._depletedPos = stamped.GatherInitPos;
+        }
+        if (target is not { } id) return;
+        var supply = cm.QueryInterface<ResourceSupply>(id);
+        if (supply != null)
+        {
+            u._depletedSpecific = supply.SpecificType;
+            u._depletedTemplate = supply.SpecificType == "meat"
+                ? cm.QueryInterface<IdentityComponent>(id)?.TemplateName ?? ""
+                : null;
+        }
+        var pos = cm.QueryInterface<PositionComponent>(id);
+        if (pos != null)
+            u._depletedPos = new FixedVector2D(pos.Position.X, pos.Position.Z);
+    }
 
     private static EntityId? FindNearbySupply(UnitAIComponent u, ComponentManager cm)
     {
         var gatherer = cm.QueryInterface<ResourceGatherer>(u.Entity);
-        if (gatherer?.TargetSupply == null) return null;
+        EntityId? target = gatherer?.TargetSupply ?? u._depletedSupply;
+        var order = u.CurrentOrder;
 
-        var prevSupply = cm.QueryInterface<ResourceSupply>(gatherer.TargetSupply.Value);
-        if (prevSupply == null) return null;
-        string specific = prevSupply.SpecificType;
-        string? template = null;
-        if (specific == "meat")
-            template = cm.QueryInterface<IdentityComponent>(gatherer.TargetSupply.Value)?.TemplateName ?? "";
+        string? specific = order?.GatherSpecific ?? u._depletedSpecific;
+        string? template = order?.GatherTemplate ?? u._depletedTemplate;
+        if (target is { } tid)
+        {
+            var prevSupply = cm.QueryInterface<ResourceSupply>(tid);
+            if (prevSupply != null)
+            {
+                specific = prevSupply.SpecificType;
+                template = specific == "meat"
+                    ? cm.QueryInterface<IdentityComponent>(tid)?.TemplateName ?? ""
+                    : null;
+            }
+        }
+        if (string.IsNullOrEmpty(specific)) return null;
 
-        // 搜索中心:强制单搜原目标位置,否则当前位置(原版 previousForced 语义)。
         FixedVector2D center;
         if (u.CurrentOrder is { Force: true })
         {
-            var tp = cm.QueryInterface<PositionComponent>(gatherer.TargetSupply.Value);
-            if (tp == null) return null;
-            center = new FixedVector2D(tp.Position.X, tp.Position.Z);
+            if (order is { HasGatherInitPos: true })
+                center = order.GatherInitPos;
+            else
+            {
+                PositionComponent? tp = target is { } t2
+                    ? cm.QueryInterface<PositionComponent>(t2) : null;
+                if (tp != null)
+                    center = new FixedVector2D(tp.Position.X, tp.Position.Z);
+                else if (u._depletedPos is { } dp)
+                    center = dp;
+                else
+                    return null;
+            }
         }
         else
         {
@@ -3117,15 +3282,20 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 if (id == null || id.TemplateName != template) return false;
             }
             if (range != null && own != null
-                && range.GetLosVisibility(e, own.PlayerId) != LosVisibility.Visible)
+                && range.GetLosVisibility(e, own.PlayerId) == LosVisibility.Hidden)
+                return false;
+            if (own != null && !GatherTargetFilter.IsGatherable(cm, own.PlayerId, e))
+                return false;
+            else if (own == null && GatherTargetFilter.IsIncompleteFoundation(cm, e))
                 return false;
             return cm.QueryInterface<PositionComponent>(e) != null;
         }
 
         EntityId? best = null;
         float bestDist2 = float.MaxValue;
+        const float maxRange2 = 64f * 64f;
         var candidates = range != null
-            ? range.ExecuteQuery(u.Entity, Fixed.Zero, Fixed.FromInt(64), Eligible)
+            ? range.ExecuteQueryAroundPos(center.X, center.Y, Fixed.Zero, Fixed.FromInt(64), Eligible)
             : System.Linq.Enumerable.Where(cm.AllEntities, Eligible);
         foreach (var e in candidates)
         {
@@ -3133,6 +3303,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             float dx = p.Position.X.ToFloat() - center.X.ToFloat();
             float dz = p.Position.Z.ToFloat() - center.Y.ToFloat();
             float d2 = dx * dx + dz * dz;
+            if (d2 > maxRange2) continue;
             if (d2 < bestDist2) { bestDist2 = d2; best = e; }
         }
         return best;

@@ -3320,6 +3320,7 @@ public sealed partial class Main : Node3D
 				var holder = _sim.Sim.QueryInterface<GarrisonHolderComponent>(target.Value);
 				var owner = _sim.Sim.QueryInterface<OwnershipComponent>(target.Value);
 				if (holder == null || owner == null || owner.PlayerId != (int)_sim.LocalPlayerId) return;
+				if (_sim.Sim.QueryInterface<FoundationComponent>(target.Value) is { IsBuilt: false }) return;
 				foreach (var unit in _selectedEntities)
 					if (_sim.Sim.QueryInterface<UnitAIComponent>(unit) != null)
 						_sim.CommandGarrison(unit, target.Value);
@@ -3491,7 +3492,7 @@ public sealed partial class Main : Node3D
 		// 选中侧能力一趟聚合(桥 GetSelectedActionCaps)。
 		int lp = (int)_sim.LocalPlayerId;
 		var caps = _sim.Gui.GetSelectedActionCaps(_selectedEntities, lp);
-		if (!caps.CanAttack && !caps.CanGather && !caps.CanGarrison) return "";
+		if (!caps.CanAttack && !caps.CanGather && !caps.CanGarrison && !caps.CanRepair) return "";
 
 		var worldPos = ScreenToWorld(mousePos);
 		if (worldPos == null) return "";
@@ -3499,11 +3500,17 @@ public sealed partial class Main : Node3D
 		if (targets.Count == 0) return "";
 		var e = targets[0];
 		var owner = _sim.Sim.QueryInterface<OwnershipComponent>(e);
-		// gaia 实体(鹿/狼等)无 OwnershipComponent,按玩家 0 处理——IsEnemy(lp,0) 恒 true,
-		// 有 Health 的 gaia 动物对士兵显示剑(原版可猎);树木无 Health(原版数据)不显示。
+		var foundation = _sim.Sim.QueryInterface<FoundationComponent>(e);
+		bool incomplete = foundation != null && !foundation.IsBuilt;
+
+		// 未完工地基:建造光标,绝不用采集(农田模板完工才有 ResourceSupply;地基被点中
+		// 或点到旁边的树时也不该显示斧子)。
+		if (incomplete && caps.CanRepair
+			&& owner != null && owner.PlayerId == lp)
+			return "action-repair";
 
 		// 采集者在资源目标上优先采集光标(鹿对村民=猎取;对齐 HandleRightClick 分流)。
-		if (caps.CanGather && _sim.Sim.QueryInterface<ResourceSupply>(e) is { } supply)
+		if (!incomplete && caps.CanGather && _sim.Sim.QueryInterface<ResourceSupply>(e) is { } supply)
 		{
 			// 按 specificType 细分(原版 cursors/action-gather-{fruit,fish,meat,...}.png);
 			// 大类兜底(旧数据无 specificType 时回退)。
@@ -3536,7 +3543,7 @@ public sealed partial class Main : Node3D
 			// Ctrl = 捕获修饰(与右键 HandleRightClick 的 allowCapture 一致)。
 			return Input.IsKeyPressed(Key.Ctrl) ? "action-capture" : "action-attack";
 		}
-		if (caps.CanGarrison && owner != null && owner.PlayerId == lp
+		if (!incomplete && caps.CanGarrison && owner != null && owner.PlayerId == lp
 			&& _sim.Sim.QueryInterface<GarrisonHolderComponent>(e) != null)
 			return "action-garrison";
 		return "";
@@ -3652,7 +3659,8 @@ public sealed partial class Main : Node3D
 		foreach (var eid in targets)
 		{
 			targetEntity = eid;
-			isResource = _sim.Sim.QueryInterface<ResourceSupply>(eid) != null;
+			isResource = _sim.Sim.QueryInterface<ResourceSupply>(eid) != null
+				&& !GatherTargetFilter.IsIncompleteFoundation(_sim.Sim, eid);
 			// 不完工地基(原版 repair 动作):右键己方地基 → 建造工去帮建。此前无此分支,
 			// 右键地基只走 Move,建造工走过去就站住、不建造。
 			var foundationCmp = _sim.Sim.QueryInterface<FoundationComponent>(eid);
@@ -3664,8 +3672,10 @@ public sealed partial class Main : Node3D
 			isEnemy = _sim.Sim.Players.IsEnemy((int)_sim.LocalPlayerId, owner?.PlayerId ?? 0)
 				&& (_sim.Sim.QueryInterface<HealthComponent>(eid) != null
 					|| _sim.Sim.QueryInterface<CapturableComponent>(eid) != null);
-			// 驻军目标(原版 garrison 动作):己方有驻军位的建筑;与敌对互斥。
-			isGarrisonTarget = !isEnemy && owner != null
+			// 驻军目标(原版 garrison 动作):己方有驻军位的*已建成*建筑;与敌对互斥。
+			// 未完工地基即使误挂了 GarrisonHolder 也不可驻(原版 foundation| 滤镜;
+			// 否则右键第二座房屋会把村民装进去从地图消失)。
+			isGarrisonTarget = !isFoundation && !isEnemy && owner != null
 				&& owner.PlayerId == (int)_sim.LocalPlayerId
 				&& _sim.Sim.QueryInterface<GarrisonHolderComponent>(eid) != null;
 			break;
@@ -3679,22 +3689,22 @@ public sealed partial class Main : Node3D
 		var orderTargets = ExpandFormationOrderTargets();
 		foreach (var unit in orderTargets)
 		{
-			if (isGarrisonTarget && targetEntity.HasValue
+			if (isFoundation && targetEntity.HasValue
+				&& _sim.Sim.QueryInterface<BuilderComponent>(unit) != null)
+			{
+				// 右键不完工地基 → 建造(原版 repair specificness 11 < garrison 20)。
+				// 必须先于驻军:房屋模板允许 Support 驻防,村民右键第二座地基否则会消失。
+				_sim.CommandRepair(unit, targetEntity.Value);
+				orderSound ??= "order_repair";
+			}
+			else if (isGarrisonTarget && targetEntity.HasValue
 				&& _sim.Sim.QueryInterface<UnitAIComponent>(unit) != null
 				&& !IsFormationController(unit))
 			{
-				// 右键己方驻军建筑 → 载入(原版 unit_actions garrison;
+				// 右键己方已建成驻军建筑 → 载入(原版 unit_actions garrison;
 				// 宿主是否接受由 sim 侧 Garrisonable.CanGarrison 判)。
 				_sim.CommandGarrison(unit, targetEntity.Value);
 				orderSound ??= "order_garrison";
-			}
-			else if (isFoundation && targetEntity.HasValue
-				&& _sim.Sim.QueryInterface<BuilderComponent>(unit) != null)
-			{
-				// 右键不完工地基 → 建造工去帮建(原版 repair 动作)。此前无此分支,
-				// 右键地基走 Move,建造工走到就站住不建造。多个建造工可同时帮建同一地基。
-				_sim.CommandRepair(unit, targetEntity.Value);
-				orderSound ??= "order_repair";
 			}
 			else if (isResource && targetEntity.HasValue
 				&& (_sim.Sim.QueryInterface<ResourceGatherer>(unit) != null || IsFormationController(unit)))
@@ -4395,6 +4405,155 @@ public sealed partial class Main : Node3D
 				return true;
 			}
 		return false;
+	}
+
+	/// <summary>MCP:对局是否已过 InitWorld(加载页结束后为 true)。</summary>
+	public bool DebugIsGameStarted() => _gameStarted;
+
+	/// <summary>MCP:市政中心东侧先生成一座<b>成品</b>住宅作阻挡,再在其东 13m 下第二座
+	/// 地基;工人传送到第一座北侧(复现转圈:第二座工地点落在第一座 AABB 内)。
+	/// 地基经锁步约两回合出现后调 <see cref="DebugRepairNewestHouse"/>。</summary>
+	public string DebugPlaceTwoAdjacentHouses()
+	{
+		if (!_gameStarted || _sim?.Sim == null) return "not-ready";
+		int lp = (int)_sim.LocalPlayerId;
+		Vector3? ccPos = null;
+		string civ = "spart";
+		EntityId builder = default;
+		bool foundBuilder = false;
+		var builders = new List<EntityId>();
+		foreach (var e in _sim.Sim.AllEntities)
+		{
+			var own = _sim.Sim.QueryInterface<OwnershipComponent>(e);
+			if (own == null || own.PlayerId != lp) continue;
+			var id = _sim.Sim.QueryInterface<IdentityComponent>(e);
+			if (id == null) continue;
+			if (ccPos == null && id.TemplateName.Contains("/civil_centre"))
+			{
+				civ = id.TemplateName.Split('/')[1];
+				var p = _sim.Sim.QueryInterface<PositionComponent>(e);
+				if (p != null) ccPos = new Vector3(p.Position.X.ToFloat(), 0, p.Position.Z.ToFloat());
+			}
+			if (_sim.Sim.QueryInterface<BuilderComponent>(e) != null
+				&& _sim.Sim.QueryInterface<UnitAIComponent>(e) != null)
+			{
+				builders.Add(e);
+				if (!foundBuilder) { builder = e; foundBuilder = true; }
+			}
+		}
+		if (ccPos == null || !foundBuilder) return "no-cc-or-builder";
+		var player = _sim.GetPlayer();
+		if (player != null) player.Wood = System.Math.Max(player.Wood, 500);
+		string house = $"structures/{civ}/house";
+		// 离 CC 24m,避开市政中心 占地;两房中心距 13m(11m 边长 + 2m 缝,对齐单测)。
+		float x1 = ccPos.Value.X + 24f, z1 = ccPos.Value.Z;
+		float x2 = x1 + 13f, z2 = z1;
+		foreach (var b in builders)
+		{
+			var pos = _sim.Sim.QueryInterface<PositionComponent>(b);
+			if (pos == null) continue;
+			var old = new FixedVector2D(pos.Position.X, pos.Position.Z);
+			pos.Position = new FixedVector3D(Fixed.FromFloat(x1), Fixed.Zero, Fixed.FromFloat(z1 + 8f));
+			_sim.Sim.NotifyPositionChanged(b, old, new FixedVector2D(pos.Position.X, pos.Position.Z));
+		}
+		var built = _sim.SpawnFromTemplate(house, x1, z1, lp);
+		_sim.AssignOwner(built, lp);
+		_sim.CommandBuild(builder, house, x2, z2, Mathf.Pi * 0.75f);
+		float h = TerrainHeightService.Sample(x2, z2);
+		_camera.SetFocus(new Vector3(x2, h, z2));
+		_camera.SetDistance(70f);
+		return $"ok civ={civ} builder={builder.Value} built={built.Value} cc=({ccPos.Value.X:0.#},{ccPos.Value.Z:0.#}) h1=({x1:0.#},{z1:0.#}) h2=({x2:0.#},{z2:0.#})";
+	}
+
+	/// <summary>MCP:把本地所有工人派去续建 X 最大的未建成住宅(第二座)。</summary>
+	public string DebugRepairNewestHouse()
+	{
+		if (!_gameStarted || _sim?.Sim == null) return "not-ready";
+		int lp = (int)_sim.LocalPlayerId;
+		EntityId target = default;
+		float bestX = float.MinValue;
+		int foundations = 0;
+		foreach (var e in _sim.Sim.AllEntities)
+		{
+			var fd = _sim.Sim.QueryInterface<FoundationComponent>(e);
+			if (fd == null || fd.IsBuilt) continue;
+			var own = _sim.Sim.QueryInterface<OwnershipComponent>(e);
+			if (own == null || own.PlayerId != lp) continue;
+			var id = _sim.Sim.QueryInterface<IdentityComponent>(e);
+			if (id == null || !id.TemplateName.Contains("/house")) continue;
+			foundations++;
+			var p = _sim.Sim.QueryInterface<PositionComponent>(e);
+			if (p == null) continue;
+			float x = p.Position.X.ToFloat();
+			if (x > bestX) { bestX = x; target = e; }
+		}
+		if (foundations == 0) return "no-foundation";
+		int n = 0;
+		foreach (var e in _sim.Sim.AllEntities)
+		{
+			var own = _sim.Sim.QueryInterface<OwnershipComponent>(e);
+			if (own == null || own.PlayerId != lp) continue;
+			if (_sim.Sim.QueryInterface<BuilderComponent>(e) == null) continue;
+			if (_sim.Sim.QueryInterface<UnitAIComponent>(e) == null) continue;
+			_sim.CommandRepair(e, target);
+			n++;
+		}
+		var tp = _sim.Sim.QueryInterface<PositionComponent>(target);
+		return $"repair n={n} target={target.Value} foundations={foundations} at=({tp?.Position.X.ToFloat():0.#},{tp?.Position.Z.ToFloat():0.#})";
+	}
+
+	/// <summary>MCP:本方工人位姿/订单/寻路,用来看第二座房是否原地转圈或消失。</summary>
+	public string DebugDumpWorkerMotion(int max = 8)
+	{
+		if (!_gameStarted || _sim?.Sim == null) return "not-ready";
+		int lp = (int)_sim.LocalPlayerId;
+		var sb = new System.Text.StringBuilder();
+		int n = 0;
+		foreach (var e in _sim.Sim.AllEntities)
+		{
+			var own = _sim.Sim.QueryInterface<OwnershipComponent>(e);
+			if (own == null || own.PlayerId != lp) continue;
+			if (_sim.Sim.QueryInterface<BuilderComponent>(e) == null) continue;
+			var pos = _sim.Sim.QueryInterface<PositionComponent>(e);
+			var ai = _sim.Sim.QueryInterface<UnitAIComponent>(e);
+			var mot = _sim.Sim.QueryInterface<UnitMotion>(e);
+			if (pos == null) continue;
+			sb.Append(e.Value).Append(" in=").Append(pos.InWorld ? 'Y' : 'N')
+				.Append(" p=(").Append(pos.Position.X.ToFloat().ToString("0.00")).Append(',')
+				.Append(pos.Position.Z.ToFloat().ToString("0.00")).Append(") yaw=")
+				.Append(pos.Rotation.Y.ToFloat().ToString("0.00"))
+				.Append(" fsm=").Append(ai?.FsmStateName ?? "-")
+				.Append(" ord=").Append(ai?.CurrentOrder?.Type ?? "-");
+			if (ai?.CurrentOrder?.Target is { } t) sb.Append('#').Append(t.Value);
+			sb.Append(" mv=").Append(mot != null && mot.HasMoveTarget ? 'Y' : 'N');
+			if (mot != null && mot.HasMoveTarget)
+				sb.Append("->(").Append(mot.TargetPos.X.ToFloat().ToString("0.00")).Append(',')
+					.Append(mot.TargetPos.Y.ToFloat().ToString("0.00")).Append(')');
+			sb.Append(" stuck=").Append(mot != null && mot.IsStuckThisLeg ? 'Y' : 'N')
+				.Append(';');
+			if (++n >= max) break;
+		}
+		sb.Append(" n=").Append(n);
+		foreach (var e in _sim.Sim.AllEntities)
+		{
+			var id = _sim.Sim.QueryInterface<IdentityComponent>(e);
+			if (id == null || !id.TemplateName.Contains("/house")) continue;
+			var own = _sim.Sim.QueryInterface<OwnershipComponent>(e);
+			if (own == null || own.PlayerId != lp) continue;
+			var p = _sim.Sim.QueryInterface<PositionComponent>(e);
+			var fd = _sim.Sim.QueryInterface<FoundationComponent>(e);
+			var gh = _sim.Sim.QueryInterface<GarrisonHolderComponent>(e);
+			sb.Append(" h#").Append(e.Value).Append(" t=").Append(id.TemplateName);
+			if (fd != null)
+				sb.Append(" fd built=").Append(fd.IsBuilt ? 'Y' : 'N').Append(" prog=").Append(fd.Progress.ToString("0.00"));
+			else sb.Append(" fd=-");
+			sb.Append(" gh=").Append(gh != null ? 'Y' : 'N').Append(" in=").Append(p != null && p.InWorld ? 'Y' : 'N');
+			if (p != null)
+				sb.Append(" @(").Append(p.Position.X.ToFloat().ToString("0.#")).Append(',')
+					.Append(p.Position.Z.ToFloat().ToString("0.#")).Append(')');
+			sb.Append(';');
+		}
+		return sb.ToString();
 	}
 
 	/// <summary>F12:dump 选中(首个)实体的全部组件到控制台 + user://debug/entity_dump.txt。

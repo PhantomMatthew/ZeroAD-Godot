@@ -18,9 +18,8 @@ public sealed class SimLoopHooks
     public Action<EntityId>? OnCorpseConverted;
     public Action? TutorialTick;
     /// <summary>完工地基 → 建筑实体的装配器:(模板全名, x, z, 玩家, 朝向 yaw) → 实体。
-    /// Godot 侧提供 SimBridge.SpawnScenarioBuilding(Footprint/静态阻挡/生产队列/驻守等建筑组件);
-    /// 为空时回落 <see cref="ComponentManager.SpawnEntity"/>——注意那条路径按单位装配
-    /// (UnitMotion/UnitAI/单位圆阻挡),只适合尚无建筑装配器的无头 RL 夹具。</summary>
+    /// Godot 侧提供 SimBridge.SpawnScenarioBuilding; 无头 RL 设为
+    /// <see cref="ComponentManager.SpawnEntity"/> (structures/ 走 AssembleStructure)。</summary>
     public Func<string, float, float, int, float, EntityId>? SpawnBuilding;
     /// <summary>地基 ResultTemplate 为旧式短名(如 "House")时映射到模板全名;为空则原样使用。</summary>
     public Func<string, string>? MapBuildTemplate;
@@ -46,9 +45,10 @@ public static class SimLoop
             catch (Exception ex) { Diag.Err("Sim", $"tick phase {name} failed: {ex.Message}"); }
         }
 
-        var pathfinder = SimSystem.Pathfinder;
+        SimSystem.Bind(cm);
+        var pathfinder = cm.Pathfinder ?? SimSystem.Pathfinder;
         var range = cm.Range ?? SimSystem.Range;
-        var territory = SimSystem.Territory;
+        var territory = cm.Territory ?? SimSystem.Territory;
 
         P("pathharvest", () => pathfinder?.HarvestPathResults());
         P("dead", () => RemoveDeadEntities(cm, hooks));
@@ -102,6 +102,7 @@ public static class SimLoop
 
     public static void TickAiBrains(ComponentManager cm)
     {
+        SimSystem.Bind(cm);
         foreach (var entity in Snapshot(cm))
             cm.QueryInterface<AIComponent>(entity)?.Tick();
     }
@@ -209,42 +210,93 @@ public static class SimLoop
                 TemplateName = fullTemplate
             });
             cm.RecomputePlayerPopBonus(ownerId);
-            AutoAssignIdleBuilders(cm, x, z);
+            // 原版 ConstructionFinished autoharvest:只通知本地基工人,绝不扫全图空闲工。
+            AutoharvestBuilders(cm, foundation.CompletedBuilders, built, ownerId);
         }
     }
 
-    private static void AutoAssignIdleBuilders(ComponentManager cm, float bx, float bz)
+    /// <summary>原版 UnitAI.js ConstructionFinished(3360-3391):仅该地基工人;
+    /// 建成体可采集(农田)则采它,否则若是投放点则在 64m 内找其接受的资源。
+    /// 教程 P2 无 AI、村民空闲——旧实现把全图空闲采集者派去 P1 工地旁的树。</summary>
+    public static void AutoharvestBuilders(ComponentManager cm,
+        IReadOnlyList<EntityId> builders, EntityId built, int ownerId)
     {
-        EntityId? nearest = null;
-        float nearestDist = 30f * 30f;
-        foreach (var e in Snapshot(cm))
+        if (builders.Count == 0) return;
+        var builtSupply = cm.QueryInterface<ResourceSupply>(built);
+        var dropsite = cm.QueryInterface<ResourceDropsite>(built);
+        var builtPos = cm.QueryInterface<PositionComponent>(built);
+        bool gatherBuilt = builtSupply != null && !builtSupply.IsEmpty
+            && !GatherTargetFilter.IsIncompleteFoundation(cm, built)
+            && !GatherTargetFilter.IsHostile(cm, ownerId, built);
+        EntityId? nearby = null;
+        if (!gatherBuilt && dropsite != null && builtPos != null
+            && !GatherTargetFilter.IsIncompleteFoundation(cm, built))
+            nearby = FindAutoharvestSupply(cm, ownerId, builtPos, dropsite);
+        if (!gatherBuilt && nearby == null) return;
+
+        foreach (var builderId in builders)
+        {
+            var owner = cm.QueryInterface<OwnershipComponent>(builderId);
+            if (owner == null || owner.PlayerId != ownerId) continue;
+            if (cm.QueryInterface<ResourceGatherer>(builderId) == null) continue;
+            var ai = cm.QueryInterface<UnitAIComponent>(builderId);
+            if (ai == null) continue;
+            var order = ai.CurrentOrder;
+            if (order != null && (order.Type != "Repair" || !order.AutoContinue))
+                continue;
+            // 附近还有未完工地基 → 让 AutocontinueRepair 续建,不要把工人拽去砍树
+            // (完工建筑阻挡刚站在工位上的人,采树寻路会卡住)。
+            if (!gatherBuilt && HasNearbyOwnFoundation(cm, builderId, ownerId))
+                continue;
+            if (gatherBuilt) ai.Gather(built);
+            else if (nearby != null) ai.Gather(nearby.Value);
+        }
+    }
+
+    private static bool HasNearbyOwnFoundation(ComponentManager cm, EntityId builder, int ownerId)
+    {
+        var self = cm.QueryInterface<PositionComponent>(builder);
+        if (self == null) return false;
+        const float range2 = 64f * 64f;
+        float bx = self.Position.X.ToFloat();
+        float bz = self.Position.Z.ToFloat();
+        foreach (var e in cm.AllEntities)
+        {
+            if (!GatherTargetFilter.IsIncompleteFoundation(cm, e)) continue;
+            if (cm.QueryInterface<OwnershipComponent>(e)?.PlayerId != ownerId) continue;
+            var pos = cm.QueryInterface<PositionComponent>(e);
+            if (pos == null) continue;
+            float dx = pos.Position.X.ToFloat() - bx;
+            float dz = pos.Position.Z.ToFloat() - bz;
+            if (dx * dx + dz * dz <= range2) return true;
+        }
+        return false;
+    }
+
+    private static EntityId? FindAutoharvestSupply(ComponentManager cm, int gathererPlayer,
+        PositionComponent builtPos, ResourceDropsite dropsite)
+    {
+        const float range2 = 64f * 64f;
+        EntityId? best = null;
+        float bestD = float.MaxValue;
+        float bx = builtPos.Position.X.ToFloat();
+        float bz = builtPos.Position.Z.ToFloat();
+        foreach (var e in cm.AllEntities)
         {
             var supply = cm.QueryInterface<ResourceSupply>(e);
-            if (supply == null || supply.Amount <= 0) continue;
+            if (supply == null || supply.IsEmpty) continue;
+            if (!dropsite.Accepts(supply.Type)) continue;
+            if (!GatherTargetFilter.IsGatherable(cm, gathererPlayer, e)) continue;
             var pos = cm.QueryInterface<PositionComponent>(e);
             if (pos == null) continue;
             float dx = pos.Position.X.ToFloat() - bx;
             float dz = pos.Position.Z.ToFloat() - bz;
             float d2 = dx * dx + dz * dz;
-            if (d2 < nearestDist)
-            {
-                nearestDist = d2;
-                nearest = e;
-            }
+            if (d2 > range2 || d2 >= bestD) continue;
+            bestD = d2;
+            best = e;
         }
-        if (nearest == null) return;
-
-        foreach (var e in Snapshot(cm))
-        {
-            var builder = cm.QueryInterface<BuilderComponent>(e);
-            if (builder == null || builder.Target != null) continue;
-            if (cm.QueryInterface<ResourceGatherer>(e) == null) continue;
-            var motion = cm.QueryInterface<UnitMotion>(e);
-            if (motion == null || motion.HasMoveTarget) continue;
-            var ai = cm.QueryInterface<UnitAIComponent>(e);
-            if (ai?.CurrentOrder != null) continue;
-            ai?.Gather(nearest.Value);
-        }
+        return best;
     }
 
     private static void TickResearch(ComponentManager cm, float dt)
@@ -317,6 +369,6 @@ public static class SimLoop
             cm.QueryInterface<BattleDetectionComponent>(entity)?.Tick(dt);
             cm.QueryInterface<HealthComponent>(entity)?.TickRegen(cm, dt);
         }
-        BarterSystem.TickRestore(dt);
+        BarterSystem.TickRestore(cm, dt);
     }
 }

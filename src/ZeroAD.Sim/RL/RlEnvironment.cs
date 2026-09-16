@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using ZeroAD.Sim.AI.CommonApi;
 using ZeroAD.Sim.Components;
+using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Net;
 using ZeroAD.Sim.Simulation;
@@ -8,18 +11,21 @@ using ZeroAD.Sim.Simulation;
 namespace ZeroAD.Sim.RL;
 
 /// <summary>Headless AlphaStar-style environment. Unique sim source is this process's
-/// <see cref="ComponentManager"/>; Python/PyTorch talks to it via in-process calls (P0)
-/// or later shared-memory / gRPC facades.</summary>
+/// <see cref="ComponentManager"/>; Python/PyTorch talks to it via in-process calls
+/// or the shared-memory / gRPC host.</summary>
 public sealed class RlEnvironment : IDisposable
 {
     private readonly RlConfig _cfg;
     private readonly SimLoopState _loop = new();
+    private readonly SimLoopHooks _hooks = new();
     private ComponentManager? _cm;
     private RangeManager? _range;
     private NetTurnManager? _net;
     private RlCatalog _catalog = new();
     private RlObservation _obs = new();
     private bool _done;
+    private int _prevEnemyHp;
+    private int _prevStock;
 
     public ComponentManager Sim => _cm ?? throw new ObjectDisposedException(nameof(RlEnvironment));
     public RangeManager Range => _range ?? throw new ObjectDisposedException(nameof(RlEnvironment));
@@ -28,6 +34,8 @@ public sealed class RlEnvironment : IDisposable
     public RlObservation Observation => _obs;
     public bool Done => _done;
     public int WorldMeters => _cfg.WorldMeters;
+    /// <summary>True when this episode loaded templates and spawned the 1v1 encounter.</summary>
+    public bool LoadedRealMatch { get; private set; }
 
     public RlEnvironment(RlConfig? config = null) => _cfg = config ?? new RlConfig();
 
@@ -35,11 +43,20 @@ public sealed class RlEnvironment : IDisposable
     {
         DisposeWorld();
         _done = false;
+        LoadedRealMatch = false;
         _loop.GateTickAccum = 0f;
         _obs = new RlObservation();
         _catalog = new RlCatalog();
 
-        var cm = new ComponentManager(_cfg.Seed);
+        TemplateLoader? templates = null;
+        TechCatalog? techs = null;
+        RlCatalog? catalog = null;
+        bool real = _cfg.UseRealMatch
+            && RlContentCache.TryGet(_cfg.DataRoot, out templates, out techs, out catalog);
+
+        var cm = real
+            ? new ComponentManager(_cfg.Seed, templates: templates!)
+            : new ComponentManager(_cfg.Seed);
         SimSystem.Init(cm);
         var world = Fixed.FromInt(_cfg.WorldMeters);
         var range = new RangeManager(cm, world, world);
@@ -47,23 +64,39 @@ public sealed class RlEnvironment : IDisposable
         var territory = new TerritoryManager(cm, _cfg.WorldMeters);
         SimSystem.SetTerritoryManager(territory);
 
-        var p1 = cm.CreateEntity();
-        cm.AddComponent(p1, new PlayerComponent());
-        cm.AddComponent(p1, new OwnershipComponent { PlayerId = _cfg.AgentPlayerId });
-        cm.Players.AddPlayer(_cfg.AgentPlayerId, p1);
+        SetupFlatWorld(cm);
 
-        var p2 = cm.CreateEntity();
-        cm.AddComponent(p2, new PlayerComponent());
-        cm.AddComponent(p2, new OwnershipComponent { PlayerId = _cfg.OpponentPlayerId });
-        cm.Players.AddPlayer(_cfg.OpponentPlayerId, p2);
+        MakePlayer(cm, _cfg.AgentPlayerId, real ? _cfg.AgentCiv : "athen",
+            real ? techs : null);
+        MakePlayer(cm, _cfg.OpponentPlayerId, real ? _cfg.OpponentCiv : "athen",
+            real ? techs : null);
+        cm.Players.SeedDiplomacyFromTeams(new Dictionary<int, int>
+        {
+            [_cfg.AgentPlayerId] = 0,
+            [_cfg.OpponentPlayerId] = 1
+        });
+        cm.EndGame.SetVictoryConditions(new[] { "conquest_units" });
 
         var expected = new HashSet<uint> { (uint)_cfg.AgentPlayerId, (uint)_cfg.OpponentPlayerId };
         var net = new NetTurnManager(cm, _cfg.CommandDelay, (uint)_cfg.AgentPlayerId,
             NetRole.Standalone, expected);
         SimSystem.SetNet(net);
 
-        SpawnSeer(cm, range, 64, 64, _cfg.AgentPlayerId);
-        SpawnSeer(cm, range, _cfg.WorldMeters - 64, _cfg.WorldMeters - 64, _cfg.OpponentPlayerId);
+        _hooks.SpawnBuilding = (tmpl, x, z, owner, _) => cm.SpawnEntity(tmpl, x, z, owner);
+
+        if (real)
+        {
+            _catalog = catalog!;
+            SpawnEncounter(cm, templates!);
+            LoadedRealMatch = true;
+            if (_cfg.TickOpponentAi)
+                AttachPetra(cm, net, templates!, techs!);
+        }
+        else
+        {
+            SpawnSeer(cm, range, 64, 64, _cfg.AgentPlayerId);
+            SpawnSeer(cm, range, _cfg.WorldMeters - 64, _cfg.WorldMeters - 64, _cfg.OpponentPlayerId);
+        }
 
         if (_cfg.PrivilegedVision)
             range.SetLosRevealAll(_cfg.AgentPlayerId, true);
@@ -72,31 +105,41 @@ public sealed class RlEnvironment : IDisposable
         _cm = cm;
         _range = range;
         _net = net;
+        SimSystem.Bind(cm);
         Encode();
+        SnapshotShaping();
         return _obs;
     }
 
-    public RlStepResult Step(RlAction action)
+    public RlStepResult Step(RlAction action, RlAction? opponentAction = null)
     {
         if (_cm == null || _range == null || _net == null)
             throw new InvalidOperationException("Reset() first.");
         if (_done)
             return new RlStepResult { Observation = _obs, Reward = 0, Done = true };
 
-        if (ActionTranslator.TryTranslate(_obs, action, (uint)_cfg.AgentPlayerId,
-                _cfg.WorldMeters, _catalog, out var cmd))
-            _net.SubmitAiCommand(cmd);
+        SimSystem.Bind(_cm);
+        Submit(_obs, action, (uint)_cfg.AgentPlayerId);
+        if (opponentAction is { } opp && opp.Function != RlFunction.NoOp)
+            Submit(_obs, opp, (uint)_cfg.OpponentPlayerId);
 
         int mul = Math.Max(1, _cfg.StepMul);
         for (int i = 0; i < mul; i++)
         {
-            SimLoop.Tick(_cm, 0.1f, _loop);
+            SimLoop.Tick(_cm, 0.1f, _loop, hooks: _hooks);
             if (_cfg.TickOpponentAi)
                 SimLoop.TickAiBrains(_cm);
             _net.AdvanceTurn();
         }
 
         Encode();
+        int enemyHp = SumUnitHp(_cfg.OpponentPlayerId);
+        int stock = Stockpile();
+        int shape = 0;
+        if (enemyHp < _prevEnemyHp)
+            shape += Math.Min(5, (_prevEnemyHp - enemyHp) / 20);
+        if (stock > _prevStock) shape += 1;
+
         int reward = 0;
         var player = _cm.GetPlayerEntity(_cfg.AgentPlayerId);
         bool won = player?.HasWon() == true;
@@ -105,6 +148,9 @@ public sealed class RlEnvironment : IDisposable
         if (won) { reward = 1; _done = true; }
         else if (lost) { reward = -1; _done = true; }
         else if (timeout) _done = true;
+        else reward = shape;
+        _prevEnemyHp = enemyHp;
+        _prevStock = stock;
         _obs.Done = _done;
         _obs.Reward = reward;
         return new RlStepResult { Observation = _obs, Reward = reward, Done = _done };
@@ -112,11 +158,158 @@ public sealed class RlEnvironment : IDisposable
 
     public void Dispose() => DisposeWorld();
 
+    private void Submit(RlObservation obs, RlAction action, uint player)
+    {
+        var resolved = ActionTranslator.WithMapCells(obs, action);
+        if (ActionTranslator.FansOut(resolved.Function))
+        {
+            bool submitted = false;
+            for (int i = 0; i < RlSpec.MaxSelected; i++)
+            {
+                int row = resolved.SelectedAt(i);
+                if (ActionTranslator.EntityAt(obs, row) == 0) continue;
+                if (!ActionTranslator.TryTranslate(obs, resolved.WithSelected(row), player,
+                        _cfg.WorldMeters, _catalog, out var fan))
+                    continue;
+                _net!.SubmitAiCommand(fan);
+                submitted = true;
+            }
+            if (submitted) return;
+        }
+        if (ActionTranslator.TryTranslate(obs, resolved, player, _cfg.WorldMeters, _catalog, out var cmd))
+            _net!.SubmitAiCommand(cmd);
+    }
+
     private void Encode()
     {
         ObservationEncoder.Encode(_cm!, _range!, _catalog, _cfg.AgentPlayerId,
             _cfg.PrivilegedVision, _net!.CurrentTurn, _obs,
-            SimSystem.Pathfinder, SimSystem.Territory);
+            _cm!.Pathfinder ?? SimSystem.Pathfinder,
+            _cm.Territory ?? SimSystem.Territory);
+    }
+
+    private void SnapshotShaping()
+    {
+        _prevEnemyHp = SumUnitHp(_cfg.OpponentPlayerId);
+        _prevStock = Stockpile();
+    }
+
+    private int SumUnitHp(int playerId)
+    {
+        if (_cm == null) return 0;
+        int sum = 0;
+        foreach (var e in _cm.AllEntities)
+        {
+            var own = _cm.QueryInterface<OwnershipComponent>(e);
+            if (own == null || own.PlayerId != playerId) continue;
+            var id = _cm.QueryInterface<IdentityComponent>(e);
+            if (id == null || !id.IsUnit) continue;
+            var hp = _cm.QueryInterface<HealthComponent>(e);
+            if (hp != null) sum += hp.Current;
+        }
+        return sum;
+    }
+
+    private int Stockpile()
+    {
+        var p = _cm?.GetPlayerEntity(_cfg.AgentPlayerId);
+        if (p == null) return 0;
+        return p.Wood + p.Food + p.Stone + p.Metal;
+    }
+
+    private void SetupFlatWorld(ComponentManager cm)
+    {
+        const int tileSize = 4;
+        int tiles = Math.Max(8, _cfg.WorldMeters / tileSize);
+        var terrain = new TerrainComponent();
+        terrain.Configure(tiles, tileSize);
+        var grid = new TerrainClass[tiles, tiles];
+        for (int i = 0; i < tiles; i++)
+            for (int j = 0; j < tiles; j++)
+                grid[i, j] = TerrainClass.Land;
+        terrain.SetPassabilityGrid(grid);
+        SimSystem.SetTerrainComponent(terrain);
+        SimSystem.SetObstructionManager(new ObstructionManager(tiles, tileSize));
+
+        var pf = new PathfinderComponent(cm);
+        string? modsPublic = RlDataRoot.FindModsPublic(_cfg.DataRoot);
+        string? modsParent = modsPublic != null ? Directory.GetParent(modsPublic)?.FullName : null;
+        pf.SetPassabilityConfig(modsParent);
+        pf.SetTerrain(terrain);
+        pf.RebuildGrid();
+        SimSystem.SetPathfinder(pf);
+    }
+
+    private static EntityId MakePlayer(ComponentManager cm, int playerId, string civ,
+        TechCatalog? techs)
+    {
+        var p = cm.CreateEntity();
+        cm.AddComponent(p, new PlayerComponent { Civ = civ });
+        cm.AddComponent(p, new OwnershipComponent { PlayerId = playerId });
+        cm.AddComponent(p, new DiplomacyComponent());
+        if (techs != null)
+        {
+            var tm = new TechnologyManager();
+            tm.Configure(techs, civ);
+            cm.AddComponent(p, tm);
+            tm.ApplyResearch("phase_village", cm);
+        }
+        cm.Players.AddPlayer(playerId, p);
+        return p;
+    }
+
+    private void SpawnEncounter(ComponentManager cm, TemplateLoader templates)
+    {
+        int w = _cfg.WorldMeters;
+        float z = w * 0.5f;
+        SpawnSide(cm, templates, _cfg.AgentCiv, _cfg.AgentPlayerId, 48f, z, +1f);
+        SpawnSide(cm, templates, _cfg.OpponentCiv, _cfg.OpponentPlayerId, w - 48f, z, -1f);
+    }
+
+    private void SpawnSide(ComponentManager cm, TemplateLoader templates, string civ,
+        int owner, float baseX, float baseZ, float towardCenter)
+    {
+        TrySpawn(cm, templates, $"structures/{civ}/civil_centre", baseX, baseZ, owner);
+
+        string soldier = $"units/{civ}/infantry_spearman_b";
+        int nSol = Math.Max(0, _cfg.SoldiersPerSide);
+        for (int i = 0; i < nSol; i++)
+        {
+            float ox = towardCenter * (10f + i * 3f);
+            float oz = (i - (nSol - 1) * 0.5f) * 4f;
+            TrySpawn(cm, templates, soldier, baseX + ox, baseZ + oz, owner);
+        }
+
+        string villager = $"units/{civ}/support_civilian";
+        int nVil = Math.Max(0, _cfg.VillagersPerSide);
+        for (int i = 0; i < nVil; i++)
+        {
+            float ox = towardCenter * 6f;
+            float oz = (i - (nVil - 1) * 0.5f) * 4f;
+            TrySpawn(cm, templates, villager, baseX + ox, baseZ + oz, owner);
+        }
+
+        TrySpawn(cm, templates, "gaia/tree/aleppo_pine", baseX - towardCenter * 14f, baseZ - 10f, 0);
+        TrySpawn(cm, templates, "gaia/tree/aleppo_pine", baseX - towardCenter * 14f, baseZ + 10f, 0);
+        TrySpawn(cm, templates, "gaia/fruit/berry_01", baseX - towardCenter * 10f, baseZ, 0);
+    }
+
+    private static void TrySpawn(ComponentManager cm, TemplateLoader templates,
+        string template, float x, float z, int owner)
+    {
+        if (!templates.TemplateExists(template)) return;
+        cm.SpawnEntity(template, x, z, owner > 0 ? owner : -1);
+    }
+
+    private void AttachPetra(ComponentManager cm, NetTurnManager net,
+        TemplateLoader templates, TechCatalog techs)
+    {
+        var opp = cm.GetPlayerEntityId(_cfg.OpponentPlayerId);
+        if (opp == null) return;
+        var ai = new AIComponent();
+        ai.Configure(cm, net, _cfg.PetraDifficulty);
+        ai.ConfigureSharedState(new SharedState(templates, techs));
+        cm.AddComponent(opp.Value, ai);
     }
 
     private static void SpawnSeer(ComponentManager cm, RangeManager rm, int x, int z, int owner)
@@ -149,5 +342,6 @@ public sealed class RlEnvironment : IDisposable
         _cm = null;
         _range = null;
         _net = null;
+        LoadedRealMatch = false;
     }
 }

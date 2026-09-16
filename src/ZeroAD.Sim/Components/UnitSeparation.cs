@@ -67,17 +67,16 @@ public static class UnitSeparation
         public bool WasObstructed;
     }
 
-    /// <summary>上回合结束位置表(initialPos 数据源;跨回合驻留,实体消失即清)。</summary>
-    private static readonly Dictionary<uint, FixedVector2D> _lastPos = new();
-
-    /// <summary>静态状态重置(新世界第一帧;SimSystem.Init 语义同款——测试隔离)。</summary>
-    public static void Reset() => _lastPos.Clear();
+    /// <summary>Clear the current world's pushing table. Per-world state lives on
+    /// <see cref="ComponentManager.SeparationLastPos"/> so parallel RL slots do not collide.</summary>
+    public static void Reset() => SimSystem.Sim?.SeparationLastPos.Clear();
 
     /// <summary>Run one pushing pass over all in-world units. Call once per sim turn, after
     /// <see cref="UnitMotion.Tick"/> has advanced positions.</summary>
     public static void Separate(ComponentManager cm, Fixed dt)
     {
         var units = new List<UnitState>();
+        var lastPos = cm.SeparationLastPos;
         foreach (var eid in cm.AllEntities)
         {
             var pos = cm.QueryInterface<PositionComponent>(eid);
@@ -95,7 +94,7 @@ public static class UnitSeparation
                 Motion = motion,
                 Pos2D = p2,
                 // 上回合结束位 = 本回合 motion 前位置;首回合(无记录)即当前位。
-                InitialPos = _lastPos.TryGetValue(eid.Value, out var last) ? last : p2,
+                InitialPos = lastPos.TryGetValue(eid.Value, out var last) ? last : p2,
                 Clearance = obs.Size0,
                 Weight = motion?.Weight ?? Fixed.FromInt(10),
                 Moving = motion != null && motion.CurrentSpeed > Fixed.Zero,
@@ -104,7 +103,7 @@ public static class UnitSeparation
                 Pressure = motion?.PushingPressure ?? 0,
             });
         }
-        if (units.Count == 0) { _lastPos.Clear(); return; }
+        if (units.Count == 0) { lastPos.Clear(); return; }
 
         // 定序:id 升序(原版 EntityMap 遍历序)。
         units.Sort((a, b) => a.Entity.Value.CompareTo(b.Entity.Value));
@@ -142,7 +141,7 @@ public static class UnitSeparation
         }
 
         // 应用相(原版 MotionMgr_PushAdjust):最小门 → 阻尼 → CheckMovement 钳 → 落位。
-        var pf = SimSystem.Pathfinder;
+        var pf = cm.Pathfinder ?? SimSystem.Pathfinder;
         foreach (var u in units)
         {
             // 压力回写+衰减(原版每回合 PostMove 后 ×0.6;整数 ×3/5 截断等价 RoundToZero)。
@@ -197,9 +196,9 @@ public static class UnitSeparation
         }
 
         // 驻留表刷新(供下回合 initialPos);消失实体顺带清。
-        _lastPos.Clear();
+        lastPos.Clear();
         foreach (var u in units)
-            _lastPos[u.Entity.Value] = u.Pos2D;
+            lastPos[u.Entity.Value] = u.Pos2D;
     }
 
     private static (int, int) CellOf(FixedVector2D p) =>

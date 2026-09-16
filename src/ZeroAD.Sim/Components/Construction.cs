@@ -40,6 +40,11 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
     public float BuildFraction => TotalTime > 0 ? Progress / TotalTime : 1f;
     public int NumBuilders => _builders.Count;
 
+    /// <summary>刚建成瞬间的工人快照。build 相位里工人会 ClearRegistrations,
+    /// found 相位再读 GetBuilders 会是空表;autoharvest 必须用这份拷贝。</summary>
+    public IReadOnlyList<EntityId> CompletedBuilders => _completedBuilders;
+    private List<EntityId> _completedBuilders = new();
+
     /// <summary>工人列表(EntityId 升序,确定性;原版 GetBuilders)。</summary>
     public List<EntityId> GetBuilders()
     {
@@ -72,11 +77,12 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
 
     /// <summary>一次建造推进(原版 Foundation.Build;由 BuilderComponent 每 tick 驱动,
     /// dt=回合秒数)。work = rate × buildMultiplier × dt;同步该工人最新 rate 进
-    /// TotalBuilderRate。返回 true = 本次建成(调用方通知工人收工)。</summary>
+    /// TotalBuilderRate。返回 true = 本次建成(调用方通知工人收工)。
+    /// 未提交且挤出未完成 → 本拍不推进进度(原版 Commit 失败则 Build 直接 return)。</summary>
     public bool Build(EntityId builderEnt, float rate, float dt)
     {
         if (IsBuilt) return true;
-        if (!Committed) Commit(SimSystem.Sim);   // 首个开工 tick 提交(清场+挤出)
+        if (!Committed && !Commit(SimSystem.Sim)) return false;
         AddProgress(rate * BuildMultiplier * dt);
         if (_builders.TryGetValue(builderEnt, out float old))
         {
@@ -92,29 +98,40 @@ public sealed class FoundationComponent : ComponentBase, IComponentMessageHandle
         Progress += dt;
         if (Progress >= TotalTime)
         {
+            _completedBuilders = GetBuilders();
             IsBuilt = true;
             Progress = TotalTime;
         }
     }
 
-    /// <summary>原版 Foundation.Commit:清场 + 挤出。</summary>
-    public void Commit(ComponentManager? cm)
+    /// <summary>原版 Foundation.Commit:清场 + 挤出。重叠未清完 → false(本拍不提交,
+    /// 下拍 Build 重试);成功则恢复 Movement/Pathfinding 阻挡并 committed=true。</summary>
+    public bool Commit(ComponentManager? cm)
     {
-        if (Committed) return;
-        Committed = true;
-        if (cm == null) return;
-        var obs = cm.QueryInterface<ObstructionComponent>(Entity);
-        if (obs == null || SimSystem.Obstructions == null) return;
-        foreach (var ent in SimSystem.Obstructions.GetEntitiesBlockingConstruction(obs.Tag))
+        if (Committed) return true;
+        if (cm == null)
         {
-            var o = cm.QueryInterface<ObstructionComponent>(ent);
-            if (o != null && (o.Flags & ObstructionFlags.DeleteUponConstruction) != 0)
-            {
-                cm.DestroyEntity(ent);
-                continue;
-            }
-            cm.QueryInterface<UnitAIComponent>(ent)?.LeaveFoundation(cm, Entity);
+            Committed = true;
+            return true;
         }
+        var obs = cm.QueryInterface<ObstructionComponent>(Entity);
+        var mgr = SimSystem.Obstructions;
+        if (obs != null && mgr != null
+            && (obs.Flags & ObstructionFlags.BlockMovement) != 0)
+        {
+            foreach (var ent in mgr.GetEntitiesDeletedUponConstruction(obs.Tag))
+                cm.DestroyEntity(ent);
+            var collisions = mgr.GetEntitiesBlockingConstruction(obs.Tag);
+            if (collisions.Count > 0)
+            {
+                foreach (var ent in collisions)
+                    cm.QueryInterface<UnitAIComponent>(ent)?.LeaveFoundation(cm, Entity);
+                return false;
+            }
+        }
+        obs?.SetDisableBlockMovementPathfinding(false, false);
+        Committed = true;
+        return true;
     }
 
     public override void Serialize(ISerializer s)
@@ -220,77 +237,128 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         TickRepair(cm, repairable);
     }
 
+    /// <summary>原版 Builder.GetRange.max:2 + 工人自身阻挡半径。</summary>
+    public static float WorkRange(ComponentManager cm, EntityId builder)
+    {
+        float max = 2f;
+        var obs = cm.QueryInterface<ObstructionComponent>(builder);
+        if (obs != null) max += obs.GetSize().ToFloat();
+        return max;
+    }
+
+    /// <summary>原版 IsInTargetRange(Builder):距目标阻挡边缘(矩形/圆) ≤ WorkRange,
+    /// 不是外接圆半对角——并排第二座房子时半对角工位会落在第一座壳内,村民原地转圈。</summary>
+    public static bool InWorkRange(ComponentManager cm, EntityId builder, EntityId target)
+    {
+        var a = cm.QueryInterface<PositionComponent>(builder);
+        var b = cm.QueryInterface<PositionComponent>(target);
+        if (a == null || b == null) return false;
+        float extra = WorkRange(cm, builder);
+        var tobs = cm.QueryInterface<ObstructionComponent>(target);
+        if (tobs != null)
+            return tobs.DistanceToSurface(a.Position.X.ToFloat(), a.Position.Z.ToFloat()) <= extra + 1f;
+        float dx = a.Position.X.ToFloat() - b.Position.X.ToFloat();
+        float dz = a.Position.Z.ToFloat() - b.Position.Z.ToFloat();
+        return MathF.Sqrt(dx * dx + dz * dz) <= extra + 1f;
+    }
+
+    public static bool TryWorkGoal(ComponentManager cm, EntityId builder, EntityId target,
+        out Maths.FixedVector2D goal)
+    {
+        goal = default;
+        var self = cm.QueryInterface<PositionComponent>(builder);
+        var pos = cm.QueryInterface<PositionComponent>(target);
+        if (self == null || pos == null) return false;
+        float gx = pos.Position.X.ToFloat();
+        float gz = pos.Position.Z.ToFloat();
+        var obs = cm.QueryInterface<ObstructionComponent>(target);
+        if (obs != null)
+            obs.NearestWorksite(self.Position.X.ToFloat(), self.Position.Z.ToFloat(),
+                WorkRange(cm, builder), out gx, out gz);
+        goal = new Maths.FixedVector2D(Maths.Fixed.FromFloat(gx), Maths.Fixed.FromFloat(gz));
+        return true;
+    }
+
+    private bool IsLeavingFoundation(ComponentManager cm)
+    {
+        var cur = cm.QueryInterface<UnitAIComponent>(Entity)?.CurrentOrder;
+        return cur != null && Target != null && cur.Type == "Walk" && cur.Target == Target;
+    }
+
+    private void MoveToWorkRange(ComponentManager cm, EntityId target)
+    {
+        var motion = cm.QueryInterface<UnitMotion>(Entity);
+        if (motion == null) return;
+        var self = cm.QueryInterface<PositionComponent>(Entity);
+        var pos = cm.QueryInterface<PositionComponent>(target);
+        if (self == null || pos == null) return;
+        float gx = pos.Position.X.ToFloat();
+        float gz = pos.Position.Z.ToFloat();
+        var obs = cm.QueryInterface<ObstructionComponent>(target);
+        if (obs != null)
+            obs.NearestWorksite(self.Position.X.ToFloat(), self.Position.Z.ToFloat(),
+                WorkRange(cm, Entity), out gx, out gz);
+        // 已在走路且未卡死:不要每拍重发目标(工位随自身位置在圆弧上滑,会原地转圈)。
+        if (motion.HasMoveTarget && !motion.IsStuckThisLeg) return;
+        motion.MoveToPoint(new Maths.FixedVector2D(
+            Maths.Fixed.FromFloat(gx), Maths.Fixed.FromFloat(gz)));
+    }
+
     private void TickFoundation(ComponentManager cm, FoundationComponent foundation)
     {
-        var foundationPos = cm.QueryInterface<PositionComponent>(Target!.Value);
-        var myPos = cm.QueryInterface<PositionComponent>(Entity);
-        if (foundationPos == null || myPos == null) return;
-
-        float dx = foundationPos.Position.X.ToFloat() - myPos.Position.X.ToFloat();
-        float dz = foundationPos.Position.Z.ToFloat() - myPos.Position.Z.ToFloat();
-        float dist = MathF.Sqrt(dx * dx + dz * dz);
+        if (IsLeavingFoundation(cm))
+        {
+            ClearRegistrations(cm);
+            return;
+        }
 
         var motion = cm.QueryInterface<UnitMotion>(Entity);
-        if (dist > 8.0f)
+        if (!InWorkRange(cm, Entity, Target!.Value))
         {
-            // 离开工位即出工人表(与修理分支同规则:不在岗不算人头)。
             ClearRegistrations(cm);
-            if (motion != null && !motion.HasMoveTarget)
-                motion.MoveToPoint(new Maths.FixedVector2D(
-                    foundationPos.Position.X, foundationPos.Position.Z));
+            MoveToWorkRange(cm, Target.Value);
+            return;
         }
-        else
+
+        float rate = cm.Modifiers.Apply("Builder/Rate", BuildSpeed, Entity);
+        if (!_foundationRegistered)
+        {
+            foundation.AddBuilder(Entity, rate);
+            _foundationRegistered = true;
+        }
+        if (foundation.Build(Entity, rate, 0.1f))
         {
             AtWorksite = true;
-            if (motion != null) motion.Stop();
-            // 进工位:入工人表(Foundation 按人头算 n^0.7/n 递减)。
-            // 建造速度过修正值管线(科技如 "Builder/Rate" ×1.15)
-            float rate = cm.Modifiers.Apply("Builder/Rate", BuildSpeed, Entity);
-            if (!_foundationRegistered)
-            {
-                foundation.AddBuilder(Entity, rate);
-                _foundationRegistered = true;
-            }
-            if (foundation.Build(Entity, rate, 0.1f))
-            {
-                ClearRegistrations(cm);
-                Target = null;
-            }
+            ClearRegistrations(cm);
+            Target = null;
+            return;
         }
+        // 挤出未完成:不要 Stop,否则会取消 LeaveFoundation 走路、人卡在壳里。
+        if (!foundation.Committed) return;
+
+        AtWorksite = true;
+        if (motion != null) motion.Stop();
     }
 
     private void TickRepair(ComponentManager cm, RepairableComponent repairable)
     {
-        var targetPos = cm.QueryInterface<PositionComponent>(Target!.Value);
-        var myPos = cm.QueryInterface<PositionComponent>(Entity);
-        if (targetPos == null || myPos == null) return;
-
-        float dx = targetPos.Position.X.ToFloat() - myPos.Position.X.ToFloat();
-        float dz = targetPos.Position.Z.ToFloat() - myPos.Position.Z.ToFloat();
-        float dist = MathF.Sqrt(dx * dx + dz * dz);
-
-        var motion = cm.QueryInterface<UnitMotion>(Entity);
-        if (dist > 8.0f)
+        if (!InWorkRange(cm, Entity, Target!.Value))
         {
-            // 离开工位即出工人表(原版 Repair 定时器停了就不再算人头)。
             ClearRegistrations(cm);
-            if (motion != null && !motion.HasMoveTarget)
-                motion.MoveToPoint(new Maths.FixedVector2D(
-                    targetPos.Position.X, targetPos.Position.Z));
+            MoveToWorkRange(cm, Target.Value);
             return;
         }
 
         AtWorksite = true;
+        var motion = cm.QueryInterface<UnitMotion>(Entity);
         if (motion != null) motion.Stop();
-        // 进工位:入工人表(Repairable 按人头算 n^0.7/n 递减)。
         float rate = cm.Modifiers.Apply("Builder/Rate", BuildSpeed, Entity);
         if (!_repairRegistered)
         {
             repairable.AddBuilder(Entity, rate);
             _repairRegistered = true;
         }
-        bool done = repairable.Repair(cm, Entity, rate, 0.1f);
-        if (done)
+        if (repairable.Repair(cm, Entity, rate, 0.1f))
         {
             ClearRegistrations(cm);
             Target = null;
