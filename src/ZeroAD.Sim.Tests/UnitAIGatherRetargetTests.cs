@@ -74,6 +74,119 @@ public sealed class UnitAIGatherRetargetTests
     }
 
     [Fact]
+    public void ExhaustedAndDestroyed_RetargetsToNearestSameType()
+    {
+        var cm = new ComponentManager(rngSeed: 1);
+        var worker = MakeUnit(cm);
+        SetPos(cm, worker, 0, 0);
+        var dying = MakeSupply(cm, 2, 0, amount: 1);
+        var near = MakeSupply(cm, 8, 0);
+        MakeSupply(cm, 40, 0);
+
+        var ai = cm.QueryInterface<UnitAIComponent>(worker)!;
+        ai.Gather(dying);
+        for (int i = 0; i < 40; i++)
+        {
+            cm.QueryInterface<UnitMotion>(worker)?.Tick(0.1f);
+            ai.Tick(0.1f, cm);
+            if (cm.QueryInterface<ResourceGatherer>(worker)!.TargetSupply == near)
+                break;
+        }
+
+        Assert.DoesNotContain(dying, cm.AllEntities);
+        Assert.Equal(near, cm.QueryInterface<ResourceGatherer>(worker)!.TargetSupply);
+    }
+
+    [Fact]
+    public void ExhaustedWithDropsite_RetargetsBeforeReturning()
+    {
+        var cm = new ComponentManager(rngSeed: 1);
+        var worker = MakeUnit(cm);
+        SetPos(cm, worker, 0, 0);
+        var dying = MakeSupply(cm, 2, 0, amount: 1);
+        var near = MakeSupply(cm, 8, 0);
+        var dropsite = cm.CreateEntity();
+        cm.AddComponent(dropsite, new PositionComponent());
+        cm.AddComponent(dropsite, new ResourceDropsite());
+        cm.AddComponent(dropsite, new OwnershipComponent { PlayerId = 1 });
+        SetPos(cm, dropsite, 80, 0);
+
+        var ai = cm.QueryInterface<UnitAIComponent>(worker)!;
+        ai.Gather(dying);
+        for (int i = 0; i < 40; i++)
+        {
+            cm.QueryInterface<UnitMotion>(worker)?.Tick(0.1f);
+            ai.Tick(0.1f, cm);
+            if (cm.QueryInterface<ResourceGatherer>(worker)!.TargetSupply == near)
+                break;
+        }
+
+        Assert.Equal(near, cm.QueryInterface<ResourceGatherer>(worker)!.TargetSupply);
+        Assert.DoesNotContain("RETURNINGRESOURCE", ai.FsmStateName ?? "");
+    }
+
+    [Fact]
+    public void OtherGathererOnDestroyedTree_AlsoRetargets()
+    {
+        var cm = new ComponentManager(rngSeed: 1);
+        var a = MakeUnit(cm);
+        var b = MakeUnit(cm);
+        SetPos(cm, a, 0, 0);
+        SetPos(cm, b, 1, 0);
+        var dying = MakeSupply(cm, 2, 0, amount: 1);
+        var near = MakeSupply(cm, 8, 0);
+
+        var aiA = cm.QueryInterface<UnitAIComponent>(a)!;
+        var aiB = cm.QueryInterface<UnitAIComponent>(b)!;
+        aiA.Gather(dying);
+        aiB.Gather(dying);
+        for (int i = 0; i < 40; i++)
+        {
+            cm.QueryInterface<UnitMotion>(a)?.Tick(0.1f);
+            cm.QueryInterface<UnitMotion>(b)?.Tick(0.1f);
+            aiA.Tick(0.1f, cm);
+            aiB.Tick(0.1f, cm);
+            if (cm.QueryInterface<ResourceGatherer>(a)!.TargetSupply == near
+                && cm.QueryInterface<ResourceGatherer>(b)!.TargetSupply == near)
+                break;
+        }
+
+        Assert.DoesNotContain(dying, cm.AllEntities);
+        Assert.Equal(near, cm.QueryInterface<ResourceGatherer>(a)!.TargetSupply);
+        Assert.Equal(near, cm.QueryInterface<ResourceGatherer>(b)!.TargetSupply);
+    }
+
+    [Fact]
+    public void ExhaustedNoNearby_Carrying_GoesToDropsite()
+    {
+        var cm = new ComponentManager(rngSeed: 1);
+        var worker = MakeUnit(cm);
+        SetPos(cm, worker, 0, 0);
+        var dying = MakeSupply(cm, 2, 0, amount: 1);
+        var dropsite = cm.CreateEntity();
+        cm.AddComponent(dropsite, new PositionComponent());
+        cm.AddComponent(dropsite, new ResourceDropsite());
+        cm.AddComponent(dropsite, new OwnershipComponent { PlayerId = 1 });
+        SetPos(cm, dropsite, 80, 0);
+
+        var ai = cm.QueryInterface<UnitAIComponent>(worker)!;
+        ai.Gather(dying);
+        for (int i = 0; i < 50; i++)
+        {
+            cm.QueryInterface<UnitMotion>(worker)?.Tick(0.1f);
+            ai.Tick(0.1f, cm);
+            if ((ai.FsmStateName ?? "").Contains("RETURNING", System.StringComparison.Ordinal))
+                break;
+        }
+
+        Assert.DoesNotContain(dying, cm.AllEntities);
+        var gatherer = cm.QueryInterface<ResourceGatherer>(worker)!;
+        Assert.True(gatherer.CarryAmount > 0);
+        Assert.False(ai.IsIdle);
+        Assert.Contains("RETURNING", ai.FsmStateName ?? "");
+    }
+
+    [Fact]
     public void GatherNearPosition_PicksClosestSupply()
     {
         var cm = new ComponentManager(rngSeed: 1);

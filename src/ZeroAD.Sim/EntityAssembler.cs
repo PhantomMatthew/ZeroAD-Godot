@@ -127,6 +127,7 @@ namespace ZeroAD.Sim
             if (isVillager || stats?.CanGather == true)
             {
                 cm.AddComponent(entity, new ResourceGatherer());
+                CopyGatherRates(cm.QueryInterface<ResourceGatherer>(entity), stats);
                 cm.AddComponent(entity, new BuilderComponent());
             }
 
@@ -420,14 +421,7 @@ namespace ZeroAD.Sim
             cm.AddComponent(entity, new ResearcherComponent());
             cm.AddComponent(entity, new RallyPointComponent());
 
-            if (templateName.Contains("field", StringComparison.OrdinalIgnoreCase))
-            {
-                var fieldSupply = new ResourceSupply();
-                fieldSupply.SetTypeString("food.grain");
-                fieldSupply.Amount = 100;
-                fieldSupply.MaxAmount = 100;
-                cm.AddComponent(entity, fieldSupply);
-            }
+            AttachStructureSupply(cm, entity, templateName, stats);
 
             cm.AddComponent(entity, new IdentityComponent
             {
@@ -1031,6 +1025,30 @@ namespace ZeroAD.Sim
             var market = cm.QueryInterface<Components.MarketComponent>(parent);
             mc.FrozenMarketTypes = market != null
                 ? string.Join(' ', market.TradeTypes) : "";
+        }
+
+        /// <summary>建筑 ResourceSupply(农田 Max=Infinity)。缺类型时仅 `*field*` 回退 grain。</summary>
+        public static void AttachStructureSupply(ComponentManager cm, EntityId entity,
+            string templateName, TemplateStats? stats)
+        {
+            string typeStr = stats?.ResourceTypeString ?? "";
+            if (string.IsNullOrEmpty(typeStr)
+                && !templateName.Contains("field", StringComparison.OrdinalIgnoreCase))
+                return;
+            if (string.IsNullOrEmpty(typeStr))
+                typeStr = "food.grain";
+            int amt = stats != null && stats.ResourceAmount > 0 ? stats.ResourceAmount : 100;
+            var supply = new ResourceSupply { Amount = amt, MaxAmount = amt };
+            cm.AddComponent(entity, supply);
+            supply.SetTypeString(typeStr);
+        }
+
+        /// <summary>把模板 Rates×BaseSpeed 抄到采集件(AddComponent 之后,OnInit 不会清字典)。</summary>
+        public static void CopyGatherRates(ResourceGatherer? gatherer, TemplateStats? stats)
+        {
+            if (gatherer == null || stats == null || stats.GatherRates.Count == 0) return;
+            foreach (var kv in stats.GatherRates)
+                gatherer.Rates[kv.Key] = kv.Value;
         }
     }
 }

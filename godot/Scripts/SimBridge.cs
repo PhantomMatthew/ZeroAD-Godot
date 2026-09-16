@@ -854,14 +854,7 @@ public sealed partial class SimBridge : Node
 		_sim.AddComponent(entity, new ResearcherComponent());
 		_sim.AddComponent(entity, new RallyPointComponent());
 
-		if (def.Template.Contains("field", StringComparison.OrdinalIgnoreCase))
-		{
-			var fieldSupply = new ResourceSupply();
-			fieldSupply.SetTypeString("food.grain");
-			fieldSupply.Amount = 100;
-			fieldSupply.MaxAmount = 100;
-			_sim.AddComponent(entity, fieldSupply);
-		}
+		EntityAssembler.AttachStructureSupply(_sim, entity, def.Template, stats);
 
 		var identity = new IdentityComponent
 		{
@@ -2064,6 +2057,7 @@ public sealed partial class SimBridge : Node
 		if (isVillager || stats?.CanGather == true)
 		{
 			_sim.AddComponent(entity, new ResourceGatherer());
+			EntityAssembler.CopyGatherRates(_sim.QueryInterface<ResourceGatherer>(entity), stats);
 			_sim.AddComponent(entity, new BuilderComponent());
 		}
 
@@ -2890,15 +2884,14 @@ public sealed partial class SimBridge : Node
 		{
 			// Fall back to Walk/Idle when the unit lacks the exact state clip, so a
 			// gather/attack state never freezes a unit that has no matching clip.
-			if (!animator.HasState(want))
-				want = ResolveAnimationState(entity).Contains("Walk") ? "Walk" : "Idle";
-			if (animator.HasState(want))
-			{
-				// SetAnimationState (not animator.Play) so per-state props switch too
-				// (axe appears while chopping, shield hidden, restored on walk/idle).
-				Actors.Composition.ActorComposer.SetAnimationState(node, want);
-				_animState[entity] = want;
-			}
+			string play = want;
+			if (!animator.HasState(play))
+				play = want.Contains("Walk", StringComparison.OrdinalIgnoreCase) ? "Walk" : "Idle";
+			// 先按真实状态切锄头/斧子,再播有 clip 的动作——gather_grain 缺轨时至少扛锄。
+			Actors.Composition.ActorComposer.SetAnimationState(node, want);
+			if (play != want && animator.HasState(play))
+				animator.Play(play);
+			_animState[entity] = want;
 		}
 	}
 
@@ -2967,13 +2960,19 @@ public sealed partial class SimBridge : Node
 
 			if (distXZ < r)
 				result.Add(kvp.Key);
+			else
+			{
+				var footprint = _sim.QueryInterface<FootprintComponent>(kvp.Key);
+				if (footprint != null && footprint.ContainsWorldPoint(worldPos.X, worldPos.Z, pad: 0.5f))
+					result.Add(kvp.Key);
+			}
 		}
 
 		result.Sort((a, b) =>
 		{
-			bool fa = ZeroAD.Sim.Components.GatherTargetFilter.IsIncompleteFoundation(_sim, a);
-			bool fb = ZeroAD.Sim.Components.GatherTargetFilter.IsIncompleteFoundation(_sim, b);
-			if (fa != fb) return fa ? -1 : 1;
+			int ra = ClickRank(a);
+			int rb = ClickRank(b);
+			if (ra != rb) return ra.CompareTo(rb);
 			var pa = _entityNodes[a].Position;
 			var pb = _entityNodes[b].Position;
 			float da = (pa.X - worldPos.X) * (pa.X - worldPos.X) + (pa.Z - worldPos.Z) * (pa.Z - worldPos.Z);
@@ -2981,6 +2980,17 @@ public sealed partial class SimBridge : Node
 			return da.CompareTo(db);
 		});
 		return result;
+	}
+
+	/// <summary>右键/悬停优先级:未完工地基 → 可采资源(农田上站着村民时仍点到田) → 建筑 → 单位。</summary>
+	private int ClickRank(EntityId e)
+	{
+		if (GatherTargetFilter.IsIncompleteFoundation(_sim, e)) return 0;
+		var supply = _sim.QueryInterface<ResourceSupply>(e);
+		if (supply != null && !supply.IsEmpty) return 1;
+		var identity = _sim.QueryInterface<IdentityComponent>(e);
+		if (identity?.IsBuilding == true) return 2;
+		return 3;
 	}
 
 	public List<EntityId> GetEntitiesInBounds(Vector3 center, Vector3 extents)

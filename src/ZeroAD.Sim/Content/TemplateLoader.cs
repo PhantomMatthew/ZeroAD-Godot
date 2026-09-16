@@ -232,6 +232,16 @@ namespace ZeroAD.Sim.Content
             return !el.IsOk || el.ToBool();
         }
 
+        /// <summary>ResourceSupply Amount/Max/Initial:原版 +"Infinity" → Infinity。
+        /// 定点 ToInt 会把 Infinity 读成 0,农田就会被当成空供应、永不采集。</summary>
+        private static int ParseResourceCount(ParamNode node)
+        {
+            string raw = node.ToString().Trim();
+            if (raw.Equals("Infinity", StringComparison.OrdinalIgnoreCase))
+                return int.MaxValue;
+            return node.ToInt();
+        }
+
         public static TemplateStats ExtractStatsFromNode(ParamNode node)
         {            var stats = new TemplateStats();
 
@@ -710,10 +720,13 @@ namespace ZeroAD.Sim.Content
             if (resourceSupply.IsOk)
             {
                 var amount = resourceSupply.GetChild("Amount");
-                if (amount.IsOk) stats.ResourceAmount = amount.ToInt();
+                if (amount.IsOk) stats.ResourceAmount = ParseResourceCount(amount);
                 var max = resourceSupply.GetChild("Max");
                 if (max.IsOk && stats.ResourceAmount == 0)
-                    stats.ResourceAmount = max.ToInt();
+                    stats.ResourceAmount = ParseResourceCount(max);
+                var initial = resourceSupply.GetChild("Initial");
+                if (initial.IsOk)
+                    stats.ResourceAmount = ParseResourceCount(initial);
                 // KillBeforeGather(原版 ResourceSupply.js):动物须先猎杀才能采肉——
                 // 原版 isUndeletable 的豁免理由之一(删除命令跳过)。
                 var killFirst = resourceSupply.GetChild("KillBeforeGather");

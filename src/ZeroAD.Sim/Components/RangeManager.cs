@@ -532,25 +532,29 @@ namespace ZeroAD.Sim.Components
         public List<EntityId> ExecuteQuery(EntityId source, Fixed minRange, Fixed maxRange,
             Func<EntityId, bool>? predicate = null)
         {
-            var result = new List<EntityId>();
-            if (!_data.TryGetValue(source, out var src)) return result;
-            var srcPos = new FixedVector2D(src.X, src.Z);
+            if (!_data.TryGetValue(source, out var src)) return new List<EntityId>();
+            var result = ExecuteQueryAroundPos(src.X, src.Z, minRange, maxRange, predicate);
+            result.Remove(source);
+            return result;
+        }
 
-            // AABB pre-filter from the spatial index, then precise circular distance test.
+        /// <summary>原版 ExecuteQueryAroundPos:按世界坐标搜,不依赖 source 仍在索引里。</summary>
+        public List<EntityId> ExecuteQueryAroundPos(Fixed x, Fixed z, Fixed minRange, Fixed maxRange,
+            Func<EntityId, bool>? predicate = null)
+        {
+            var result = new List<EntityId>();
             Fixed r = maxRange;
-            _subdivision.Collect(_scratch, src.X - r, src.Z - r, src.X + r, src.Z + r);
+            _subdivision.Collect(_scratch, x - r, z - r, x + r, z + r);
             foreach (var eid in _scratch)
             {
-                if (eid == source) continue;
                 if (!_data.TryGetValue(eid, out var d) || !d.InWorld) continue;
-                var rel = new FixedVector2D(d.X - src.X, d.Z - src.Z);
+                var rel = new FixedVector2D(d.X - x, d.Z - z);
                 int cmp = rel.CompareLength(maxRange);
-                if (cmp > 0) continue;                      // beyond maxRange
-                if (minRange > Fixed.Zero && rel.CompareLength(minRange) < 0) continue; // inside minRange
+                if (cmp > 0) continue;
+                if (minRange > Fixed.Zero && rel.CompareLength(minRange) < 0) continue;
                 if (predicate != null && !predicate(eid)) continue;
                 result.Add(eid);
             }
-            // Stable, deterministic order: sort by entity id so results don't depend on hash order.
             result.Sort((a, b) => a.Value.CompareTo(b.Value));
             return result;
         }

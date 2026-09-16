@@ -109,5 +109,29 @@ namespace ZeroAD.Sim.Components
         }
 
         public void HandleMessage(IMessage message) { }
+
+        /// <summary>点是否落在占地盒内(建筑选择/右键;农田 28×28 角点超出 15m 圆)。</summary>
+        public bool ContainsWorldPoint(float wx, float wz, float pad = 0f)
+        {
+            var pos = SimSystem.GetComponent<PositionComponent>(Entity);
+            if (pos == null) return false;
+            float ox = pos.Position.X.ToFloat();
+            float oz = pos.Position.Z.ToFloat();
+            if (Shape == FootprintShape.Circle)
+            {
+                float dx = wx - ox, dz = wz - oz;
+                float r = Size0.ToFloat() + pad;
+                return dx * dx + dz * dz <= r * r;
+            }
+            float hw = Size0.ToFloat() * 0.5f + pad;
+            float hh = Size1.ToFloat() * 0.5f + pad;
+            Trig.SinCosApprox(pos.Rotation.Y, out Fixed s, out Fixed c);
+            float ux = c.ToFloat(), uy = (-s).ToFloat();
+            float vx = s.ToFloat(), vy = c.ToFloat();
+            float dxw = wx - ox, dzw = wz - oz;
+            float lx = dxw * ux + dzw * uy;
+            float lz = dxw * vx + dzw * vy;
+            return MathF.Abs(lx) <= hw && MathF.Abs(lz) <= hh;
+        }
     }
 }
