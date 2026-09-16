@@ -11,7 +11,7 @@ namespace ZeroAD.Sim.Tests;
 public sealed class FoundationPushOutTests
 {
     private static (ComponentManager cm, EntityId foundation, EntityId unit) World(
-        bool deleteFlag = false, bool unitOnSite = true)
+        bool deleteFlag = false, bool unitOnSite = true, int footprint = 8)
     {
         var cm = new ComponentManager(42);
         SimSystem.Init(cm);
@@ -27,8 +27,8 @@ public sealed class FoundationPushOutTests
         var fobs = new ObstructionComponent
         {
             Type = ObstructionType.Static,
-            Size0 = Fixed.FromInt(8),
-            Size1 = Fixed.FromInt(8),
+            Size0 = Fixed.FromInt(footprint),
+            Size1 = Fixed.FromInt(footprint),
             Flags = ObstructionFlags.DefaultBlock,
             DisableBlockMovement = true,
             DisableBlockPathfinding = true,
@@ -191,5 +191,41 @@ public sealed class FoundationPushOutTests
         Assert.False(fd.Commit(cm));
         var order = cm.QueryInterface<UnitAIComponent>(unit)!.CurrentOrder;
         Assert.Equal("Walk", order?.Type);
+    }
+
+    [Fact]
+    public void BarracksSizedFoundation_BuilderProgressesFromEdge()
+    {
+        // 17×17 壳半宽 8.5m;旧工位判定 dist≤8 落在壳内,提交后走不到中心、进度永远 0。
+        var (cm, f, u) = World(unitOnSite: false, footprint: 17);
+        Assert.True(BuilderProgresses(cm, f, u));
+        var p = cm.QueryInterface<PositionComponent>(u)!;
+        float dx = p.Position.X.ToFloat() - 50f, dz = p.Position.Z.ToFloat() - 50f;
+        Assert.True(dx * dx + dz * dz > 8f * 8f, "builder must work outside the 17×17 hull");
+    }
+
+    [Fact]
+    public void BarracksSizedFoundation_OnSiteVillagerLeavesThenBuilds()
+    {
+        var (cm, f, u) = World(unitOnSite: true, footprint: 17);
+        Assert.True(BuilderProgresses(cm, f, u));
+    }
+
+    private static bool BuilderProgresses(ComponentManager cm, EntityId f, EntityId u)
+    {
+        cm.AddComponent(u, new BuilderComponent());
+        cm.QueryInterface<UnitAIComponent>(u)!.Repair(f);
+        var fd = cm.QueryInterface<FoundationComponent>(f)!;
+        var motion = cm.QueryInterface<UnitMotion>(u)!;
+        var ai = cm.QueryInterface<UnitAIComponent>(u)!;
+        var builder = cm.QueryInterface<BuilderComponent>(u)!;
+        for (int i = 0; i < 500; i++)
+        {
+            motion.Tick(0.1f);
+            ai.Tick(0.1f, cm);
+            builder.Tick(cm);
+            if (fd.Progress > 0f) return true;
+        }
+        return false;
     }
 }

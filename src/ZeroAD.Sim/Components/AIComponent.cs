@@ -115,13 +115,9 @@ public sealed class AIComponent : ComponentBase
             EnemyBuildings = FindEnemyBuildings(playerId),
         };
 
-        _economy.Update(snapshot, playerId);
-        _build.Update(snapshot, playerId);
-        _research.Update(snapshot, playerId);
-
         // Petra 完整版 HQ 更新（如果有 SharedState = 地图已加载 + 模板就绪）。
-        // HQ 激活时,旧版 defense/attack 停跑——两套防御会重复下令(旧版全军扑一个
-        // 威胁 vs Petra 的限量回防+驻军避险),旧版留作无地图/无模板环境的兜底。
+        // HQ 激活时旧玩具 economy/build/research/defense/attack 一律停跑——
+        // 玩具 EconomyManager 按全图最近食物派工,会把 P2 村民派去 P1 浆果/农田。
         bool petraActive = false;
         if (_hq != null && _sharedState != null && _petraConfig != null)
         {
@@ -144,6 +140,9 @@ public sealed class AIComponent : ComponentBase
         }
         if (!petraActive)
         {
+            _economy.Update(snapshot, playerId);
+            _build.Update(snapshot, playerId);
+            _research.Update(snapshot, playerId);
             _defense.Update(snapshot, playerId);
             _attack.Update(snapshot, playerId);
         }

@@ -80,7 +80,7 @@ public sealed class StatusRepairLootTrickleTests
         // FSM 必须从 REPAIR.APPROACHING 进 REPAIR.REPAIRING——否则动画停在
         // walk(工人原地踏步盖房子)。
         var cm = SetupWorld();
-        var site = MakeEntity(cm, 1, 5, 0);   // 距工人 5m(< 8m 工位半径)
+        var site = MakeEntity(cm, 1, 2, 0);   // 距工人 2m(无阻挡时工位=WorkRange 2 + 1m 容差)
         var fdn = new FoundationComponent();
         cm.AddComponent(site, fdn);
         fdn.Configure("structures/test", 100f);
@@ -102,7 +102,7 @@ public sealed class StatusRepairLootTrickleTests
     public void BuilderTick_RepairsAdjacentDamagedBuilding_ThenClearsTarget()
     {
         var cm = SetupWorld();
-        var bld = MakeEntity(cm, 1, 5, 0);   // 距工人 5m(< 8m 工位半径)
+        var bld = MakeEntity(cm, 1, 2, 0);   // 距工人 2m(无阻挡时工位=WorkRange 2 + 1m 容差)
         cm.AddComponent(bld, new HealthComponent { Current = 90, Max = 100 });
         cm.AddComponent(bld, new CostComponent { BuildTime = 10f });
         var rep = new RepairableComponent { RepairTimeRatio = 2f };
@@ -126,7 +126,7 @@ public sealed class StatusRepairLootTrickleTests
     public void BuilderTick_RepairUnregisteredWhenWalkingAway()
     {
         var cm = SetupWorld();
-        var bld = MakeEntity(cm, 1, 5, 0);
+        var bld = MakeEntity(cm, 1, 2, 0);
         cm.AddComponent(bld, new HealthComponent { Current = 50, Max = 100 });
         cm.AddComponent(bld, new CostComponent { BuildTime = 10f });
         var rep = new RepairableComponent { RepairTimeRatio = 2f };
@@ -153,7 +153,7 @@ public sealed class StatusRepairLootTrickleTests
     public void UnitAI_RepairOrder_RejectsFullHealthBuilding()
     {
         var cm = SetupWorld();
-        var bld = MakeEntity(cm, 1, 5, 0);
+        var bld = MakeEntity(cm, 1, 2, 0);
         cm.AddComponent(bld, new HealthComponent { Current = 100, Max = 100 });  // 满血
         cm.AddComponent(bld, new RepairableComponent());
 
@@ -514,7 +514,7 @@ public sealed class StatusRepairLootTrickleTests
     public void BuilderTick_FoundationRegistersAndUnregistersOnCompletion()
     {
         var cm = SetupWorld();
-        var site = MakeEntity(cm, 1, 5, 0);   // 距工人 5m(< 8m 工位半径)
+        var site = MakeEntity(cm, 1, 2, 0);   // 距工人 2m(无阻挡时工位=WorkRange 2 + 1m 容差)
         var fdn = new FoundationComponent();
         cm.AddComponent(site, fdn);
         fdn.Configure("structures/test", 100f);
@@ -540,7 +540,7 @@ public sealed class StatusRepairLootTrickleTests
     public void BuilderTick_FoundationUnregisteredWhenWalkingAway()
     {
         var cm = SetupWorld();
-        var site = MakeEntity(cm, 1, 5, 0);
+        var site = MakeEntity(cm, 1, 2, 0);
         var fdn = new FoundationComponent();
         cm.AddComponent(site, fdn);
         fdn.Configure("structures/test", 100f);

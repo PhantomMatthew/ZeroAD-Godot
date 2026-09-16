@@ -3491,7 +3491,7 @@ public sealed partial class Main : Node3D
 		// 选中侧能力一趟聚合(桥 GetSelectedActionCaps)。
 		int lp = (int)_sim.LocalPlayerId;
 		var caps = _sim.Gui.GetSelectedActionCaps(_selectedEntities, lp);
-		if (!caps.CanAttack && !caps.CanGather && !caps.CanGarrison) return "";
+		if (!caps.CanAttack && !caps.CanGather && !caps.CanGarrison && !caps.CanRepair) return "";
 
 		var worldPos = ScreenToWorld(mousePos);
 		if (worldPos == null) return "";
@@ -3499,11 +3499,17 @@ public sealed partial class Main : Node3D
 		if (targets.Count == 0) return "";
 		var e = targets[0];
 		var owner = _sim.Sim.QueryInterface<OwnershipComponent>(e);
-		// gaia 实体(鹿/狼等)无 OwnershipComponent,按玩家 0 处理——IsEnemy(lp,0) 恒 true,
-		// 有 Health 的 gaia 动物对士兵显示剑(原版可猎);树木无 Health(原版数据)不显示。
+		var foundation = _sim.Sim.QueryInterface<FoundationComponent>(e);
+		bool incomplete = foundation != null && !foundation.IsBuilt;
+
+		// 未完工地基:建造光标,绝不用采集(农田模板完工才有 ResourceSupply;地基被点中
+		// 或点到旁边的树时也不该显示斧子)。
+		if (incomplete && caps.CanRepair
+			&& owner != null && owner.PlayerId == lp)
+			return "action-repair";
 
 		// 采集者在资源目标上优先采集光标(鹿对村民=猎取;对齐 HandleRightClick 分流)。
-		if (caps.CanGather && _sim.Sim.QueryInterface<ResourceSupply>(e) is { } supply)
+		if (!incomplete && caps.CanGather && _sim.Sim.QueryInterface<ResourceSupply>(e) is { } supply)
 		{
 			// 按 specificType 细分(原版 cursors/action-gather-{fruit,fish,meat,...}.png);
 			// 大类兜底(旧数据无 specificType 时回退)。
@@ -3652,7 +3658,8 @@ public sealed partial class Main : Node3D
 		foreach (var eid in targets)
 		{
 			targetEntity = eid;
-			isResource = _sim.Sim.QueryInterface<ResourceSupply>(eid) != null;
+			isResource = _sim.Sim.QueryInterface<ResourceSupply>(eid) != null
+				&& !GatherTargetFilter.IsIncompleteFoundation(_sim.Sim, eid);
 			// 不完工地基(原版 repair 动作):右键己方地基 → 建造工去帮建。此前无此分支,
 			// 右键地基只走 Move,建造工走过去就站住、不建造。
 			var foundationCmp = _sim.Sim.QueryInterface<FoundationComponent>(eid);

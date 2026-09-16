@@ -2971,6 +2971,9 @@ public sealed partial class SimBridge : Node
 
 		result.Sort((a, b) =>
 		{
+			bool fa = ZeroAD.Sim.Components.GatherTargetFilter.IsIncompleteFoundation(_sim, a);
+			bool fb = ZeroAD.Sim.Components.GatherTargetFilter.IsIncompleteFoundation(_sim, b);
+			if (fa != fb) return fa ? -1 : 1;
 			var pa = _entityNodes[a].Position;
 			var pb = _entityNodes[b].Position;
 			float da = (pa.X - worldPos.X) * (pa.X - worldPos.X) + (pa.Z - worldPos.Z) * (pa.Z - worldPos.Z);

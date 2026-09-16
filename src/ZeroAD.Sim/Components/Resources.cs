@@ -165,6 +165,42 @@ public sealed class ResourceDropsite : ComponentBase, IComponentMessageHandler
     public void HandleMessage(IMessage message) { }
 }
 
+/// <summary>采集目标判定:未完工地基不可采(原版 foundation| 滤镜剥掉 ResourceSupply);
+/// 另拒敌方属主农田与敌方领土上的 gaia 浆果。</summary>
+public static class GatherTargetFilter
+{
+    public static bool IsIncompleteFoundation(ComponentManager cm, EntityId entity)
+    {
+        var foundation = cm.QueryInterface<FoundationComponent>(entity);
+        return foundation != null && !foundation.IsBuilt;
+    }
+
+    public static bool IsGatherable(ComponentManager cm, int gathererPlayer, EntityId supply)
+    {
+        var s = cm.QueryInterface<ResourceSupply>(supply);
+        if (s == null || s.IsEmpty) return false;
+        if (IsIncompleteFoundation(cm, supply)) return false;
+        return !IsHostile(cm, gathererPlayer, supply);
+    }
+
+    public static bool IsHostile(ComponentManager cm, int gathererPlayer, EntityId supply)
+    {
+        if (gathererPlayer <= 0) return false;
+        int supplyOwner = cm.QueryInterface<OwnershipComponent>(supply)?.PlayerId ?? 0;
+        if (supplyOwner > 0 && cm.Players.IsEnemy(gathererPlayer, supplyOwner))
+            return true;
+        var pos = cm.QueryInterface<PositionComponent>(supply);
+        var terr = SimSystem.Territory;
+        if (pos != null && terr != null)
+        {
+            int tile = terr.GetOwner(pos.Position.X, pos.Position.Z);
+            if (tile > 0 && cm.Players.IsEnemy(gathererPlayer, tile))
+                return true;
+        }
+        return false;
+    }
+}
+
 /// <summary>尸体标记(原版:killBeforeGather 的 gaia 动物死亡不销毁,转尸体继续供采集)。
 /// 死亡清扫见此组件即跳过;UnitAI/移动/攻击的 tick 驱动见此组件即停。
 /// 无字段——存在即语义。</summary>

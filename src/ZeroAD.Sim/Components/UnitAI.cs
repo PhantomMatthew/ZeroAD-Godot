@@ -1042,10 +1042,16 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             if (gatherer == null) { u.FinishOrder(); return; }
             if (m.Order!.Target is { } target)
             {
+                // 未完工地基不可采(原版 foundation| 剥掉 ResourceSupply;误下 Gather
+                // 会卡在 APPROACHING,工地阻挡走不出)。
+                if (GatherTargetFilter.IsIncompleteFoundation(m.Cm, target))
+                { u.FinishOrder(); return; }
+                var supply = m.Cm.QueryInterface<ResourceSupply>(target);
+                if (supply == null)
+                { u.FinishOrder(); return; }
                 // 狩猎重定向(原版 killBeforeGather):活体动物先猎杀,死后采尸体——
                 // 队列改为 [Attack, Gather]:Attack 在目标死亡后完成,接着 Gather 采尸体。
-                var supply = m.Cm.QueryInterface<ResourceSupply>(target);
-                if (supply != null && supply.KillBeforeGather
+                if (supply.KillBeforeGather
                     && m.Cm.QueryInterface<HealthComponent>(target) is { IsDead: false })
                 {
                     // 目标不在属主视野(动物游走进雾):攻击单会被追击门取消,采集也无处
@@ -1116,7 +1122,16 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 && m.Cm.QueryInterface<HealthComponent>(target) is { IsInjured: true };
             if (!validFoundation && !validRepair) { u.FinishOrder(); return; }
             builder.Build(target);
-            MoveToTarget(u, target, m.Cm!);
+            var gatherer = m.Cm.QueryInterface<ResourceGatherer>(u.Entity);
+            if (gatherer != null)
+            {
+                gatherer.State = ResourceGatherer.GatherState.Idle;
+                gatherer.TargetSupply = null;
+            }
+            // 走到阻挡边缘(原版 MoveToTargetRange + Builder.GetRange),不要走中心——
+            // 兵营提交后中心在壳内,寻路失败工人卡住不盖。
+            MoveToTargetEdge(u, target, m.Cm!,
+                Fixed.FromFloat(BuilderComponent.WorkRange(m.Cm, u.Entity)));
             u.FsmNextState = "REPAIR.APPROACHING";
         });
 
@@ -2076,14 +2091,18 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                     // Deposit carried resources at the dropsite.
                     DepositResources(u.Entity, gatherer, m.Cm!);
                     // Return to the original supply (if still valid) for another load.
-                    if (gatherer.TargetSupply is { } supply && MoveToTargetEdge(u, supply, m.Cm!, Fixed.FromInt(1)))
+                    // 敌方领土/敌方属主的供应不走回(否则交完己方 CC 又杀去 P1 浆果)。
+                    var own = m.Cm.QueryInterface<OwnershipComponent>(u.Entity);
+                    if (gatherer.TargetSupply is { } supply
+                        && (own == null || !GatherTargetFilter.IsHostile(m.Cm, own.PlayerId, supply))
+                        && MoveToTargetEdge(u, supply, m.Cm!, Fixed.FromInt(1)))
                     {
                         gatherer.State = ResourceGatherer.GatherState.MovingToResource;
                         u.FsmNextState = "GATHER.APPROACHING";
                     }
                     else
                     {
-                        // 原供应失效 → FINDINGNEWTARGET 自动续目标(原版同)。
+                        // 原供应失效或在敌方领土 → FINDINGNEWTARGET 自动续目标。
                         u._depletedSupply = gatherer.TargetSupply;
                         u.FsmNextState = "GATHER.FINDINGNEWTARGET";
                     }
@@ -2098,8 +2117,13 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             .On("Timer", (u, m) =>
             {
                 var next = FindNearbySupply(u, m.Cm!);
-                if (next == null) { u.FinishOrder(); return; }
                 var gatherer = m.Cm!.QueryInterface<ResourceGatherer>(u.Entity);
+                if (next == null)
+                {
+                    if (gatherer != null) gatherer.TargetSupply = null;
+                    u.FinishOrder();
+                    return;
+                }
                 if (gatherer == null) { u.FinishOrder(); return; }
                 gatherer.TargetSupply = next;
                 MoveToTargetEdge(u, next.Value, m.Cm!, Fixed.FromInt(1));
@@ -3060,6 +3084,7 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
         {
             var ds = cm.QueryInterface<ResourceDropsite>(e);
             if (ds == null || !ds.Accepts(carryType)) continue;
+            if (GatherTargetFilter.IsIncompleteFoundation(cm, e)) continue;
             if (cm.QueryInterface<OwnershipComponent>(e)?.PlayerId != own.PlayerId) continue;
             var pos = cm.QueryInterface<PositionComponent>(e);
             if (pos == null) continue;
@@ -3130,6 +3155,10 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
             }
             if (range != null && own != null
                 && range.GetLosVisibility(e, own.PlayerId) != LosVisibility.Visible)
+                return false;
+            if (own != null && !GatherTargetFilter.IsGatherable(cm, own.PlayerId, e))
+                return false;
+            else if (own == null && GatherTargetFilter.IsIncompleteFoundation(cm, e))
                 return false;
             return cm.QueryInterface<PositionComponent>(e) != null;
         }

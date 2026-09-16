@@ -105,7 +105,8 @@ public sealed class EconomyManager
         AiUtils.FindNearest(_cm, from, e =>
         {
             var s = _cm.QueryInterface<ResourceSupply>(e);
-            return s != null && !s.IsEmpty && s.Type == type;
+            return s != null && !s.IsEmpty && s.Type == type
+                && GatherTargetFilter.IsGatherable(_cm, (int)_playerId, e);
         });
 }
 

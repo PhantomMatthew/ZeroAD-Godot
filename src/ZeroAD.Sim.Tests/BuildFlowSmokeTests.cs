@@ -84,6 +84,37 @@ public sealed class BuildFlowSmokeTests
     }
 
     [Fact]
+    public void BuildBarracks_WithObstruction_ProgressesFromEdge()
+    {
+        var cm = SetupWorld();
+        if (cm == null) return;
+        // 有阻挡管理器才走 Commit/挤出;无则地基永不挡路,掩盖兵营卡死。
+        SimSystem.SetObstructionManager(new ObstructionManager(512, 4f));
+        var villager = cm!.SpawnEntity("units/spart/support_civilian", 10, 10, ownerPlayerId: 1);
+
+        var exec = new Net.SimCommandExecutor(cm);
+        exec.Apply(new Net.NetCommand(1, Net.NetCommandType.Build, villager.Value,
+            fp1: Fixed.FromFloat(40f).InternalValue, fp2: Fixed.FromFloat(10f).InternalValue,
+            templateName: "structures/spart/barracks"));
+
+        var fdn = cm.AllEntities
+            .Select(e => cm.QueryInterface<FoundationComponent>(e))
+            .FirstOrDefault(f => f != null);
+        Assert.NotNull(fdn);
+        Assert.Equal("structures/spart/barracks", fdn!.ResultTemplate);
+
+        TickWorld(cm, 400);
+        Assert.True(fdn.Committed);
+        Assert.True(fdn.Progress > 0f);
+        var fent = cm.AllEntities.First(e => cm.QueryInterface<FoundationComponent>(e) != null);
+        var fpos = cm.QueryInterface<PositionComponent>(fent)!;
+        var vpos = cm.QueryInterface<PositionComponent>(villager)!;
+        float dx = vpos.Position.X.ToFloat() - fpos.Position.X.ToFloat();
+        float dz = vpos.Position.Z.ToFloat() - fpos.Position.Z.ToFloat();
+        Assert.True(dx * dx + dz * dz > 8f * 8f, "builder must not sit inside the barracks hull");
+    }
+
+    [Fact]
     public void AdjacentIdenticalOrders_RejectedPair_DoesNotGetStuck()
     {
         var cm = SetupWorld();

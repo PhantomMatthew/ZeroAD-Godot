@@ -136,6 +136,9 @@ public sealed class GuiInterface
                 g.State == ResourceGatherer.GatherState.MovingToResource ||
                 g.State == ResourceGatherer.GatherState.MovingToDropsite)
             {
+                var ai = cm().QueryInterface<UnitAIComponent>(e);
+                if (ai != null && ai.FsmStateName.Contains("REPAIR", System.StringComparison.Ordinal))
+                    continue;
                 counts[g.CarryType]++;
             }
         }
@@ -599,7 +602,7 @@ public sealed class GuiInterface
             promotion?.XP ?? 0, promotion?.XpNext ?? 0,
             hp != null && hp.Max > 0 && hp.Current > 0, hp?.Current ?? 0, hp?.Max ?? 0,
             capturable != null && maxCp > 0f, maxCp, cps,
-            supply != null && supply.MaxAmount > 0,
+            supply != null && supply.MaxAmount > 0 && !GatherTargetFilter.IsIncompleteFoundation(_cm, entity),
             supply?.Type.ToString() ?? "", supply?.Amount ?? 0, supply?.MaxAmount ?? 0,
             gatherer?.CarryAmount ?? 0,
             gatherer != null ? gatherer.CarryType.ToString().ToLowerInvariant() : "",
@@ -686,10 +689,12 @@ public sealed class GuiInterface
         }
         if (fpSize1 <= 0.01f) fpSize1 = fpSize0;
 
+        bool incomplete = GatherTargetFilter.IsIncompleteFoundation(_cm, entity);
         return new MarkerState(
             id?.IsBuilding ?? false, own?.PlayerId ?? -1,
             hp?.Max ?? 0, hp != null && hp.Max > 0 ? (float)hp.Current / hp.Max : 0f,
-            supply?.Amount ?? 0, supply?.MaxAmount ?? 0,
+            incomplete ? 0 : supply?.Amount ?? 0,
+            incomplete ? 0 : supply?.MaxAmount ?? 0,
             fpCircle, fpSize0 * 0.5f, fpSize1 * 0.5f,
             attack is { HasRangeOverlay: true }, attack?.Range ?? 0f,
             maxCp, cps, barW, barH, barOff, overlayTex, overlayTexPath, overlayMaskPath);
@@ -698,23 +703,24 @@ public sealed class GuiInterface
     /// <summary>选中集动作能力(原版 actionCheck 的选中侧:攻击/采集/驻防三光标资格,
     /// 一趟扫描替代 DetermineHoverCursor 的每帧 5×N 查询)。Garrison 资格 =
     /// Garrisonable + UnitAI(与调用方原判定一致)。</summary>
-    public readonly record struct ActionCaps(bool CanAttack, bool CanGather, bool CanGarrison);
+    public readonly record struct ActionCaps(bool CanAttack, bool CanGather, bool CanGarrison, bool CanRepair);
 
     public ActionCaps GetSelectedActionCaps(IReadOnlyCollection<EntityId> selected, int localPlayerId)
     {
-        bool canAttack = false, canGather = false, canGarrison = false;
+        bool canAttack = false, canGather = false, canGarrison = false, canRepair = false;
         foreach (var eid in selected)
         {
             if (_cm.QueryInterface<OwnershipComponent>(eid)?.PlayerId != localPlayerId) continue;
             if (_cm.QueryInterface<AttackComponent>(eid) != null) canAttack = true;
             if (_cm.QueryInterface<ResourceGatherer>(eid) != null) canGather = true;
+            if (_cm.QueryInterface<BuilderComponent>(eid) != null) canRepair = true;
             if (!canGarrison
                 && _cm.QueryInterface<GarrisonableComponent>(eid) != null
                 && _cm.QueryInterface<UnitAIComponent>(eid) != null)
                 canGarrison = true;
-            if (canAttack && canGather && canGarrison) break;
+            if (canAttack && canGather && canGarrison && canRepair) break;
         }
-        return new ActionCaps(canAttack, canGather, canGarrison);
+        return new ActionCaps(canAttack, canGather, canGarrison, canRepair);
     }
 
     /// <summary>在研科技快照(原版 GetStartedResearch:首个己方在研建筑)。
