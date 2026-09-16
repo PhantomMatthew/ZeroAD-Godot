@@ -2952,8 +2952,8 @@ public sealed partial class Main : Node3D
 	/// <summary>Reconcile the cached rally marker (_rallyMarker) with the current selection:
 	/// find the first selected production building carrying a non-empty rally queue, and rebuild
 	/// the flags + path line only when the building/queue/civ changes. 多点版(原版
-	/// CCmpRallyPointRenderer):遍历 GetPositions 全队列,每点一面旗,折线串联
-	/// (建筑→首点走寻路,点间直线);缓存键 = 整队列哈希,设点/目标跟拍移位即重绘
+	/// CCmpRallyPointRenderer):每旗一面,每段独立 ComputePathImmediate + 线性化/可见性/
+	/// 开口 RNS;缓存键 = 整队列哈希,设点/目标跟拍移位即重绘
 	/// (原版 DisplayRallyPoint 语义)。Tearing down when nothing qualifies keeps pathfinding
 	/// off the hot path — ComputePath runs once per rally change, not per frame.</summary>
 	private void ReconcileRallyMarker()
@@ -3014,33 +3014,19 @@ public sealed partial class Main : Node3D
 			container.AddChild(flag);
 		}
 
-		// 折线:建筑→首点走寻路(read-only; mirrors CCmpRallyPointRenderer),点间直线串联,
-		// 沿路铺 textured ground ribbon。
+		// Overlay line: CCmpRallyPointRenderer (edge start, goal-first snap, linearize,
+		// visibility reduce, open RNS). Do not prepend the centre or re-append flags —
+		// Waypoints are goal-first, so that fold is a there-and-back zigzag.
 		var bpos = _sim.Sim.QueryInterface<PositionComponent>(rallyBuilding);
 		if (bpos != null)
 		{
-			var pts3 = new List<Vector3>();
-			var start = new FixedVector2D(bpos.Position.X, bpos.Position.Z);
-			pts3.Add(new Vector3(start.X.ToFloat(),
-				TerrainHeightService.Sample(start.X.ToFloat(), start.Y.ToFloat()) + 0.15f,
-				start.Y.ToFloat()));
-			// Waypoints are stored start→goal (index 0 = start; UnitMotion consumes front→back
-			// likewise); iterate front→back for travel order. Reversing this draws the path
-			// backward so the cap segments cross over → a straight diagonal + the curve.
-			var path = _sim.Pathfinder.ComputePath(start, PathGoal.Point(points[0].X, points[0].Y));
-			if (!path.IsEmpty)
-				for (int i = 0; i < path.Waypoints.Count; i++)
-				{
-					var w = path.Waypoints[i];
-					pts3.Add(new Vector3(w.X.ToFloat(),
-						TerrainHeightService.Sample(w.X.ToFloat(), w.Z.ToFloat()) + 0.15f,
-						w.Z.ToFloat()));
-				}
-			foreach (var p in points)
-				pts3.Add(new Vector3(p.X.ToFloat(),
-					TerrainHeightService.Sample(p.X.ToFloat(), p.Y.ToFloat()) + 0.15f,
-					p.Y.ToFloat()));
-			container.AddChild(SelectionRing.CreateRallyLine(pts3));
+			var fp = _sim.Sim.QueryInterface<FootprintComponent>(rallyBuilding);
+			float waterY = _sim.Sim.Water.WaterHeight.ToFloat();
+			float Elev(float x, float z) =>
+				Mathf.Max(TerrainHeightService.Sample(x, z), waterY);
+			var pts3 = RallyPointLineBuilder.Build(_sim.Pathfinder, bpos, fp, points, Elev);
+			if (pts3.Count >= 2)
+				container.AddChild(SelectionRing.CreateRallyLine(pts3));
 		}
 	}
 
