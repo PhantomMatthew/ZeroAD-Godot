@@ -1128,10 +1128,13 @@ public sealed class UnitAIComponent : ComponentBase, IComponentMessageHandler, I
                 gatherer.State = ResourceGatherer.GatherState.Idle;
                 gatherer.TargetSupply = null;
             }
-            // 走到阻挡边缘(原版 MoveToTargetRange + Builder.GetRange),不要走中心——
-            // 兵营提交后中心在壳内,寻路失败工人卡住不盖。
-            MoveToTargetEdge(u, target, m.Cm!,
-                Fixed.FromFloat(BuilderComponent.WorkRange(m.Cm, u.Entity)));
+            // 走到矩形外壳工位(原版 IsInTargetRange),不要走外接圆——并排第二座
+            // 房子时半对角点落在第一座壳内,寻路失败原地转圈。
+            if (BuilderComponent.TryWorkGoal(m.Cm, u.Entity, target, out var workGoal))
+                m.Cm.QueryInterface<UnitMotion>(u.Entity)?.MoveToPoint(workGoal);
+            else
+                MoveToTargetEdge(u, target, m.Cm!,
+                    Fixed.FromFloat(BuilderComponent.WorkRange(m.Cm, u.Entity)));
             u.FsmNextState = "REPAIR.APPROACHING";
         });
 

@@ -375,6 +375,9 @@ public sealed class GarrisonableComponent : ComponentBase, IComponentMessageHand
     {
         if (Holder != null)
             return false;
+        // 未完工地基不可驻(原版 foundation| 剥掉 GarrisonHolder;误驻则 MoveOutOfWorld 消失)。
+        if (cm.QueryInterface<FoundationComponent>(target) is { IsBuilt: false })
+            return false;
         var holder = cm.QueryInterface<GarrisonHolderComponent>(target);
         return holder != null && holder.IsAllowedToGarrison(cm, Entity);
     }

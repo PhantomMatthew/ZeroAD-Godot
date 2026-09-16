@@ -773,8 +773,12 @@ namespace ZeroAD.Sim
                     Content.EntityClassHelper.ParseClassTokens(stats.MarketTradeTypes));
             }
 
+            // 未完工地基(原版 foundation| 滤镜)不带 GarrisonHolder/TurretHolder:
+            // 否则右键己方房屋地基会驻军,村民 InWorld=false 从地图消失。
+            bool incompleteFoundation = cm.QueryInterface<FoundationComponent>(entity) is { IsBuilt: false };
+
             // GarrisonHolder(驻军建筑;civil_centre/fortress 等):GarrisonHolder.js 行为件。
-            if (stats != null && stats.HasGarrisonHolder
+            if (!incompleteFoundation && stats != null && stats.HasGarrisonHolder
                 && cm.QueryInterface<GarrisonHolderComponent>(entity) == null)
             {
                 var holderCmp = new GarrisonHolderComponent
@@ -792,7 +796,7 @@ namespace ZeroAD.Sim
             }
 
             // TurretHolder(城墙/哨塔炮塔点):TurretHolder.js 行为件。
-            if (stats != null && stats.HasTurretHolder
+            if (!incompleteFoundation && stats != null && stats.HasTurretHolder
                 && cm.QueryInterface<TurretHolderComponent>(entity) == null)
             {
                 AddTurretHolder(cm, entity, stats);

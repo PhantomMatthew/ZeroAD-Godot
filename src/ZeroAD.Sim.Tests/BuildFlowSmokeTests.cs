@@ -75,6 +75,8 @@ public sealed class BuildFlowSmokeTests
             .FirstOrDefault(f => f != null);
         Assert.NotNull(fdn);
         Assert.Equal("structures/spart/house", fdn!.ResultTemplate);
+        var fent = cm.AllEntities.First(e => cm.QueryInterface<FoundationComponent>(e) != null);
+        Assert.Null(cm.QueryInterface<GarrisonHolderComponent>(fent));
 
         TickWorld(cm, 1500);   // 走 20m + 建造,150s 足够
         Assert.True(fdn.IsBuilt);

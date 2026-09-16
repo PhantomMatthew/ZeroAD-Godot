@@ -247,6 +247,74 @@ namespace ZeroAD.Sim.Components
             return Fixed.Zero.WithInternalValue((int)MathInt.Sqrt64((ulong)sq));
         }
 
+        /// <summary>到外壳的边距(壳内为 0)。建筑用旋转矩形,不用外接圆——两座房子并排时
+        /// 半对角工位会落在第一座壳内,寻路每拍改目标,村民原地转圈。</summary>
+        public float DistanceToSurface(float wx, float wz)
+        {
+            ClosestOnFootprint(wx, wz, out float cx, out float cz, out bool inside);
+            if (inside) return 0f;
+            float dx = wx - cx, dz = wz - cz;
+            return MathF.Sqrt(dx * dx + dz * dz);
+        }
+
+        /// <summary>距外壳 <paramref name="margin"/> 米、靠近查询点的最近工位(世界 XZ)。</summary>
+        public void NearestWorksite(float wx, float wz, float margin, out float gx, out float gz)
+        {
+            ClosestOnFootprint(wx, wz, out float cx, out float cz, out bool inside);
+            if (inside)
+            {
+                gx = wx; gz = wz;
+                return;
+            }
+            float dx = wx - cx, dz = wz - cz;
+            float d = MathF.Sqrt(dx * dx + dz * dz);
+            if (d <= margin || d < 0.01f)
+            {
+                gx = wx; gz = wz;
+                return;
+            }
+            gx = cx + dx / d * margin;
+            gz = cz + dz / d * margin;
+        }
+
+        private void ClosestOnFootprint(float wx, float wz, out float cx, out float cz, out bool inside)
+        {
+            var pos = SimSystem.GetComponent<PositionComponent>(Entity);
+            if (pos == null)
+            {
+                cx = wx; cz = wz; inside = true;
+                return;
+            }
+            float ox = pos.Position.X.ToFloat();
+            float oz = pos.Position.Z.ToFloat();
+            if (Type == ObstructionType.Unit)
+            {
+                float dx = wx - ox, dz = wz - oz;
+                float d = MathF.Sqrt(dx * dx + dz * dz);
+                float r = Size0.ToFloat();
+                if (d <= r || d < 0.01f)
+                {
+                    cx = wx; cz = wz; inside = true;
+                    return;
+                }
+                cx = ox + dx / d * r;
+                cz = oz + dz / d * r;
+                inside = false;
+                return;
+            }
+            float hw = Size0.ToFloat() * 0.5f;
+            float hh = Size1.ToFloat() * 0.5f;
+            AxesFromYaw(pos.Rotation.Y, out var u, out var v);
+            float dxw = wx - ox, dzw = wz - oz;
+            float lx = dxw * u.X.ToFloat() + dzw * u.Y.ToFloat();
+            float lz = dxw * v.X.ToFloat() + dzw * v.Y.ToFloat();
+            float qx = Math.Clamp(lx, -hw, hw);
+            float qz = Math.Clamp(lz, -hh, hh);
+            inside = qx == lx && qz == lz;
+            cx = ox + qx * u.X.ToFloat() + qz * v.X.ToFloat();
+            cz = oz + qx * u.Y.ToFloat() + qz * v.Y.ToFloat();
+        }
+
         protected override void OnDeinit()
         {
             // Tear down: remove the shape so the obstruction doesn't outlive the entity. This is

@@ -228,4 +228,42 @@ public sealed class FoundationPushOutTests
         }
         return false;
     }
+
+    [Fact]
+    public void AdjacentSecondHouse_WorkGoalIsOutsideFirstHouse()
+    {
+        // 第一座 11×11 在 (50,50) 已提交;第二座在 (63,50);工人在第一座北侧工位。
+        // 外接圆工位会落进第一座壳内;矩形边缘工位必须在第一座 AABB 之外。
+        var (cm, house1, u) = World(unitOnSite: false, footprint: 11);
+        cm.QueryInterface<PositionComponent>(u)!.Position =
+            new FixedVector3D(Fixed.FromInt(50), Fixed.Zero, Fixed.FromInt(58));
+        cm.QueryInterface<FoundationComponent>(house1)!.Commit(cm);
+
+        var house2 = cm.CreateEntity();
+        cm.AddComponent(house2, new PositionComponent());
+        cm.QueryInterface<PositionComponent>(house2)!.Position =
+            new FixedVector3D(Fixed.FromInt(63), Fixed.Zero, Fixed.FromInt(50));
+        cm.AddComponent(house2, new OwnershipComponent { PlayerId = 1 });
+        var fobs = new ObstructionComponent
+        {
+            Type = ObstructionType.Static,
+            Size0 = Fixed.FromInt(11),
+            Size1 = Fixed.FromInt(11),
+            Flags = ObstructionFlags.DefaultBlock,
+            DisableBlockMovement = true,
+            DisableBlockPathfinding = true,
+        };
+        cm.AddComponent(house2, fobs);
+        fobs.EnsureRegistered();
+        var fd = new FoundationComponent();
+        cm.AddComponent(house2, fd);
+        fd.Configure("structures/athen/house", 30f);
+
+        cm.AddComponent(u, new BuilderComponent());
+        Assert.True(BuilderComponent.TryWorkGoal(cm, u, house2, out var goal));
+        float gx = goal.X.ToFloat(), gz = goal.Y.ToFloat();
+        Assert.False(gx >= 44.5f && gx <= 55.5f && gz >= 44.5f && gz <= 55.5f,
+            $"work goal ({gx:0.00},{gz:0.00}) must not sit inside the first house");
+        Assert.False(BuilderComponent.InWorkRange(cm, u, house2));
+    }
 }

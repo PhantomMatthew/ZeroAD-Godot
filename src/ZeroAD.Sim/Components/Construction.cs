@@ -246,22 +246,37 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         return max;
     }
 
-    /// <summary>原版 IsInTargetRange(Builder):距目标阻挡边缘 ≤ WorkRange,
-    /// 不是距中心 8m(兵营半宽 8.5m,8m 工位在壳内,提交后永远走不到)。</summary>
+    /// <summary>原版 IsInTargetRange(Builder):距目标阻挡边缘(矩形/圆) ≤ WorkRange,
+    /// 不是外接圆半对角——并排第二座房子时半对角工位会落在第一座壳内,村民原地转圈。</summary>
     public static bool InWorkRange(ComponentManager cm, EntityId builder, EntityId target)
     {
         var a = cm.QueryInterface<PositionComponent>(builder);
         var b = cm.QueryInterface<PositionComponent>(target);
         if (a == null || b == null) return false;
-        float dx = a.Position.X.ToFloat() - b.Position.X.ToFloat();
-        float dz = a.Position.Z.ToFloat() - b.Position.Z.ToFloat();
-        float dist = MathF.Sqrt(dx * dx + dz * dz);
         float extra = WorkRange(cm, builder);
         var tobs = cm.QueryInterface<ObstructionComponent>(target);
-        if (tobs != null) extra += tobs.GetSize().ToFloat();
-        // UnitMotion 到站阈值约 1m;对角接近时 float 半径会差几厘米,无容差会误判
-        // 未到岗又朝中心寻路,提交后卡在壳边进度永远 0。
-        return dist <= extra + 1f;
+        if (tobs != null)
+            return tobs.DistanceToSurface(a.Position.X.ToFloat(), a.Position.Z.ToFloat()) <= extra + 1f;
+        float dx = a.Position.X.ToFloat() - b.Position.X.ToFloat();
+        float dz = a.Position.Z.ToFloat() - b.Position.Z.ToFloat();
+        return MathF.Sqrt(dx * dx + dz * dz) <= extra + 1f;
+    }
+
+    public static bool TryWorkGoal(ComponentManager cm, EntityId builder, EntityId target,
+        out Maths.FixedVector2D goal)
+    {
+        goal = default;
+        var self = cm.QueryInterface<PositionComponent>(builder);
+        var pos = cm.QueryInterface<PositionComponent>(target);
+        if (self == null || pos == null) return false;
+        float gx = pos.Position.X.ToFloat();
+        float gz = pos.Position.Z.ToFloat();
+        var obs = cm.QueryInterface<ObstructionComponent>(target);
+        if (obs != null)
+            obs.NearestWorksite(self.Position.X.ToFloat(), self.Position.Z.ToFloat(),
+                WorkRange(cm, builder), out gx, out gz);
+        goal = new Maths.FixedVector2D(Maths.Fixed.FromFloat(gx), Maths.Fixed.FromFloat(gz));
+        return true;
     }
 
     private bool IsLeavingFoundation(ComponentManager cm)
@@ -277,21 +292,14 @@ public sealed class BuilderComponent : ComponentBase, IComponentMessageHandler
         var self = cm.QueryInterface<PositionComponent>(Entity);
         var pos = cm.QueryInterface<PositionComponent>(target);
         if (self == null || pos == null) return;
+        float gx = pos.Position.X.ToFloat();
+        float gz = pos.Position.Z.ToFloat();
         var obs = cm.QueryInterface<ObstructionComponent>(target);
-        float margin = WorkRange(cm, Entity);
-        float cx = pos.Position.X.ToFloat();
-        float cz = pos.Position.Z.ToFloat();
-        float gx = cx, gz = cz;
         if (obs != null)
-        {
-            float dx = self.Position.X.ToFloat() - cx;
-            float dz = self.Position.Z.ToFloat() - cz;
-            float d = MathF.Sqrt(dx * dx + dz * dz);
-            if (d < 0.01f) { dx = 1f; dz = 0f; d = 1f; }
-            float offset = obs.GetSize().ToFloat() + margin;
-            gx = cx + dx / d * offset;
-            gz = cz + dz / d * offset;
-        }
+            obs.NearestWorksite(self.Position.X.ToFloat(), self.Position.Z.ToFloat(),
+                WorkRange(cm, Entity), out gx, out gz);
+        // 已在走路且未卡死:不要每拍重发目标(工位随自身位置在圆弧上滑,会原地转圈)。
+        if (motion.HasMoveTarget && !motion.IsStuckThisLeg) return;
         motion.MoveToPoint(new Maths.FixedVector2D(
             Maths.Fixed.FromFloat(gx), Maths.Fixed.FromFloat(gz)));
     }
