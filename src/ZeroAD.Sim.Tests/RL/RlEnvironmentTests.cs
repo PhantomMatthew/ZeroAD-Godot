@@ -112,6 +112,105 @@ public sealed class RlEnvironmentTests
     }
 
     [Fact]
+    public void RealMatch_PerEntityCatalog_CcTrainsAndVillagerBuilds()
+    {
+        using var env = new RlEnvironment(new RlConfig { Seed = 1, PrivilegedVision = true });
+        var obs = env.Reset();
+        if (!env.LoadedRealMatch) return;
+
+        int ccTmpl = env.Catalog.LookupTemplate("structures/athen/civil_centre");
+        int spearTmpl = env.Catalog.LookupTemplate("units/athen/infantry_spearman_b");
+        int civilianTmpl = env.Catalog.LookupTemplate("units/athen/support_civilian");
+        int houseTmpl = env.Catalog.LookupTemplate("structures/athen/house");
+        int phase = env.Catalog.LookupTech("phase_town_athen");
+        if (phase == 0) phase = env.Catalog.LookupTech("phase_town");
+        Assert.True(ccTmpl > 0 && spearTmpl > 0 && civilianTmpl > 0);
+
+        int ccRow = FindRow(obs, ccTmpl, RlSpec.OwnerRel.Self);
+        int spearRow = FindRow(obs, spearTmpl, RlSpec.OwnerRel.Self);
+        int civilianRow = FindRow(obs, civilianTmpl, RlSpec.OwnerRel.Self);
+        Assert.True(ccRow >= 0, "own civic centre should be in the entity table");
+        Assert.True(spearRow >= 0, "own spearman should be in the entity table");
+        Assert.True(civilianRow >= 0, "own civilian should be in the entity table");
+
+        uint trainBit = 1u << (int)RlFunction.Train;
+        uint buildBit = 1u << (int)RlFunction.Build;
+        uint researchBit = 1u << (int)RlFunction.Research;
+        Assert.True((obs.EntityMask[ccRow] & trainBit) != 0);
+        Assert.True((obs.EntityMask[ccRow] & researchBit) != 0);
+        Assert.Equal(0u, obs.EntityMask[spearRow] & trainBit);
+        Assert.True((obs.EntityMask[civilianRow] & buildBit) != 0);
+        Assert.Equal(0u, obs.EntityMask[civilianRow] & trainBit);
+
+        Assert.True(CatalogContains(obs, ccRow, RlSpec.Cat.Train, spearTmpl));
+        Assert.True(CatalogContains(obs, ccRow, RlSpec.Cat.Train, civilianTmpl));
+        if (houseTmpl > 0)
+            Assert.True(CatalogContains(obs, civilianRow, RlSpec.Cat.Build, houseTmpl));
+        if (phase > 0)
+            Assert.True(CatalogContains(obs, ccRow, RlSpec.Cat.Research, phase));
+    }
+
+    [Fact]
+    public void RealMatch_CarryAndQueueFeats_StartEmpty_ThenCarryShows()
+    {
+        using var env = new RlEnvironment(new RlConfig { Seed = 1, PrivilegedVision = true });
+        var obs = env.Reset();
+        if (!env.LoadedRealMatch) return;
+        Assert.False(HasEntityFeat(obs, RlSpec.Ent.CarryAmount, v => v > 0));
+        Assert.False(HasEntityFeat(obs, RlSpec.Ent.QueueCount, v => v > 0));
+
+        EntityId? civilian = null;
+        foreach (var e in env.Sim.AllEntities)
+        {
+            var g = env.Sim.QueryInterface<ResourceGatherer>(e);
+            if (g == null) continue;
+            var own = env.Sim.QueryInterface<OwnershipComponent>(e);
+            if (own?.PlayerId != 1) continue;
+            g.CarryAmount = 17;
+            g.CarryType = ResourceType.Food;
+            civilian = e;
+            break;
+        }
+        Assert.True(civilian != null, "own gatherer");
+        obs = env.Step(RlAction.NoOp()).Observation;
+        bool found = false;
+        for (int i = 0; i < RlSpec.MaxEntities; i++)
+        {
+            if (obs.Entity(i, RlSpec.Ent.Valid) == 0) continue;
+            if (obs.Entity(i, RlSpec.Ent.CarryAmount) == 17
+                && obs.Entity(i, RlSpec.Ent.CarryType) == (int)ResourceType.Food + 1)
+            {
+                found = true;
+                break;
+            }
+        }
+        Assert.True(found, "carry amount 17 food should appear on a visible own gatherer");
+    }
+
+    [Fact]
+    public void EncodePriority_OwnCivicCentre_BeatsGaiaTree()
+    {
+        using var env = new RlEnvironment(new RlConfig { Seed = 1, PrivilegedVision = true });
+        env.Reset();
+        if (!env.LoadedRealMatch) return;
+        EntityId? cc = null;
+        EntityId? tree = null;
+        foreach (var e in env.Sim.AllEntities)
+        {
+            var id = env.Sim.QueryInterface<IdentityComponent>(e);
+            if (id == null) continue;
+            var own = env.Sim.QueryInterface<OwnershipComponent>(e);
+            if (cc == null && own?.PlayerId == 1 && id.TemplateName.Contains("civil_centre", StringComparison.Ordinal))
+                cc = e;
+            if (tree == null && id.TemplateName.Contains("aleppo_pine", StringComparison.Ordinal))
+                tree = e;
+        }
+        Assert.True(cc != null && tree != null);
+        Assert.True(ObservationEncoder.EncodePriority(env.Sim, cc!.Value, 1)
+            < ObservationEncoder.EncodePriority(env.Sim, tree!.Value, 1));
+    }
+
+    [Fact]
     public void ConquestUnits_FiresWhenEnemyUnitsDie()
     {
         using var env = new RlEnvironment(new RlConfig
@@ -209,6 +308,61 @@ public sealed class RlEnvironmentTests
         Assert.True(ActionTranslator.TryTranslate(obs,
             new RlAction(RlFunction.Barter, 0), 1, 256, new RlCatalog(), out var barter));
         Assert.Equal(NetCommandType.Barter, barter.Type);
+        obs.FunctionMask[(int)RlFunction.Tribute] = 1;
+        obs.FunctionMask[(int)RlFunction.SetTradingGoods] = 1;
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Tribute, 0, catalogId: 1 | (1 << 2)), 1, 256, new RlCatalog(),
+            out var tribute));
+        Assert.Equal(NetCommandType.Tribute, tribute.Type);
+        Assert.Equal(500, tribute.IntParam2);
+        Assert.Equal((int)ResourceType.Food, tribute.FixedParam1);
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Barter, 0, catalogId: 0 | (2 << 2) | (1 << 4)), 1, 256,
+            new RlCatalog(), out var barterPacked));
+        Assert.Equal((int)ResourceType.Wood, barterPacked.IntParam1);
+        Assert.Equal((int)ResourceType.Stone, barterPacked.IntParam2);
+        Assert.Equal(500, barterPacked.FixedParam1);
+        Assert.True(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.SetTradingGoods, 0, catalogId: 1 | (1 << 2)), 1, 256,
+            new RlCatalog(), out var goods));
+        Assert.Equal(50, goods.IntParam1);
+        Assert.Equal(50, goods.IntParam2);
+        Assert.Equal(0, goods.FixedParam1);
+        Assert.Equal(0, goods.FixedParam2);
+        Assert.False(ActionTranslator.TryTranslate(obs,
+            new RlAction(RlFunction.Formation, 0, catalogId: RlPacking.ControlAssignBase),
+            1, 256, new RlCatalog(), out _));
+    }
+
+    [Fact]
+    public void RandomizeCivs_PicksTwoPlayableCivs()
+    {
+        using var env = new RlEnvironment(new RlConfig { Seed = 7, RandomizeCivs = true });
+        env.Reset();
+        Assert.Contains(env.AgentCiv, RlMapApply.PlayableCivs);
+        Assert.Contains(env.OpponentCiv, RlMapApply.PlayableCivs);
+        Assert.NotEqual(env.AgentCiv, env.OpponentCiv);
+    }
+
+    [Fact]
+    public void RmgenMainland_SpawnsWhenDataPresent()
+    {
+        using var env = new RlEnvironment(new RlConfig
+        {
+            Seed = 3,
+            PrivilegedVision = true,
+            MapName = "mainland",
+            MapSize = 128,
+            TickOpponentAi = false,
+            AgentCiv = "gaul",
+            OpponentCiv = "rome"
+        });
+        env.Reset();
+        if (!env.LoadedRealMatch) return;
+        Assert.True(env.WorldMeters >= 512, "rmgen mainland should enlarge the world past the 256m encounter");
+        Assert.Equal("gaul", env.AgentCiv);
+        Assert.Equal("rome", env.OpponentCiv);
+        Assert.True(CountValid(env.Observation) >= 2);
     }
 
     [Fact]
@@ -308,6 +462,27 @@ public sealed class RlEnvironmentTests
         return 0;
     }
 
+    private static int FindRow(RlObservation obs, int templateId, int ownerRel)
+    {
+        for (int i = 0; i < RlSpec.MaxEntities; i++)
+        {
+            if (obs.Entity(i, RlSpec.Ent.Valid) == 0) continue;
+            if (obs.Entity(i, RlSpec.Ent.TemplateId) != templateId) continue;
+            if (obs.Entity(i, RlSpec.Ent.OwnerRel) != ownerRel) continue;
+            return i;
+        }
+        return -1;
+    }
+
+    private static bool CatalogContains(RlObservation obs, int row, int kind, int internId)
+    {
+        for (int i = 0; i < RlSpec.MaxCatalogChoices; i++)
+        {
+            if (obs.CatalogAt(row, kind, i) == internId) return true;
+        }
+        return false;
+    }
+
     private static void KillPlayerUnits(ComponentManager cm, int playerId)
     {
         foreach (var e in cm.AllEntities)
@@ -327,6 +502,16 @@ public sealed class RlEnvironmentTests
         {
             if (obs.Entity(i, RlSpec.Ent.Valid) == 0) continue;
             if ((obs.Entity(i, RlSpec.Ent.Flags) & flag) != 0) return true;
+        }
+        return false;
+    }
+
+    private static bool HasEntityFeat(RlObservation obs, int feat, Func<int, bool> pred)
+    {
+        for (int i = 0; i < RlSpec.MaxEntities; i++)
+        {
+            if (obs.Entity(i, RlSpec.Ent.Valid) == 0) continue;
+            if (pred(obs.Entity(i, feat))) return true;
         }
         return false;
     }

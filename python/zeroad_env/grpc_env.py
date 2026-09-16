@@ -45,12 +45,19 @@ def _obs_to_numpy(obs: pb2.Observation) -> dict[str, np.ndarray]:
     em = np.array(obs.entity_mask, dtype=np.uint32)
     if em.size < L.MAX_ENTITIES:
         em = np.pad(em, (0, L.MAX_ENTITIES - em.size))
+    cat_n = L.MAX_ENTITIES * L.CATALOG_KIND_COUNT * L.MAX_CATALOG_CHOICES
+    cat = np.array(obs.catalog, dtype=np.int32)
+    if cat.size < cat_n:
+        cat = np.pad(cat, (0, cat_n - cat.size))
     return {
         "entities": entities,
         "spatial": spatial,
         "scalars": scalars,
         "function_mask": mask[: L.MASK_BYTES],
         "entity_mask": em[: L.MAX_ENTITIES],
+        "catalog": cat[:cat_n].reshape(
+            L.MAX_ENTITIES, L.CATALOG_KIND_COUNT, L.MAX_CATALOG_CHOICES
+        ),
     }
 
 

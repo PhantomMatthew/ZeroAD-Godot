@@ -6,6 +6,7 @@ using ZeroAD.Sim.Components;
 using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Net;
+using ZeroAD.Sim.Rmgen;
 using ZeroAD.Sim.Simulation;
 
 namespace ZeroAD.Sim.RL;
@@ -27,17 +28,37 @@ public sealed class RlEnvironment : IDisposable
     private int _prevEnemyHp;
     private int _prevStock;
 
+    private readonly List<uint>[] _controlGroups = CreateGroups();
+    private int _worldMeters;
+    private int _maxTurns;
+
     public ComponentManager Sim => _cm ?? throw new ObjectDisposedException(nameof(RlEnvironment));
     public RangeManager Range => _range ?? throw new ObjectDisposedException(nameof(RlEnvironment));
     public NetTurnManager Net => _net ?? throw new ObjectDisposedException(nameof(RlEnvironment));
     public RlCatalog Catalog => _catalog;
     public RlObservation Observation => _obs;
     public bool Done => _done;
-    public int WorldMeters => _cfg.WorldMeters;
-    /// <summary>True when this episode loaded templates and spawned the 1v1 encounter.</summary>
+    public int WorldMeters => _worldMeters > 0 ? _worldMeters : _cfg.WorldMeters;
+    /// <summary>True when this episode loaded templates and spawned a real match (encounter, PMP, or rmgen).</summary>
     public bool LoadedRealMatch { get; private set; }
+    public string AgentCiv { get; private set; } = "athen";
+    public string OpponentCiv { get; private set; } = "athen";
 
-    public RlEnvironment(RlConfig? config = null) => _cfg = config ?? new RlConfig();
+    public RlEnvironment(RlConfig? config = null)
+    {
+        _cfg = config ?? new RlConfig();
+        _worldMeters = _cfg.WorldMeters;
+        _maxTurns = Math.Max(1, _cfg.MaxEpisodeTurns);
+    }
+
+    public void SetMaxEpisodeTurns(int turns) => _maxTurns = Math.Max(1, turns);
+
+    private static List<uint>[] CreateGroups()
+    {
+        var g = new List<uint>[RlPacking.ControlGroupCount];
+        for (int i = 0; i < g.Length; i++) g[i] = new List<uint>();
+        return g;
+    }
 
     public RlObservation Reset()
     {
@@ -47,6 +68,8 @@ public sealed class RlEnvironment : IDisposable
         _loop.GateTickAccum = 0f;
         _obs = new RlObservation();
         _catalog = new RlCatalog();
+        _maxTurns = Math.Max(1, _cfg.MaxEpisodeTurns);
+        foreach (var g in _controlGroups) g.Clear();
 
         TemplateLoader? templates = null;
         TechCatalog? techs = null;
@@ -54,21 +77,80 @@ public sealed class RlEnvironment : IDisposable
         bool real = _cfg.UseRealMatch
             && RlContentCache.TryGet(_cfg.DataRoot, out templates, out techs, out catalog);
 
+        string ac;
+        string oc;
+        AgentCiv = _cfg.AgentCiv;
+        OpponentCiv = _cfg.OpponentCiv;
+        if (_cfg.RandomizeCivs)
+            RlMapApply.PickCivs(_cfg.Seed, out ac, out oc);
+        else
+        {
+            ac = AgentCiv;
+            oc = OpponentCiv;
+        }
+        AgentCiv = ac;
+        OpponentCiv = oc;
+
+        string mapName = _cfg.MapName ?? "";
+        MapExport? export = null;
+        PmpTerrain? pmp = null;
+        ScenarioData? scenario = null;
+        int worldM = _cfg.WorldMeters;
+        string? mods = RlDataRoot.FindModsPublic(_cfg.DataRoot);
+
+        if (real && mapName.Length > 0)
+        {
+            if (RlMapApply.IsRmgenName(mapName))
+            {
+                try
+                {
+                    export = RlMapApply.GenerateRmgen(mapName, _cfg.Seed, _cfg.MapSize,
+                        AgentCiv, OpponentCiv, mods);
+                }
+                catch (Exception)
+                {
+                    export = null;
+                }
+                if (export != null)
+                    worldM = export.Size * (int)PmpTerrain.TileSize;
+            }
+            else if (mods != null)
+            {
+                try
+                {
+                    if (RlMapApply.TryLoadPmp(mods, mapName, out pmp, out scenario))
+                        worldM = pmp.MapSizeMeters;
+                }
+                catch (Exception)
+                {
+                    pmp = null;
+                    scenario = null;
+                }
+            }
+        }
+
+        _worldMeters = Math.Max(32, worldM);
+
         var cm = real
             ? new ComponentManager(_cfg.Seed, templates: templates!)
             : new ComponentManager(_cfg.Seed);
         SimSystem.Init(cm);
-        var world = Fixed.FromInt(_cfg.WorldMeters);
+        var world = Fixed.FromInt(_worldMeters);
         var range = new RangeManager(cm, world, world);
         SimSystem.SetRangeManager(range);
-        var territory = new TerritoryManager(cm, _cfg.WorldMeters);
+        var territory = new TerritoryManager(cm, _worldMeters);
         SimSystem.SetTerritoryManager(territory);
 
-        SetupFlatWorld(cm);
+        if (export != null)
+            RlMapApply.ApplyRmgen(cm, export, mods);
+        else if (pmp != null)
+            RlMapApply.ApplyPmp(cm, pmp, waterMeters: 2f, mods);
+        else
+            SetupFlatWorld(cm);
 
-        MakePlayer(cm, _cfg.AgentPlayerId, real ? _cfg.AgentCiv : "athen",
+        MakePlayer(cm, _cfg.AgentPlayerId, real ? AgentCiv : "athen",
             real ? techs : null);
-        MakePlayer(cm, _cfg.OpponentPlayerId, real ? _cfg.OpponentCiv : "athen",
+        MakePlayer(cm, _cfg.OpponentPlayerId, real ? OpponentCiv : "athen",
             real ? techs : null);
         cm.Players.SeedDiplomacyFromTeams(new Dictionary<int, int>
         {
@@ -87,7 +169,16 @@ public sealed class RlEnvironment : IDisposable
         if (real)
         {
             _catalog = catalog!;
-            SpawnEncounter(cm, templates!);
+            if (export != null)
+                RlMapApply.SpawnRmgenEntities(cm, templates!, export);
+            else if (scenario != null)
+            {
+                string? civsRoot = SkirmishReplacer.CivsRootFromTemplatesRoot(
+                    Path.Combine(mods ?? "", "simulation", "templates"));
+                RlMapApply.SpawnScenario(cm, templates!, scenario, AgentCiv, OpponentCiv, civsRoot);
+            }
+            else
+                SpawnEncounter(cm, templates!);
             LoadedRealMatch = true;
             if (_cfg.TickOpponentAi)
                 AttachPetra(cm, net, templates!, techs!);
@@ -95,7 +186,7 @@ public sealed class RlEnvironment : IDisposable
         else
         {
             SpawnSeer(cm, range, 64, 64, _cfg.AgentPlayerId);
-            SpawnSeer(cm, range, _cfg.WorldMeters - 64, _cfg.WorldMeters - 64, _cfg.OpponentPlayerId);
+            SpawnSeer(cm, range, _worldMeters - 64, _worldMeters - 64, _cfg.OpponentPlayerId);
         }
 
         if (_cfg.PrivilegedVision)
@@ -136,15 +227,14 @@ public sealed class RlEnvironment : IDisposable
         int enemyHp = SumUnitHp(_cfg.OpponentPlayerId);
         int stock = Stockpile();
         int shape = 0;
-        if (enemyHp < _prevEnemyHp)
-            shape += Math.Min(5, (_prevEnemyHp - enemyHp) / 20);
-        if (stock > _prevStock) shape += 1;
+        if (_prevEnemyHp - enemyHp >= 50) shape += 1;
+        if (stock - _prevStock >= 100) shape += 1;
 
         int reward = 0;
         var player = _cm.GetPlayerEntity(_cfg.AgentPlayerId);
         bool won = player?.HasWon() == true;
         bool lost = player?.IsDefeated() == true;
-        bool timeout = _net.CurrentTurn >= (uint)_cfg.MaxEpisodeTurns;
+        bool timeout = _net.CurrentTurn >= (uint)_maxTurns;
         if (won) { reward = 1; _done = true; }
         else if (lost) { reward = -1; _done = true; }
         else if (timeout) _done = true;
@@ -161,6 +251,16 @@ public sealed class RlEnvironment : IDisposable
     private void Submit(RlObservation obs, RlAction action, uint player)
     {
         var resolved = ActionTranslator.WithMapCells(obs, action);
+        if (TryControlGroup(obs, resolved, player)) return;
+
+        var expanded = new List<NetCommand>();
+        if (ActionTranslator.TryExpand(obs, resolved, player, _worldMeters, _catalog, expanded))
+        {
+            foreach (var c in expanded)
+                _net!.SubmitAiCommand(c);
+            return;
+        }
+
         if (ActionTranslator.FansOut(resolved.Function))
         {
             bool submitted = false;
@@ -169,15 +269,36 @@ public sealed class RlEnvironment : IDisposable
                 int row = resolved.SelectedAt(i);
                 if (ActionTranslator.EntityAt(obs, row) == 0) continue;
                 if (!ActionTranslator.TryTranslate(obs, resolved.WithSelected(row), player,
-                        _cfg.WorldMeters, _catalog, out var fan))
+                        _worldMeters, _catalog, out var fan))
                     continue;
                 _net!.SubmitAiCommand(fan);
                 submitted = true;
             }
             if (submitted) return;
         }
-        if (ActionTranslator.TryTranslate(obs, resolved, player, _cfg.WorldMeters, _catalog, out var cmd))
+        if (ActionTranslator.TryTranslate(obs, resolved, player, _worldMeters, _catalog, out var cmd))
             _net!.SubmitAiCommand(cmd);
+    }
+
+    private bool TryControlGroup(RlObservation obs, RlAction action, uint player)
+    {
+        if (action.Function != RlFunction.Formation) return false;
+        if (RlPacking.IsControlAssign(action.CatalogId, out int assign))
+        {
+            var g = _controlGroups[assign];
+            g.Clear();
+            for (int i = 0; i < RlSpec.MaxSelected; i++)
+            {
+                uint id = ActionTranslator.EntityAt(obs, action.SelectedAt(i));
+                if (id != 0) g.Add(id);
+            }
+            return true;
+        }
+        if (!RlPacking.IsControlRecall(action.CatalogId, out int recall)) return false;
+        var members = _controlGroups[recall];
+        if (members.Count == 0) return false;
+        _net!.SubmitAiCommand(NetCommand.FormationCmd(player, "box", members));
+        return true;
     }
 
     private void Encode()
@@ -220,7 +341,7 @@ public sealed class RlEnvironment : IDisposable
     private void SetupFlatWorld(ComponentManager cm)
     {
         const int tileSize = 4;
-        int tiles = Math.Max(8, _cfg.WorldMeters / tileSize);
+        int tiles = Math.Max(8, _worldMeters / tileSize);
         var terrain = new TerrainComponent();
         terrain.Configure(tiles, tileSize);
         var grid = new TerrainClass[tiles, tiles];
@@ -260,10 +381,10 @@ public sealed class RlEnvironment : IDisposable
 
     private void SpawnEncounter(ComponentManager cm, TemplateLoader templates)
     {
-        int w = _cfg.WorldMeters;
+        int w = _worldMeters;
         float z = w * 0.5f;
-        SpawnSide(cm, templates, _cfg.AgentCiv, _cfg.AgentPlayerId, 48f, z, +1f);
-        SpawnSide(cm, templates, _cfg.OpponentCiv, _cfg.OpponentPlayerId, w - 48f, z, -1f);
+        SpawnSide(cm, templates, AgentCiv, _cfg.AgentPlayerId, 48f, z, +1f);
+        SpawnSide(cm, templates, OpponentCiv, _cfg.OpponentPlayerId, w - 48f, z, -1f);
     }
 
     private void SpawnSide(ComponentManager cm, TemplateLoader templates, string civ,

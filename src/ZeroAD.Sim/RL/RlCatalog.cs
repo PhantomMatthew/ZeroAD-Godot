@@ -69,6 +69,31 @@ public sealed class RlCatalog
         return id;
     }
 
+    /// <summary>Existing intern id, or 0. Does not grow the map (keeps Python intern stable).</summary>
+    public int LookupTemplate(string name) =>
+        string.IsNullOrEmpty(name) ? 0 : (_templates.TryGetValue(name, out int id) ? id : 0);
+
+    /// <summary>Existing intern id, or 0. Does not grow the map (keeps Python intern stable).</summary>
+    public int LookupTech(string name) =>
+        string.IsNullOrEmpty(name) ? 0 : (_techs.TryGetValue(name, out int id) ? id : 0);
+
+    /// <summary>Trainer/Builder/Researcher token split: <c>{civ}</c> / <c>{native}</c>,
+    /// drop unresolved placeholders. Existence filters are the caller's.</summary>
+    public static List<string> ExpandCivTokens(string tokens, string ownerCiv, string nativeCiv)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrEmpty(tokens)) return result;
+        foreach (var raw in tokens.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string token = raw;
+            if (nativeCiv.Length > 0) token = token.Replace("{native}", nativeCiv);
+            if (ownerCiv.Length > 0) token = token.Replace("{civ}", ownerCiv);
+            if (token.Contains('{')) continue;
+            if (!result.Contains(token)) result.Add(token);
+        }
+        return result;
+    }
+
     public string TemplateName(int id) =>
         id > 0 && id < _templateById.Count ? _templateById[id] : "";
 

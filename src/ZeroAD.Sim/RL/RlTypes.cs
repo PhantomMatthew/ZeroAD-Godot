@@ -1,11 +1,11 @@
 namespace ZeroAD.Sim.RL;
 
-/// <summary>AlphaStar-style observation / action dimensions. LayoutVersion 2 grew
-/// spatial channels, per-entity masks, multi-select, and a full opponent action block.</summary>
+/// <summary>AlphaStar-style observation / action dimensions. LayoutVersion 4 adds
+/// per-entity carry / production-queue / research fields (feats 13–19).</summary>
 public static class RlSpec
 {
     public const int MaxEntities = 512;
-    public const int EntityFeat = 13;
+    public const int EntityFeat = 20;
     public const int SpatialSize = 64;
     public const int SpatialChannels = 5;
     public const int ScalarCount = 11;
@@ -13,9 +13,20 @@ public static class RlSpec
     /// <summary>Must equal the <see cref="RlFunction"/> enum length and stay ≤ 32
     /// (packed into a uint32 per-entity mask).</summary>
     public const int FunctionCount = 32;
+    /// <summary>Packed intern ids per entity for Train / Build / Research.</summary>
+    public const int CatalogKindCount = 3;
+    public const int MaxCatalogChoices = 16;
+    public const int CatalogLength = MaxEntities * CatalogKindCount * MaxCatalogChoices;
     public const int WorldMetersDefault = 256;
     public const uint LayoutMagic = 0x5A414452; // "ZADR"
-    public const int LayoutVersion = 2;
+    public const int LayoutVersion = 4;
+
+    public static class Cat
+    {
+        public const int Train = 0;
+        public const int Build = 1;
+        public const int Research = 2;
+    }
 
     public static class Ent
     {
@@ -32,11 +43,21 @@ public static class RlSpec
         public const int EntityId = 10;
         public const int PosXInternal = 11;
         public const int PosZInternal = 12;
+        /// <summary>0 = empty hands; else 1+<see cref="ZeroAD.Sim.Components.ResourceType"/>.</summary>
+        public const int CarryType = 13;
+        public const int CarryAmount = 14;
+        public const int QueueCount = 15;
+        public const int QueueId = 16;
+        public const int QueueProgress = 17;
+        public const int ResearchId = 18;
+        public const int ResearchProgress = 19;
 
         public const int FlagBuilding = 1;
         public const int FlagCanAttack = 2;
         public const int FlagCanGather = 4;
         public const int FlagFoundation = 8;
+        /// <summary>Set when a RallyPoint queue has at least one position.</summary>
+        public const int FlagRallySet = 16;
     }
 
     public static class OwnerRel
@@ -84,6 +105,14 @@ public sealed class RlConfig
     public int MaxEpisodeTurns { get; init; } = 10_000;
     public int WorldMeters { get; init; } = RlSpec.WorldMetersDefault;
     public bool TickOpponentAi { get; init; }
+    /// <summary>Empty = 1v1 encounter sandbox. rmgen registry name (e.g. <c>mainland</c>)
+    /// or a scenario-relative path under mods/public (e.g. <c>maps/skirmishes/Acropolis Bay</c>).</summary>
+    public string MapName { get; init; } = "";
+    /// <summary>rmgen tile count (typically 128–192). Ignored for PMP / encounter.</summary>
+    public int MapSize { get; init; } = 128;
+    /// <summary>When true, pick agent/opponent civs from <see cref="Seed"/> instead of
+    /// the athen/athen default.</summary>
+    public bool RandomizeCivs { get; init; }
     /// <summary>Staged mods/public (or a parent that contains it). Null = walk-up from the process.</summary>
     public string? DataRoot { get; init; }
     /// <summary>When templates are found, spawn a 1v1 encounter (CC + soldiers + villagers + trees)
@@ -104,6 +133,8 @@ public sealed class RlObservation
     public readonly byte[] FunctionMask;
     /// <summary>Bit i of row r means <see cref="RlFunction"/> i is legal for that entity.</summary>
     public readonly uint[] EntityMask;
+    /// <summary>Per-entity intern ids: [row][kind][choice], kinds Train/Build/Research.</summary>
+    public readonly int[] Catalog;
     public uint Turn;
     public bool Done;
     public int Reward;
@@ -115,10 +146,20 @@ public sealed class RlObservation
         Scalars = new int[RlSpec.ScalarCount];
         FunctionMask = new byte[RlSpec.FunctionCount];
         EntityMask = new uint[RlSpec.MaxEntities];
+        Catalog = new int[RlSpec.CatalogLength];
     }
 
     public int Entity(int row, int feat) => Entities[row * RlSpec.EntityFeat + feat];
     public void SetEntity(int row, int feat, int value) => Entities[row * RlSpec.EntityFeat + feat] = value;
+
+    public int CatalogAt(int row, int kind, int slot) =>
+        Catalog[CatalogIndex(row, kind, slot)];
+
+    public void SetCatalog(int row, int kind, int slot, int internId) =>
+        Catalog[CatalogIndex(row, kind, slot)] = internId;
+
+    public static int CatalogIndex(int row, int kind, int slot) =>
+        ((row * RlSpec.CatalogKindCount) + kind) * RlSpec.MaxCatalogChoices + slot;
 }
 
 public enum RlFunction : byte

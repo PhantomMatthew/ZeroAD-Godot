@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 
 namespace ZeroAD.Sim.RL;
 
-/// <summary>File layout v2: 64-byte global header + N slots.
+/// <summary>File layout v4: 64-byte global header + N slots.
 /// Slot offsets are relative to the start of that slot.</summary>
 public static class ShmLayout
 {
@@ -24,12 +24,15 @@ public static class ShmLayout
     public const int OffSeqOut = 20;
     public const int OffPrivileged = 24;
     public const int OffSeed = 28;
+    /// <summary>Optional per-reset episode cap (0 = use host --max-turns).</summary>
+    public const int OffMaxTurns = 32;
 
     public const int EntitiesBytes = RlSpec.MaxEntities * RlSpec.EntityFeat * sizeof(int);
     public const int SpatialBytes = RlSpec.SpatialChannels * RlSpec.SpatialSize * RlSpec.SpatialSize * sizeof(int);
     public const int ScalarsBytes = RlSpec.ScalarCount * sizeof(int);
     public const int MaskBytes = 32;
     public const int EntityMaskBytes = RlSpec.MaxEntities * sizeof(uint);
+    public const int CatalogBytes = RlSpec.CatalogLength * sizeof(int);
     public const int ActionBlockBytes = 64;
     public const int ActionBytes = ActionBlockBytes * 2;
 
@@ -41,7 +44,8 @@ public static class ShmLayout
     public const int OffScalars = OffSpatial + SpatialBytes;
     public const int OffMask = OffScalars + ScalarsBytes;
     public const int OffEntityMask = OffMask + MaskBytes;
-    public const int OffAction = OffEntityMask + EntityMaskBytes;
+    public const int OffCatalog = OffEntityMask + EntityMaskBytes;
+    public const int OffAction = OffCatalog + CatalogBytes;
     public const int SlotBytes = OffAction + ActionBytes;
 
     public const int ActFunction = 0;
@@ -85,6 +89,7 @@ public static class ShmCodec
         var em = slot.Slice(ShmLayout.OffEntityMask, ShmLayout.EntityMaskBytes);
         for (int i = 0; i < obs.EntityMask.Length; i++)
             BinaryPrimitives.WriteUInt32LittleEndian(em.Slice(i * 4), obs.EntityMask[i]);
+        CopyInts(obs.Catalog, slot.Slice(ShmLayout.OffCatalog, ShmLayout.CatalogBytes));
     }
 
     public static RlAction ReadAction(ReadOnlySpan<byte> slot) =>

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ZeroAD.Sim.Components;
+using ZeroAD.Sim.Content;
 using ZeroAD.Sim.Maths;
 using ZeroAD.Sim.Net;
 
@@ -137,15 +138,17 @@ public static class ActionTranslator
                 command = NetCommand.SpyRequest(player, catalogPlayer);
                 return true;
             case RlFunction.Formation:
+                if (RlPacking.IsControlAssign(action.CatalogId, out _)
+                    || RlPacking.IsControlRecall(action.CatalogId, out _))
+                    return false;
                 return TryFormation(obs, action, player, out command);
             case RlFunction.Tribute:
-                command = NetCommand.Tribute(player, other, ResourceOf(action.CatalogId), 100);
+                command = NetCommand.Tribute(player, other, RlPacking.ResourceOf(action.CatalogId),
+                    RlPacking.TributeAmount(action.CatalogId));
                 return true;
             case RlFunction.Barter:
-                var sell = ResourceOf(action.CatalogId);
-                var buy = ResourceOf(action.CatalogId / 4);
-                if (buy == sell) buy = (ResourceType)(((int)sell + 1) % 4);
-                command = NetCommand.Barter(player, sell, buy, 100);
+                RlPacking.BarterPair(action.CatalogId, out var sell, out var buy, out int barterAmt);
+                command = NetCommand.Barter(player, sell, buy, barterAmt);
                 return true;
             case RlFunction.SetupTradeRoute:
                 if (target == 0) return false;
@@ -155,13 +158,86 @@ public static class ActionTranslator
                 command = NetCommand.AttackRequest(player, catalogPlayer);
                 return true;
             case RlFunction.SetTradingGoods:
-                int[] pct = { 0, 0, 0, 0 };
-                pct[Math.Clamp(action.CatalogId, 0, 3)] = 100;
-                command = NetCommand.SetTradingGoods(player, pct[0], pct[1], pct[2], pct[3]);
+                RlPacking.TradingGoods(action.CatalogId, out int tw, out int tf, out int ts, out int tm);
+                command = NetCommand.SetTradingGoods(player, tw, tf, ts, tm);
                 return true;
             default:
                 return false;
         }
+    }
+
+    /// <summary>Wallset Build (piece chain) and extra Rally points. Returns true when
+    /// <paramref name="dest"/> was filled and the caller should skip <see cref="TryTranslate"/>.</summary>
+    public static bool TryExpand(RlObservation obs, RlAction action, uint player,
+        int worldMeters, RlCatalog catalog, List<NetCommand> dest)
+    {
+        dest.Clear();
+        if (action.Function == RlFunction.Build)
+            return TryWallChain(obs, action, player, worldMeters, catalog, dest);
+        if (action.Function == RlFunction.Rally)
+            return TryMultiRally(obs, action, player, worldMeters, dest);
+        return false;
+    }
+
+    private static bool TryWallChain(RlObservation obs, RlAction action, uint player,
+        int worldMeters, RlCatalog catalog, List<NetCommand> dest)
+    {
+        uint selected = EntityAt(obs, action.SelectedIndex);
+        if (selected == 0) return false;
+        string setName = catalog.TemplateName(action.CatalogId);
+        if (setName.Length == 0) return false;
+        var stats = SimSystem.Sim?.Templates?.ExtractStats(setName);
+        if (stats == null || !stats.IsWallSet) return false;
+
+        float PieceLen(string tmpl, float fallback)
+        {
+            if (string.IsNullOrEmpty(tmpl)) return fallback;
+            var ps = SimSystem.Sim?.Templates?.ExtractStats(tmpl);
+            return ps != null && ps.WallPieceLength > 0f ? ps.WallPieceLength : fallback;
+        }
+
+        float sx = Fixed.Zero.WithInternalValue(
+            obs.Entity(action.SelectedIndex, RlSpec.Ent.PosXInternal)).ToFloat();
+        float sz = Fixed.Zero.WithInternalValue(
+            obs.Entity(action.SelectedIndex, RlSpec.Ent.PosZInternal)).ToFloat();
+        var (ex, ez) = CellToWorld(action.TargetCellX, action.TargetCellZ, worldMeters);
+        var pieces = WallChain.Compute(
+            stats.WallSetTower, stats.WallSetLong, stats.WallSetMedium, stats.WallSetShort,
+            PieceLen(stats.WallSetTower, 8f),
+            PieceLen(stats.WallSetLong, 12f),
+            PieceLen(stats.WallSetMedium, 8f),
+            PieceLen(stats.WallSetShort, 4f),
+            stats.WallSetMinTowerOverlap, stats.WallSetMaxTowerOverlap,
+            sx, sz, ex.ToFloat(), ez.ToFloat());
+        if (pieces.Count == 0) return false;
+        foreach (var p in pieces)
+        {
+            if (string.IsNullOrEmpty(p.Template)) continue;
+            dest.Add(NetCommand.Build(player, selected, p.Template,
+                Fixed.FromFloat(p.X), Fixed.FromFloat(p.Z), Fixed.FromFloat(p.Angle)));
+        }
+        return dest.Count > 0;
+    }
+
+    private static bool TryMultiRally(RlObservation obs, RlAction action, uint player,
+        int worldMeters, List<NetCommand> dest)
+    {
+        uint selected = EntityAt(obs, action.SelectedIndex);
+        if (selected == 0) return false;
+        uint target = EntityAt(obs, action.TargetEntityIndex);
+        var (wx, wz) = CellToWorld(action.TargetCellX, action.TargetCellZ, worldMeters);
+        if (target != 0)
+            dest.Add(NetCommand.SetRallyPoint(player, selected, target));
+        else
+            dest.Add(NetCommand.SetRallyPointPosition(player, selected, wx, wz));
+        for (int i = 1; i < RlSpec.MaxSelected; i++)
+        {
+            uint extra = EntityAt(obs, action.SelectedAt(i));
+            if (extra == 0) continue;
+            dest.Add(NetCommand.SetRallyPointFull(player, selected, extra,
+                Fixed.Zero, Fixed.Zero, "walk", append: true));
+        }
+        return dest.Count > 0;
     }
 
     /// <summary>When cells are negative (legacy packed opponent actions omit them), copy
@@ -225,13 +301,6 @@ public static class ActionTranslator
 
     private static string StanceName(int catalogId) =>
         StanceNames[Math.Clamp(catalogId, 0, StanceNames.Length - 1)];
-
-    private static ResourceType ResourceOf(int catalogId)
-    {
-        int v = catalogId % 4;
-        if (v < 0) v += 4;
-        return (ResourceType)v;
-    }
 }
 
 internal static class RlActionMask

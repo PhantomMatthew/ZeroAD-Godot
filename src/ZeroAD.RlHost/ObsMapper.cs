@@ -21,6 +21,7 @@ internal static class ObsMapper
         msg.Scalars.AddRange(obs.Scalars);
         for (int i = 0; i < obs.EntityMask.Length; i++)
             msg.EntityMask.Add(obs.EntityMask[i]);
+        msg.Catalog.AddRange(obs.Catalog);
         return msg;
     }
 
@@ -58,15 +59,27 @@ internal static class ObsMapper
         return opp.Function == RlFunction.NoOp ? null : opp;
     }
 
-    public static RlEnvironment CreateEnv(uint seed, bool privileged, int stepMul, int delay,
-        bool tickOpponentAi = true, int maxEpisodeTurns = 10_000) =>
-        new(new RlConfig
+    public static RlEnvironment CreateEnv(RlConfig cfg) => new(cfg);
+
+    public static RlConfig MakeConfig(uint seed, bool privileged, int stepMul, int delay,
+        bool tickOpponentAi, int maxEpisodeTurns, string mapName = "", int mapSize = 128,
+        string agentCiv = "athen", string opponentCiv = "athen", bool randomizeCivs = false) =>
+        new()
         {
             Seed = seed,
             PrivilegedVision = privileged,
             StepMul = Math.Max(1, stepMul <= 0 ? 1 : stepMul),
             CommandDelay = Math.Max(1, delay <= 0 ? 2 : delay),
             TickOpponentAi = tickOpponentAi,
-            MaxEpisodeTurns = Math.Max(1, maxEpisodeTurns)
-        });
+            MaxEpisodeTurns = Math.Max(1, maxEpisodeTurns),
+            MapName = mapName,
+            MapSize = mapSize,
+            AgentCiv = agentCiv,
+            OpponentCiv = opponentCiv,
+            RandomizeCivs = randomizeCivs
+        };
+
+    public static RlEnvironment CreateEnv(uint seed, bool privileged, int stepMul, int delay,
+        bool tickOpponentAi = true, int maxEpisodeTurns = 10_000) =>
+        CreateEnv(MakeConfig(seed, privileged, stepMul, delay, tickOpponentAi, maxEpisodeTurns));
 }

@@ -604,14 +604,14 @@ public sealed class UnitMotion : ComponentBase, IComponentMessageHandler
 
 public static class SimSystem
 {
-    private static ComponentManager? _cm;
-    private static ObstructionManager? _obstructions;
-    private static RangeManager? _range;
-    private static PathfinderComponent? _pathfinder;
-    private static WaterManager? _water;
-    private static TerritoryManager? _territory;
-    private static Net.NetTurnManager? _net;
-    private static TerrainComponent? _terrain;
+    [ThreadStatic] private static ComponentManager? _cm;
+    [ThreadStatic] private static ObstructionManager? _obstructions;
+    [ThreadStatic] private static RangeManager? _range;
+    [ThreadStatic] private static PathfinderComponent? _pathfinder;
+    [ThreadStatic] private static WaterManager? _water;
+    [ThreadStatic] private static TerritoryManager? _territory;
+    [ThreadStatic] private static Net.NetTurnManager? _net;
+    [ThreadStatic] private static TerrainComponent? _terrain;
     public static void Init(ComponentManager cm)
     {
         _cm = cm;

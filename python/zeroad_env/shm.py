@@ -35,9 +35,15 @@ class ZeroADShmEnv:
         shm_path: str | None = None,
         petra: bool = True,
         max_turns: int = 10_000,
+        map_name: str = "",
+        map_size: int = 128,
+        agent_civ: str = "athen",
+        opponent_civ: str = "athen",
+        random_civs: bool = False,
     ) -> None:
         self.n_slots = max(1, n_slots)
         self._seed = seed
+        self._max_turns = max(1, max_turns)
         path = Path(shm_path) if shm_path else Path(
             tempfile.gettempdir(), f"zeroad_rl_{os.getpid()}.shm"
         )
@@ -53,11 +59,17 @@ class ZeroADShmEnv:
             "--step-mul",
             str(step_mul),
             "--max-turns",
-            str(max(1, max_turns)),
+            str(self._max_turns),
         ]
         if privileged:
             cmd.append("--privileged")
         cmd.append("--petra" if petra else "--no-petra")
+        if map_name:
+            cmd.extend(["--map", map_name, "--map-size", str(map_size)])
+        if random_civs:
+            cmd.append("--random-civs")
+        else:
+            cmd.extend(["--agent-civ", agent_civ, "--opponent-civ", opponent_civ])
         self._proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -92,8 +104,13 @@ class ZeroADShmEnv:
 
     def reset(self) -> dict[str, np.ndarray]:
         """Reset every slot and return batched observations."""
+        _I32.pack_into(self._mm, L.OFF_MAX_TURNS, int(self._max_turns))
         self._issue(L.CMD_RESET)
         return self._read_obs()
+
+    def set_max_turns(self, turns: int) -> None:
+        """Curriculum: next reset uses this episode cap (host reads header)."""
+        self._max_turns = max(1, int(turns))
 
     def step(self, actions: dict[str, np.ndarray] | None = None) -> tuple[
         dict[str, np.ndarray], np.ndarray, np.ndarray, list[dict[str, Any]]
@@ -200,6 +217,10 @@ class ZeroADShmEnv:
         scalars = np.empty((self.n_slots, L.SCALAR_COUNT), dtype=np.int32)
         mask = np.empty((self.n_slots, L.MASK_BYTES), dtype=np.uint8)
         entity_mask = np.empty((self.n_slots, L.MAX_ENTITIES), dtype=np.uint32)
+        catalog = np.empty(
+            (self.n_slots, L.MAX_ENTITIES, L.CATALOG_KIND_COUNT, L.MAX_CATALOG_CHOICES),
+            dtype=np.int32,
+        )
         for s in range(self.n_slots):
             off = L.slot_offset(s)
             entities[s] = np.frombuffer(
@@ -232,12 +253,19 @@ class ZeroADShmEnv:
                 count=L.MAX_ENTITIES,
                 offset=off + L.OFF_ENTITY_MASK,
             )
+            catalog[s] = np.frombuffer(
+                self._mm,
+                dtype="<i4",
+                count=L.MAX_ENTITIES * L.CATALOG_KIND_COUNT * L.MAX_CATALOG_CHOICES,
+                offset=off + L.OFF_CATALOG,
+            ).reshape(L.MAX_ENTITIES, L.CATALOG_KIND_COUNT, L.MAX_CATALOG_CHOICES)
         return {
             "entities": entities.copy(),
             "spatial": spatial.copy(),
             "scalars": scalars.copy(),
             "function_mask": mask.copy(),
             "entity_mask": entity_mask.copy(),
+            "catalog": catalog.copy(),
         }
 
 

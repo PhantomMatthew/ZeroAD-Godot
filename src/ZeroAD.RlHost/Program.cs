@@ -30,6 +30,11 @@ internal static class Program
         int commandDelay = 2;
         bool petra = true;
         int maxTurns = 10_000;
+        string mapName = "";
+        int mapSize = 128;
+        string agentCiv = "athen";
+        string oppCiv = "athen";
+        bool randomCivs = false;
         for (int i = 0; i < args.Length; i++)
         {
             string a = args[i];
@@ -46,6 +51,11 @@ internal static class Program
                 case "--petra": petra = true; break;
                 case "--no-petra": petra = false; break;
                 case "--max-turns": maxTurns = Math.Max(1, int.Parse(Next())); break;
+                case "--map": mapName = Next(); break;
+                case "--map-size": mapSize = Math.Max(64, int.Parse(Next())); break;
+                case "--agent-civ": agentCiv = Next(); break;
+                case "--opponent-civ": oppCiv = Next(); break;
+                case "--random-civs": randomCivs = true; break;
                 default:
                     Console.Error.WriteLine("unknown arg: " + a);
                     return 2;
@@ -62,7 +72,8 @@ internal static class Program
             return 2;
         }
 
-        return RunShm(shmPath, slots, seed, privileged, stepMul, commandDelay, petra, maxTurns);
+        return RunShm(shmPath, slots, seed, privileged, stepMul, commandDelay, petra, maxTurns,
+            mapName, mapSize, agentCiv, oppCiv, randomCivs);
     }
 
     private static async Task<int> RunGrpc(int port)
@@ -91,7 +102,8 @@ internal static class Program
     }
 
     private static int RunShm(string shmPath, int slots, int seed, bool privileged,
-        int stepMul, int commandDelay, bool petra, int maxTurns)
+        int stepMul, int commandDelay, bool petra, int maxTurns, string mapName, int mapSize,
+        string agentCiv, string oppCiv, bool randomCivs)
     {
         int fileBytes = ShmLayout.FileBytes(slots);
         string? dir = Path.GetDirectoryName(Path.GetFullPath(shmPath));
@@ -108,15 +120,16 @@ internal static class Program
 
         var envs = new RlEnvironment[slots];
         for (int s = 0; s < slots; s++)
-            envs[s] = ObsMapper.CreateEnv(unchecked((uint)(seed + s)), privileged, stepMul,
-                commandDelay, petra, maxTurns);
+            envs[s] = CreateSlot(unchecked((uint)(seed + s)), privileged, stepMul, commandDelay,
+                petra, maxTurns, mapName, mapSize, agentCiv, oppCiv, randomCivs);
 
         Console.WriteLine("READY slots=" + slots + " bytes=" + fileBytes);
         Console.Out.Flush();
 
         try
         {
-            RunLoop(acc, scratch, envs, slots, seed, privileged, stepMul, commandDelay, petra, maxTurns);
+            RunLoop(acc, scratch, envs, slots, seed, privileged, stepMul, commandDelay, petra,
+                maxTurns, mapName, mapSize, agentCiv, oppCiv, randomCivs);
             return 0;
         }
         finally
@@ -125,9 +138,16 @@ internal static class Program
         }
     }
 
+    private static RlEnvironment CreateSlot(uint seed, bool privileged, int stepMul, int delay,
+        bool petra, int maxTurns, string mapName, int mapSize, string agentCiv, string oppCiv,
+        bool randomCivs) =>
+        ObsMapper.CreateEnv(ObsMapper.MakeConfig(seed, privileged, stepMul, delay, petra, maxTurns,
+            mapName, mapSize, agentCiv, oppCiv, randomCivs));
+
     private static void RunLoop(MemoryMappedViewAccessor acc, byte[] scratch,
         RlEnvironment[] envs, int slots, int seed, bool privileged, int stepMul, int delay,
-        bool petra, int maxTurns)
+        bool petra, int maxTurns, string mapName, int mapSize, string agentCiv, string oppCiv,
+        bool randomCivs)
     {
         while (true)
         {
@@ -144,27 +164,30 @@ internal static class Program
             if (cmd == ShmLayout.CmdQuit) return;
 
             acc.ReadArray(0, scratch, 0, scratch.Length);
+            int headerTurns = BitConverter.ToInt32(scratch, ShmLayout.OffMaxTurns);
+            int turns = headerTurns > 0 ? headerTurns : maxTurns;
             if (cmd == ShmLayout.CmdReset)
             {
-                for (int s = 0; s < slots; s++)
+                Parallel.For(0, slots, s =>
                 {
                     envs[s].Dispose();
-                    envs[s] = ObsMapper.CreateEnv(unchecked((uint)(seed + s)), privileged, stepMul,
-                        delay, petra, maxTurns);
+                    envs[s] = CreateSlot(unchecked((uint)(seed + s)), privileged, stepMul,
+                        delay, petra, turns, mapName, mapSize, agentCiv, oppCiv, randomCivs);
                     var obs = envs[s].Reset();
-                    ShmCodec.WriteObservation(scratch.AsSpan(ShmLayout.SlotOffset(s), ShmLayout.SlotBytes), obs);
-                }
+                    ShmCodec.WriteObservation(
+                        scratch.AsSpan(ShmLayout.SlotOffset(s), ShmLayout.SlotBytes), obs);
+                });
             }
             else if (cmd == ShmLayout.CmdStep)
             {
-                for (int s = 0; s < slots; s++)
+                Parallel.For(0, slots, s =>
                 {
                     var span = scratch.AsSpan(ShmLayout.SlotOffset(s), ShmLayout.SlotBytes);
                     var action = ShmCodec.ReadAction(span);
                     var opp = ShmCodec.ReadOpponentAction(span);
                     var result = envs[s].Step(action, opp.Function == RlFunction.NoOp ? null : opp);
                     ShmCodec.WriteObservation(span, result.Observation);
-                }
+                });
             }
 
             acc.WriteArray(ShmLayout.HeaderBytes, scratch, ShmLayout.HeaderBytes,

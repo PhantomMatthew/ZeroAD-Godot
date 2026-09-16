@@ -100,6 +100,9 @@ class ZeroADGymEnv(gym.Env if gym is not None else object):
                         shape=(L.MAX_ENTITIES,),
                         dtype=np.uint32,
                     ),
+                    "catalog": _i32_box(
+                        (L.MAX_ENTITIES, L.CATALOG_KIND_COUNT, L.MAX_CATALOG_CHOICES)
+                    ),
                 }
             )
             idx = spaces.Box(low=-1, high=L.MAX_ENTITIES - 1, shape=(), dtype=np.int32)
@@ -130,6 +133,7 @@ class ZeroADGymEnv(gym.Env if gym is not None else object):
             "scalars": (L.SCALAR_COUNT,),
             "function_mask": (L.MASK_BYTES,),
             "entity_mask": (L.MAX_ENTITIES,),
+            "catalog": (L.MAX_ENTITIES, L.CATALOG_KIND_COUNT, L.MAX_CATALOG_CHOICES),
         }
 
     def reset(
@@ -180,6 +184,11 @@ class ZeroADGymEnv(gym.Env if gym is not None else object):
             self._grpc.close()
         if self._vec is not None:
             self._vec.close()
+
+    def set_max_turns(self, turns: int) -> None:
+        """Forward curriculum cap to the shm host (no-op on gRPC)."""
+        if self._vec is not None:
+            self._vec.set_max_turns(turns)
 
 
 def make_env(backend: str = "shm", **kwargs: Any) -> ZeroADGymEnv:
