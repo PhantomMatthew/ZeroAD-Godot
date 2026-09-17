@@ -531,6 +531,33 @@ namespace ZeroAD.Sim
             obstruction.EnsureRegistered();
         }
 
+        /// <summary>静态 gaia(树/浆果/矿)的 Static 阻挡。原版 template_gaia BlockFoundation
+        /// + tree/fruit 的 &lt;Static&gt;;DeleteUponConstruction 只在开工时清场,不跳过放置检测。
+        /// 幂等:已有 Obstruction 则跳过。无模板时按橡树 1.6m 回退(SpawnTree 调试路径)。</summary>
+        public static void AttachGaiaObstruction(ComponentManager cm, EntityId entity, TemplateStats? stats)
+        {
+            if (cm.QueryInterface<ObstructionComponent>(entity) != null) return;
+            float fpSize = stats?.FootprintSize0.ToFloat() is { } fp && fp > 0 ? fp : 1.6f;
+            float obSize0 = stats?.ObstructionSize0.ToFloat() is { } ob0 && ob0 > 0 ? ob0 : fpSize;
+            float obSize1 = stats?.ObstructionSize1.ToFloat() is { } ob1 && ob1 > 0 ? ob1 : obSize0;
+            var flags = stats?.ObstructionFlags ?? ObstructionFlags.DefaultBlock;
+            if (stats == null || stats.ObstructionDeleteUponConstruction)
+                flags |= ObstructionFlags.DeleteUponConstruction;
+            var obstruction = new ObstructionComponent
+            {
+                Type = ObstructionType.Static,
+                Size0 = Fixed.FromFloat(obSize0),
+                Size1 = Fixed.FromFloat(obSize1),
+                Flags = flags,
+            };
+            if (stats != null && stats.ObstructionSubShapes.Count > 0)
+                foreach (var (name, sx, sz, sw, sd) in stats.ObstructionSubShapes)
+                    obstruction.SubShapes.Add((name, Fixed.FromFloat(sx), Fixed.FromFloat(sz),
+                        Fixed.FromFloat(sw), Fixed.FromFloat(sd)));
+            cm.AddComponent(entity, obstruction);
+            obstruction.EnsureRegistered();
+        }
+
         /// <summary>Assemble a static gaia resource (tree/berry/mine). Fauna still go through
         /// <see cref="AssembleUnit"/>. Ownership is applied by the caller (usually none).</summary>
         public static void AssembleGaia(ComponentManager cm, EntityId entity,
@@ -585,6 +612,7 @@ namespace ZeroAD.Sim
                     new Maths.FixedVector2D(Maths.Fixed.Zero, Maths.Fixed.Zero),
                     new Maths.FixedVector2D(p.X, p.Z));
             }
+            AttachGaiaObstruction(cm, entity, stats);
         }
 
         private static void AttachAttack(ComponentManager cm, EntityId entity, TemplateStats? stats)

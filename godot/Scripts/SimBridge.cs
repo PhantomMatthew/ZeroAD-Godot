@@ -1113,6 +1113,7 @@ public sealed partial class SimBridge : Node
 				new FixedVector2D(Fixed.Zero, Fixed.Zero),
 				new FixedVector2D(sp.X, sp.Z));
 		}
+		EntityAssembler.AttachGaiaObstruction(_sim, entity, stats);
 
 		bool isTree = def.Template.Contains("tree", StringComparison.OrdinalIgnoreCase) ||
 					  def.Template.Contains("bush", StringComparison.OrdinalIgnoreCase) ||
@@ -2161,6 +2162,8 @@ public sealed partial class SimBridge : Node
 				new FixedVector2D(Fixed.Zero, Fixed.Zero),
 				new FixedVector2D(spawnPos.X, spawnPos.Z));
 		}
+		if (isResource && !isFauna)
+			EntityAssembler.AttachGaiaObstruction(_sim, entity, stats);
 
 		Color color = _lastPlayerColor;
 		float visualSize = isStructure ? 8f : isResource ? 2.5f : 1.5f;
@@ -2203,6 +2206,7 @@ public sealed partial class SimBridge : Node
 				new FixedVector2D(Fixed.Zero, Fixed.Zero),
 				new FixedVector2D(sp.X, sp.Z));
 		}
+		EntityAssembler.AttachGaiaObstruction(_sim, entity, stats: null);
 
 		CreateVisualFor(entity, new Color(0.1f, 0.5f, 0.1f), 2.5f);
 		// No template stats on this fallback path: indexing only, no fog components.
