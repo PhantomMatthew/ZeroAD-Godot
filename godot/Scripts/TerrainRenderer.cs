@@ -85,54 +85,60 @@ public static class TerrainRenderer
         if (System.Environment.GetEnvironmentVariable("ZEROAD_TERRAIN_LEGACY") == "1") ctx = null;
         if (ctx != null)
         {
-            // 生产路径:整图单张烘焙贴图(连续 UV world×0.125)。分块(每 64m 一张)
-            // 会在地图边缘低角度把相邻 4m tile 行的贴图差异拉伸成清晰的"多层带"
-            // (用户截图 + A/B 实证:整图连续 UV 无此现象);整图烘焙保留 C++ 风格的
-            // 混合色,2048-8192px 密度足够。
-            var bakedWhole = SplatBaker.BakeAlbedo(ctx);
-            if (System.Environment.GetEnvironmentVariable("ZEROAD_TERRAIN_DUMP") == "1" && bakedWhole != null)
-                bakedWhole.SavePng("user://terrain_dump.png");
-            if (bakedWhole != null)
+            // 生产路径:按 64m patch 分块烘焙。整图一张 ~8 texel/m,市政厅石板
+            // (citytile/paving,C++ 按 18–32m 平铺 512–2048px)会糊成一团。
+            // 含这类贴图的 patch 升到 32 texel/m(2048px/64m);其余仍 8 texel/m,
+            // 避免整图 4× 烘焙时间和显存。分块 mesh UV 0..1 + clamp,避免旧分块
+            // 沿用 world×0.125 把 4m 行拉成"多层带"。
+            int n = map.PatchesPerSide;
+            const int CoarsePx = 512;   // 64m → 8 texel/m(与旧整图密度同级)
+            const int FinePx = 2048;    // 64m → 32 texel/m(SplatBaker 目标密度)
+            var patchesRoot = new Node3D { Name = "TerrainBaked" };
+            int fineCount = 0;
+            for (int pz = 0; pz < n; pz++)
             {
-                // Uv1Scale:网格 UV=world×0.125(1024m 图 → 0..128)压回 0..1,整图
-                // 烘焙贴图与地形一一对应;漏了它整图贴图会平铺 128 次(贴图全错)。
-                float uvScale = 8f / map.MapSizeMeters;
-                var mat = new StandardMaterial3D
+                for (int px = 0; px < n; px++)
                 {
-                    AlbedoTexture = ImageTexture.CreateFromImage(bakedWhole),
-                    Uv1Scale = new Vector3(uvScale, uvScale, 1f),
-                    Roughness = 1f,
-                    DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
-                    SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
-                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                    TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps,
-                };
-                fullMesh.SurfaceSetMaterial(0, mat);
-                root.AddChild(new MeshInstance3D { Mesh = fullMesh, Name = "TerrainBaked" });
-                ZeroAD.Sim.Diag.Log("Terrain",
-                    $"Terrain mesh: {verts}x{verts}={verts * verts} verts, single baked albedo " +
-                    $"({bakedWhole.GetWidth()}x{bakedWhole.GetHeight()}px, " +
-                    $"{bakedWhole.GetWidth() / map.MapSizeMeters:F1} texel/m)");
+                    bool fine = map.PatchUsesFineScaleTerrain(px, pz);
+                    if (fine) fineCount++;
+                    int pxSize = fine ? FinePx : CoarsePx;
+                    var baked = SplatBaker.BakeAlbedoPatch(ctx, px, pz, pxSize);
+                    if (System.Environment.GetEnvironmentVariable("ZEROAD_TERRAIN_DUMP") == "1"
+                        && fine && fineCount == 1)
+                        baked.SavePng("user://terrain_dump.png");
+                    var patchMesh = BuildPatchMesh(map, px, pz);
+                    patchMesh.SurfaceSetMaterial(0, MakeBakedTerrainMaterial(baked));
+                    patchesRoot.AddChild(new MeshInstance3D
+                    {
+                        Mesh = patchMesh,
+                        Name = $"Patch_{px}_{pz}",
+                    });
+                }
             }
-            bool flattened = bakedWhole != null;
-            if (!flattened)
+            root.AddChild(patchesRoot);
+            ZeroAD.Sim.Diag.Log("Terrain",
+                $"Terrain mesh: {verts}x{verts} verts, {n}x{n} patches " +
+                $"({fineCount} fine {FinePx}px / {n * n - fineCount} coarse {CoarsePx}px)");
+        }
+        else
+        {
+            // 无 PMP 贴图 / ZEROAD_TERRAIN_LEGACY=1:整图一个 mesh。
+            var flatMat = new StandardMaterial3D
             {
-                // 无 PMP 贴图数据/烘焙失败:整图一个 mesh(与此前行为一致)。
-                var flatMat = new StandardMaterial3D
-                {
-                    DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
-                    SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
-                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                };
-                var tex = LoadTexture("terrain_grass.png");
-                if (tex != null)
-                    flatMat.AlbedoTexture = tex;
-                else
-                    flatMat.AlbedoColor = new Color(0.35f, 0.50f, 0.20f);
-                fullMesh.SurfaceSetMaterial(0, flatMat);
-                root.AddChild(new MeshInstance3D { Mesh = fullMesh, Name = "TerrainFlat" });
-                ZeroAD.Sim.Diag.Log("Terrain", $"Terrain mesh: {verts}x{verts}={verts * verts} verts, {(verts - 1) * (verts - 1) * 2} tris (no baked textures)");
-            }
+                DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
+                SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            };
+            var tex = LoadTexture("terrain_grass.png");
+            if (tex != null)
+                flatMat.AlbedoTexture = tex;
+            else
+                flatMat.AlbedoColor = new Color(0.35f, 0.50f, 0.20f);
+            fullMesh.SurfaceSetMaterial(0, flatMat);
+            root.AddChild(new MeshInstance3D { Mesh = fullMesh, Name = "TerrainFlat" });
+            ZeroAD.Sim.Diag.Log("Terrain",
+                $"Terrain mesh: {verts}x{verts}={verts * verts} verts, " +
+                $"{(verts - 1) * (verts - 1) * 2} tris (no baked textures)");
         }
 
         // 拾取/贴地走 TerrainHeightService,不走物理射线。HeightMapShape3D 仍给
@@ -287,5 +293,57 @@ public static class TerrainRenderer
         }
         ZeroAD.Sim.Diag.Log("Terrain", $"Texture loaded: {filename} ({img.GetWidth()}x{img.GetHeight()})");
         return ImageTexture.CreateFromImage(img);
+    }
+
+    /// <summary>64m patch 网格:UV 0..1 对应 <see cref="SplatBaker.BakeAlbedoPatch"/> 整张
+    /// 烘焙图。clamp 不平铺,避免旧分块沿用 world×0.125 把 4m 行拉成多层带。</summary>
+    private static Mesh BuildPatchMesh(PmpMap map, int patchX, int patchZ)
+    {
+        int verts = PmpMap.PatchSize + 1;
+        int x0 = patchX * PmpMap.PatchSize;
+        int z0 = patchZ * PmpMap.PatchSize;
+        float tileSize = PmpMap.TileSize;
+        float mapSize = map.MapSizeMeters;
+        var st = new SurfaceTool();
+        st.Begin(Mesh.PrimitiveType.Triangles);
+        for (int lz = 0; lz < verts; lz++)
+        {
+            for (int lx = 0; lx < verts; lx++)
+            {
+                int x = x0 + lx;
+                int z = z0 + lz;
+                st.SetUV(new Vector2(lx / (float)PmpMap.PatchSize, lz / (float)PmpMap.PatchSize));
+                st.AddVertex(new Vector3(x * tileSize, map.GetHeight(x, z), mapSize - z * tileSize));
+            }
+        }
+        for (int lz = 0; lz < verts - 1; lz++)
+        {
+            for (int lx = 0; lx < verts - 1; lx++)
+            {
+                int i = lz * verts + lx;
+                st.AddIndex(i);
+                st.AddIndex(i + verts);
+                st.AddIndex(i + 1);
+                st.AddIndex(i + 1);
+                st.AddIndex(i + verts);
+                st.AddIndex(i + verts + 1);
+            }
+        }
+        st.GenerateNormals();
+        return st.Commit();
+    }
+
+    private static StandardMaterial3D MakeBakedTerrainMaterial(Image baked)
+    {
+        return new StandardMaterial3D
+        {
+            AlbedoTexture = ImageTexture.CreateFromImage(baked),
+            Roughness = 1f,
+            DiffuseMode = BaseMaterial3D.DiffuseModeEnum.Lambert,
+            SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmapsAnisotropic,
+            TextureRepeat = false,
+        };
     }
 }

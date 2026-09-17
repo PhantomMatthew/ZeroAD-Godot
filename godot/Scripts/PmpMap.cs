@@ -158,6 +158,40 @@ public sealed class PmpMap
         };
     }
 
+    /// <summary>高频平铺地面(市政厅石板/铺路砖)。C++ 按 terrain XML size(常 18–32m)
+    /// 重复 512–2048px 贴图(~32 texel/m);整图烘焙只有 ~8 texel/m,这类贴图最糊。</summary>
+    public static bool IsFineScaleTerrain(string textureName)
+    {
+        if (string.IsNullOrEmpty(textureName)) return false;
+        return textureName.Contains("city_tile", StringComparison.OrdinalIgnoreCase)
+            || textureName.Contains("citytile", StringComparison.OrdinalIgnoreCase)
+            || textureName.Contains("city_pavement", StringComparison.OrdinalIgnoreCase)
+            || textureName.Contains("paving", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>该 64m patch 内是否有 citytile/paving 底图(tex1)。邻接草地 patch 上的
+    /// 覆盖层仍按粗密度烘焙,市政厅广场本体走高密度。</summary>
+    public bool PatchUsesFineScaleTerrain(int patchX, int patchZ)
+    {
+        int texCount = TextureNames.Count;
+        if (texCount == 0 || TileTex1.Length == 0) return false;
+        int tiles = TilesPerSide;
+        int x0 = patchX * PatchSize;
+        int z0 = patchZ * PatchSize;
+        for (int zi = 0; zi < PatchSize; zi++)
+        {
+            for (int xi = 0; xi < PatchSize; xi++)
+            {
+                int idx = (z0 + zi) * tiles + (x0 + xi);
+                if ((uint)idx >= (uint)TileTex1.Length) continue;
+                int ti = TileTex1[idx];
+                if ((uint)ti >= (uint)texCount) continue;
+                if (IsFineScaleTerrain(TextureNames[ti])) return true;
+            }
+        }
+        return false;
+    }
+
     private static string ReadPmpString(BinaryReader reader)
     {
         int len = reader.ReadInt32();
