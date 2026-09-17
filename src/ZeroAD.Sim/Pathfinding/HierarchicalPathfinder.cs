@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.Pathfinding;
@@ -71,11 +72,14 @@ public sealed class HierarchicalPathfinder
         _states.Clear();
         _navW = grid.W;
         _navH = grid.H;
-        foreach (var cls in classes)
-        {
-            var st = BuildClassState(grid, cls);
-            if (st != null) _states[cls.Mask.Mask] = st;
-        }
+        var list = new List<PassabilityClassDef>();
+        foreach (var cls in classes) list.Add(cls);
+        if (list.Count == 0) return;
+        var built = new ClassState[list.Count];
+        // 各类互不共享可变状态,并行洪泛(192+ tile 图上 Recompute 是 RebuildGrid 热点)。
+        Parallel.For(0, list.Count, i => built[i] = BuildClassState(grid, list[i]));
+        for (int i = 0; i < list.Count; i++)
+            _states[list[i].Mask.Mask] = built[i];
     }
 
     private static ClassState BuildClassState(Grid<NavcellData> grid, PassabilityClassDef cls)

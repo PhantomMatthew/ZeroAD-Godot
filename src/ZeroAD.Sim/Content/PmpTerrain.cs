@@ -53,8 +53,9 @@ public sealed class PmpTerrain
         int heightmapSize = verticesPerSide * verticesPerSide;
         var heightmap = new ushort[heightmapSize];
         byte[] raw = reader.ReadBytes(heightmapSize * 2);
-        for (int i = 0; i < heightmapSize; i++)
-            heightmap[i] = (ushort)(raw[i * 2] | (raw[i * 2 + 1] << 8));
+        if (raw.Length != heightmapSize * 2)
+            throw new InvalidDataException($"PMP heightmap truncated: {raw.Length} bytes");
+        Buffer.BlockCopy(raw, 0, heightmap, 0, raw.Length);
         return new PmpTerrain
         {
             PatchesPerSide = patchesPerSide,

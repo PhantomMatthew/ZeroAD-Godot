@@ -107,4 +107,26 @@ public class TemplateHotloadTests
         Assert.Equal("tokens", classes.GetChild("@datatype").ToString());
         Directory.Delete(dir, true);
     }
+
+    [Fact]
+    public void LoadAllTemplates_ResolvesParentAfterParallelPreload()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "zad_preload_" + Path.GetRandomFileName());
+        Directory.CreateDirectory(Path.Combine(dir, "units"));
+        File.WriteAllText(Path.Combine(dir, "base.xml"),
+            "<Entity><Health><Max>50</Max></Health></Entity>");
+        File.WriteAllText(Path.Combine(dir, "units", "foo.xml"),
+            "<Entity parent=\"base\"><Health><Max>75</Max></Health></Entity>");
+        try
+        {
+            var loader = new TemplateLoader(dir);
+            loader.LoadAllTemplates();
+            Assert.Equal(75, loader.LoadTemplate("units/foo").GetChild("Health").GetChild("Max").ToInt());
+            Assert.Equal(50, loader.LoadTemplate("base").GetChild("Health").GetChild("Max").ToInt());
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
 }

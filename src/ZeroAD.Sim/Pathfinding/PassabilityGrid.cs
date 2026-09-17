@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using ZeroAD.Sim.Maths;
 
 namespace ZeroAD.Sim.Pathfinding;
@@ -88,24 +89,27 @@ public sealed class PassabilityGridBuilder
 
         // --- 1. Rasterize terrain: classify each navcell by its parent terrain tile. ---
         // Every navcell in a 4m tile inherits that tile's depth/slope/shore (the original does
-        // the same — terrain is sampled at tile granularity).
-        for (int tileZ = 0; tileZ < terrainTilesPerSide; tileZ++)
+        // the same — terrain is sampled at tile granularity). Tiles write disjoint navcells.
+        int npt = PathfindingCore.NavcellsPerTerrainTile;
+        var classes = _config.Classes;
+        Parallel.For(0, terrainTilesPerSide, tileZ =>
+        {
             for (int tileX = 0; tileX < terrainTilesPerSide; tileX++)
             {
                 var info = terrain[tileX, tileZ];
-                // 每类判定一次,把失败类的位印到该 tile 的 4×4 navcell 块。
-                for (int dz = 0; dz < PathfindingCore.NavcellsPerTerrainTile; dz++)
-                    for (int dx = 0; dx < PathfindingCore.NavcellsPerTerrainTile; dx++)
+                for (int dz = 0; dz < npt; dz++)
+                    for (int dx = 0; dx < npt; dx++)
                     {
-                        int ni = tileX * PathfindingCore.NavcellsPerTerrainTile + dx;
-                        int nj = tileZ * PathfindingCore.NavcellsPerTerrainTile + dz;
+                        int ni = tileX * npt + dx;
+                        int nj = tileZ * npt + dz;
                         var cell = grid.Get(ni, nj);
-                        foreach (var cls in _config.Classes)
+                        foreach (var cls in classes)
                             if (!cls.TerrainIsPassable(in info))
                                 cell = PathfindingCore.MakeImpassable(cell, cls.Mask);
                         grid.Set(ni, nj, cell);
                     }
             }
+        });
 
         // --- 1.5 图外缘印戳(上游 CCmpPathfinder::UpdateGrid 的 off-world passability):
         // 全类不可通行(所有 mask 位),方形图印四条边带,圆形图按半径印圆。

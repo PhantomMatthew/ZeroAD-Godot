@@ -193,6 +193,8 @@ public sealed class RlEnvironment : IDisposable
             range.SetLosRevealAll(_cfg.AgentPlayerId, true);
         range.UpdateVisibilityData();
 
+        SimSystem.Pathfinder?.RebuildGrid();
+
         _cm = cm;
         _range = range;
         _net = net;
@@ -357,7 +359,6 @@ public sealed class RlEnvironment : IDisposable
         string? modsParent = modsPublic != null ? Directory.GetParent(modsPublic)?.FullName : null;
         pf.SetPassabilityConfig(modsParent);
         pf.SetTerrain(terrain);
-        pf.RebuildGrid();
         SimSystem.SetPathfinder(pf);
     }
 

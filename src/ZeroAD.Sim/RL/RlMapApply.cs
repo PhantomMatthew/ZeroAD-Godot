@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using ZeroAD.Sim.Components;
@@ -21,6 +22,8 @@ public static class RlMapApply
     };
 
     public static readonly object RmgenGate = new();
+    private static readonly ConcurrentDictionary<string, PmpTerrain> PmpCache = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, ScenarioData> ScenarioCache = new(StringComparer.Ordinal);
 
     public static void PickCivs(uint seed, out string agent, out string opp)
     {
@@ -42,9 +45,9 @@ public static class RlMapApply
         scenario = null;
         string? pmpPath = ScenarioLoader.FindPmpPath(modsPublic, mapName);
         if (pmpPath == null || !File.Exists(pmpPath)) return false;
-        pmp = PmpTerrain.Load(pmpPath);
+        pmp = PmpCache.GetOrAdd(pmpPath, PmpTerrain.Load);
         string? xml = ScenarioLoader.FindScenarioPath(modsPublic, mapName);
-        if (xml != null) scenario = ScenarioLoader.Load(xml);
+        if (xml != null) scenario = ScenarioCache.GetOrAdd(xml, ScenarioLoader.Load);
         return true;
     }
 
@@ -73,18 +76,24 @@ public static class RlMapApply
         terrain.Configure(tiles, tileSize);
         terrain.SetWaterLevel(Fixed.FromFloat(waterMeters));
         var grid = new TerrainClass[tiles, tiles];
-        var heights = new Fixed[tiles + 1, tiles + 1];
-        for (int tz = 0; tz <= tiles; tz++)
-            for (int tx = 0; tx <= tiles; tx++)
-                heights[tx, tz] = Fixed.FromFloat(heightAt(tx, tz));
+        int verts = tiles + 1;
+        var heightsF = new float[verts, verts];
+        var heights = new Fixed[verts, verts];
+        for (int tz = 0; tz < verts; tz++)
+            for (int tx = 0; tx < verts; tx++)
+            {
+                float h = heightAt(tx, tz);
+                heightsF[tx, tz] = h;
+                heights[tx, tz] = Fixed.FromFloat(h);
+            }
         for (int tz = 0; tz < tiles; tz++)
         {
             for (int tx = 0; tx < tiles; tx++)
             {
-                float h00 = heightAt(tx, tz);
-                float h10 = heightAt(tx + 1, tz);
-                float h01 = heightAt(tx, tz + 1);
-                float h11 = heightAt(tx + 1, tz + 1);
+                float h00 = heightsF[tx, tz];
+                float h10 = heightsF[tx + 1, tz];
+                float h01 = heightsF[tx, tz + 1];
+                float h11 = heightsF[tx + 1, tz + 1];
                 float mid = (h00 + h10 + h01 + h11) * 0.25f;
                 if (mid <= waterMeters)
                 {
@@ -119,7 +128,7 @@ public static class RlMapApply
         string? modsParent = modsPublic != null ? Directory.GetParent(modsPublic)?.FullName : null;
         pf.SetPassabilityConfig(modsParent);
         pf.SetTerrain(terrain);
-        pf.RebuildGrid();
+        // RebuildGrid 推迟到实体生成之后(一次全量含障碍,避免空图全量 + 脏区增量)。
         SimSystem.SetPathfinder(pf);
     }
 

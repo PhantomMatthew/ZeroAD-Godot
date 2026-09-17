@@ -191,10 +191,15 @@ public static class SplatBaker
     public static Image? BakeAlbedo(PmpMap map)
     {
         var ctx = PrepareBakeContext(map);
-        if (ctx == null) return null;
+        return ctx == null ? null : BakeAlbedo(ctx);
+    }
+
+    /// <summary>用已准备好的上下文烘焙整图,避免 <see cref="PrepareBakeContext"/> 解码两遍贴图。</summary>
+    internal static Image BakeAlbedo(BakeContext ctx)
+    {
         int px = 2048;
         while (px < ctx.TilesPerSide * 21 && px < 8192) px *= 2;
-        return BakeRegion(ctx, 0f, 0f, ctx.MapSizeMeters, px, map.TextureNames.Count);
+        return BakeRegion(ctx, 0f, 0f, ctx.MapSizeMeters, px, ctx.TexCount);
     }
 
     /// <summary>烘焙一个 64m×64m patch 的地形 albedo(含 mipmap)。(patchX,patchZ) 为 patch

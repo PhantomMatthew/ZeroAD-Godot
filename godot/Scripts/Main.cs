@@ -424,15 +424,21 @@ public sealed partial class Main : Node3D
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
+			var loadSw = System.Diagnostics.Stopwatch.StartNew();
 			var effectiveSlots = BeginGameplayInit(seed, playerId, slots, tutorial, isMultiplayer, isHost);
+			ZeroAD.Sim.Diag.Log("Load", $"InitWorld: {loadSw.ElapsedMilliseconds}ms");
 			_loadingOverlay.SetProgress(0.5f);
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
+			loadSw.Restart();
 			BeginGameplaySession(playerId);
+			ZeroAD.Sim.Diag.Log("Load", $"Session: {loadSw.ElapsedMilliseconds}ms");
 			_loadingOverlay.SetProgress(0.65f);
 			await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
+			loadSw.Restart();
 			BeginGameplayScenario(playerId, effectiveSlots, isMultiplayer);
+			ZeroAD.Sim.Diag.Log("Load", $"Scenario: {loadSw.ElapsedMilliseconds}ms");
 			_loadingOverlay.SetProgress(1f);
 			ShowLoadWarnings();
 		}
@@ -1467,6 +1473,7 @@ public sealed partial class Main : Node3D
 		});
 
 		_sim.RebuildSpatialIndexesAfterLoad();
+		RebuildPathfinderAfterEntities();
 		_sim.RebuildAllVisuals();
 		FocusCameraOnLocalPlayer();
 
@@ -1558,6 +1565,7 @@ public sealed partial class Main : Node3D
 		// Rebuild the two spatial indexes DeserializeSaveGame bypasses (obstructions + range/LOS),
 		// THEN rebuild visuals (whose RegisterForLos needs the range index populated).
 		_sim.RebuildSpatialIndexesAfterLoad();
+		RebuildPathfinderAfterEntities();
 		_sim.RebuildAllVisuals();
 
 		// No saved camera in v1: frame the local player's first owned entity (its base).
@@ -1612,12 +1620,14 @@ public sealed partial class Main : Node3D
 	private void SetupTerrain(string? pmpRelPath = null)
 	{
 		_loadingMapDesc = pmpRelPath ?? "(auto terrain)";
+		var terrainSw = System.Diagnostics.Stopwatch.StartNew();
 		// 随机地图：路径以 "random/" 开头 → 走 rmgen 生成
 		if (pmpRelPath != null && pmpRelPath.StartsWith("random/"))
 		{
 			string mapName = pmpRelPath.Substring("random/".Length);
 			_loadingMapDesc = pmpRelPath;
 			SetupRmgenTerrain(mapName);
+			ZeroAD.Sim.Diag.Log("Load", $"SetupTerrain(rmgen): {terrainSw.ElapsedMilliseconds}ms");
 			return;
 		}
 
@@ -1696,6 +1706,7 @@ public sealed partial class Main : Node3D
 				// BuildRestrictions (can't build on water) and Footprint spawn placement.
 				FillPassabilityFromPmp(pmp, waterHeight);
 				_sim.MapPath = mapRel; // 冷加载重建本地形的契约字段(存档头 v6)
+				ZeroAD.Sim.Diag.Log("Load", $"SetupTerrain(pmp): {terrainSw.ElapsedMilliseconds}ms");
 
 				return;
 			}
@@ -1827,7 +1838,7 @@ public sealed partial class Main : Node3D
 		// 水位取地图环境的 setWaterHeight(未设定则 SEA_LEVEL=20m ——
 		// rmgen 内部水面高度 0 + SEA_LEVEL 偏移)。
 		// 图形状先行(原版 Setup.js → SetPassabilityCircular):RebuildGrid 在
-		// FillPassabilityAllLand 内发生,外缘方/圆印戳依此旗。
+		// 实体生成后发生,外缘方/圆印戳依此旗。
 		_sim.Obstructions.SetPassabilityCircular(settings.CircularMap);
 		_sim.Range.LosCircular = settings.CircularMap;
 		FillPassabilityAllLand(pmp, rmgenWater.Height);
@@ -1931,10 +1942,7 @@ public sealed partial class Main : Node3D
 			// spatial index — one LosGrid vertex per 4m).
 			_sim.Range.SetBounds(f1);
 			_sim.Territory.SetBounds((int)worldM);
-
-			// Build the M3 pathfinding pipeline (passability grid → hierarchical connectivity →
-			// A*) now that terrain + obstructions reflect the real map.
-			_sim.Pathfinder.RebuildGrid();
+			// 寻路网格推迟到实体生成后一次全量 RebuildGrid(本方法只填地形通行类)。
 		}
 
 	private void FillPassabilityAllLand(PmpMap? pmp = null, float waterHeight = -999f)
@@ -1988,10 +1996,8 @@ public sealed partial class Main : Node3D
 			terrain.SetHeightGrid(heights);
 		}
 
-		// Match the obstruction bounds to the generated map, then build the pathfinding grid
-		// (the PMP path does the same in FillPassabilityFromPmp). Without this, the pathfinder's
-		// grid stays null and ComputePath returns empty paths — units would only ever move in
-		// straight lines, ignoring terrain and obstructions.
+		// Match the obstruction bounds to the generated map. Pathfinder RebuildGrid runs
+		// after entities spawn (the PMP path does the same).
 		float worldM = n * terrain.TileSize;
 		var f0 = ZeroAD.Sim.Maths.Fixed.Zero;
 		var f1 = ZeroAD.Sim.Maths.Fixed.FromFloat(worldM);
@@ -1999,7 +2005,16 @@ public sealed partial class Main : Node3D
 		_sim.Range.SetBounds(f1);
 		// 领土网格同尺寸(PMP 路径同款调用;缺了它领土判定/显示也按 256m)。
 		_sim.Territory.SetBounds((int)worldM);
+		// 寻路网格推迟到实体生成后一次全量 RebuildGrid。
+	}
+
+	/// <summary>实体全部落地后再建寻路网格(含障碍印戳)。FillPassability 只填地形通行类。</summary>
+	private void RebuildPathfinderAfterEntities()
+	{
+		var sw = System.Diagnostics.Stopwatch.StartNew();
 		_sim.Pathfinder.RebuildGrid();
+		_sim.RefreshAiAccessibility();
+		ZeroAD.Sim.Diag.Log("Load", $"RebuildGrid: {sw.ElapsedMilliseconds}ms");
 	}
 
 	private string? FindDataPath(string relPath)
@@ -2071,6 +2086,7 @@ public sealed partial class Main : Node3D
 		_sim.StartTutorial(mapRel);
 		ZeroAD.Sim.Diag.Log("Tutorial", "showing panel...");
 		_tutorialPanel.ShowTutorial();
+		RebuildPathfinderAfterEntities();
 		ZeroAD.Sim.Diag.Log("Tutorial", "SetupTutorialWorld complete");
 	}
 
@@ -2224,11 +2240,9 @@ public sealed partial class Main : Node3D
 		// Ownerless neutral soldiers — mid-map (768m world → centre ~384) so they overlap no base.
 		// (moved into the !spawnedFromMap branch above — skirmish maps author their own entities)
 
-		// Initial buildings/units were spawned AFTER the map-load RebuildGrid; rebuild once more so
-		// pathing accounts for the town centres and any scenario buildings.
-		_sim.Pathfinder.RebuildGrid();
-		// AI 水陆区域图(Accessibility)随网格定型重建(Petra 海军/码头选址的前置)。
-		_sim.RefreshAiAccessibility();
+		// Initial buildings/units were spawned AFTER passability fill; one RebuildGrid so
+		// pathing accounts for town centres and scenario buildings.
+		RebuildPathfinderAfterEntities();
 
 		if (spawnedFromMap || isRandomMap)
 		{

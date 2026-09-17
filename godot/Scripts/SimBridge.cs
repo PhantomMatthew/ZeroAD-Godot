@@ -82,6 +82,8 @@ public sealed partial class SimBridge : Node
 	/// 各 AI 玩家共用)。InitWorld 末构建;AttachAi 注入 AIComponent——此前从未接线,
 	/// 导致 HQ 主循环在实战恒不跑(只有旧版兜底管理器在跑)。</summary>
 	private ZeroAD.Sim.AI.CommonApi.SharedState? _sharedState;
+	private static ZeroAD.Sim.Content.Schema.TemplateSchema? _templateSchemaCache;
+	private static string? _templateSchemaCacheKey;
 
 	/// <summary>
 	/// The single shared sim event bus. Delegates to <see cref="ComponentManager.Events"/> so
@@ -226,18 +228,35 @@ public sealed partial class SimBridge : Node
 			// 每模板 memo,strict = 无效模板拒载)。grammar = JS 组件 Schema 提取
 			// (simulation/components/*.js,分层)+ 原生组件表 + resources.json。
 			{
-				var schema = ZeroAD.Sim.Content.Schema.TemplateSchema.Build(schemaVfs);
+				var schemaSw = System.Diagnostics.Stopwatch.StartNew();
+				string schemaKey = modsRoot + "\n" + (enabledMods ?? "mod public");
+				ZeroAD.Sim.Content.Schema.TemplateSchema schema;
+				if (_templateSchemaCache != null && _templateSchemaCacheKey == schemaKey)
+					schema = _templateSchemaCache;
+				else
+				{
+					schema = ZeroAD.Sim.Content.Schema.TemplateSchema.Build(schemaVfs);
+					_templateSchemaCache = schema;
+					_templateSchemaCacheKey = schemaKey;
+				}
 				foreach (var w in schema.Warnings)
 					ZeroAD.Sim.Diag.Warn("Templates", "schema: " + w);
 				templates.EnableSchemaValidation(schema, strict: true);
 				ZeroAD.Sim.Diag.Log("Sim",
-					$"Template schema: {schema.Grammar.Defines.Count} defines (strict validation on)");
+					$"Template schema: {schema.Grammar.Defines.Count} defines (strict validation on) in {schemaSw.ElapsedMilliseconds}ms");
 			}
 			ZeroAD.Sim.Diag.Log("Sim", $"Loaded templates from: {templatesPath}");
 			int count = 0;
 			foreach (var kvp in templates.Cache) count++;
-			if (count == 0) templates.LoadAllTemplates();
-			ZeroAD.Sim.Diag.Log("Sim", $"Template cache: {templates.Cache.Count} entries");
+			if (count == 0)
+			{
+				var xmlSw = System.Diagnostics.Stopwatch.StartNew();
+				templates.LoadAllTemplates();
+				ZeroAD.Sim.Diag.Log("Sim",
+					$"LoadAllTemplates: {xmlSw.ElapsedMilliseconds}ms, cache={templates.Cache.Count}");
+			}
+			else
+				ZeroAD.Sim.Diag.Log("Sim", $"Template cache: {templates.Cache.Count} entries");
 				// 引用校验(原版 checkrefs.py 装载期子集:父链/训练建造引用/晋升目标)。
 				ZeroAD.Sim.Content.TemplateValidator.ValidateAndReport(templates);
 

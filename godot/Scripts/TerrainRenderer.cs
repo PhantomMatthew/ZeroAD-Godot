@@ -89,7 +89,7 @@ public static class TerrainRenderer
             // 会在地图边缘低角度把相邻 4m tile 行的贴图差异拉伸成清晰的"多层带"
             // (用户截图 + A/B 实证:整图连续 UV 无此现象);整图烘焙保留 C++ 风格的
             // 混合色,2048-8192px 密度足够。
-            var bakedWhole = SplatBaker.BakeAlbedo(map);
+            var bakedWhole = SplatBaker.BakeAlbedo(ctx);
             if (System.Environment.GetEnvironmentVariable("ZEROAD_TERRAIN_DUMP") == "1" && bakedWhole != null)
                 bakedWhole.SavePng("user://terrain_dump.png");
             if (bakedWhole != null)
@@ -135,17 +135,38 @@ public static class TerrainRenderer
             }
         }
 
-        // 碰撞与可见 patch 解耦:整图只建一份(用今天同一套顶点/索引,不分块),避免 giant
-        // 地图产生上千个独立 StaticBody3D。fullMesh 未挂任何可见 MeshInstance3D 时(patch
-        // 分支)这里是它唯一的用途之一;不可见,只用来生成碰撞。
-        var collisionCarrier = new MeshInstance3D { Mesh = fullMesh, Visible = false, Name = "TerrainCollision" };
-        root.AddChild(collisionCarrier);
-        collisionCarrier.CreateTrimeshCollision();
+        // 拾取/贴地走 TerrainHeightService,不走物理射线。HeightMapShape3D 仍给
+        // 编辑器预览点选,且比 CreateTrimeshCollision(大图可达数秒)快一个数量级。
+        AddHeightmapCollision(root, map);
 
         return (root, fullMesh);
     }
 
-
+    /// <summary>GodotPhysics 不支持非均匀缩放:CollisionShape 均匀 ×tileSize,高度预除。</summary>
+    private static void AddHeightmapCollision(Node3D root, PmpMap map)
+    {
+        int verts = map.VerticesPerSide;
+        if (verts < 2) return;
+        float ts = PmpMap.TileSize;
+        float mapSize = map.MapSizeMeters;
+        var data = new float[verts * verts];
+        int last = verts - 1;
+        for (int z = 0; z < verts; z++)
+            for (int x = 0; x < verts; x++)
+                data[(last - z) * verts + x] = map.GetHeight(x, z) / ts;
+        var shape = new HeightMapShape3D();
+        shape.MapWidth = verts;
+        shape.MapDepth = verts;
+        shape.MapData = data;
+        var body = new StaticBody3D { Name = "TerrainCollision" };
+        body.AddChild(new CollisionShape3D
+        {
+            Shape = shape,
+            Position = new Vector3(mapSize * 0.5f, 0f, mapSize * 0.5f),
+            Scale = new Vector3(ts, ts, ts),
+        });
+        root.AddChild(body);
+    }
 
     /// <summary>图缘黑色裙边(上游 BuildSide 逐字语义):每条边从边缘顶点
     /// (clamp 到水面)垂到 y=0。返回挂好纯黑无光照材质的 MeshInstance3D。</summary>
