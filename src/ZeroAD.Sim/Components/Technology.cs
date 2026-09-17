@@ -208,6 +208,8 @@ public sealed class ResearcherComponent : ComponentBase, IComponentMessageHandle
     public float Progress => _queue.Count > 0 ? _queue.Peek().Progress : 0f;
     /// <summary>队列深度(含在研)。</summary>
     public int QueueCount => _queue.Count;
+    /// <summary>队列快照(头项=在研;Progress 为已耗秒)。供 GUI 队列条/取消下标。</summary>
+    public IReadOnlyList<(string Tech, float Progress)> QueueSnapshot() => _queue.ToArray();
 
     /// <summary>开始研究(入队;原版 Researcher.QueueTechnology):校验 CanResearch
     /// (前置/pair/重复)+ 四资源扣费。同一建筑可排多科技依次研究——原版

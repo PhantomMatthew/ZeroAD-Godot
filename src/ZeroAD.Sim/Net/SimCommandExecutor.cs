@@ -77,8 +77,7 @@ namespace ZeroAD.Sim.Net
                 case NetCommandType.Stop: _cm.QueryInterface<UnitAIComponent>(new EntityId(cmd.EntityId))?.Stop(); break;
                 case NetCommandType.Delete: ApplyDelete(cmd); break;
                 case NetCommandType.CancelProduction:
-                    _cm.QueryInterface<ProductionQueue>(new EntityId(cmd.EntityId))?.CancelAt(cmd.IntParam1, _cm);
-                    break;
+                    ApplyCancelProduction(new EntityId(cmd.EntityId), cmd); break;
                 case NetCommandType.SetUnitStance: ApplySetUnitStance(cmd); break;
                 case NetCommandType.Garrison: ApplyGarrison(cmd); break;
                 case NetCommandType.Ungarrison: ApplyUngarrison(cmd); break;
@@ -382,6 +381,31 @@ namespace ZeroAD.Sim.Net
                 TechnologyTemplate = cmd.TemplateName,
                 PlayerId = (int)cmd.Player
             });
+        }
+
+        /// <summary>取消生产队列下标(原版 stop-production):训练项走 ProductionQueue.CancelAt;
+        /// 下标落在其后的研究槽则 Researcher.CancelResearch(与 GUI 队列条合并序一致)。</summary>
+        private void ApplyCancelProduction(EntityId entity, NetCommand cmd)
+        {
+            var queue = _cm.QueryInterface<ProductionQueue>(entity);
+            int prod = queue?.QueueCount ?? 0;
+            int index = cmd.IntParam1;
+            if (index < prod)
+            {
+                queue!.CancelAt(index, _cm);
+                return;
+            }
+            int ri = index - prod;
+            var researcher = _cm.QueryInterface<ResearcherComponent>(entity);
+            if (researcher == null) return;
+            var items = researcher.QueueSnapshot();
+            if ((uint)ri >= (uint)items.Count) return;
+            var player = _cm.GetPlayerEntity((int)cmd.Player);
+            var playerEntityId = _cm.GetPlayerEntityId((int)cmd.Player);
+            var techMgr = playerEntityId.HasValue
+                ? _cm.QueryInterface<TechnologyManager>(playerEntityId.Value) : null;
+            if (player == null || techMgr == null) return;
+            researcher.CancelResearch(items[ri].Tech, techMgr, player);
         }
 
         private void ApplySetRallyPoint(EntityId building, NetCommand cmd)

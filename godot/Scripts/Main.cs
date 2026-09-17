@@ -4155,6 +4155,17 @@ public sealed partial class Main : Node3D
 	/// <summary>选中编队组(图标条点击与数字热键同路)。</summary>
 	public void SelectControlGroupPublic(int group) => SelectControlGroup(group);
 
+	/// <summary>选中实体并相机跟过去(原版 EntitySelection.selectAndMoveTo)。</summary>
+	public void SelectAndMoveTo(EntityId entity)
+	{
+		SelectOnly(new[] { entity });
+		var pos = _sim.Sim.QueryInterface<PositionComponent>(entity);
+		if (pos == null) return;
+		SetCameraFocus(new Vector3(
+			pos.Position.X.ToFloat(), pos.Position.Y.ToFloat(), pos.Position.Z.ToFloat()));
+		_camera.FollowTarget = entity;
+	}
+
 	/// <summary>多选网格点击(原版 unitSelectionButton):选中给定实体组。</summary>
 	public void SelectOnly(IEnumerable<EntityId> entities)
 	{

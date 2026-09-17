@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using ZeroAD.Sim;
@@ -723,29 +724,38 @@ public sealed class GuiInterface
         return new ActionCaps(canAttack, canGather, canGarrison, canRepair);
     }
 
-    /// <summary>在研科技快照(原版 GetStartedResearch:首个己方在研建筑)。
-    /// 无在研 → null;TotalTime 取科技定义 ResearchTime(≤0 回退 1 防除零)。</summary>
+    /// <summary>在研科技快照(原版 GetStartedResearch → GetBasicInfoOfStartedTechs)。
+    /// 每座己方建筑的队列头(已开始的那项),按科技名去重(先到先得),AllEntities 序。
+    /// Progress = 0..1;TimeRemaining 秒。无在研 → 空表。</summary>
     public record StartedResearch(
-        string Tech, float Progress, float TotalTime, string GenericName, string Icon);
+        string Tech, float Progress, float TimeRemaining, string GenericName, string Icon,
+        EntityId Researcher);
 
-    public StartedResearch? GetStartedResearch(int playerId)
+    public IReadOnlyList<StartedResearch> GetStartedResearch(int playerId)
     {
         var playerEnt = _cm.GetPlayerEntityId(playerId);
         var tm = playerEnt.HasValue
             ? _cm.QueryInterface<TechnologyManager>(playerEnt.Value) : null;
+        var result = new List<StartedResearch>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var eid in _cm.AllEntities)
         {
             var own = _cm.QueryInterface<OwnershipComponent>(eid);
             if (own == null || own.PlayerId != playerId) continue;
             var r = _cm.QueryInterface<ResearcherComponent>(eid);
             if (r == null || !r.IsResearching || r.CurrentTech == null) continue;
+            if (!seen.Add(r.CurrentTech)) continue;
             var def = tm?.GetDefinition(r.CurrentTech);
-            return new StartedResearch(
-                r.CurrentTech, r.Progress,
-                def != null && def.ResearchTime > 0 ? def.ResearchTime : 1f,
-                def?.GenericName ?? r.CurrentTech, def?.Icon ?? "");
+            float total = def != null && def.ResearchTime > 0 ? def.ResearchTime : 1f;
+            float elapsed = r.Progress;
+            result.Add(new StartedResearch(
+                r.CurrentTech,
+                Math.Clamp(elapsed / total, 0f, 1f),
+                Math.Max(total - elapsed, 0f),
+                def?.GenericName ?? r.CurrentTech, def?.Icon ?? "",
+                eid));
         }
-        return null;
+        return result;
     }
 
     /// <summary>首个选中有站姿的己方单位的当前站姿(原版 IsStanceSelected 的单值版;
@@ -800,9 +810,10 @@ public sealed class GuiInterface
 
     // ── 桥扩面第三波:生产队列条 / 多选网格血微条 / 阵型行(HUD 选择重建段收尾)──
 
-    /// <summary>生产队列条单槽(原版 unitQueuePanel):Progress 仅首项非零(进度遮罩),
-    /// BatchCount = 批量待出数。</summary>
-    public record QueueStripItem(string TemplateName, float Progress, int BatchCount);
+    /// <summary>生产队列条单槽(原版 unitQueuePanel):Progress 仅头项非零(进度遮罩),
+    /// BatchCount = 批量待出数;IsTechnology 时 TemplateName=科技 id,Icon=JSON icon。</summary>
+    public record QueueStripItem(string TemplateName, float Progress, int BatchCount,
+        string Icon = "", bool IsTechnology = false);
 
     /// <summary>生产队列条快照:队列非空 → 各槽 + 剩余总秒(只计可见槽,与 HUD 原口径
     /// 一致);否则升级中 → 单槽目标模板进度(原版 Upgrade.js GetProgress 的 GUI 条,
@@ -811,31 +822,54 @@ public sealed class GuiInterface
 
     public QueueStripState? GetQueueStripState(EntityId entity, int maxSlots)
     {
+        var items = new List<QueueStripItem>(maxSlots);
+        float remaining = 0f;
+
         var queue = _cm.QueryInterface<ProductionQueue>(entity);
         if (queue != null && queue.QueueCount > 0)
         {
-            int n = System.Math.Min(queue.QueueCount, maxSlots);
-            float remaining = 0f;
-            var items = new List<QueueStripItem>(n);
+            int n = Math.Min(queue.QueueCount, maxSlots);
             for (int i = 0; i < n; i++)
             {
                 var item = queue.Queue[i];
                 remaining += item.BuildTime * item.Count;
                 items.Add(new QueueStripItem(item.TemplateName,
                     i == 0 && item.BuildTime > 0f
-                        ? System.Math.Clamp(queue.Progress / item.BuildTime, 0f, 1f) : 0f,
+                        ? Math.Clamp(queue.Progress / item.BuildTime, 0f, 1f) : 0f,
                     item.Count));
             }
             if (n > 0) remaining -= queue.Progress;
-            return new QueueStripState((int)System.Math.Max(remaining, 0f), items);
         }
+
+        var researcher = _cm.QueryInterface<ResearcherComponent>(entity);
+        if (researcher != null && researcher.QueueCount > 0 && items.Count < maxSlots)
+        {
+            var own = _cm.QueryInterface<OwnershipComponent>(entity);
+            var tm = own != null && _cm.GetPlayerEntityId(own.PlayerId) is { } pe
+                ? _cm.QueryInterface<TechnologyManager>(pe) : null;
+            var snap = researcher.QueueSnapshot();
+            for (int i = 0; i < snap.Count && items.Count < maxSlots; i++)
+            {
+                var (tech, elapsed) = snap[i];
+                var def = tm?.GetDefinition(tech);
+                float total = def != null && def.ResearchTime > 0 ? def.ResearchTime : 1f;
+                remaining += Math.Max(total - elapsed, 0f);
+                items.Add(new QueueStripItem(tech,
+                    Math.Clamp(elapsed / total, 0f, 1f), 0,
+                    def?.Icon ?? "", true));
+            }
+        }
+
+        if (items.Count > 0)
+            return new QueueStripState((int)Math.Max(remaining, 0f), items);
+
         var up = _cm.QueryInterface<UpgradeComponent>(entity);
         if (up != null && up.IsUpgrading)
         {
             return new QueueStripState(
-                (int)System.Math.Max(up.RequiredTime - up.ElapsedTime, 0f),
+                (int)Math.Max(up.RequiredTime - up.ElapsedTime, 0f),
                 [new QueueStripItem(up.TargetTemplate,
-                    System.Math.Clamp(up.GetProgress(), 0f, 1f), 0)]);
+                    Math.Clamp(up.GetProgress(), 0f, 1f), 0)]);
         }
         return null;
     }

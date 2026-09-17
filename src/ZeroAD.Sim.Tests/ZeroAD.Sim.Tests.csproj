@@ -24,6 +24,8 @@
     <Compile Include="../../godot/Scripts/PmpMap.cs" />
     <!-- TechTreeBuilder 同为纯 C#(只用 TemplateLoader/TechCatalog/CivData),供科技树回归。 -->
     <Compile Include="../../godot/Scripts/Structree/TechTreeBuilder.cs" />
+    <!-- GuiInterface 零 Godot 依赖,供 GetStartedResearch/队列条回归。 -->
+    <Compile Include="../../godot/Scripts/GuiInterface.cs" />
   </ItemGroup>
 
 </Project>

@@ -33,13 +33,11 @@ public sealed partial class HUD : CanvasLayer
     private double _alertFlash;
     private HBoxContainer _groupRow = null!;
     private string _groupSignature = "";
-    private HBoxContainer _researchPanel = null!;
-    private TextureRect _researchIcon = null!;
-    private Label _researchLabel = null!;
-    private ProgressBar _researchBar = null!;
-    private string _researchTech = "";
+    private Control _researchOverlay = null!;
+    private readonly ResearchProgressSlot[] _researchSlots = new ResearchProgressSlot[ResearchProgressMax];
     private readonly System.Collections.Generic.Dictionary<string, Button> _stanceButtons = new();
     private const int QueueSlotCount = 16;    // 队列条槽数(原版 unitQueuePanel repeat 16)
+    private const int ResearchProgressMax = 10; // 原版 ResearchProgress.xml repeat 10
     private HBoxContainer _queueRow = null!;
     private readonly QueueSlot[] _queueSlots = new QueueSlot[QueueSlotCount];
     private HFlowContainer _commandBox = null!;
@@ -52,6 +50,7 @@ public sealed partial class HUD : CanvasLayer
     public override void _Ready()
     {
         SetupTopBar();
+        SetupResearchOverlay();
         SetupBottomPanel();
         SetupToast();
     }
@@ -140,38 +139,6 @@ public sealed partial class HUD : CanvasLayer
         _resourceCounters.Add(popCounter);
         hbox.AddChild(popCounter.Root);
 
-        // 研究进度条(原版 session_objects research progress):顶栏中部,
-        // 任一己方建筑在研时显示 科技图标+名+进度条;完成/无在研隐藏。
-        _researchPanel = new HBoxContainer();
-        _researchPanel.AnchorLeft = 0.5f; _researchPanel.AnchorRight = 0.5f;
-        _researchPanel.AnchorTop = 0f; _researchPanel.AnchorBottom = 0f;
-        _researchPanel.OffsetLeft = -330; _researchPanel.OffsetRight = -60;
-        _researchPanel.OffsetTop = 4; _researchPanel.OffsetBottom = 34;
-        _researchPanel.AddThemeConstantOverride("separation", 6);
-        _researchPanel.Visible = false;
-        _researchIcon = new TextureRect
-        {
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-            CustomMinimumSize = new Vector2(26, 26),
-        };
-        _researchPanel.AddChild(_researchIcon);
-        _researchLabel = new Label { VerticalAlignment = VerticalAlignment.Center };
-        _researchLabel.AddThemeFontSizeOverride("font_size", 12);
-        _researchLabel.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.82f));
-        _researchLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
-        _researchLabel.AddThemeConstantOverride("outline_size", 2);
-        _researchPanel.AddChild(_researchLabel);
-        _researchBar = new ProgressBar
-        {
-            MinValue = 0, MaxValue = 100,
-            CustomMinimumSize = new Vector2(90, 12),
-            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-            ShowPercentage = false,
-        };
-        _researchPanel.AddChild(_researchBar);
-        _topBar.AddChild(_researchPanel);
-
         // 民族徽标钮(原版 top_panel/CivIcon.xml):顶栏正中的圆形文明徽标
         // (size 50%±48, y −26..70——跨栏下探),点击开科技树(structree)。
         _civEmblemBtn = new TextureButton
@@ -219,6 +186,49 @@ public sealed partial class HUD : CanvasLayer
         StoneButtonStyle.Apply(menuBtn, FindBinariesDir());
         menuBtn.Pressed += () => _main.OpenPauseMenu();
         menuBox.AddChild(menuBtn);
+    }
+
+    /// <summary>在研科技叠层(原版 ResearchProgress.xml):屏幕右上
+    /// size=100%-48 40 100%-10 420,最多 10 个 38×38 图标竖排,间距 4。
+    /// 绿半透明遮罩盖未完成段(queueProgressSlider 0 255 0 128),倒计时 m:ss,
+    /// 点击 selectAndMoveTo 研究者。</summary>
+    private void SetupResearchOverlay()
+    {
+        _researchOverlay = new Control
+        {
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            ClipContents = false,
+        };
+        _researchOverlay.AnchorLeft = 1f;
+        _researchOverlay.AnchorRight = 1f;
+        _researchOverlay.AnchorTop = 0f;
+        _researchOverlay.AnchorBottom = 0f;
+        _researchOverlay.OffsetLeft = -48;
+        _researchOverlay.OffsetRight = -10;
+        _researchOverlay.OffsetTop = 40;
+        _researchOverlay.OffsetBottom = 420;
+        AddChild(_researchOverlay);
+
+        const float margin = 4f;
+        const float btn = 38f;
+        for (int i = 0; i < _researchSlots.Length; i++)
+        {
+            var slot = new ResearchProgressSlot
+            {
+                Position = new Vector2(0, margin + (margin + btn) * i),
+                Size = new Vector2(btn, btn),
+                Visible = false,
+            };
+            int captured = i;
+            slot.Clicked += () =>
+            {
+                var s = _researchSlots[captured];
+                if (s.Researcher.IsValid)
+                    _main.SelectAndMoveTo(s.Researcher);
+            };
+            _researchSlots[i] = slot;
+            _researchOverlay.AddChild(slot);
+        }
     }
 
     // ── 游戏速度控制(原版 GameSpeedControl:顶栏时间按钮 → 开合下方控制条)──
@@ -1726,7 +1736,9 @@ public sealed partial class HUD : CanvasLayer
                 var slot = _queueSlots[i];
                 if (i >= strip.Items.Count) { slot.Visible = false; continue; }
                 var item = strip.Items[i];
-                slot.Portrait = LoadPortraitForTemplate(item.TemplateName);
+                slot.Portrait = item.IsTechnology
+                    ? (item.Icon.Length > 0 ? LoadPortraitFromIcon("technologies/" + item.Icon) : null)
+                    : LoadPortraitForTemplate(item.TemplateName);
                 slot.Progress = item.Progress;
                 slot.BatchCount = item.BatchCount;
                 slot.Visible = true;
@@ -2113,28 +2125,38 @@ public sealed partial class HUD : CanvasLayer
         _formationRow.Visible = true;
     }
 
-    /// <summary>研究进度条(原版 session_objects research progress;桥 GetStartedResearch):
-    /// 首个己方在研建筑的科技名+进度;图标取科技 JSON icon 的原版立绘。完成/无在研自动隐藏。</summary>
+    /// <summary>在研科技叠层(原版 ResearchProgress.js):最多 10 槽,竖排图标+绿遮罩+m:ss。
+    /// 点击选中并跟随研究者。</summary>
     private void RefreshResearchProgress()
     {
-        var research = _sim.Gui.GetStartedResearch((int)_sim.LocalPlayerId);
-
-        if (research == null)
+        var list = _sim.Gui.GetStartedResearch((int)_sim.LocalPlayerId);
+        int n = System.Math.Min(list.Count, _researchSlots.Length);
+        _researchOverlay.Visible = n > 0;
+        for (int i = 0; i < _researchSlots.Length; i++)
         {
-            if (_researchPanel.Visible) _researchPanel.Visible = false;
-            _researchTech = "";
-            return;
+            var slot = _researchSlots[i];
+            if (i >= n)
+            {
+                slot.Visible = false;
+                continue;
+            }
+            var r = list[i];
+            slot.Portrait = r.Icon.Length > 0
+                ? LoadPortraitFromIcon("technologies/" + r.Icon) : null;
+            slot.Progress = r.Progress;
+            slot.TimeText = FormatResearchCountdown(r.TimeRemaining);
+            slot.Researcher = r.Researcher;
+            slot.TooltipText = r.GenericName;
+            slot.Visible = true;
+            slot.QueueRedraw();
         }
+    }
 
-        _researchPanel.Visible = true;
-        _researchBar.Value = 100f * research.Progress / research.TotalTime;
-        if (research.Tech != _researchTech)
-        {
-            _researchTech = research.Tech;
-            _researchLabel.Text = research.GenericName;
-            _researchIcon.Texture = research.Icon.Length > 0
-                ? LoadPortraitFromIcon("technologies/" + research.Icon) : null;
-        }
+    /// <summary>原版 countdown format "m:ss"(FormatMillisecondsIntoDateStringGMT)。</summary>
+    private static string FormatResearchCountdown(float seconds)
+    {
+        int s = System.Math.Max(0, (int)System.Math.Floor(seconds));
+        return $"{s / 60}:{s % 60:D2}";
     }
 
     /// <summary>编队组图标条(原版 PanelEntityManager 紧凑版):已编入的组按号升序显示
@@ -2362,19 +2384,78 @@ public sealed partial class HUD : CanvasLayer
             else
                 DrawRect(rect, new Color(0.3f, 0.3f, 0.3f));
 
-            // 进度遮罩:部分训完(0<Progress<1)→ 顶部未训段压暗;未开始(Progress<=0)→ 整槽压暗。
+            // 进度遮罩:原版 queueProgressSlider = 0 255 0 128,盖住未完成的下段
+            // (slider.top 随 progress 下移)。未开始(Progress<=0)整槽同色压暗。
+            var overlay = new Color(0f, 1f, 0f, 128f / 255f);
             if (Progress > 0f && Progress < 1f)
             {
                 float doneH = rect.Size.Y * Progress;
-                DrawRect(new Rect2(0, doneH, rect.Size.X, rect.Size.Y - doneH),
-                    new Color(0f, 0f, 0f, 0.55f));
+                DrawRect(new Rect2(0, doneH, rect.Size.X, rect.Size.Y - doneH), overlay);
             }
             else if (Progress <= 0f)
             {
-                DrawRect(rect, new Color(0f, 0f, 0f, 0.45f));
+                DrawRect(rect, overlay);
             }
 
             DrawRect(rect, new Color(0f, 0f, 0f, 0.8f), filled: false, width: 1f);
+        }
+    }
+
+    /// <summary>原版 researchStartedButton:38×38 科技立绘 + 绿进度遮罩 + 居中 m:ss。
+    /// 点击 → selectAndMoveTo 研究者。</summary>
+    private sealed partial class ResearchProgressSlot : Control
+    {
+        public Texture2D? Portrait;
+        public float Progress;
+        public string TimeText = "";
+        public EntityId Researcher;
+
+        public event System.Action? Clicked;
+
+        private readonly Label _time;
+
+        public ResearchProgressSlot()
+        {
+            MouseFilter = MouseFilterEnum.Stop;
+            _time = new Label
+            {
+                MouseFilter = MouseFilterEnum.Ignore,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            _time.AddThemeFontSizeOverride("font_size", 11);
+            _time.AddThemeColorOverride("font_color", Colors.White);
+            _time.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _time.AddThemeConstantOverride("outline_size", 2);
+            _time.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            AddChild(_time);
+        }
+
+        public override void _GuiInput(global::Godot.InputEvent @event)
+        {
+            if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
+            {
+                Clicked?.Invoke();
+                AcceptEvent();
+            }
+        }
+
+        public override void _Draw()
+        {
+            var rect = new Rect2(Vector2.Zero, Size);
+            var inset = new Rect2(3, 3, System.Math.Max(Size.X - 6, 1), System.Math.Max(Size.Y - 6, 1));
+            DrawRect(rect, new Color(0.08f, 0.08f, 0.08f));
+            if (Portrait != null)
+                DrawTextureRect(Portrait, inset, tile: false);
+            var overlay = new Color(0f, 1f, 0f, 128f / 255f);
+            if (Progress < 1f)
+            {
+                float doneH = inset.Size.Y * System.Math.Clamp(Progress, 0f, 1f);
+                DrawRect(new Rect2(inset.Position.X, inset.Position.Y + doneH,
+                    inset.Size.X, inset.Size.Y - doneH), overlay);
+            }
+            DrawRect(rect, new Color(0f, 0f, 0f, 0.8f), filled: false, width: 1f);
+            _time.Text = TimeText;
         }
     }
 }
