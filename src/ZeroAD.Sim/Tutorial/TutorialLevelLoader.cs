@@ -482,7 +482,8 @@ namespace ZeroAD.Sim.Tutorial
         }
 
         /// <summary>敌方 CitizenSoldier 全体进攻玩家的 Tower(优先)/CivilCentre;
-        /// 进攻者记入 ctx.Attackers 供 AttackersRepelled 复查(原版 launchAttack)。</summary>
+        /// 进攻者记入 ctx.Attackers 供 AttackersRepelled 复查。原版
+        /// ProcessCommand(attack-walk) → WalkAndFight,不是 AttackTarget(建筑)。</summary>
         private static void LaunchAttack(TutorialGoalContext ctx)
         {
             EntityId? target = null;
@@ -503,8 +504,8 @@ namespace ZeroAD.Sim.Tutorial
             {
                 var identity = ctx.Sim.QueryInterface<IdentityComponent>(eid);
                 var owner = ctx.Sim.QueryInterface<OwnershipComponent>(eid);
-                var attack = ctx.Sim.QueryInterface<AttackComponent>(eid);
-                if (identity == null || owner == null || attack == null) continue;
+                var ai = ctx.Sim.QueryInterface<UnitAIComponent>(eid);
+                if (identity == null || owner == null || ai == null) continue;
                 if (owner.PlayerId == ctx.EnemyId && identity.HasClass("CitizenSoldier"))
                     ctx.Attackers.Add(eid);
             }
@@ -512,16 +513,17 @@ namespace ZeroAD.Sim.Tutorial
             if (!target.HasValue) return;
             var pos = ctx.Sim.QueryInterface<PositionComponent>(target.Value);
             if (pos == null) return;
+            // 原版 ProcessCommand(attack-walk) → UnitAI WalkAndFight,状态
+            // INDIVIDUAL.WALKINGANDFIGHTING。AttackTarget(建筑) 只推 Combat,
+            // UnitAI 停 IDLE,表现层 EndsWith(".WALKING") 也对不上走步。
+            var dest = new Maths.FixedVector2D(pos.Position.X, pos.Position.Z);
             foreach (var attacker in ctx.Attackers)
             {
-                var atk = ctx.Sim.QueryInterface<AttackComponent>(attacker);
-                if (atk != null)
-                {
-                    atk.AttackTarget(ctx.Sim, target.Value);
-                    continue;
-                }
-                var motion = ctx.Sim.QueryInterface<UnitMotion>(attacker);
-                motion?.MoveToPoint(new Maths.FixedVector2D(pos.Position.X, pos.Position.Z));
+                var ai = ctx.Sim.QueryInterface<UnitAIComponent>(attacker);
+                if (ai != null)
+                    ai.WalkAndFight(dest);
+                else
+                    ctx.Sim.QueryInterface<UnitMotion>(attacker)?.MoveToPoint(dest);
             }
         }
 

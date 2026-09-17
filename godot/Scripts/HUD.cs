@@ -545,25 +545,23 @@ public sealed partial class HUD : CanvasLayer
     {
         var frame = new Control { Position = pos, Size = size };
         AddBorderFrame(frame);
-        // 原版 MiniMap.xml 200×204 面板:圆环图内缩 (4,6)、小地图内缩 (8,10),
-        // 角钮贴图铺满 115×115 角区——弧垫恰好压在圆环角上(此前全幅布局导致错位)。
-        var ring = new TextureRect
-        {
-            Texture = LoadTex("minimap_circle_modern.png"),
-            Position = new Vector2(4, 6),
-            Size = new Vector2(192, 192),
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-        };
-        ring.MouseFilter = Control.MouseFilterEnum.Ignore;
-        frame.AddChild(ring);
+        // 原版 MiniMap.xml 200×204:背景 4,4,-4,-4 / 金环 4,6,-4,-6 / 地图 8,10,-8,-10。
+        // TextureRect 必须先 IgnoreSize 再赋贴图,否则 256 金环按原尺寸画出面板
+        // (截图像素就是这个:金弧飞进右侧空面板)。
+        frame.AddChild(MakeAnchoredTex(LoadTex("background_circle_spart.png"), 4, 4, -4, -4));
 
-        _minimap = new Minimap(_sim, _main)
-        {
-            Position = new Vector2(8, 10),
-            Size = new Vector2(184, 184),
-        };
+        _minimap = new Minimap(_sim, _main);
+        _minimap.AnchorRight = 1f;
+        _minimap.AnchorBottom = 1f;
+        _minimap.OffsetLeft = 8;
+        _minimap.OffsetTop = 10;
+        _minimap.OffsetRight = -8;
+        _minimap.OffsetBottom = -10;
         frame.AddChild(_minimap);
+        frame.AddChild(MakeAnchoredTex(LoadTex("minimap_circle_modern.png"), 4, 6, -4, -6));
+
+        float btnRight = size.X - MinimapCornerBtn - 4f;
+        float btnBottom = size.Y - MinimapCornerBtn - 6f;
 
         // 空闲村民按钮(原版 MiniMapIdleWorkerButton:116×116 角区贴图铺满小地图
         // 右下角——贴图含 1/4 弧框,图标在角上,不是 30px 独立图标;点击循环聚焦
@@ -571,7 +569,7 @@ public sealed partial class HUD : CanvasLayer
         _idleButton = MakeMinimapCornerButton(
             "Find idle worker (.)",
             "session/minimap-idle.png", "session/minimap-idle-highlight.png", "session/minimap-idle-disabled.png");
-        _idleButton.Position = new Vector2(MinimapCornerBtnRight, MinimapCornerBtnBottom);
+        _idleButton.Position = new Vector2(btnRight, btnBottom);
         _idleButton.Pressed += () => _main.CycleIdleWorker();
         frame.AddChild(_idleButton);
         _idleCountLabel = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -589,7 +587,7 @@ public sealed partial class HUD : CanvasLayer
         _diploButton = MakeMinimapCornerButton(
             "Toggle Diplomacy Colors (Alt+V)",
             "session/minimap-diplomacy-off.png", "session/minimap-diplomacy-off-highlight.png", null);
-        _diploButton.Position = new Vector2(3, MinimapCornerBtnBottom);
+        _diploButton.Position = new Vector2(3, btnBottom);
         _diploButton.Pressed += ToggleDiplomacyColors;
         frame.AddChild(_diploButton);
 
@@ -609,11 +607,28 @@ public sealed partial class HUD : CanvasLayer
         parent.AddChild(frame);
     }
 
-    // 角钮尺寸:原版 200×204 面板上 115×115(MiniMap.xml 实测值,直接照抄;
-    // 右缘内缩 4、底缘内缩 6、左上内缩 2/4)。
+    // 角钮尺寸:原版 MiniMap.xml 115×115(idle 100%-119×100%-121;底/右内缩 6/4)。
     private const float MinimapCornerBtn = 115f;
-    private const float MinimapCornerBtnRight = 200f - MinimapCornerBtn - 4f;
-    private const float MinimapCornerBtnBottom = 200f - MinimapCornerBtn - 6f;
+
+    /// <summary>按锚点内缩铺贴图。先 IgnoreSize 再赋 Texture,避免被贴图像素尺寸撑破面板。</summary>
+    private static TextureRect MakeAnchoredTex(Texture2D? tex, float left, float top, float right, float bottom)
+    {
+        var r = new TextureRect
+        {
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.Scale,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            CustomMinimumSize = Vector2.Zero,
+            Texture = tex,
+        };
+        r.AnchorRight = 1f;
+        r.AnchorBottom = 1f;
+        r.OffsetLeft = left;
+        r.OffsetTop = top;
+        r.OffsetRight = right;
+        r.OffsetBottom = bottom;
+        return r;
+    }
 
     /// <summary>小地图角钮:stretched 角区贴图 + 悬停/禁用变体 + 非透明像素点击掩码
     /// (原版 mouse_event_mask="texture:..." —— 弧外透明区不挡小地图点击)。</summary>
@@ -622,6 +637,8 @@ public sealed partial class HUD : CanvasLayer
     {
         var btn = new TextureButton
         {
+            IgnoreTextureSize = true,
+            CustomMinimumSize = new Vector2(MinimapCornerBtn, MinimapCornerBtn),
             Size = new Vector2(MinimapCornerBtn, MinimapCornerBtn),
             TooltipText = tooltip,
             StretchMode = TextureButton.StretchModeEnum.Scale,

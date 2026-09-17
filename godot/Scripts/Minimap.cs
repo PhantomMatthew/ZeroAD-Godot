@@ -12,7 +12,6 @@ public sealed partial class Minimap : Control
     private readonly Main _main;
     private ImageTexture _texture = null!;
     private Image _image = null!;
-    private Texture2D? _bgTexture;
 
     /// 渲染像素尺寸 = 节点宽(原版小地图 184px 内缩于 200×204 面板;HUD 布局设定 Size,
     /// 不再硬编码 200——硬编码曾使节点 Size 被 min-size 钳回 200,右/下缘越出面板 8/6px)。
@@ -65,7 +64,13 @@ public sealed partial class Minimap : Control
     {
         _image = Image.CreateEmpty(MapSizePx, MapSizePx, false, Image.Format.Rgba8);
         _texture = ImageTexture.CreateFromImage(_image);
-        _bgTexture = LoadTex("background_circle_spart.png");
+    }
+
+    /// <summary>原版 CMiniMap::IsMouseOver:只认圆环内(mask=true),方角点击穿透给角钮。</summary>
+    public override bool _HasPoint(Vector2 local)
+    {
+        float r = MapSizePx * 0.5f;
+        return (local - new Vector2(r, r)).LengthSquared() <= r * r;
     }
 
     public override void _GuiInput(InputEvent @event)
@@ -138,9 +143,30 @@ public sealed partial class Minimap : Control
         }
 
         BlendFog(lp);
+        ApplyCircleMask();
 
         _texture.Update(_image);
         QueueRedraw();
+    }
+
+    /// <summary>原版 minimap mask=true:只留圆内像素,方角不盖金环。</summary>
+    private void ApplyCircleMask()
+    {
+        int n = MapSizePx;
+        byte[] rgba = _image.GetData();
+        float c = (n - 1) * 0.5f;
+        float r2 = (n * 0.5f) * (n * 0.5f);
+        for (int z = 0; z < n; z++)
+        {
+            float dz = z - c;
+            for (int x = 0; x < n; x++)
+            {
+                float dx = x - c;
+                if (dx * dx + dz * dz > r2)
+                    rgba[(z * n + x) * 4 + 3] = 0;
+            }
+        }
+        _image.SetData(n, n, false, Image.Format.Rgba8, rgba);
     }
 
     private readonly FogTextureBuilder _fogBuilder = new();
@@ -203,9 +229,6 @@ public sealed partial class Minimap : Control
 
     public override void _Draw()
     {
-        if (_bgTexture != null)
-            DrawTextureRect(_bgTexture, new Rect2(Vector2.Zero, MapSizePx, MapSizePx), false);
-
         DrawTextureRect(_texture, new Rect2(Vector2.Zero, MapSizePx, MapSizePx), false);
 
         float worldSize = _sim.Terrain.MapSize * _sim.Terrain.TileSize;
@@ -291,10 +314,4 @@ public sealed partial class Minimap : Control
     }
 
     private IReadOnlyDictionary<EntityId, Node3D> GetAllEntityNodes() => _sim.EntityNodes;
-
-    private static Texture2D? LoadTex(string file)
-    {
-        var img = AssetIO.LoadImageRes($"res://assets/ui/{file}");
-        return img != null ? ImageTexture.CreateFromImage(img) : null;
-    }
 }

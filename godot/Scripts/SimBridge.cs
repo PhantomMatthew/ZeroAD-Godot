@@ -2928,29 +2928,17 @@ public sealed partial class SimBridge : Node
 	private string ResolveAnimationState(EntityId entity)
 	{
 		var ai = _sim.QueryInterface<UnitAIComponent>(entity);
-		string fsm = ai?.FsmStateName ?? "";
-
-		if (fsm.Contains("GATHER.GATHERING"))
-		{
-			var gatherer = _sim.QueryInterface<ResourceGatherer>(entity);
-			var supply = gatherer?.TargetSupply is EntityId s
-				? _sim.QueryInterface<ResourceSupply>(s) : null;
-			string? specific = supply?.SpecificType;
-			return string.IsNullOrEmpty(specific) ? "gather_tree" : "gather_" + specific;
-		}
-		if (fsm.Contains("REPAIR.REPAIRING"))
-			return "Build";   // 动画变体名大写(variants/biped/build.xml name="Build")
-		if (fsm.Contains("COMBAT.ATTACKING"))
-			return "attack_melee";
-
-		// Walking states: simple move (WALKING), approaching a target (*.APPROACHING),
-		// or returning resources (GATHER.RETURNINGRESOURCE).
-		if (fsm.EndsWith(".WALKING", StringComparison.Ordinal)
-			|| fsm.Contains("APPROACHING")
-			|| fsm.Contains("RETURNINGRESOURCE"))
-			return "Walk";
-
-		return "Idle";
+		var motion = _sim.QueryInterface<UnitMotion>(entity);
+		var attack = _sim.QueryInterface<AttackComponent>(entity);
+		string? gatherSpecific = null;
+		var gatherer = _sim.QueryInterface<ResourceGatherer>(entity);
+		if (gatherer?.TargetSupply is EntityId supplyId)
+			gatherSpecific = _sim.QueryInterface<ResourceSupply>(supplyId)?.SpecificType;
+		return UnitAnimationMapper.Resolve(
+			ai?.FsmStateName ?? "",
+			motion is { HasMoveTarget: true },
+			attack?.State ?? AttackComponent.AttackState.Idle,
+			gatherSpecific);
 	}
 
 	public List<EntityId> GetEntitiesAtPosition(Vector3 worldPos, float radius = 3f)
